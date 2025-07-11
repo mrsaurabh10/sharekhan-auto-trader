@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+# Optional: You can store your API key/secret in env vars if needed
+sharekhan:
+  api-key: YOUR_API_KEY
+  secret-key: YOUR_SECRET_KEY
