@@ -1,14 +1,22 @@
-# Use the Eclipse Temurin JDK 21 as base image
-FROM eclipse-temurin:21-jdk
+# -------- Stage 1: Build --------
+FROM maven:3.9.6-eclipse-temurin-21 AS build
 
-# Create a working directory
 WORKDIR /app
 
-# Copy your built JAR (adjust the filename if needed)
-COPY target/SharekhanOrderAPI-1.0-SNAPSHOT.jar app.jar
+COPY pom.xml .
+COPY src ./src
 
-# Expose the port your Spring Boot app listens on
+# Build the jar
+RUN mvn clean package -DskipTests
+
+# -------- Stage 2: Run --------
+FROM eclipse-temurin:21-jdk
+
+WORKDIR /app
+
+# Copy built jar from stage 1
+COPY --from=build /app/target/SharekhanOrderAPI-1.0-SNAPSHOT.jar app.jar
+
 EXPOSE 8080
 
-# Run the application
 ENTRYPOINT ["java", "-jar", "app.jar"]
