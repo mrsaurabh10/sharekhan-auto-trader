@@ -1,11 +1,5 @@
-# Use a slim Java runtime image
-FROM eclipse-temurin:21-jre
-
-WORKDIR /app
-
-# Copy pre-built JAR file (built locally)
-COPY target/SharekhanOrderAPI-1.0-SNAPSHOT.jar app.jar
-
+FROM eclipse-temurin:17-jdk-alpine
+VOLUME /tmp
+COPY target/*.jar app.jar
 EXPOSE 8080
-
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-jar", "/app.jar"]

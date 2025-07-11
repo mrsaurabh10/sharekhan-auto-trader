@@ -16,11 +16,10 @@
 
     <build>
         <plugins>
-            <!-- Spring Boot plugin to create fat jar -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
-                <version>3.2.5</version> <!-- Use the version you're using -->
+                <version>3.2.4</version> <!-- Use your Spring Boot version -->
                 <executions>
                     <execution>
                         <goals>
