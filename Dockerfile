@@ -18,12 +18,30 @@ RUN mvn clean package -DskipTests
 
 # STAGE 2: Run JAR
 FROM eclipse-temurin:21-jdk
+USER root
 
-# ✅ Install Playwright browser dependencies
+# ✅ Install Playwright browser dependencies (split for debug visibility)
 RUN apt-get update && \
-    apt-get install -y wget gnupg ca-certificates curl && \
-    apt-get install -y libatk-bridge2.0-0 libgtk-3-0 libxss1 libasound2 libnss3 libxcomposite1 libxrandr2 libgbm1 libxdamage1 libxfixes3 libxext6 libx11-xcb1 fonts-liberation libdrm2 libx11-6 libx11-data libfontconfig1 && \
-    apt-get clean
+    apt-get install -y wget gnupg curl ca-certificates && \
+    apt-get install -y \
+    libatk-bridge2.0-0 \
+    libgtk-3-0 \
+    libxss1 \
+    libasound2 \
+    libnss3 \
+    libxcomposite1 \
+    libxrandr2 \
+    libgbm1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxext6 \
+    libx11-xcb1 \
+    fonts-liberation \
+    libdrm2 \
+    libx11-6 \
+    libx11-data \
+    libfontconfig1 && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY --from=builder /app/target/*.jar app.jar
