@@ -37,8 +37,6 @@
             <groupId>com.sharekhan</groupId>
             <artifactId>sharekhan</artifactId>
             <version>0.0.1-SNAPSHOT</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/sharekhan-0.0.1-SNAPSHOT.jar</systemPath>
         </dependency>
 
 
