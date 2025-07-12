@@ -13,6 +13,8 @@ RUN mvn install:install-file \
     -Dversion=0.0.1-SNAPSHOT \
     -Dpackaging=jar
 
+RUN mkdir -p /app/data
+VOLUME /app/data
 # Build your app
 RUN mvn clean package -DskipTests
 
