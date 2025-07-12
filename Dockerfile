@@ -7,7 +7,7 @@ WORKDIR /app
 COPY pom.xml .
 
 # Manually install the Sharekhan SDK JAR into Maven repo
-COPY sharekhan-sdk/sharekhan-0.0.1-SNAPSHOT.jar /tmp/sharekhan-sdk.jar
+COPY lib/sharekhan-0.0.1-SNAPSHOT.jar /tmp/sharekhan-sdk.jar
 RUN mvn install:install-file \
     -Dfile=/tmp/sharekhan-sdk.jar \
     -DgroupId=com.sharekhan \
