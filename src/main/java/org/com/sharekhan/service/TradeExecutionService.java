@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
+import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
@@ -18,6 +19,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +30,7 @@ public class TradeExecutionService {
     private final TriggeredTradeSetupRepository triggeredTradeRepo;
     private final TriggerTradeRequestRepository triggerTradeRequestRepo;
     private final TokenStoreService tokenStoreService; // ✅ holds current token
+    private final LtpCacheService ltpCacheService;
 
     private final WebSocketSubscriptionService webSocketSubscriptionService;
 
@@ -163,6 +167,25 @@ public class TradeExecutionService {
         webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
 
         log.warn("❌ Order rejected for orderId {}", orderId);
+    }
+
+    public boolean forceCloseByScripCode(int scripCode) {
+        Optional<TriggeredTradeSetupEntity> tradeOpt = triggeredTradeRepo
+                .findByScripCodeAndStatus(scripCode, TriggeredTradeStatus.EXECUTED);
+
+        if (tradeOpt.isPresent()) {
+            TriggeredTradeSetupEntity trade = tradeOpt.get();
+
+            Double ltp = ltpCacheService.getLtp(scripCode);
+            double exitPrice = (ltp != null) ? ltp : trade.getEntryPrice(); // fallback to entry
+
+            log.info("🛑 Force-closing trade {} at price: {}", trade.getId(), exitPrice);
+
+            squareOff(trade, exitPrice,"Force fully close the trade"); // reuse existing logic
+            return true;
+        } else {
+            return false;
+        }
     }
 
     @Transactional
