@@ -19,4 +19,5 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     Optional<TriggeredTradeSetupEntity> findByExitOrderId(String exitOrderId);
 
+    List<TriggeredTradeSetupEntity> findByIntradayTrueAndStatus(TriggeredTradeStatus status);
 }

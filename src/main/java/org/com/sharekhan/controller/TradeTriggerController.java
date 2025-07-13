@@ -57,6 +57,7 @@ public class TradeTriggerController {
                 .quantity(finalQuantity)
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
+                .intraday(request.getIntraday())
                 .build();
 
         TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);

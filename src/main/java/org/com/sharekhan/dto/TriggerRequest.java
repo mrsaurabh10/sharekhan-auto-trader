@@ -17,4 +17,5 @@ public class TriggerRequest {
     private Double strikePrice;
     private String optionType;
     private String expiry; // format: 31/07/2025
+    private Boolean intraday;
 }

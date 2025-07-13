@@ -9,8 +9,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
+import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.TradeExecutionService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +34,8 @@ public class WebSocketClientService  {
     private Session session;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final Set<String> subscribedScrips = ConcurrentHashMap.newKeySet();
+    @Autowired
+    private final LtpCacheService ltpCacheService;
 
     // 🧠 Cache to track active subscriptions (e.g., NC2885, NF42120, etc.)
     private final Set<String> activeLtpSubscriptions = ConcurrentHashMap.newKeySet();
@@ -94,6 +98,7 @@ public class WebSocketClientService  {
                 int scripCode = data.get("scripCode").asInt();
                 double ltp = data.get("ltp").asDouble();
                 log.info("📊 Tick received - Scrip: {}, LTP: {}", scripCode, ltp);
+                ltpCacheService.updateLtp(scripCode, ltp);
                 priceTriggerService.evaluatePriceTrigger(scripCode,ltp);
                 priceTriggerService.monitorOpenTrades(scripCode,ltp);
             }else if (json.has("message")  && "ack".equals(json.get("message").asText())

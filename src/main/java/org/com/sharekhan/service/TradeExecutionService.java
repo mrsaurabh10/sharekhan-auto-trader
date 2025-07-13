@@ -103,6 +103,7 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
                 triggeredTradeSetupEntity.setEntryPrice(ltp);
                 triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
+                triggeredTradeSetupEntity.setIntraday(trigger.isIntraday());
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
                 //subscribe to ack feed
@@ -177,7 +178,7 @@ public class TradeExecutionService {
         exitOrder.quantity = trade.getQuantity().longValue();
         exitOrder.instrumentType = trade.getInstrumentType();
         exitOrder.productType = "INVESTMENT";
-        exitOrder.price = "0.0"; //0.0 means Market Price
+        exitOrder.price = String.valueOf(exitPrice); //0.0 means Market Price
         exitOrder.transactionType = "S"; // Assuming original was "B"
         exitOrder.orderType = "NORMAL";
         exitOrder.expiry = trade.getExpiry();
@@ -267,6 +268,7 @@ public class TradeExecutionService {
         log.info("⏳ Order is still pending or partially executed.");
         return TradeStatus.PENDING;
     }
+
 
 
 
