@@ -11,6 +11,8 @@ import org.com.sharekhan.ws.WebSocketConnector;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.concurrent.Executor;
@@ -28,6 +30,8 @@ public class OrderStatusPollingService {
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
     private final TriggeredTradeSetupRepository tradeRepo;
     private final SharekhanConnect sharekhanConnect;
+    @Lazy
+    @Autowired
     private final WebSocketClientService webSocketClientService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketConnector webSocketConnector;

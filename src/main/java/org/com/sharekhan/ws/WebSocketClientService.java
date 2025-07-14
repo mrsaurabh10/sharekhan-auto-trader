@@ -48,6 +48,7 @@ public class WebSocketClientService  {
 
     private static final String API_KEY = TokenLoginAutomationService.apiKey; // replace with actual key
     @Autowired
+    @Lazy
     private OrderStatusPollingService orderStatusPollingService;
     @Autowired
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
