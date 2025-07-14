@@ -39,8 +39,6 @@ public class OrderStatusPollingService {
                 JSONObject response = sharekhanConnect.orderHistory("NF", trade.getCustomerId(), trade.getOrderId());
                 JSONArray data = response.getJSONArray("data");
 
-                tradeExecutionService.evaluateOrderFinalStatus(response);
-
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                     trade.setStatus(TriggeredTradeStatus.EXECUTED);
