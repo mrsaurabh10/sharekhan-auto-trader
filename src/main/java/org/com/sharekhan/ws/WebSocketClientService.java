@@ -10,14 +10,20 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.service.OrderStatusPollingService;
 import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.TradeExecutionService;
+import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import javax.swing.text.html.Option;
 import java.io.IOException;
 import java.net.URI;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -41,6 +47,10 @@ public class WebSocketClientService  {
     private final Set<String> activeLtpSubscriptions = ConcurrentHashMap.newKeySet();
 
     private static final String API_KEY = TokenLoginAutomationService.apiKey; // replace with actual key
+    @Autowired
+    private OrderStatusPollingService orderStatusPollingService;
+    @Autowired
+    private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
 
     @PostConstruct
     public void init() {
@@ -107,11 +117,13 @@ public class WebSocketClientService  {
                     log.info("📊 Ack received -  {}", message);
                     JsonNode data = json.get("data");
                     String orderId = data.get("SharekhanOrderID").asText();
-
                     // need to find the buy price for calculation of pnl
                     String ackState = data.get("AckState").asText();
-                    if ("FullyExecuted".equalsIgnoreCase(ackState)) {
-                        tradeExecutionService.markOrderExecuted(orderId);
+                    if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
+                        // Order is confirmed trigger a thread to poll the status
+                        Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
+                        triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> orderStatusPollingService.monitorOrderStatus(tradeSetupEntity));
+                        //tradeExecutionService.markOrderExecuted(orderId);
                     } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
                         tradeExecutionService.markOrderRejected(orderId);
                     }

@@ -76,17 +76,19 @@ public class TradeExecutionService {
                 //order placed  successfully
                 log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
 
-                // check the status immediately
+                // check the status with a delay of .5 second
+                Thread.sleep(500);
                 JSONObject orderHistory =  sharekhanConnect.getTrades(trigger.getExchange(), TokenLoginAutomationService.customerId,orderId);
 
-                TradeStatus tradeStatus = evaluateOrderFinalStatus(orderHistory);
+                TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
+                TradeStatus tradeStatus = evaluateOrderFinalStatus(triggeredTradeSetupEntity,orderHistory);
 
 
 
                 //trigger.setStatus(TriggeredTradeStatus.TRIGGERED);
 
                 //since the order is triggered then place the entity in the setup
-                TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
+
                 triggeredTradeSetupEntity.setOrderId(orderId);
 
                 if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
@@ -115,8 +117,10 @@ public class TradeExecutionService {
                 if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
                     webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
                 }
+
                 String feedKey = trigger.getExchange() + trigger.getScripCode();
                 webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
+
 
                 log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
             }
@@ -258,7 +262,7 @@ public class TradeExecutionService {
         NO_RECORDS
     }
 
-    public TradeStatus evaluateOrderFinalStatus(JSONObject orderHistoryResponse) {
+    public TradeStatus evaluateOrderFinalStatus(TriggeredTradeSetupEntity tradeSetupEntity, JSONObject orderHistoryResponse) {
         Object data = orderHistoryResponse.get("data");
 
         if (data instanceof String && "no_records".equalsIgnoreCase((String) data)) {
@@ -275,14 +279,17 @@ public class TradeExecutionService {
             JSONObject trade = trades.getJSONObject(i);
             String status = trade.optString("orderStatus", "").trim();
 
+
             switch (status) {
                 case "Rejected":
                     String reason = trade.optString("clientGroup", "Unknown");
                     log.warn("❌ Order Rejected - Reason: {}", reason);
                     return TradeStatus.REJECTED;
 
-                case "Fully Executed":
+                case "FullyExecuted":
                     log.info("✅ Order Fully Executed - Order ID: {}", trade.optString("orderId"));
+                    String orderPrice = trade.optString("orderPrice", "").trim();
+                    tradeSetupEntity.setEntryPrice(Double.parseDouble(orderPrice));
                     return TradeStatus.FULLY_EXECUTED;
             }
         }
