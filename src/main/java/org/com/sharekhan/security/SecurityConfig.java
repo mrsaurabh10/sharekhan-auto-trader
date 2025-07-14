@@ -14,7 +14,7 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/h2-console/**").permitAll()
+                .requestMatchers("/h2-console/**", "/api/**").permitAll()
                 .anyRequest().authenticated()
             )
             .csrf(csrf -> csrf.disable()) // Disable CSRF for dev

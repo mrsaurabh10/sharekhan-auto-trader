@@ -2,8 +2,6 @@ target/
 !.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
-# Allow one specific jar to be committed
-!target/SharekhanOrderAPI-1.0-SNAPSHOT.jar
 # In .gitignore
 !lib/sharekhan-0.0.1-SNAPSHOT.jar
 ### IntelliJ IDEA ###
