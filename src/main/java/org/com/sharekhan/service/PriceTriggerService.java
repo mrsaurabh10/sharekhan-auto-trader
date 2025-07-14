@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -45,11 +46,14 @@ public class PriceTriggerService {
 
     public void monitorOpenTrades(Integer scripCode, double ltp) {
         try {
-            List<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatus(
+            Optional<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatus(
                     scripCode, TriggeredTradeStatus.EXECUTED
             );
 
-            for (TriggeredTradeSetupEntity trade : trades) {
+            //for (TriggeredTradeSetupEntity trade : trades)
+            if(trades.isPresent())
+            {
+                TriggeredTradeSetupEntity trade = trades.get();
                 boolean slHit = ltp <= trade.getStopLoss();
                 boolean targetHit = Stream.of(trade.getTarget1(), trade.getTarget2(), trade.getTarget3())
                         .filter(Objects::nonNull)
