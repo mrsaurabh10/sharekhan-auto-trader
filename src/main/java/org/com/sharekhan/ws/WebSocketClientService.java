@@ -11,12 +11,14 @@ import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.OrderStatusPollingService;
 import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
@@ -42,14 +44,12 @@ public class WebSocketClientService  {
     private final Set<String> subscribedScrips = ConcurrentHashMap.newKeySet();
     @Autowired
     private final LtpCacheService ltpCacheService;
+    private final ApplicationEventPublisher eventPublisher;
 
     // 🧠 Cache to track active subscriptions (e.g., NC2885, NF42120, etc.)
     private final Set<String> activeLtpSubscriptions = ConcurrentHashMap.newKeySet();
 
     private static final String API_KEY = TokenLoginAutomationService.apiKey; // replace with actual key
-    @Autowired
-    @Lazy
-    private OrderStatusPollingService orderStatusPollingService;
     @Autowired
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
 
@@ -96,10 +96,11 @@ public class WebSocketClientService  {
 
     @OnMessage
     public void onMessage(String message) {
-        log.info("💓 Message received {}", message);
         if ("heartbeat".equalsIgnoreCase(message)) {
             log.debug("💓 Heartbeat received");
             return;
+        }else{
+            log.info("Message received: {}", message);
         }
         try {
             JsonNode json = OBJECT_MAPPER.readTree(message);
@@ -123,7 +124,7 @@ public class WebSocketClientService  {
                     if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
                         // Order is confirmed trigger a thread to poll the status
                         Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
-                        triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> orderStatusPollingService.monitorOrderStatus(tradeSetupEntity));
+                        triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity.get())));// .monitorOrderStatus(tradeSetupEntity));
                         //tradeExecutionService.markOrderExecuted(orderId);
                     } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
                         tradeExecutionService.markOrderRejected(orderId);

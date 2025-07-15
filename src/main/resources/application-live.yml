@@ -15,3 +15,19 @@ spring:
       ddl-auto: update
 server:
   port: 8080
+logging:
+  level:
+    org:
+      hibernate:
+        SQL: OFF
+        type:
+          descriptor:
+            sql: OFF
+        orm:
+          jdbc:
+            bind: OFF
+        tool:
+          hbm2ddl: ERROR
+      springframework:
+        orm:
+          jpa: ERROR

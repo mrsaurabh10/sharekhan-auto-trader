@@ -11,12 +11,13 @@ import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
-import org.com.sharekhan.login.SharekhanLoginAutomation;
+import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.util.Optional;
@@ -31,6 +32,8 @@ public class TradeExecutionService {
     private final TriggerTradeRequestRepository triggerTradeRequestRepo;
     private final TokenStoreService tokenStoreService; // ✅ holds current token
     private final LtpCacheService ltpCacheService;
+
+    private final ApplicationEventPublisher eventPublisher;
 
     private final WebSocketSubscriptionService webSocketSubscriptionService;
 
@@ -77,11 +80,12 @@ public class TradeExecutionService {
                 log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
 
                 // check the status with a delay of .5 second
-                Thread.sleep(500);
-                JSONObject orderHistory =  sharekhanConnect.getTrades(trigger.getExchange(), TokenLoginAutomationService.customerId,orderId);
+                //Thread.sleep(500);
 
-                TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
-                TradeStatus tradeStatus = evaluateOrderFinalStatus(triggeredTradeSetupEntity,orderHistory);
+                //JSONObject orderHistory =  sharekhanConnect.getTrades(trigger.getExchange(), TokenLoginAutomationService.customerId,orderId);
+
+
+                //TradeStatus tradeStatus = evaluateOrderFinalStatus(triggeredTradeSetupEntity,orderHistory);
 
 
 
@@ -89,13 +93,14 @@ public class TradeExecutionService {
 
                 //since the order is triggered then place the entity in the setup
 
+                TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
                 triggeredTradeSetupEntity.setOrderId(orderId);
 
-                if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
-                    triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
-                } else{
-                    triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.EXECUTED);
-                }
+                //if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
+                triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+                //} else{
+                  //  triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.EXECUTED);
+                //}
 
                 triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
                 triggeredTradeSetupEntity.setExchange(trigger.getExchange());
@@ -112,11 +117,14 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setIntraday(trigger.isIntraday());
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
+                eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+                //orderMonitoringManager.startMonitoring(triggeredTradeSetupEntity);
+
                 //subscribe to ack feed
                 // 🔌 Subscribe to ACK
-                if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
-                    webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
-                }
+                //if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
+                //    webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
+                //}
 
                 String feedKey = trigger.getExchange() + trigger.getScripCode();
                 webSocketSubscriptionService.unsubscribeFromScrip(feedKey);

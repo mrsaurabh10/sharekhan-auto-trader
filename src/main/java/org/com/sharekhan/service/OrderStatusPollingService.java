@@ -3,6 +3,8 @@ package org.com.sharekhan.service;
 import com.sharekhan.SharekhanConnect;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.com.sharekhan.auth.TokenLoginAutomationService;
+import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
@@ -15,10 +17,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.Map;
+import java.util.concurrent.*;
 
 import static org.com.sharekhan.service.TradeExecutionService.*;
 
@@ -30,17 +30,23 @@ public class OrderStatusPollingService {
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
     private final TriggeredTradeSetupRepository tradeRepo;
     private final SharekhanConnect sharekhanConnect;
+    private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
     @Lazy
     @Autowired
     private final WebSocketClientService webSocketClientService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketConnector webSocketConnector;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
+    private final TokenStoreService   tokenStoreService;
 
     public void monitorOrderStatus(TriggeredTradeSetupEntity trade) {
         Runnable pollTask = () -> {
             try {
-                JSONObject response = sharekhanConnect.orderHistory("NF", trade.getCustomerId(), trade.getOrderId());
+
+                String accessToken = tokenStoreService.getAccessToken(); // ✅ fetch fresh token
+
+                SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
+                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(), trade.getOrderId());
                 JSONArray data = response.getJSONArray("data");
 
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
@@ -50,11 +56,21 @@ public class OrderStatusPollingService {
                     webSocketSubscriptionHelper.subscribeToScrip(feedKey);
                     tradeRepo.save(trade);
                     //todo add executed price here
+                    ScheduledFuture<?> future = activePolls.remove(trade.getOrderId());
+                    if (future != null) {
+                        future.cancel(true);
+                        log.info("🛑 Polling stopped for order {}", trade.getOrderId());
+                    }
                     return;
                 }else if (TradeStatus.REJECTED.equals(tradeStatus)) {
                     //stop polling stop ack
                     trade.setStatus(TriggeredTradeStatus.REJECTED);
                     tradeRepo.save(trade);
+                    ScheduledFuture<?> future = activePolls.remove(trade.getOrderId());
+                    if (future != null) {
+                        future.cancel(true);
+                        log.info("🛑 Polling stopped for order {}", trade.getOrderId());
+                    }
                     return;
                 }
                 log.info("⌛ Order still pending: {}", trade.getOrderId());
@@ -65,7 +81,8 @@ public class OrderStatusPollingService {
         };
 
         // Poll every 3 seconds, up to 2 minutes
-        executor.scheduleAtFixedRate(pollTask, 0, 500, TimeUnit.MILLISECONDS);
+        ScheduledFuture<?> future = executor.scheduleAtFixedRate(pollTask, 0, 500, TimeUnit.MILLISECONDS);
+        activePolls.put(trade.getOrderId(), future);
 
         // Optional: Cancel polling after 2 minutes
         executor.schedule(() -> {
