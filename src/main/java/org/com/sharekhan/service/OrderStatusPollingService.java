@@ -51,7 +51,13 @@ public class OrderStatusPollingService {
 
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
-                    trade.setStatus(TriggeredTradeStatus.EXECUTED);
+                    if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
+                        trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+                    }else{
+                        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+                    }
+
+
                     String feedKey = trade.getExchange() + trade.getScripCode();
                     webSocketSubscriptionHelper.subscribeToScrip(feedKey);
                     tradeRepo.save(trade);
@@ -63,8 +69,14 @@ public class OrderStatusPollingService {
                     }
                     return;
                 }else if (TradeStatus.REJECTED.equals(tradeStatus)) {
-                    //stop polling stop ack
-                    trade.setStatus(TriggeredTradeStatus.REJECTED);
+
+                    if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
+                        trade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
+                    }else{
+                        trade.setStatus(TriggeredTradeStatus.REJECTED);
+                    }
+
+
                     tradeRepo.save(trade);
                     ScheduledFuture<?> future = activePolls.remove(trade.getOrderId());
                     if (future != null) {
@@ -74,12 +86,10 @@ public class OrderStatusPollingService {
                     return;
                 }
                 log.info("⌛ Order still pending: {}", trade.getOrderId());
-
             } catch (Exception e) {
                 log.error("❌ Error polling order status for {}: {}", trade.getOrderId(), e.getMessage());
             }
         };
-
         // Poll every 3 seconds, up to 2 minutes
         ScheduledFuture<?> future = executor.scheduleAtFixedRate(pollTask, 0, 500, TimeUnit.MILLISECONDS);
         activePolls.put(trade.getOrderId(), future);

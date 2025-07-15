@@ -254,6 +254,9 @@ public class TradeExecutionService {
             String feedKey = trade.getExchange() + trade.getScripCode();
             webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
 
+            //monitor trade
+            eventPublisher.publishEvent(new OrderPlacedEvent(trade));
+
             log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trade.getScripCode(), exitPrice);
         }
 
