@@ -1,6 +1,9 @@
 package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.com.sharekhan.service.TradeExecutionService;
+import org.com.sharekhan.service.TradingRequestService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -11,16 +14,17 @@ import org.springframework.web.bind.annotation.RestController;
 @RequiredArgsConstructor
 public class OrderViewController {
 
-    //private final RequestedOrderService requestedOrderService;
-    //private final TradeSetupService tradeSetupService;
+    @Autowired
+    private TradingRequestService tradingRequestService;
+    @Autowired private TradeExecutionService tradeExecutionService;
 
-//    @GetMapping("/requested")
-//    public ResponseEntity<List<RequestedOrderResponse>> getRequestedOrders() {
-//        return ResponseEntity.ok(requestedOrderService.getLatestRequestedOrders(10));
-//    }
-//
-//    @GetMapping("/trade-setup")
-//    public ResponseEntity<List<TradeSetupResponse>> getTradeSetups() {
-//        return ResponseEntity.ok(tradeSetupService.getLatestTradeSetups(10));
-//    }
+    @GetMapping("/requests")
+    public ResponseEntity<?>  getRequestedOrders() {
+            return ResponseEntity.ok(tradingRequestService.getRecentRequests());
+     }
+
+    @GetMapping("/executed")
+    public ResponseEntity<?> getExecuted() {
+        return ResponseEntity.ok(tradeExecutionService.getRecentExecutions());
+    }
 }

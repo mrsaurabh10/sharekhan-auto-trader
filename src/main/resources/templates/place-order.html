@@ -94,35 +94,37 @@
 
 <div id="result"></div>
 
-<h3>Requested Orders</h3>
-<table id="requestedOrdersTable" border="1" cellpadding="8" cellspacing="0">
+<h3>Trading Requests</h3>
+<table id="trading-requests-table" border="1" style="margin-bottom: 2rem; width: 100%;">
     <thead>
     <tr>
-        <th>Exchange</th>
+        <th>ID</th>
         <th>Symbol</th>
-        <th>Entry</th>
+        <th>Exchange</th>
+        <th>Strike</th>
+        <th>Expiry</th>
+        <th>Entry Price</th>
         <th>SL</th>
-        <th>T1</th>
-        <th>T2</th>
-        <th>T3</th>
+        <th>Target 1</th>
         <th>Qty</th>
-        <th>Option</th>
     </tr>
     </thead>
     <tbody></tbody>
 </table>
 
-<h3>Trade Setup</h3>
-<table id="tradeSetupTable" border="1" cellpadding="8" cellspacing="0">
+<h3>Trades Executed</h3>
+<table id="trades-executed-table" border="1" style="width: 100%;">
     <thead>
     <tr>
-        <th>Exchange</th>
+        <th>ID</th>
         <th>Symbol</th>
+        <th>Exchange</th>
         <th>Strike</th>
         <th>Expiry</th>
-        <th>Option</th>
-        <th>Type</th>
-        <th>Status</th>
+        <th>Entry Price</th>
+        <th>SL</th>
+        <th>Target 1</th>
+        <th>Qty</th>
     </tr>
     </thead>
     <tbody></tbody>
@@ -250,44 +252,46 @@
     }
 
     function loadRequestedOrders() {
-        fetch('/api/orders/requested')
+        fetch('/api/orders/requests')
             .then(res => res.json())
             .then(data => {
-                const tbody = document.querySelector("#requestedOrdersTable tbody");
+                const tbody = document.querySelector("#trading-requests-table tbody");
                 tbody.innerHTML = "";
                 data.forEach(order => {
                     tbody.innerHTML += `
                     <tr>
-                        <td>${order.exchange}</td>
+                        <td>${order.id}</td>
                         <td>${order.symbol}</td>
-                        <td>${order.entryPrice}</td>
+                        <td>${order.exchange}</td>
+                        <td>${order.strikePrice}</td>
+                        <td>${order.expiry}</td>
+                        <td>${order.entry}</td>
                         <td>${order.stopLoss}</td>
                         <td>${order.target1}</td>
-                        <td>${order.target2}</td>
-                        <td>${order.target3}</td>
-                        <td>${order.quantity}</td>
-                        <td>${order.optionType || ''}</td>
+                        <td>${order.quantity || ''}</td>
                     </tr>`;
                 });
             }).catch(err => console.error("Failed to load requested orders", err));
     }
 
     function loadTradeSetups() {
-        fetch('/api/orders/trade-setup')
+        fetch('/api/orders/executed')
             .then(res => res.json())
             .then(data => {
-                const tbody = document.querySelector("#tradeSetupTable tbody");
+                const tbody = document.querySelector("#trades-executed-table tbody");
                 tbody.innerHTML = "";
                 data.forEach(setup => {
                     tbody.innerHTML += `
                     <tr>
-                        <td>${setup.exchange}</td>
+                        <td>${setup.id}</td>
                         <td>${setup.symbol}</td>
+                        <td>${setup.exchange || ''}</td>
                         <td>${setup.strikePrice || ''}</td>
                         <td>${setup.expiry || ''}</td>
-                        <td>${setup.optionType || ''}</td>
-                        <td>${setup.instrumentType || ''}</td>
-                        <td>${setup.status || ''}</td>
+                        <td>${setup.entryPrice || ''}</td>
+                        <td>${setup.stopLoss || ''}</td>
+                        <td>${setup.target1 || ''}</td>
+                         <td>${setup.quantity || ''}</td>
                     </tr>`;
                 });
             }).catch(err => console.error("Failed to load trade setups", err));

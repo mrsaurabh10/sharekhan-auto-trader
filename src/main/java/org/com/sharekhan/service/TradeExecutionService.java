@@ -20,6 +20,7 @@ import org.json.JSONObject;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 
 
@@ -105,16 +106,18 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
                 triggeredTradeSetupEntity.setExchange(trigger.getExchange());
                 triggeredTradeSetupEntity.setCustomerId(TokenLoginAutomationService.customerId);
+                triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
                 triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
                 triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());
                 triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
                 triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
                 triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
+                triggeredTradeSetupEntity.setQuantity(trigger.getQuantity().intValue());
                 triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
                 triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
                 triggeredTradeSetupEntity.setEntryPrice(ltp);
                 triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
-                triggeredTradeSetupEntity.setIntraday(trigger.isIntraday());
+                triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
                 eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
@@ -310,6 +313,9 @@ public class TradeExecutionService {
         return TradeStatus.PENDING;
     }
 
+    public List<TriggeredTradeSetupEntity> getRecentExecutions() {
+        return triggeredTradeRepo.findTop10ByOrderByIdDesc();
+    }
 
 
 

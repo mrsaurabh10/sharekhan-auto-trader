@@ -40,7 +40,7 @@ public class TriggerTradeRequestEntity {
     private Double trailingSl;
 
     @Column(name = "intraday")
-    private boolean intraday;  // default false
+    private Boolean intraday;  // default false
 
 
 

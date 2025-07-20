@@ -49,7 +49,7 @@ public class TriggeredTradeSetupEntity {
     private String exitReason;
 
     @Column(name = "intraday")
-    private boolean intraday;  // default false
+    private Boolean intraday;  // default false
 
 
     @Enumerated(EnumType.STRING)

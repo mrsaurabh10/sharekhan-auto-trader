@@ -21,5 +21,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findByIntradayTrueAndStatus(TriggeredTradeStatus status);
 
+    List<TriggeredTradeSetupEntity> findTop10ByOrderByIdDesc();
+
 
 }
