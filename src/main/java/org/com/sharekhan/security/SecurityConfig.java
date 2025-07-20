@@ -14,17 +14,9 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(
-                                "/h2-console/**",
-                                "/api/**",
-                                "/place-order",
-                                "/css/**",
-                                "/js/**",
-                                "/images/**"
-                        ).permitAll()
-                        .anyRequest().authenticated()
+                        .anyRequest().permitAll()
                 )
-                .csrf(csrf -> csrf.disable()) // Disable CSRF for simplicity (dev only)
+                .csrf(csrf -> csrf.disable())// Disable CSRF for simplicity (dev only)
                 .headers(headers -> headers.frameOptions().disable()); // For H2 console
 
         return http.build();

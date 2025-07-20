@@ -1,76 +1,303 @@
-package templates;
-
 <!DOCTYPE html>
 <html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <title>Place Trade Order</title>
-    <meta charset="UTF-8"/>
+    <title>Place Order</title>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 2rem;
+        }
+        form {
+            max-width: 600px;
+        }
+        label {
+            display: block;
+            margin-top: 1rem;
+        }
+        select, input {
+            width: 100%;
+            padding: 0.5rem;
+        }
+        button {
+            margin-top: 1rem;
+            padding: 0.5rem 1rem;
+        }
+        #result {
+            margin-top: 1rem;
+            font-weight: bold;
+        }
+    </style>
 </head>
 <body>
-<h2>Place Trade Order</h2>
 
-<form id="orderForm">
-    <label>Instrument: <input type="text" name="instrument" required/></label><br/>
-    <label>Exchange: <input type="text" name="exchange" required/></label><br/>
-    <label>Strike Price: <input type="number" name="strikePrice" step="0.01" required/></label><br/>
-    <label>Option Type:
-        <select name="optionType">
-            <option value="CE">Call</option>
-            <option value="PE">Put</option>
-        </select>
-    </label><br/>
-    <label>Expiry: <input type="text" name="expiry" placeholder="dd/MM/yyyy" required/></label><br/>
-    <label>Entry Price: <input type="number" name="entryPrice" step="0.01" required/></label><br/>
-    <label>Stop Loss: <input type="number" name="stopLoss" step="0.01" required/></label><br/>
-    <label>Target 1: <input type="number" name="target1" step="0.01"/></label><br/>
-    <label>Target 2: <input type="number" name="target2" step="0.01"/></label><br/>
-    <label>Target 3: <input type="number" name="target3" step="0.01"/></label><br/>
-    <label>Quantity: <input type="number" name="quantity" required/></label><br/>
-    <label>Intraday: <input type="checkbox" name="intraday" value="true"/></label><br/>
-    <label>Mode:
-        <select name="mode">
-            <option value="live">Live</option>
-            <option value="demo">Demo</option>
-        </select>
-    </label><br/><br/>
+<h2>Place Order</h2>
 
-    <button type="submit">Submit</button>
+<form id="placeOrderForm" method="POST">
+    <label for="exchange">Exchange</label>
+    <select id="exchange" name="exchange" required>
+        <option value="">Select Exchange</option>
+        <option value="NF">NF</option>
+        <option value="BF">BF</option>
+        <option value="MX">MX</option>
+        <option value="NC">NC</option>
+        <option value="BF">BF</option>
+    </select>
+
+    <label for="instrument">Instrument</label>
+    <select id="instrument" name="instrument" required>
+        <option value="">Select Instrument</option>
+    </select>
+
+    <label for="strikePrice">Strike Price</label>
+    <select id="strikePrice" name="strikePrice">
+        <option value="">Select Strike</option>
+    </select>
+
+    <label for="expiry">Expiry</label>
+    <select id="expiry" name="expiry">
+        <option value="">Select Expiry</option>
+    </select>
+
+    <label for="entryPrice">Entry Price</label>
+    <input type="number" step="0.01" id="entryPrice" name="entryPrice" required>
+
+    <label for="stopLoss">Stop Loss</label>
+    <input type="number" step="0.01" id="stopLoss" name="stopLoss" required>
+
+    <label for="target1">Target 1</label>
+    <input type="number" step="0.01" id="target1" name="target1">
+
+    <label for="target2">Target 2</label>
+    <input type="number" step="0.01" id="target2" name="target2">
+
+    <label for="target3">Target 3</label>
+    <input type="number" step="0.01" id="target3" name="target3">
+
+    <label for="optionType">Option Type</label>
+    <select id="optionType" name="optionType">
+        <option value="">--</option>
+        <option value="CE">Call</option>
+        <option value="PE">Put</option>
+    </select>
+
+    <label for="quantity">Quantity (Lots)</label>
+    <input type="number" id="quantity" name="quantity" required th:default="1">
+
+    <label>
+        <input type="checkbox" id="intraday" name="intraday">
+        Intraday
+    </label>
+
+    <button type="submit">Place Order</button>
 </form>
 
-<div id="responseMsg" style="margin-top:10px;color:green;"></div>
+<div id="result"></div>
+
+<h3>Requested Orders</h3>
+<table id="requestedOrdersTable" border="1" cellpadding="8" cellspacing="0">
+    <thead>
+    <tr>
+        <th>Exchange</th>
+        <th>Symbol</th>
+        <th>Entry</th>
+        <th>SL</th>
+        <th>T1</th>
+        <th>T2</th>
+        <th>T3</th>
+        <th>Qty</th>
+        <th>Option</th>
+    </tr>
+    </thead>
+    <tbody></tbody>
+</table>
+
+<h3>Trade Setup</h3>
+<table id="tradeSetupTable" border="1" cellpadding="8" cellspacing="0">
+    <thead>
+    <tr>
+        <th>Exchange</th>
+        <th>Symbol</th>
+        <th>Strike</th>
+        <th>Expiry</th>
+        <th>Option</th>
+        <th>Type</th>
+        <th>Status</th>
+    </tr>
+    </thead>
+    <tbody></tbody>
+</table>
 
 <script>
-    document.getElementById('orderForm').addEventListener('submit', async function (e) {
+    // Load instruments when exchange is selected
+    document.getElementById('exchange').addEventListener('change', function () {
+        const exchange = this.value;
+        fetch(`/api/scripts/instruments/${exchange}`)
+            .then(res => res.json())
+            .then(data => {
+                const instruments = data.instruments;
+                const instrumentSelect = document.getElementById('instrument');
+                instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
+
+                instruments.forEach(symbol => {
+                    instrumentSelect.innerHTML += `<option value="${symbol}">${symbol}</option>`;
+                });
+            })
+            .catch(err => {
+                console.error("Failed to load instruments:", err);
+            });
+    });
+
+    // Load strikes and expiries when instrument is selected
+    // Load strikes and expiries when instrument is selected
+    document.getElementById('instrument').addEventListener('change', function () {
+        const exchange = document.getElementById('exchange').value;
+        const instrument = this.value;
+
+        if (!exchange || !instrument) return;
+
+        fetch(`/api/scripts/strikes?exchange=${exchange}&instrument=${instrument}`)
+            .then(res => res.json())
+            .then(data => {
+                const strikes = data.strikes || [];
+                const strikeSelect = document.getElementById('strikePrice');
+                strikeSelect.innerHTML = '<option value="">Select Strike</option>';
+
+                strikes.forEach(strike => {
+                    strikeSelect.innerHTML += `<option value="${strike}">${strike}</option>`;
+                });
+                autoSelectOptionTypeIfValid();
+            })
+            .catch(err => {
+                console.error("Failed to load strikes or expiries:", err);
+            });
+    });
+
+    document.getElementById('strikePrice').addEventListener('change', function () {
+        autoSelectOptionTypeIfValid();
+    });
+
+    // Load expiries when strike is selected
+    document.getElementById('strikePrice').addEventListener('change', function () {
+        const exchange = document.getElementById('exchange').value;
+        const instrument = document.getElementById('instrument').value;
+        const strikePrice = this.value;
+
+
+        if (!exchange || !instrument || !strikePrice) return;
+
+        fetch(`/api/scripts/expiries?exchange=${exchange}&instrument=${instrument}&strikePrice=${strikePrice}`)
+            .then(res => res.json())
+            .then(data => {
+                const expiries = data.expiries || [];
+                const expirySelect = document.getElementById('expiry');
+                expirySelect.innerHTML = '<option value="">Select Expiry</option>';
+
+                expiries.forEach((expiry, index) => {
+                    const selected = index === 0 ? 'selected' : '';
+                    expirySelect.innerHTML += `<option value="${expiry}" ${selected}>${expiry}</option>`;
+
+                });
+            })
+            .catch(err => {
+                console.error("Failed to load expiries:", err);
+            });
+    });
+
+    // Submit form via REST
+    document.getElementById('placeOrderForm').addEventListener('submit', function (e) {
         e.preventDefault();
 
         const form = e.target;
-        const formData = new FormData(form);
-        const json = {};
+        const data = {
+            exchange: form.exchange.value,
+            instrument: form.instrument.value,
+            strikePrice: form.strikePrice.value ? parseFloat(form.strikePrice.value):null,
+            expiry: form.expiry.value || null,
+            entryPrice: parseFloat(form.entryPrice.value),
+            stopLoss: parseFloat(form.stopLoss.value),
+            target1: parseFloat(form.target1.value) || 0,
+            target2: parseFloat(form.target2.value) || 0,
+            target3: parseFloat(form.target3.value) || 0,
+            optionType: form.optionType.value || null,
+            quantity: parseInt(form.quantity.value),
+            intraday: form.intraday.checked
+        };
 
-        for (const [key, value] of formData.entries()) {
-            if (json[key]) {
-                // Handle multiple entries (e.g. checkbox arrays)
-                if (!Array.isArray(json[key])) json[key] = [json[key]];
-                json[key].push(value);
-            } else {
-                json[key] = value === 'true' ? true : (value === 'false' ? false : value);
-            }
-        }
-
-        try {
-            const response = await fetch('api/trades/trigger-on-price', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(json)
-            });
-
-            const result = await response.json();
-            document.getElementById('responseMsg').innerText = "✅ Trade submitted: " + JSON.stringify(result);
-        } catch (error) {
-            console.error("Error submitting order:", error);
-            document.getElementById('responseMsg').innerText = "❌ Error submitting order";
-        }
+        fetch('/api/trades/trigger-on-price', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        }).then(res => {
+            if (!res.ok) throw new Error("Failed to trigger order");
+            return res.text();
+        }).then(msg => {
+            document.getElementById('result').innerText = "✅ Order Triggered";
+            form.reset();
+        }).catch(err => {
+            document.getElementById('result').innerText = "❌ Failed to trigger order.";
+            console.error(err);
+        });
     });
+
+    function autoSelectOptionTypeIfValid() {
+        const instrument = document.getElementById('instrument').value;
+        const strike = document.getElementById('strikePrice').value;
+
+        if (instrument && strike) {
+            document.getElementById('optionType').value = 'CE'; // Auto-select Call
+        }
+    }
+
+    function loadRequestedOrders() {
+        fetch('/api/orders/requested')
+            .then(res => res.json())
+            .then(data => {
+                const tbody = document.querySelector("#requestedOrdersTable tbody");
+                tbody.innerHTML = "";
+                data.forEach(order => {
+                    tbody.innerHTML += `
+                    <tr>
+                        <td>${order.exchange}</td>
+                        <td>${order.symbol}</td>
+                        <td>${order.entryPrice}</td>
+                        <td>${order.stopLoss}</td>
+                        <td>${order.target1}</td>
+                        <td>${order.target2}</td>
+                        <td>${order.target3}</td>
+                        <td>${order.quantity}</td>
+                        <td>${order.optionType || ''}</td>
+                    </tr>`;
+                });
+            }).catch(err => console.error("Failed to load requested orders", err));
+    }
+
+    function loadTradeSetups() {
+        fetch('/api/orders/trade-setup')
+            .then(res => res.json())
+            .then(data => {
+                const tbody = document.querySelector("#tradeSetupTable tbody");
+                tbody.innerHTML = "";
+                data.forEach(setup => {
+                    tbody.innerHTML += `
+                    <tr>
+                        <td>${setup.exchange}</td>
+                        <td>${setup.symbol}</td>
+                        <td>${setup.strikePrice || ''}</td>
+                        <td>${setup.expiry || ''}</td>
+                        <td>${setup.optionType || ''}</td>
+                        <td>${setup.instrumentType || ''}</td>
+                        <td>${setup.status || ''}</td>
+                    </tr>`;
+                });
+            }).catch(err => console.error("Failed to load trade setups", err));
+    }
+
+    // Initial load
+    loadRequestedOrders();
+    loadTradeSetups();
+
 </script>
+
 </body>
 </html>
