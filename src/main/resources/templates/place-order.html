@@ -236,6 +236,7 @@
         }).then(msg => {
             document.getElementById('result').innerText = "✅ Order Triggered";
             form.reset();
+            loadRequestedOrders()
         }).catch(err => {
             document.getElementById('result').innerText = "❌ Failed to trigger order.";
             console.error(err);
@@ -296,6 +297,9 @@
                 });
             }).catch(err => console.error("Failed to load trade setups", err));
     }
+
+
+
 
     // Initial load
     loadRequestedOrders();
