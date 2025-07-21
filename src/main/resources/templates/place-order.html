@@ -305,6 +305,11 @@
     loadRequestedOrders();
     loadTradeSetups();
 
+    setInterval(() => {
+        loadRequestedOrders(); // To reflect deletions if trade is executed
+        loadTradeSetups();      // To reflect new setups
+    }, 5000); // every 5 sec
+
 </script>
 
 </body>
