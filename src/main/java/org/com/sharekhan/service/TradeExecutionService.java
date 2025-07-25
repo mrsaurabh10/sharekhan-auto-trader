@@ -121,13 +121,6 @@ public class TradeExecutionService {
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
                 eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
-                //orderMonitoringManager.startMonitoring(triggeredTradeSetupEntity);
-
-                //subscribe to ack feed
-                // 🔌 Subscribe to ACK
-                //if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
-                //    webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
-                //}
 
                 String feedKey = trigger.getExchange() + trigger.getScripCode();
                 webSocketSubscriptionService.unsubscribeFromScrip(feedKey);

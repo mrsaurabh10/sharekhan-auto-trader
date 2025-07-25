@@ -52,7 +52,7 @@ public class TokenLoginAutomationService {
             JSONObject response = sharekhanConnect.generateSession(apiKey, encodedToken, null, 12345L, secretKey, 1005L);
             String accessToken = response.getJSONObject("data").getString("token");
 
-            return new TokenResult(accessToken, 6 * 60* 60); // Sharekhan expires in 6 hour?
+            return new TokenResult(accessToken, 8 * 60* 60); // Sharekhan expires in 6 hour?
         } catch (Exception e) {
             throw new RuntimeException("Login automation failed: " + e.getMessage(), e);
         }

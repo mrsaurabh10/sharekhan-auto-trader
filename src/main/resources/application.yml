@@ -17,6 +17,8 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  jackson:
+    time-zone: Asia/Kolkata
 server:
   port: 8080
 logging:
@@ -35,3 +37,4 @@ logging:
       springframework:
         orm:
           jpa: ERROR
+
