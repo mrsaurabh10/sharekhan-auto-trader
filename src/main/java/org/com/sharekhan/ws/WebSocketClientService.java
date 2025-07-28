@@ -20,11 +20,14 @@ import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.stereotype.Service;
 
 import javax.swing.text.html.Option;
 import java.io.IOException;
 import java.net.URI;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -53,13 +56,13 @@ public class WebSocketClientService  {
     @Autowired
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
 
-    @PostConstruct
-    public void init() {
+    public void connect() {
         try {
             String accessToken = tokenStoreService.getAccessToken();
             String wsUrl = String.format("wss://stream.sharekhan.com/skstream/api/stream?ACCESS_TOKEN=%s&API_KEY=%s", accessToken, API_KEY);
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
             container.connectToServer(this, new URI(wsUrl));
+
         } catch (Exception e) {
             log.error("❌ Failed to connect WebSocket", e);
         }
@@ -71,6 +74,7 @@ public class WebSocketClientService  {
         this.session = session;
         webSocketConnector.setSession(session);
         sendSubscribeMessage();
+        tradeExecutionService.subscribeForOpenTrades();
     }
 
 
@@ -136,6 +140,17 @@ public class WebSocketClientService  {
         }
     }
 
+    public void close() {
+        try {
+            if (session != null && session.isOpen()) {
+                session.close();
+                log.info("🔌 WebSocket session closed.");
+            }
+        } catch (IOException e) {
+            log.error("❌ Error while closing WebSocket", e);
+        }
+    }
+
 //    @Override
 //    public void subscribeToScrip(String feedKey) {
 //        if (session == null || !session.isOpen()) return;
@@ -198,12 +213,24 @@ public class WebSocketClientService  {
         log.error("❗ WebSocket error", thr);
     }
 
-    @OnClose
-    public void onClose(Session session, CloseReason closeReason) {
-        log.warn("🔌 WebSocket closed: {}", closeReason);
-    }
 
     public boolean isConnected() {
         return session != null && session.isOpen();
+    }
+
+    @OnClose
+    public void onClose(Session session, CloseReason closeReason) {
+        log.warn("🔌 WebSocket closed: {}", closeReason);
+
+        LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
+        if (!now.isBefore(LocalTime.of(9, 10)) && !now.isAfter(LocalTime.of(15, 35))) {
+            log.info("🔁 Within trading hours. Attempting immediate reconnect...");
+            try {
+                Thread.sleep(5000); // brief pause before reconnecting
+                this.connect();
+            } catch (Exception e) {
+                log.error("❌ Immediate reconnect failed", e);
+            }
+        }
     }
 }

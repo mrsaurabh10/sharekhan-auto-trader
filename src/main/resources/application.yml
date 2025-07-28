@@ -13,10 +13,10 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update   # or 'create' for fresh schema every run
-    show-sql: true
+    show-sql: false
     properties:
       hibernate:
-        format_sql: true
+        format_sql: false
   jackson:
     time-zone: Asia/Kolkata
 server:

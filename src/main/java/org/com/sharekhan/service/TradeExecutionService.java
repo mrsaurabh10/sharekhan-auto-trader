@@ -14,12 +14,14 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 
@@ -37,6 +39,8 @@ public class TradeExecutionService {
     private final ApplicationEventPublisher eventPublisher;
 
     private final WebSocketSubscriptionService webSocketSubscriptionService;
+
+    private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
 
     public void execute(TriggerTradeRequestEntity trigger, double ltp) {
         try {
@@ -308,6 +312,37 @@ public class TradeExecutionService {
 
     public List<TriggeredTradeSetupEntity> getRecentExecutions() {
         return triggeredTradeRepo.findTop10ByOrderByIdDesc();
+    }
+
+    public void subscribeForOpenTrades(){
+        log.info("🚀 Starting to monitor trades...");
+        // 1. Subscribe to LTP for all pending trade requests
+        List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepo
+                .findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        log.info("📄 Found {} pending trade requests", pendingRequests.size());
+
+        for (TriggerTradeRequestEntity request : pendingRequests) {
+            try {
+                Integer scripCode = request.getScripCode(); // Assuming you store this or convert symbol to code
+                String feedKey = request.getExchange() + scripCode;
+                webSocketSubscriptionHelper.subscribeToScrip(feedKey);
+                log.info("🔁 Subscribed to LTP for scrip {}", scripCode);
+            } catch (Exception e) {
+                log.error("❌ Failed to subscribe LTP for trade request {}", request.getId(), e);
+            }
+        }
+
+        // 2. Subscribe to ACK for all executed trades
+        List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXECUTED);
+
+
+        if(!executedTrades.isEmpty()){
+            log.info("📄 Found {} executed trades for ACK monitoring", executedTrades.size());
+            webSocketSubscriptionHelper.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
+        }
+
+        log.info("✅ Monitoring setup complete.");
+
     }
 
 
