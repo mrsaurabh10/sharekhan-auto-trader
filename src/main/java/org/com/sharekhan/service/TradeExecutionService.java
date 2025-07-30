@@ -21,9 +21,7 @@ import org.json.JSONObject;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
 
 
 @Service
@@ -126,8 +124,10 @@ public class TradeExecutionService {
 
                 eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
 
-                String feedKey = trigger.getExchange() + trigger.getScripCode();
-                webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
+                //dont need the unsubscribe code here as we will not unsubscribe
+                // reason being need to take care of pending order
+               // String feedKey = trigger.getExchange() + trigger.getScripCode();
+                //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
 
 
                 log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
@@ -251,8 +251,8 @@ public class TradeExecutionService {
             //subscribe to ack feed
             // 🔌 Subscribe to ACK
             webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
-            String feedKey = trade.getExchange() + trade.getScripCode();
-            webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
+            //String feedKey = trade.getExchange() + trade.getScripCode();
+            //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
 
             //monitor trade
             eventPublisher.publishEvent(new OrderPlacedEvent(trade));
@@ -286,28 +286,41 @@ public class TradeExecutionService {
             return TradeStatus.NO_RECORDS;
         }
 
+        Set<String> orderStatusSet = new HashSet<>();
         for (int i = 0; i < trades.length(); i++) {
             JSONObject trade = trades.getJSONObject(i);
             String status = trade.optString("orderStatus", "").trim();
-
-
-            switch (status) {
-                case "Rejected":
-                    String reason = trade.optString("clientGroup", "Unknown");
-                    log.warn("❌ Order Rejected - Reason: {}", reason);
-                    return TradeStatus.REJECTED;
-
-                case "FullyExecuted":
-                    log.info("✅ Order Fully Executed - Order ID: {}", trade.optString("orderId"));
-                    String orderPrice = trade.optString("orderPrice", "").trim();
-                    tradeSetupEntity.setEntryPrice(Double.parseDouble(orderPrice));
-                    return TradeStatus.FULLY_EXECUTED;
+            if("Fully Executed".equals(status)) {
+                String orderPrice = trade.optString("orderPrice", "").trim();
+                tradeSetupEntity.setEntryPrice(Double.parseDouble(orderPrice));
             }
+            orderStatusSet.add(status);
+//
+//            switch (status) {
+//                case "Rejected":
+//                    String reason = trade.optString("clientGroup", "Unknown");
+//                    log.warn("❌ Order Rejected - Reason: {}", reason);
+//                    return TradeStatus.REJECTED;
+//
+//                case "Fully Executed":
+//                    log.info("✅ Order Fully Executed - Order ID: {}", trade.optString("orderId"));
+//                    String orderPrice = trade.optString("orderPrice", "").trim();
+//                    tradeSetupEntity.setEntryPrice(Double.parseDouble(orderPrice));
+//                    return TradeStatus.FULLY_EXECUTED;
+//            }
+        }
+
+        if(orderStatusSet.contains("Fully Executed")){
+            return TradeStatus.FULLY_EXECUTED;
+        }
+
+        if(orderStatusSet.contains("Pending")){
+            return TradeStatus.PENDING;
         }
 
         // Still in progress or partially executed
         log.info("⏳ Order is still pending or partially executed.");
-        return TradeStatus.PENDING;
+        return TradeStatus.NO_RECORDS;
     }
 
     public List<TriggeredTradeSetupEntity> getRecentExecutions() {
