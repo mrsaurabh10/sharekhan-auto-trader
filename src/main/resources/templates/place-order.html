@@ -221,6 +221,9 @@
         if (strikes.length > 0) {
             const midIndex = Math.floor(strikes.length / 2);
             strikeSelect.value = strikes[midIndex];
+            // 👇 Trigger change event programmatically
+            const event = new Event('change');
+            strikeSelect.dispatchEvent(event);
         }
 
         autoSelectOptionTypeIfValid();
