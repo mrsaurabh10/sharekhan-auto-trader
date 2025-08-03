@@ -61,8 +61,9 @@ public class OrderStatusPollingService {
                     if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
                         trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
                         // since we have exited the trade then we can unsubscribe
-                        String feedKey = trade.getExchange() + trade.getScripCode();
-                        webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
+                        //String feedKey = trade.getExchange() + trade.getScripCode();
+                        //webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
+                        webSocketSubscriptionHelper.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
                     }else{
                         trade.setStatus(TriggeredTradeStatus.EXECUTED);
                     }
