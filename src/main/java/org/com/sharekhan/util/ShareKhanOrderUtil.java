@@ -34,7 +34,7 @@ public class ShareKhanOrderUtil {
         orderParams.triggerPrice = "0";
         orderParams.rmsCode= "ANY";
         orderParams.afterHour= "N";
-        orderParams.channelUser=TokenLoginAutomationService.clientCode; //enter the customerid
+        orderParams.channelUser=TokenLoginAutomationService.clientCode; //enter the clientCode
         orderParams.requestType="MODIFY"; //
         orderParams.instrumentType=tradeSetupEntity.getInstrumentType(); //(Future Stocks(FS)/ Future Index(FI)/ Option Index(OI)/ Option Stocks(OS)/ Future Currency(FUTCUR)/ Option Currency(OPTCUR))
         orderParams.strikePrice= String.valueOf(tradeSetupEntity.getStrikePrice());

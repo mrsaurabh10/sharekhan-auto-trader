@@ -131,49 +131,100 @@
 </table>
 
 <script>
+
+    const instrumentCache = {}; // { exchange: [symbols] }
+    const strikeCache = {};     // { exchange_instrument: [strikes] }
+
+    // Fetch all symbols for NF and BF on page load
+    function preloadInstruments() {
+        ['NF', 'BF'].forEach(exchange => {
+            fetch(`/api/scripts/instruments/${exchange}`)
+                .then(res => res.json())
+                .then(data => {
+                    instrumentCache[exchange] = data.instruments || [];
+                })
+                .catch(err => {
+                    console.error(`Failed to preload instruments for ${exchange}:`, err);
+                });
+        });
+    }
+
     // Load instruments when exchange is selected
     document.getElementById('exchange').addEventListener('change', function () {
         const exchange = this.value;
-        fetch(`/api/scripts/instruments/${exchange}`)
-            .then(res => res.json())
-            .then(data => {
-                const instruments = data.instruments;
-                const instrumentSelect = document.getElementById('instrument');
-                instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
 
-                instruments.forEach(symbol => {
-                    instrumentSelect.innerHTML += `<option value="${symbol}">${symbol}</option>`;
+        const instrumentSelect = document.getElementById('instrument');
+        instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
+
+        if (!exchange) return;
+        if (instrumentCache[exchange]) {
+            // ✅ Already cached
+            populateInstruments(instrumentCache[exchange]);
+        } else {
+            // ❌ Not cached – fetch and cache
+            fetch(`/api/scripts/instruments/${exchange}`)
+                .then(res => res.json())
+                .then(data => {
+                    const instruments = data.instruments;
+                    instrumentCache[exchange] = instruments; // 💾 Cache it
+                    populateInstruments(instruments);
+                })
+                .catch(err => {
+                    console.error("Failed to load instruments:", err);
                 });
-            })
-            .catch(err => {
-                console.error("Failed to load instruments:", err);
-            });
+        }
     });
 
+    function populateInstruments(instruments) {
+        const instrumentSelect = document.getElementById('instrument');
+        instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
+        instruments.forEach(symbol => {
+            instrumentSelect.innerHTML += `<option value="${symbol}">${symbol}</option>`;
+        });
+    }
+
     // Load strikes and expiries when instrument is selected
-    // Load strikes and expiries when instrument is selected
+    // When instrument is selected, load (or use cached) strikes
     document.getElementById('instrument').addEventListener('change', function () {
         const exchange = document.getElementById('exchange').value;
         const instrument = this.value;
 
         if (!exchange || !instrument) return;
 
-        fetch(`/api/scripts/strikes?exchange=${exchange}&instrument=${instrument}`)
-            .then(res => res.json())
-            .then(data => {
-                const strikes = data.strikes || [];
-                const strikeSelect = document.getElementById('strikePrice');
-                strikeSelect.innerHTML = '<option value="">Select Strike</option>';
-
-                strikes.forEach(strike => {
-                    strikeSelect.innerHTML += `<option value="${strike}">${strike}</option>`;
+        const cacheKey = `${exchange}_${instrument}`;
+        if (strikeCache[cacheKey]) {
+            populateStrikeDropdown(strikeCache[cacheKey]);
+        } else {
+            fetch(`/api/scripts/strikes?exchange=${exchange}&instrument=${instrument}`)
+                .then(res => res.json())
+                .then(data => {
+                    const strikes = data.strikes || [];
+                    strikeCache[cacheKey] = strikes;
+                    populateStrikeDropdown(strikes);
+                })
+                .catch(err => {
+                    console.error("Failed to load strikes:", err);
                 });
-                autoSelectOptionTypeIfValid();
-            })
-            .catch(err => {
-                console.error("Failed to load strikes or expiries:", err);
-            });
+        }
     });
+
+    // Auto-select middle strike
+    function populateStrikeDropdown(strikes) {
+        const strikeSelect = document.getElementById('strikePrice');
+        strikeSelect.innerHTML = '<option value="">Select Strike</option>';
+
+        strikes.forEach(strike => {
+            strikeSelect.innerHTML += `<option value="${strike}">${strike}</option>`;
+        });
+
+        // Auto-select middle strike
+        if (strikes.length > 0) {
+            const midIndex = Math.floor(strikes.length / 2);
+            strikeSelect.value = strikes[midIndex];
+        }
+
+        autoSelectOptionTypeIfValid();
+    }
 
     document.getElementById('strikePrice').addEventListener('change', function () {
         autoSelectOptionTypeIfValid();
@@ -302,6 +353,7 @@
 
 
     // Initial load
+    preloadInstruments();
     loadRequestedOrders();
     loadTradeSetups();
 

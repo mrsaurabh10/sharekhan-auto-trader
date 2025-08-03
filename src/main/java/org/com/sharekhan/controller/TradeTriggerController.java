@@ -23,7 +23,7 @@ public class TradeTriggerController {
 
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final ScriptMasterRepository scriptMasterRepository;
-    private final WebSocketSubscriptionService webSocketSubscriptionService;
+        private final WebSocketSubscriptionService webSocketSubscriptionService;
     private final TradeExecutionService tradeExecutionService;
 
     @PostMapping("/trigger-on-price")
