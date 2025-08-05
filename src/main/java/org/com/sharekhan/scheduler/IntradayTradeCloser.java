@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -21,6 +22,7 @@ public class IntradayTradeCloser {
     private final TriggeredTradeSetupRepository setupRepository;
     private final TradeExecutionService tradeExecutionService;
     private final LtpCacheService ltpCacheService;
+    private final TriggerTradeRequestRepository triggerTradeRequestRepository;
 
     // Run every day at 15:25 IST
     @Scheduled(cron = "0 25 15 * * MON-FRI", zone = "Asia/Kolkata")
@@ -44,5 +46,7 @@ public class IntradayTradeCloser {
                 log.error("❌ Failed to close intraday trade {}: {}", trade.getId(), e.getMessage(), e);
             }
         }
+
+        triggerTradeRequestRepository.deleteAll();
     }
 }
