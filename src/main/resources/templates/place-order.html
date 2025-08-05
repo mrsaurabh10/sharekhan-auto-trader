@@ -110,6 +110,7 @@
         <th>OptionType</th>
         <th>Intraday</th>
         <th>Status</th>
+        <th>Action</th>
     </tr>
     </thead>
     <tbody></tbody>
@@ -131,6 +132,7 @@
         <th>OptionType</th>
         <th>Intraday</th>
         <th>Status</th>
+        <th>Action</th>
     </tr>
     </thead>
     <tbody></tbody>
@@ -312,6 +314,40 @@
         }
     }
 
+    function cancelTradeRequest(id) {
+        if (!confirm("Are you sure you want to cancel this trade request?")) return;
+
+        fetch(`/api/trades/cancel-request/${id}`, {
+            method: 'POST'
+        }).then(res => {
+            if (!res.ok) throw new Error("Cancel failed");
+            return res.text();
+        }).then(() => {
+            alert("✅ Trade request cancelled");
+            loadRequestedOrders();
+        }).catch(err => {
+            console.error("❌ Cancel failed", err);
+            alert("❌ Failed to cancel request");
+        });
+    }
+
+    function squareOffTrade(id) {
+        if (!confirm("Are you sure you want to square off this trade?")) return;
+
+        fetch(`/api/trades/square-off/${id}`, {
+            method: 'POST'
+        }).then(res => {
+            if (!res.ok) throw new Error("Square off failed");
+            return res.text();
+        }).then(() => {
+            alert("✅ Trade squared off");
+            loadTradeSetups();
+        }).catch(err => {
+            console.error("❌ Square off failed", err);
+            alert("❌ Failed to square off trade");
+        });
+    }
+
     function loadRequestedOrders() {
         fetch('/api/orders/requests')
             .then(res => res.json())
@@ -333,6 +369,9 @@
                         <td>${order.optionType || ''}</td>
                         <td>${order.intraday || ''}</td>
                         <td>${order.status || ''}</td>
+                        <td>
+                            <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
+                        </td>
                     </tr>`;
                 });
             }).catch(err => console.error("Failed to load requested orders", err));
@@ -357,8 +396,11 @@
                         <td>${setup.target1 || ''}</td>
                          <td>${setup.quantity || ''}</td>
                          <td>${setup.optionType || ''}</td>
-                          <td>${setup.intraday || ''}</td>
-                           <td>${setup.status || ''}</td>
+                         <td>${setup.intraday || ''}</td>
+                          <td>${setup.status || ''}</td>
+                          <td>
+                            <button onclick="squareOffTrade(${setup.id})">Square Off</button>
+                         </td>
                     </tr>`;
                 });
             }).catch(err => console.error("Failed to load trade setups", err));

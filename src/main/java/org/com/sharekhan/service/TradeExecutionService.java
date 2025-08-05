@@ -265,6 +265,13 @@ public class TradeExecutionService {
         log.info("✅ Trade exited [{}]: PnL = {}", exitReason, trade.getPnl());
     }
 
+    public void squareOffTrade(Long id) {
+        TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(id)
+                .orElseThrow(() -> new RuntimeException("Trade not found"));
+        this.squareOff(tradeSetupEntity,ltpCacheService.getLtp(tradeSetupEntity.getScripCode()),
+                "Manual Exit");
+    }
+
 
     public enum TradeStatus {
         FULLY_EXECUTED,
