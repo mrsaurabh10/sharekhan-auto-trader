@@ -107,6 +107,9 @@
         <th>SL</th>
         <th>Target 1</th>
         <th>Qty</th>
+        <th>OptionType</th>
+        <th>Intraday</th>
+        <th>Status</th>
     </tr>
     </thead>
     <tbody></tbody>
@@ -125,6 +128,9 @@
         <th>SL</th>
         <th>Target 1</th>
         <th>Qty</th>
+        <th>OptionType</th>
+        <th>Intraday</th>
+        <th>Status</th>
     </tr>
     </thead>
     <tbody></tbody>
@@ -320,10 +326,13 @@
                         <td>${order.exchange}</td>
                         <td>${order.strikePrice}</td>
                         <td>${order.expiry}</td>
-                        <td>${order.entry}</td>
+                        <td>${order.entryPrice}</td>
                         <td>${order.stopLoss}</td>
                         <td>${order.target1}</td>
                         <td>${order.quantity || ''}</td>
+                        <td>${order.optionType || ''}</td>
+                        <td>${order.intraday || ''}</td>
+                        <td>${order.status || ''}</td>
                     </tr>`;
                 });
             }).catch(err => console.error("Failed to load requested orders", err));
@@ -347,6 +356,9 @@
                         <td>${setup.stopLoss || ''}</td>
                         <td>${setup.target1 || ''}</td>
                          <td>${setup.quantity || ''}</td>
+                         <td>${setup.optionType || ''}</td>
+                          <td>${setup.intraday || ''}</td>
+                           <td>${setup.status || ''}</td>
                     </tr>`;
                 });
             }).catch(err => console.error("Failed to load trade setups", err));

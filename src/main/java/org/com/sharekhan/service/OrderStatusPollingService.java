@@ -113,7 +113,7 @@ public class OrderStatusPollingService {
                         }
                     }
                 }
-                
+
                 log.info("⌛ Order still pending: {}", trade.getOrderId());
             } catch (Exception e) {
                 log.error("❌ Error polling order status for {}: {}", trade.getOrderId(), e.getMessage());
