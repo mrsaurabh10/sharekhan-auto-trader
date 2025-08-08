@@ -97,7 +97,7 @@
 <h3>Trading Requests</h3>
 <table id="trading-requests-table" border="1" style="margin-bottom: 2rem; width: 100%;">
     <thead>
-    <tr>
+    <tr data-scrip="${order.scripCode}">
         <th>ID</th>
         <th>Symbol</th>
         <th>Exchange</th>
@@ -111,6 +111,7 @@
         <th>Intraday</th>
         <th>Status</th>
         <th>Action</th>
+        <th>LTP</th>
     </tr>
     </thead>
     <tbody></tbody>
@@ -119,7 +120,7 @@
 <h3>Trades Executed</h3>
 <table id="trades-executed-table" border="1" style="width: 100%;">
     <thead>
-    <tr>
+    <tr data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity}">
         <th>ID</th>
         <th>Symbol</th>
         <th>Exchange</th>
@@ -133,6 +134,8 @@
         <th>Intraday</th>
         <th>Status</th>
         <th>Action</th>
+        <th>LTP</th> <!-- New -->
+        <th>PnL</th> <!-- New -->
     </tr>
     </thead>
     <tbody></tbody>
@@ -142,6 +145,44 @@
 
     const instrumentCache = {}; // { exchange: [symbols] }
     const strikeCache = {};     // { exchange_instrument: [strikes] }
+    const ltpSocket = new WebSocket(`ws://${window.location.host}/ws/ltp`);
+    const scripLtpMap = {}; // scripCode -> LTP
+    const executedTrades = {}; // orderId -> { entryPrice, quantity }
+
+    ltpSocket.onmessage = function (event) {
+        const { scripCode, ltp } = JSON.parse(msg.data);
+        scripLtpMap[scripCode] = ltp;
+
+        // 🔄 Update LTP and PnL in the UI
+        // 🔁 Update UI tables
+        updateTradingRequestLTP(scripCode, ltp);
+        updateExecutedTradeLTP(scripCode, ltp);
+    };
+
+
+    function updateTradingRequestLTP(scripCode, ltp) {
+        document.querySelectorAll(`#trading-requests-table tbody tr`).forEach(row => {
+            const cell = row.querySelector(`[data-scrip="${scripCode}"]`);
+            if (cell) cell.innerText = ltp.toFixed(2);
+        });
+    }
+
+    function updateExecutedTradeLTP(scripCode, ltp) {
+        document.querySelectorAll(`#trades-executed-table tbody tr`).forEach(row => {
+            const cell = row.querySelector(`[data-scrip="${scripCode}"]`);
+            const pnlCell = row.querySelector(`[data-pnl="${scripCode}"]`);
+
+            if (cell && pnlCell) {
+                const entry = parseFloat(row.dataset.entry);
+                const qty = parseInt(row.dataset.qty || "1");
+                const pnl = (ltp - entry) * qty;
+
+                cell.innerText = ltp.toFixed(2);
+                pnlCell.innerText = pnl.toFixed(2);
+                pnlCell.style.color = pnl >= 0 ? "green" : "red";
+            }
+        });
+    }
 
     // Fetch all symbols for NF and BF on page load
     function preloadInstruments() {
@@ -372,6 +413,7 @@
                         <td>
                             <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
                         </td>
+                         <td data-scrip="${order.scripCode || ''}">--</td>
                     </tr>`;
                 });
             }).catch(err => console.error("Failed to load requested orders", err));
@@ -385,23 +427,25 @@
                 tbody.innerHTML = "";
                 data.forEach(setup => {
                     tbody.innerHTML += `
-                    <tr>
-                        <td>${setup.id}</td>
-                        <td>${setup.symbol}</td>
-                        <td>${setup.exchange || ''}</td>
-                        <td>${setup.strikePrice || ''}</td>
-                        <td>${setup.expiry || ''}</td>
-                        <td>${setup.entryPrice || ''}</td>
-                        <td>${setup.stopLoss || ''}</td>
-                        <td>${setup.target1 || ''}</td>
-                         <td>${setup.quantity || ''}</td>
-                         <td>${setup.optionType || ''}</td>
-                         <td>${setup.intraday || ''}</td>
-                          <td>${setup.status || ''}</td>
-                          <td>
-                            <button onclick="squareOffTrade(${setup.id})">Square Off</button>
-                         </td>
-                    </tr>`;
+                <tr data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity || 0}">
+                    <td>${setup.id}</td>
+                    <td>${setup.symbol}</td>
+                    <td>${setup.exchange || ''}</td>
+                    <td>${setup.strikePrice || ''}</td>
+                    <td>${setup.expiry || ''}</td>
+                    <td>${setup.entryPrice || ''}</td>
+                    <td>${setup.stopLoss || ''}</td>
+                    <td>${setup.target1 || ''}</td>
+                    <td>${setup.quantity || ''}</td>
+                    <td>${setup.optionType || ''}</td>
+                    <td>${setup.intraday || ''}</td>
+                    <td>${setup.status || ''}</td>
+                    <td>
+                            <button onclick="squareOffTrade(${setup.id})">Close</button>
+                        </td>
+                    <td class="ltp">-</td>
+                    <td class="pnl">-</td>
+                </tr>`;
                 });
             }).catch(err => console.error("Failed to load trade setups", err));
     }

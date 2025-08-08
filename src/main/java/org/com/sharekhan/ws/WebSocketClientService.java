@@ -42,6 +42,7 @@ public class WebSocketClientService  {
     private final PriceTriggerService priceTriggerService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketConnector webSocketConnector;
+    private final LtpWebSocketHandler ltpWebSocketHandler;
     private Session session;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final Set<String> subscribedScrips = ConcurrentHashMap.newKeySet();
@@ -117,6 +118,9 @@ public class WebSocketClientService  {
                 ltpCacheService.updateLtp(scripCode, ltp);
                 priceTriggerService.evaluatePriceTrigger(scripCode,ltp);
                 priceTriggerService.monitorOpenTrades(scripCode,ltp);
+                // Broadcast to frontend
+                ltpWebSocketHandler.broadcastLtp(
+                       scripCode, ltp);
             }else if (json.has("message")  && "ack".equals(json.get("message").asText())
                     && json.has("data") && json.get("data").has("AckState")) {
                 {
