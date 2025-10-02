@@ -7,6 +7,7 @@ package org.com.sharekhan;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.WaitUntilState;
 import org.com.sharekhan.util.TOTPGenerator;
 
 public class SharekhanTokenFetcher {
@@ -21,7 +22,8 @@ public class SharekhanTokenFetcher {
             Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
 
-            page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(60000));
+            page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(120000)
+                    .setWaitUntil(WaitUntilState.NETWORKIDLE));
 
             // Fill credentials
             page.locator("#clientcode").fill(clientCode);

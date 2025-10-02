@@ -1,6 +1,7 @@
 package org.com.sharekhan.auth;
 
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.WaitUntilState;
 import com.sharekhan.SharekhanConnect;
 import org.jboss.aerogear.security.otp.Totp;
 import org.json.JSONObject;
@@ -33,7 +34,8 @@ public class TokenLoginAutomationService {
             Browser browser = playwright.chromium().
                     launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
-            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(60000));
+            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(120000)
+                    .setWaitUntil(WaitUntilState.NETWORKIDLE));
 
             page.locator("#mpwd").fill(password);
             page.locator("#lg_btn").click();

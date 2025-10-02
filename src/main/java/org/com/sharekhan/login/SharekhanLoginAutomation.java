@@ -1,6 +1,7 @@
 package org.com.sharekhan.login;
 
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.WaitUntilState;
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
 import org.jboss.aerogear.security.otp.Totp;
@@ -29,7 +30,8 @@ public class SharekhanLoginAutomation {
         try (Playwright playwright = Playwright.create()) {
             Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
-            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(60000));
+            page.navigate(loginUrl, new Page.NavigateOptions()
+                    .setTimeout(120000).setWaitUntil(WaitUntilState.NETWORKIDLE));
 
             // Step 1: Fill password only (client code is pre-filled and disabled)
             page.locator("#mpwd").fill(password);
