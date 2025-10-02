@@ -31,7 +31,7 @@ public class SharekhanLoginAutomation {
             Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
             page.navigate(loginUrl, new Page.NavigateOptions()
-                    .setTimeout(120000).setWaitUntil(WaitUntilState.NETWORKIDLE));
+                    .setTimeout(120000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
             // Step 1: Fill password only (client code is pre-filled and disabled)
             page.locator("#mpwd").fill(password);

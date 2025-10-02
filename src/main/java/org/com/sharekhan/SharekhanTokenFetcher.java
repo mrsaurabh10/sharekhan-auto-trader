@@ -23,7 +23,7 @@ public class SharekhanTokenFetcher {
             Page page = browser.newPage();
 
             page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(120000)
-                    .setWaitUntil(WaitUntilState.NETWORKIDLE));
+                    .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
             // Fill credentials
             page.locator("#clientcode").fill(clientCode);

@@ -35,7 +35,7 @@ public class TokenLoginAutomationService {
                     launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
             page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(120000)
-                    .setWaitUntil(WaitUntilState.NETWORKIDLE));
+                    .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
             page.locator("#mpwd").fill(password);
             page.locator("#lg_btn").click();
