@@ -18,7 +18,7 @@ public class SharekhanTokenFetcher {
         AtomicReference<String> accessToken = new AtomicReference<>(null);
 
         try (Playwright playwright = Playwright.create()) {
-            Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(false));
+            Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
 
             page.navigate(LOGIN_URL);
