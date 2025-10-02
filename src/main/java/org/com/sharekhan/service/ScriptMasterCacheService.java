@@ -41,19 +41,18 @@ public class ScriptMasterCacheService {
     public Map<String, JSONObject> getScriptCache(String exchange) throws IOException, SharekhanAPIException {
         if (!scriptCache.isEmpty()) return scriptCache;
 
-        //we dont need token for script master apis
-//        String token = tokenStoreService.getValidTokenOrNull();
-//        if (token == null) {
-//           // log.warn("⚠️ Access token expired or missing. Attempting to refresh via login automation...");
-//            var result = tokenLoginAutomationService.loginAndFetchToken();
-//            tokenStoreService.updateToken(result.token(), result.expiresIn());
-//            token = result.token();
-//        }
-//        if (token == null) {
-//            throw new IllegalStateException("Access token is not available or expired");
-//        }
+        String token = tokenStoreService.getValidTokenOrNull();
+        if (token == null) {
+           // log.warn("⚠️ Access token expired or missing. Attempting to refresh via login automation...");
+            var result = tokenLoginAutomationService.loginAndFetchToken();
+            tokenStoreService.updateToken(result.token(), result.expiresIn());
+            token = result.token();
+        }
+        if (token == null) {
+            throw new IllegalStateException("Access token is not available or expired");
+        }
 
-        SharekhanConnect sdk = new SharekhanConnect(null, apiKey, null);
+        SharekhanConnect sdk = new SharekhanConnect(null, apiKey, token);
         JSONObject response = sdk.getActiveScript(exchange);
         JSONArray data = response.getJSONArray("data");
 
