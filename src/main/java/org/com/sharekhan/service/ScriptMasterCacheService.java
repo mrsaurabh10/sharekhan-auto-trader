@@ -53,7 +53,7 @@ public class ScriptMasterCacheService {
 //            throw new IllegalStateException("Access token is not available or expired");
 //        }
 
-        SharekhanConnect sdk = new SharekhanConnect(null, apiKey, token);
+        SharekhanConnect sdk = new SharekhanConnect(null, apiKey, null);
         JSONObject response = sdk.getActiveScript(exchange);
         JSONArray data = response.getJSONArray("data");
 
