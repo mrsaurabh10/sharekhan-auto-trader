@@ -30,9 +30,10 @@ public class TokenLoginAutomationService {
         String loginUrl = sharekhanConnect.getLoginURL(apiKey, null, "1234", 1234L);
 
         try (Playwright playwright = Playwright.create()) {
-            Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+            Browser browser = playwright.chromium().
+                    launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
-            page.navigate(loginUrl);
+            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(60000));
 
             page.locator("#mpwd").fill(password);
             page.locator("#lg_btn").click();
