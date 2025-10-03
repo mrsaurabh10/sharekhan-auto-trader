@@ -3,8 +3,10 @@ package org.com.sharekhan.service;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
+import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.entity.ScriptMasterEntity;
@@ -25,6 +27,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class ScriptMasterCacheService {
 
     private final Map<String, JSONObject> scriptCache = new HashMap<>();
@@ -45,12 +48,14 @@ public class ScriptMasterCacheService {
     }
 
     public Map<String, JSONObject> getScriptCache(String exchange) throws IOException, SharekhanAPIException {
-        if (!scriptCache.isEmpty()) return scriptCache;
+        if (!scriptCache.isEmpty()) {
+            log.info("Script cache already filled. Returning cached data.");
+            return scriptCache;
+        }
 
-        // Construct URL - replace NF with exchange
+        log.info("Fetching script cache for exchange: {}", exchange);
         String urlStr = "https://api.sharekhan.com/skapi/services/master/" + exchange;
 
-        // Setup HTTP connection
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
@@ -58,52 +63,61 @@ public class ScriptMasterCacheService {
         conn.setReadTimeout(30000);
 
         int responseCode = conn.getResponseCode();
+        log.info("HTTP GET to {} returned status {}", urlStr, responseCode);
         if (responseCode != 200) {
             throw new SharekhanAPIException("Failed to fetch data, HTTP code: " + responseCode);
         }
 
-        try (InputStream inputStream = conn.getInputStream()) {
-            JsonFactory jsonFactory = new JsonFactory();
-            try (JsonParser parser = jsonFactory.createParser(inputStream)) {
-                List<ScriptMasterEntity> batchList = new ArrayList<>();
-                int batchSize = 100;
+        ObjectMapper mapper = new ObjectMapper();
+        try (InputStream inputStream = conn.getInputStream();
+             JsonParser parser = mapper.getFactory().createParser(inputStream)) {
 
-                if (parser.nextToken() != JsonToken.START_OBJECT) {
-                    throw new IOException("Expected JSON to start with an object");
-                }
+            List<ScriptMasterEntity> batchList = new ArrayList<>();
+            int batchSize = 100;
+            int totalProcessed = 0;
 
-                while (parser.nextToken() != JsonToken.END_OBJECT) {
-                    String fieldName = parser.getCurrentName();
-                    if ("data".equals(fieldName)) {
-                        parser.nextToken(); // move to start array
-                        if (parser.currentToken() != JsonToken.START_ARRAY) {
-                            throw new IOException("'data' field is not an array");
-                        }
-                        while (parser.nextToken() != JsonToken.END_ARRAY) {
-                            JSONObject scriptJson = new JSONObject(parser.readValueAsTree().toString());
-                            ScriptMasterEntity entity = convertToEntity(scriptJson, exchange);
-                            batchList.add(entity);
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                throw new IOException("Expected JSON to start with an object");
+            }
 
-                            if (batchList.size() == batchSize) {
-
-                                repository.saveAll(batchList);
-                                repository.flush();
-                                batchList.clear();
-                            }
-                        }
-                    } else {
-                        parser.skipChildren();
+            while (parser.nextToken() != JsonToken.END_OBJECT) {
+                String fieldName = parser.getCurrentName();
+                if ("data".equals(fieldName)) {
+                    parser.nextToken(); // move to START_ARRAY
+                    if (parser.currentToken() != JsonToken.START_ARRAY) {
+                        throw new IOException("'data' field is not an array");
                     }
-                }
+                    log.info("Parsing 'data' array of scripts");
+                    while (parser.nextToken() != JsonToken.END_ARRAY) {
+                        JSONObject scriptJson = new JSONObject(parser.readValueAsTree().toString());
+                        ScriptMasterEntity entity = convertToEntity(scriptJson, exchange);
+                        batchList.add(entity);
+                        totalProcessed++;
 
-                if (!batchList.isEmpty()) {
-                    repository.saveAll(batchList);
-                    repository.flush();
-                    batchList.clear();
+                        if (batchList.size() == batchSize) {
+                            log.info("Saving batch of {} scripts", batchSize);
+                            repository.saveAll(batchList);
+                            repository.flush();
+                            batchList.clear();
+                            log.info("Batch saved successfully. Total processed so far: {}", totalProcessed);
+                        }
+                    }
+                } else {
+                    parser.skipChildren();
                 }
             }
+            if (!batchList.isEmpty()) {
+                log.info("Saving final batch of {} scripts", batchList.size());
+                repository.saveAll(batchList);
+                repository.flush();
+                batchList.clear();
+                log.info("Final batch saved");
+            }
+            log.info("Completed processing total {} scripts for exchange {}", totalProcessed, exchange);
+
         } finally {
             conn.disconnect();
+            log.info("Disconnected from HTTP connection");
         }
 
         return scriptCache;
