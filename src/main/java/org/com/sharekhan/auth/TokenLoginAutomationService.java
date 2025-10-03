@@ -47,7 +47,7 @@ public class TokenLoginAutomationService {
             passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
             passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
 
-            page.locator("#mpwd").fill(password);
+            page.locator("#mpwd").fill(password, new Locator.FillOptions().setForce(true));
 
             Locator loginButton = page.locator("#lg_btn");
             loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
@@ -66,10 +66,10 @@ public class TokenLoginAutomationService {
             //page.waitForSelector("#totp", new Page.WaitForSelectorOptions().setTimeout(30000));
             Totp totp = new Totp(totpSecret);
             String otpCode = totp.now();
-            totpLocator.fill(otpCode);
+            totpLocator.fill(otpCode, new Locator.FillOptions().setForce(true));
             page.locator("button[onclick=\"submitOTP('TOTP')\"]").click();
 
-            page.waitForURL(url -> url.contains("test"), new Page.WaitForURLOptions().setTimeout(15000));
+            page.waitForURL(url -> url.contains("test"), new Page.WaitForURLOptions().setTimeout(120000));
             String redirectedUrl = page.url();
 
             Map<String, String> tokens = extractTokensFromUrl(redirectedUrl);
