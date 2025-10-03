@@ -1,5 +1,8 @@
 package org.com.sharekhan.service;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
@@ -12,6 +15,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -41,32 +47,63 @@ public class ScriptMasterCacheService {
     public Map<String, JSONObject> getScriptCache(String exchange) throws IOException, SharekhanAPIException {
         if (!scriptCache.isEmpty()) return scriptCache;
 
-        String token = tokenStoreService.getValidTokenOrNull();
-        if (token == null) {
-            var result = tokenLoginAutomationService.loginAndFetchToken();
-            tokenStoreService.updateToken(result.token(), result.expiresIn());
-            token = result.token();
+        // Construct URL - replace NF with exchange
+        String urlStr = "https://api.sharekhan.com/skapi/services/master/" + exchange;
+
+        // Setup HTTP connection
+        URL url = new URL(urlStr);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(30000);
+
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new SharekhanAPIException("Failed to fetch data, HTTP code: " + responseCode);
         }
-        if (token == null) {
-            throw new IllegalStateException("Access token is not available or expired");
-        }
 
-        SharekhanConnect sdk = new SharekhanConnect(null, apiKey, token);
-        JSONObject response = sdk.getActiveScript(exchange);
-        JSONArray data = response.getJSONArray("data");
+        try (InputStream inputStream = conn.getInputStream()) {
+            JsonFactory jsonFactory = new JsonFactory();
+            try (JsonParser parser = jsonFactory.createParser(inputStream)) {
+                List<ScriptMasterEntity> batchList = new ArrayList<>();
+                int batchSize = 100;
 
-        int batchSize = 100;
-        List<ScriptMasterEntity> batchList = new ArrayList<>(batchSize);
+                if (parser.nextToken() != JsonToken.START_OBJECT) {
+                    throw new IOException("Expected JSON to start with an object");
+                }
 
-        for (int i = 0; i < data.length(); i++) {
-            JSONObject script = data.getJSONObject(i);
-            batchList.add(convertToEntity(script, exchange));
+                while (parser.nextToken() != JsonToken.END_OBJECT) {
+                    String fieldName = parser.getCurrentName();
+                    if ("data".equals(fieldName)) {
+                        parser.nextToken(); // move to start array
+                        if (parser.currentToken() != JsonToken.START_ARRAY) {
+                            throw new IOException("'data' field is not an array");
+                        }
+                        while (parser.nextToken() != JsonToken.END_ARRAY) {
+                            JSONObject scriptJson = new JSONObject(parser.readValueAsTree().toString());
+                            ScriptMasterEntity entity = convertToEntity(scriptJson, exchange);
+                            batchList.add(entity);
 
-            if (batchList.size() == batchSize || i == data.length() - 1) {
-                repository.saveAll(batchList);
-                repository.flush();  // Optionally flush if JPA
-                batchList.clear();
+                            if (batchList.size() == batchSize) {
+
+                                repository.saveAll(batchList);
+                                repository.flush();
+                                batchList.clear();
+                            }
+                        }
+                    } else {
+                        parser.skipChildren();
+                    }
+                }
+
+                if (!batchList.isEmpty()) {
+                    repository.saveAll(batchList);
+                    repository.flush();
+                    batchList.clear();
+                }
             }
+        } finally {
+            conn.disconnect();
         }
 
         return scriptCache;
