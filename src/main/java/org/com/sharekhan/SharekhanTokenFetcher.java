@@ -22,7 +22,7 @@ public class SharekhanTokenFetcher {
             Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
 
-            page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(120000)
+            page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(1200000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
             // Fill credentials

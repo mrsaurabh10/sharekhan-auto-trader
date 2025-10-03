@@ -34,7 +34,7 @@ public class TokenLoginAutomationService {
             Browser browser = playwright.chromium().
                     launch(new BrowserType.LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
-            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(120000)
+            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(1200000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
             page.locator("#mpwd").fill(password);
