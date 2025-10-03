@@ -15,6 +15,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
+import static com.microsoft.playwright.BrowserType.*;
+
 @Service
 public class TokenLoginAutomationService {
 
@@ -30,10 +32,10 @@ public class TokenLoginAutomationService {
     public TokenResult loginAndFetchToken() {
         SharekhanConnect sharekhanConnect = new SharekhanConnect();
         String loginUrl = sharekhanConnect.getLoginURL(apiKey, null, "1234", 1234L);
-
+        Browser browser =null;
         try (Playwright playwright = Playwright.create()) {
-            Browser browser = playwright.chromium().
-                    launch(new BrowserType.LaunchOptions().setHeadless(true));
+            browser = playwright.chromium().
+                    launch(new LaunchOptions().setHeadless(true));
             Page page = browser.newPage();
             page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(1200000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
@@ -52,14 +54,19 @@ public class TokenLoginAutomationService {
             loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
             //loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.).setTimeout(30000));
             loginButton.click(new Locator.ClickOptions().setForce(true));
+            //page.waitForURL(url -> url.contains("expected-part-of-url"), new Page.WaitForURLOptions().setTimeout(60000));
             //loginButton.click();
 
             //page.locator("#lg_btn").click();
 
-            page.waitForSelector("#totp", new Page.WaitForSelectorOptions().setTimeout(8000));
+            Locator totpLocator = page.locator("#totp");
+            totpLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
+            totpLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
+
+            //page.waitForSelector("#totp", new Page.WaitForSelectorOptions().setTimeout(30000));
             Totp totp = new Totp(totpSecret);
             String otpCode = totp.now();
-            page.locator("#totp").fill(otpCode);
+            totpLocator.fill(otpCode);
             page.locator("button[onclick=\"submitOTP('TOTP')\"]").click();
 
             page.waitForURL(url -> url.contains("test"), new Page.WaitForURLOptions().setTimeout(15000));
@@ -74,6 +81,10 @@ public class TokenLoginAutomationService {
             return new TokenResult(accessToken, 8 * 60* 60); // Sharekhan expires in 6 hour?
         } catch (Exception e) {
             throw new RuntimeException("Login automation failed: " + e.getMessage(), e);
+        } finally {
+            if(browser != null){
+                browser.close();
+            }
         }
     }
 
