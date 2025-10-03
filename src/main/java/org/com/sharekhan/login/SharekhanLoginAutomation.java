@@ -33,6 +33,10 @@ public class SharekhanLoginAutomation {
             page.navigate(loginUrl, new Page.NavigateOptions()
                     .setTimeout(1200000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
+            // Step 2: Wait explicitly for the password field (or your critical UI element) to appear
+            page.waitForSelector("#mpwd", new Page.WaitForSelectorOptions().setTimeout(200000));
+
+
             // Step 1: Fill password only (client code is pre-filled and disabled)
             page.locator("#mpwd").fill(password);
             page.locator("#lg_btn").click();

@@ -25,6 +25,10 @@ public class SharekhanTokenFetcher {
             page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(1200000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
+            // Step 2: Wait explicitly for the password field (or your critical UI element) to appear
+            page.waitForSelector("#mpwd", new Page.WaitForSelectorOptions().setTimeout(200000));
+
+
             // Fill credentials
             page.locator("#clientcode").fill(clientCode);
             page.locator("#password").fill(password);
