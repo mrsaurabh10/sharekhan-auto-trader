@@ -51,7 +51,8 @@ public class TokenLoginAutomationService {
             loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
             loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
             //loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.).setTimeout(30000));
-            loginButton.click();
+            loginButton.click(new Locator.ClickOptions().setForce(true));
+            //loginButton.click();
 
             //page.locator("#lg_btn").click();
 
