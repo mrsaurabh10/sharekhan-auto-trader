@@ -1,6 +1,7 @@
 package org.com.sharekhan.login;
 
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.WaitForSelectorState;
 import com.microsoft.playwright.options.WaitUntilState;
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
@@ -36,9 +37,13 @@ public class SharekhanLoginAutomation {
             // Step 2: Wait explicitly for the password field (or your critical UI element) to appear
             page.waitForSelector("#mpwd", new Page.WaitForSelectorOptions().setTimeout(200000));
 
+            Locator passwordLocator = page.locator("#mpwd");
+            passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
+            passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
+
 
             // Step 1: Fill password only (client code is pre-filled and disabled)
-            page.locator("#mpwd").fill(password);
+            passwordLocator.fill(password);
             page.locator("#lg_btn").click();
 
             // Step 2: Wait for TOTP field to appear and fill TOTP

@@ -7,6 +7,7 @@ package org.com.sharekhan;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.WaitForSelectorState;
 import com.microsoft.playwright.options.WaitUntilState;
 import org.com.sharekhan.util.TOTPGenerator;
 
@@ -28,6 +29,9 @@ public class SharekhanTokenFetcher {
             // Step 2: Wait explicitly for the password field (or your critical UI element) to appear
             page.waitForSelector("#mpwd", new Page.WaitForSelectorOptions().setTimeout(200000));
 
+            Locator passwordLocator = page.locator("#mpwd");
+            passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
+            passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
 
             // Fill credentials
             page.locator("#clientcode").fill(clientCode);
