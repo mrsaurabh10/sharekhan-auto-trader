@@ -46,7 +46,14 @@ public class TokenLoginAutomationService {
             passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
 
             page.locator("#mpwd").fill(password);
-            page.locator("#lg_btn").click();
+
+            Locator loginButton = page.locator("#lg_btn");
+            loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
+            loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
+            //loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.).setTimeout(30000));
+            loginButton.click();
+
+            //page.locator("#lg_btn").click();
 
             page.waitForSelector("#totp", new Page.WaitForSelectorOptions().setTimeout(8000));
             Totp totp = new Totp(totpSecret);
