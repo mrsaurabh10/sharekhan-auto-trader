@@ -43,7 +43,6 @@ public class ScriptMasterCacheService {
 
         String token = tokenStoreService.getValidTokenOrNull();
         if (token == null) {
-           // log.warn("⚠️ Access token expired or missing. Attempting to refresh via login automation...");
             var result = tokenLoginAutomationService.loginAndFetchToken();
             tokenStoreService.updateToken(result.token(), result.expiresIn());
             token = result.token();
@@ -56,23 +55,23 @@ public class ScriptMasterCacheService {
         JSONObject response = sdk.getActiveScript(exchange);
         JSONArray data = response.getJSONArray("data");
 
-        List<ScriptMasterEntity> entityList = new ArrayList<>();
+        int batchSize = 100;
+        List<ScriptMasterEntity> batchList = new ArrayList<>(batchSize);
+
         for (int i = 0; i < data.length(); i++) {
             JSONObject script = data.getJSONObject(i);
-            entityList.add(convertToEntity(script, exchange));
+            batchList.add(convertToEntity(script, exchange));
 
+            if (batchList.size() == batchSize || i == data.length() - 1) {
+                repository.saveAll(batchList);
+                repository.flush();  // Optionally flush if JPA
+                batchList.clear();
+            }
         }
-
-//        for (int i = 0; i < data.length(); i++) {
-//            JSONObject script = data.getJSONObject(i);
-//            String tradingSymbol = script.getString("tradingSymbol");
-//            scriptCache.put(tradingSymbol, script);
-//        }
-
-        repository.saveAll(entityList);
 
         return scriptCache;
     }
+
 
     public JSONObject getScriptBySymbol(String tradingSymbol) {
         return scriptCache.get(tradingSymbol);
