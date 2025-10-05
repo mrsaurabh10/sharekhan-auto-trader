@@ -81,15 +81,6 @@ public class TokenLoginAutomationService {
             return new TokenResult(accessToken, 8 * 60* 60); // Sharekhan expires in 6 hour?
         } catch (Exception e) {
             throw new RuntimeException("Login automation failed: " + e.getMessage(), e);
-        } finally {
-            try{
-                if(browser != null){
-                    browser.close();
-                }
-            }catch (Exception ex){
-
-            }
-
         }
     }
 
