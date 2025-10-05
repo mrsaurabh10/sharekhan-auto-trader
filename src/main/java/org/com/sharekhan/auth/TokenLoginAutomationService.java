@@ -82,9 +82,14 @@ public class TokenLoginAutomationService {
         } catch (Exception e) {
             throw new RuntimeException("Login automation failed: " + e.getMessage(), e);
         } finally {
-            if(browser != null){
-                browser.close();
+            try{
+                if(browser != null){
+                    browser.close();
+                }
+            }catch (Exception ex){
+
             }
+
         }
     }
 
