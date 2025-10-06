@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -32,10 +33,23 @@ public class TokenLoginAutomationService {
     public TokenResult loginAndFetchToken() {
         SharekhanConnect sharekhanConnect = new SharekhanConnect();
         String loginUrl = sharekhanConnect.getLoginURL(apiKey, null, "1234", 1234L);
-        Browser browser =null;
+        Browser browser;
         try (Playwright playwright = Playwright.create()) {
+            LaunchOptions options = new LaunchOptions()
+                    .setHeadless(true)
+                    .setArgs(Arrays.asList("--disable-gpu",
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage",
+                            "--disable-software-rasterizer",
+                            "--disable-extensions",
+                            "--disable-background-networking",
+                            "--disable-default-apps",
+                            "--disable-popup-blocking",
+                            "--mute-audio",
+                            "--single-process"));
+
             browser = playwright.chromium().
-                    launch(new LaunchOptions().setHeadless(true));
+                    launch(options);
             Page page = browser.newPage();
             page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(1200000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
