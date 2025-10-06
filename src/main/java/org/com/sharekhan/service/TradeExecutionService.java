@@ -73,10 +73,8 @@ public class TradeExecutionService {
             log.info("Response received " + response);
             if (response == null ) {
                 log.error("❌ Sharekhan order failed or returned null for trigger {}", trigger.getId());
-                return;
             }else if (!response.has("data")){
                 log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trigger.getId());
-                return;
             }else if (response.getJSONObject("data").has("orderId")){
                 String orderId = response.getJSONObject("data").getString("orderId");
                 //order placed  successfully
@@ -140,35 +138,35 @@ public class TradeExecutionService {
         }
     }
 
-    public void markOrderExecuted(String orderId) {
-        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByOrderId(orderId)
-                .orElseThrow(() -> new RuntimeException("Trade not found"));
-
-        trade.setStatus(TriggeredTradeStatus.EXECUTED);
-        triggeredTradeRepo.save(trade);
-
-        // ✅ Start LTP monitoring
-        String feedKey = trade.getExchange() + trade.getScripCode();
-        webSocketSubscriptionService.subscribeToScrip(feedKey);
-
-        log.info("✅ Order executed, monitoring LTP for SL/target: {}", feedKey);
-    }
-
-    public void markOrderExited(String orderId) {
-        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByExitOrderId(orderId)
-                .orElseThrow(() -> new RuntimeException("Trade not found"));
-
-        trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-        //trade.setExitPrice(Double.parseDouble(data.get("TradePrice").asText()));
-        trade.setPnl((trade.getExitPrice() - trade.getEntryPrice()) * trade.getQuantity());
-        triggeredTradeRepo.save(trade);
-
-        // ✅ Start LTP monitoring
-        webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
-
-        log.info("✅ Order executed, monitoring LTP for SL/target: {}", trade.getExchange() + trade.getScripCode());
-
-    }
+////    public void markOrderExecuted(String orderId) {
+////        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByOrderId(orderId)
+////                .orElseThrow(() -> new RuntimeException("Trade not found"));
+////
+////        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+////        triggeredTradeRepo.save(trade);
+////
+////        // ✅ Start LTP monitoring
+////        String feedKey = trade.getExchange() + trade.getScripCode();
+////        webSocketSubscriptionService.subscribeToScrip(feedKey);
+////
+////        log.info("✅ Order executed, monitoring LTP for SL/target: {}", feedKey);
+////    }
+//
+//    public void markOrderExited(String orderId) {
+//        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByExitOrderId(orderId)
+//                .orElseThrow(() -> new RuntimeException("Trade not found"));
+//
+//        trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+//        //trade.setExitPrice(Double.parseDouble(data.get("TradePrice").asText()));
+//        trade.setPnl((trade.getExitPrice() - trade.getEntryPrice()) * trade.getQuantity());
+//        triggeredTradeRepo.save(trade);
+//
+//        // ✅ Start LTP monitoring
+//        webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
+//
+//        log.info("✅ Order executed, monitoring LTP for SL/target: {}", trade.getExchange() + trade.getScripCode());
+//
+//    }
 
     public void markOrderRejected(String orderId) {
         TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByOrderId(orderId)
@@ -323,6 +321,10 @@ public class TradeExecutionService {
 
         if(orderStatusSet.contains("Pending")){
             return TradeStatus.PENDING;
+        }
+
+        if(orderStatusSet.contains("Rejected")){
+            return TradeStatus.REJECTED;
         }
 
         // Still in progress or partially executed
