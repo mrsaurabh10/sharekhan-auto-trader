@@ -46,7 +46,7 @@ public class TradeTriggerController {
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
                 .symbol(request.getInstrument())
                 .scripCode(script.getScripCode())
-                .exchange(request.getExchange())
+                .exchange(script.getExchange())
                 .instrumentType(script.getInstrumentType())
                 .strikePrice(request.getStrikePrice())
                 .optionType(request.getOptionType())
