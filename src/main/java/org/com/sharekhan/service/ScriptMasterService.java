@@ -6,6 +6,7 @@ import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -35,5 +36,32 @@ public class ScriptMasterService {
                 .distinct()
                 .sorted()
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * Find a specific option script for the provided selection.
+     * Returns Optional.empty() if not found.
+     */
+    public Optional<ScriptMasterEntity> findOption(String exchange, String instrument, Double strikePrice, String optionType, String expiry) {
+        if (instrument == null || strikePrice == null || optionType == null || expiry == null) {
+            return Optional.empty();
+        }
+
+        Optional<ScriptMasterEntity> opt = repository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
+                instrument, strikePrice, optionType, expiry
+        );
+
+        if (opt.isPresent()) {
+            ScriptMasterEntity e = opt.get();
+            if (exchange == null || exchange.isBlank() || exchange.equals(e.getExchange())) {
+                return Optional.of(e);
+            }
+        }
+
+        // fallback: try to find among scripts for the exchange + instrument + strike and match optionType & expiry
+        List<ScriptMasterEntity> list = repository.findByExchangeAndTradingSymbolAndStrikePrice(exchange, instrument, strikePrice);
+        return list.stream()
+                .filter(e -> optionType.equalsIgnoreCase(e.getOptionType()) && expiry.equals(e.getExpiry()))
+                .findFirst();
     }
 }

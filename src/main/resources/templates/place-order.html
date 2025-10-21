@@ -150,15 +150,34 @@
     const executedTrades = {}; // orderId -> { entryPrice, quantity }
 
     ltpSocket.onmessage = function (event) {
-        const { scripCode, ltp } = JSON.parse(msg.data);
+        const payload = JSON.parse(event.data);
+        const scripCode = payload.scripCode;
+        const ltp = payload.ltp;
         scripLtpMap[scripCode] = ltp;
 
         // 🔄 Update LTP and PnL in the UI
-        // 🔁 Update UI tables
         updateTradingRequestLTP(scripCode, ltp);
         updateExecutedTradeLTP(scripCode, ltp);
     };
 
+    // Helper to call backend MStock LTP endpoint for a qualified key like "NFO:CDSL25JAN2220CE"
+    function fetchMStockLtpForKey(qualifiedKey) {
+        if (!qualifiedKey) return Promise.resolve(null);
+        const url = `/api/mstock/ltp?i=${encodeURIComponent(qualifiedKey)}`;
+        return fetch(url)
+            .then(res => res.json())
+            .then(json => {
+                if (!json || json.status !== 'success' || !json.data) return null;
+                const entry = json.data[qualifiedKey];
+                if (!entry) return null;
+                // last_price may be integer or number string — return numeric value
+                return Number(entry.last_price);
+            })
+            .catch(err => {
+                console.error('Failed to fetch MStock LTP for', qualifiedKey, err);
+                return null;
+            });
+    }
 
     function updateTradingRequestLTP(scripCode, ltp) {
         document.querySelectorAll(`#trading-requests-table tbody tr`).forEach(row => {
@@ -187,13 +206,21 @@
     // Fetch all symbols for NF and BF on page load
     function preloadInstruments() {
         ['NF', 'BF'].forEach(exchange => {
-            fetch(`/api/scripts/instruments/${exchange}`)
-                .then(res => res.json())
+            const url = `/api/scripts/instruments/${encodeURIComponent(exchange)}`;
+            console.debug('Preloading instruments from', url);
+            fetch(url)
+                .then(res => {
+                    if (!res.ok) throw new Error('HTTP ' + res.status + ' when fetching instruments for ' + exchange);
+                    return res.json();
+                })
                 .then(data => {
-                    instrumentCache[exchange] = data.instruments || [];
+                    instrumentCache[exchange] = Array.isArray(data?.instruments) ? data.instruments : [];
+                    console.debug('Instruments cached for', exchange, instrumentCache[exchange].length);
                 })
                 .catch(err => {
                     console.error(`Failed to preload instruments for ${exchange}:`, err);
+                    const r = document.getElementById('result');
+                    if (r) r.innerText = `Failed to preload instruments for ${exchange}: ${err.message}`;
                 });
         });
     }
@@ -201,25 +228,40 @@
     // Load instruments when exchange is selected
     document.getElementById('exchange').addEventListener('change', function () {
         const exchange = this.value;
+        console.debug('Exchange selected:', exchange);
 
         const instrumentSelect = document.getElementById('instrument');
         instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
 
         if (!exchange) return;
-        if (instrumentCache[exchange]) {
+        if (Array.isArray(instrumentCache[exchange]) && instrumentCache[exchange].length > 0) {
             // ✅ Already cached
+            console.debug('Using cached instruments for', exchange);
             populateInstruments(instrumentCache[exchange]);
+            // also fetch underlying LTP and auto-select nearest strike (if strikes cached)
+            const cacheKey = `${exchange}_${instrumentSelect.value}`;
+            if (strikeCache[cacheKey]) {
+                fetchUnderlyingAndSelectNearestStrike(exchange, instrumentSelect.value, strikeCache[cacheKey]);
+            }
         } else {
             // ❌ Not cached – fetch and cache
-            fetch(`/api/scripts/instruments/${exchange}`)
-                .then(res => res.json())
+            const url = `/api/scripts/instruments/${encodeURIComponent(exchange)}`;
+            console.debug('Fetching instruments from', url);
+            fetch(url)
+                .then(res => {
+                    if (!res.ok) throw new Error('HTTP ' + res.status + ' when fetching instruments for ' + exchange);
+                    return res.json();
+                })
                 .then(data => {
-                    const instruments = data.instruments;
+                    const instruments = Array.isArray(data?.instruments) ? data.instruments : [];
                     instrumentCache[exchange] = instruments; // 💾 Cache it
+                    console.debug('Fetched instruments', instruments.length, 'for', exchange);
                     populateInstruments(instruments);
                 })
                 .catch(err => {
                     console.error("Failed to load instruments:", err);
+                    const r = document.getElementById('result');
+                    if (r) r.innerText = `Failed to load instruments for ${exchange}: ${err.message}`;
                 });
         }
     });
@@ -230,6 +272,105 @@
         instruments.forEach(symbol => {
             instrumentSelect.innerHTML += `<option value="${symbol}">${symbol}</option>`;
         });
+    }
+
+    // Resolve option trading symbol (and scripCode) for the given selection using backend lookup
+    function resolveOptionTradingSymbol(exchange, instrument, strikePrice, optionType, expiry) {
+        const params = new URLSearchParams();
+        params.set('exchange', exchange);
+        params.set('instrument', instrument);
+        params.set('strikePrice', strikePrice);
+        params.set('optionType', optionType);
+        params.set('expiry', expiry);
+
+        return fetch(`/api/scripts/option?${params.toString()}`)
+            .then(res => {
+                if (!res.ok) return null;
+                return res.json();
+            })
+            .then(json => {
+                // expected { tradingSymbol: '...', scripCode: 12345 }
+                return json;
+            })
+            .catch(err => {
+                console.error('Failed to resolve option trading symbol', err);
+                return null;
+            });
+    }
+
+    // Build MStock option key in format: {mappedExchange}:{SYMBOL}{DDMMMYY}{STRIKE}{OPTIONTYPE}
+    // Example: NFO:CDSL25JAN22220CE  --> depending on strike formatting
+    function buildQualifiedOptionKey(exchange, symbol, expiryStr, strike, optionType) {
+        if (!exchange || !symbol || !expiryStr || !strike || !optionType) return null;
+
+        // map UI exchange to MStock exchange for options
+        const exchangeMap = { 'NF': 'NFO' };
+        const mappedExchange = exchangeMap[exchange] || exchange;
+
+        // expiryStr may be 'dd/MM/yyyy' or already '25JAN22' — normalize to DDMMM (remove year)
+        let expiryFormatted = null;
+        try {
+            // If format contains '/', treat as dd/MM/yyyy
+            if (expiryStr.includes('/')) {
+                const parts = expiryStr.split('/').map(p => p.trim()); // dd/MM/yyyy
+                if (parts.length >= 2) {
+                    const day = parts[0].padStart(2, '0');
+                    // ensure parts[2] exists and take the last 2 digits of the year (e.g. "2025" -> "25")
+                    const year = String(parts[2] || '').slice(-2);
+
+                    const monthNum = parseInt(parts[1], 10);
+                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+                    const mon = months[Math.max(0, Math.min(11, monthNum - 1))];
+                    expiryFormatted = `${year}${mon}`.toUpperCase();
+                }
+            } else {
+                // Remove non-alphanumeric then analyze
+                const norm = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+                // Pattern: DDMONYYYY or DDMONYY or DDMON
+                const m1 = norm.match(/^(\d{1,2})([A-Z]{3})(\d{2,4})?$/);
+                if (m1) {
+                    const day = m1[1].padStart(2, '0');
+                    const mon = m1[2];
+                    expiryFormatted = `${day}${mon}`;
+                } else if (/^\d{8}$/.test(norm)) {
+                    // ddmmyyyy
+                    const day = norm.substring(0,2);
+                    const monthNum = parseInt(norm.substring(2,4), 10);
+                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+                    const mon = months[Math.max(0, Math.min(11, monthNum - 1))];
+                    expiryFormatted = `${day}${mon}`;
+                } else if (/^\d{6}$/.test(norm)) {
+                    // ddmmyy
+                    const day = norm.substring(0,2);
+                    const monthNum = parseInt(norm.substring(2,4), 10);
+                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+                    const mon = months[Math.max(0, Math.min(11, monthNum - 1))];
+                    expiryFormatted = `${day}${mon}`;
+                } else {
+                    // fallback: if string starts with DDMMM (e.g., 25JAN22 or 25JAN), take first 2+3 chars
+                    const m2 = expiryStr.trim().toUpperCase().match(/^(\d{1,2}\s*[A-Z]{3})/);
+                    if (m2) {
+                        // remove spaces between day and month
+                        const compact = m2[1].replace(/\s+/g, '');
+                        const day = compact.substring(0, compact.length - 3).padStart(2, '0');
+                        const mon = compact.substring(compact.length - 3);
+                        expiryFormatted = `${day}${mon}`;
+                    } else {
+                        // As a last resort use the original uppercased first 5 chars
+                        expiryFormatted = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase().substring(0,5);
+                    }
+                }
+            }
+        }catch (e) {
+            expiryFormatted = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase().substring(0,5);
+        }
+        if (!expiryFormatted) expiryFormatted = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase().substring(0,5);
+
+        // strike: ensure integer-like string without decimal and no thousand separators
+        let strikeStr = String(Math.round(Number(strike)));
+
+        const qualified = `${mappedExchange}:${symbol}${expiryFormatted}${strikeStr}${optionType}`;
+        return qualified;
     }
 
     // Load strikes and expiries when instrument is selected
@@ -243,13 +384,17 @@
         const cacheKey = `${exchange}_${instrument}`;
         if (strikeCache[cacheKey]) {
             populateStrikeDropdown(strikeCache[cacheKey]);
+            // after populating strikes from cache, fetch underlying LTP and pick nearest strike
+            fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikeCache[cacheKey]);
         } else {
-            fetch(`/api/scripts/strikes?exchange=${exchange}&instrument=${instrument}`)
+            fetch(`/api/scripts/strikes?exchange=${encodeURIComponent(exchange)}&instrument=${encodeURIComponent(instrument)}`)
                 .then(res => res.json())
                 .then(data => {
                     const strikes = data.strikes || [];
                     strikeCache[cacheKey] = strikes;
                     populateStrikeDropdown(strikes);
+                    // after caching strikes, fetch underlying LTP and select nearest
+                    fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes);
                 })
                 .catch(err => {
                     console.error("Failed to load strikes:", err);
@@ -266,15 +411,8 @@
             strikeSelect.innerHTML += `<option value="${strike}">${strike}</option>`;
         });
 
-        // Auto-select middle strike
-        if (strikes.length > 0) {
-            const midIndex = Math.floor(strikes.length / 2);
-            strikeSelect.value = strikes[midIndex];
-            // 👇 Trigger change event programmatically
-            const event = new Event('change');
-            strikeSelect.dispatchEvent(event);
-        }
-
+        // Do NOT auto-select the middle strike here. Nearest strike will be selected
+        // by fetchUnderlyingAndSelectNearestStrike after we fetch the underlying LTP.
         autoSelectOptionTypeIfValid();
     }
 
@@ -288,10 +426,9 @@
         const instrument = document.getElementById('instrument').value;
         const strikePrice = this.value;
 
-
         if (!exchange || !instrument || !strikePrice) return;
 
-        fetch(`/api/scripts/expiries?exchange=${exchange}&instrument=${instrument}&strikePrice=${strikePrice}`)
+        fetch(`/api/scripts/expiries?exchange=${encodeURIComponent(exchange)}&instrument=${encodeURIComponent(instrument)}&strikePrice=${encodeURIComponent(strikePrice)}`)
             .then(res => res.json())
             .then(data => {
                 const expiries = data.expiries || [];
@@ -301,12 +438,58 @@
                 expiries.forEach((expiry, index) => {
                     const selected = index === 0 ? 'selected' : '';
                     expirySelect.innerHTML += `<option value="${expiry}" ${selected}>${expiry}</option>`;
-
                 });
+
+                // after expiry and optionType are set, resolve and fetch option LTP to populate entry price
+                const selectedExpiry = expirySelect.value;
+                const optionType = document.getElementById('optionType').value || 'CE';
+
+                if (selectedExpiry) {
+                    // Build qualified option key per requested format and fetch LTP directly
+                    const qualifiedKey = buildQualifiedOptionKey(exchange, instrument, selectedExpiry, strikePrice, optionType);
+                    if (qualifiedKey) {
+                        fetchMStockLtpForKey(qualifiedKey).then(ltp => {
+                            if (ltp != null) {
+                                document.getElementById('entryPrice').value = ltp;
+                            }
+                        });
+                    }
+                }
+
             })
             .catch(err => {
                 console.error("Failed to load expiries:", err);
             });
+    });
+
+    // Whenever expiry or option type changes, re-resolve option trading symbol and populate entry price
+    function fetchOptionLtpAndPopulateEntry() {
+        const exchange = document.getElementById('exchange').value;
+        const instrument = document.getElementById('instrument').value;
+        const strikePrice = document.getElementById('strikePrice').value;
+        const optionType = document.getElementById('optionType').value || 'CE';
+        const expiry = document.getElementById('expiry').value;
+
+        if (!exchange || !instrument || !strikePrice || !expiry) return;
+
+        const qualifiedKey = buildQualifiedOptionKey(exchange, instrument, expiry, strikePrice, optionType);
+        if (!qualifiedKey) return;
+        fetchMStockLtpForKey(qualifiedKey)
+            .then(ltp => {
+                if (ltp != null) {
+                    document.getElementById('entryPrice').value = ltp;
+                }
+            })
+            .catch(err => console.warn('Failed to fetch option LTP', err));
+    }
+
+    document.getElementById('expiry').addEventListener('change', function () {
+        fetchOptionLtpAndPopulateEntry();
+    });
+
+    document.getElementById('optionType').addEventListener('change', function () {
+        // when option type changes we may need to re-resolve symbol and fetch LTP
+        fetchOptionLtpAndPopulateEntry();
     });
 
     // Submit form via REST
@@ -453,15 +636,65 @@
 
 
 
-    // Initial load
-    preloadInstruments();
-    loadRequestedOrders();
-    loadTradeSetups();
+    // Initialization: attach listeners and run initial loads when DOM is ready
+    function initPlaceOrderPage() {
+        // Attach event listeners that reference DOM elements (already done earlier in this script)
+        // Run initial data fetches
+        preloadInstruments();
+        loadRequestedOrders();
+        loadTradeSetups();
 
-    setInterval(() => {
-        loadRequestedOrders(); // To reflect deletions if trade is executed
-        loadTradeSetups();      // To reflect new setups
-    }, 5000); // every 5 sec
+        // periodic refresh
+        setInterval(() => {
+            loadRequestedOrders(); // To reflect deletions if trade is executed
+            loadTradeSetups();      // To reflect new setups
+        }, 5000); // every 5 sec
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPlaceOrderPage);
+    } else {
+        // DOM already available
+        initPlaceOrderPage();
+    }
+
+    function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
+        // Map UI exchange to MStock underlying exchange codes
+        const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
+        const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+
+        // build qualified key like 'NSE:ACC' or 'BSE:ACC'
+        const qualified = `${mappedExchange}:${instrument}`;
+
+        fetchMStockLtpForKey(qualified)
+            .then(ltp => {
+                if (ltp == null) return;
+
+                // find nearest numeric strike from the provided strikes list
+                const numericStrikes = strikes.map(s => Number(s)).filter(n => !isNaN(n));
+                if (numericStrikes.length === 0) return;
+
+                let nearest = numericStrikes[0];
+                let bestDiff = Math.abs(nearest - ltp);
+                numericStrikes.forEach(s => {
+                    const diff = Math.abs(s - ltp);
+                    if (diff < bestDiff) {
+                        bestDiff = diff;
+                        nearest = s;
+                    }
+                });
+                const nearestStr = String(nearest);
+                const strikeValue = nearestStr.includes('.') ? nearestStr : `${nearestStr}.0`;
+
+                const strikeSelect = document.getElementById('strikePrice');
+                strikeSelect.value = strikeValue;
+                // trigger change so expiries are loaded and option LTP fetched
+                strikeSelect.dispatchEvent(new Event('change'));
+            })
+            .catch(err => {
+                console.warn('Could not fetch underlying LTP to choose nearest strike', err);
+            });
+    }
 
 </script>
 

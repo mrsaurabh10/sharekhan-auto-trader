@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.ExchangeResponse;
 import org.com.sharekhan.dto.InstrumentResponse;
 import org.com.sharekhan.dto.StrikeResponse;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.service.ScriptMasterService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -11,10 +12,10 @@ import org.springframework.web.bind.annotation.*;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collector;
-import java.util.stream.Collectors;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/scripts")
@@ -56,9 +57,35 @@ public class ScriptMasterController {
                 .filter(expDate -> !expDate.isBefore(LocalDate.now(ZoneId.of("Asia/Kolkata")))) // future only
                 .sorted()
                 .map(date -> date.format(outputFormatter))
-                .collect(Collectors.toList());
+                .toList();
 
         return ResponseEntity.ok(Map.of("expiries", expiries));
+    }
+
+    /**
+     * Resolve an option trading symbol for the given inputs. Returns { tradingSymbol: "...", scripCode: 123 }
+     */
+    @GetMapping("/option")
+    public ResponseEntity<?> getOption(
+            @RequestParam String exchange,
+            @RequestParam String instrument,
+            @RequestParam Double strikePrice,
+            @RequestParam String optionType,
+            @RequestParam String expiry
+    ) {
+        Optional<ScriptMasterEntity> opt = service.findOption(exchange, instrument, strikePrice, optionType, expiry);
+        if (opt.isEmpty()) {
+            return ResponseEntity.status(404).body(Map.of("message", "Option script not found"));
+        }
+
+        ScriptMasterEntity e = opt.get();
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("tradingSymbol", e.getTradingSymbol());
+        resp.put("scripCode", e.getScripCode());
+        resp.put("exchange", e.getExchange());
+        resp.put("optionType", e.getOptionType());
+        resp.put("expiry", e.getExpiry());
+        return ResponseEntity.ok(resp);
     }
 
 
