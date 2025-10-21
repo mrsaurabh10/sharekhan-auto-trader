@@ -10,4 +10,10 @@ public interface AccessTokenRepository extends JpaRepository<AccessTokenEntity, 
     AccessTokenEntity findTopByOrderByExpiryDesc();
 
     void deleteAll();
+
+    AccessTokenEntity findTopByBrokerNameOrderByExpiryDesc(String brokerName);
+
+    // delete tokens for a specific broker
+    void deleteAllByBrokerName(String brokerName);
+
 }

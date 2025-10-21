@@ -9,6 +9,7 @@ import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
@@ -49,7 +50,7 @@ public class OrderStatusPollingService {
         Runnable pollTask = () -> {
             try {
 
-                String accessToken = tokenStoreService.getAccessToken(); // ✅ fetch fresh token
+                String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
 
 
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);

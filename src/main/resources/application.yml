@@ -38,3 +38,13 @@ logging:
         orm:
           jpa: ERROR
 
+# Application specific
+app:
+  default-broker: SHAREKHAN
+  mstock:
+    api-key: "MusnORunrjCcP+x8+Fw0YSaiELJKBT5OL3ipnUptoD4="
+    totp-secret: "3TWOBV56LA63H7JLWEY57K6DFIXOR5ED"
+  sharekhan:
+    client-code: "SGUPTA78"
+    password: "Anvi@2023"
+    totp-secret: "3VNUAS5GNB5UXCXR"

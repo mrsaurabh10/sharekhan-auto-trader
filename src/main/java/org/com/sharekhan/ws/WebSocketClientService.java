@@ -11,6 +11,7 @@ import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.OrderStatusPollingService;
@@ -59,7 +60,7 @@ public class WebSocketClientService  {
 
     public void connect() {
         try {
-            String accessToken = tokenStoreService.getAccessToken();
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
             String wsUrl = String.format("wss://stream.sharekhan.com/skstream/api/stream?ACCESS_TOKEN=%s&API_KEY=%s", accessToken, API_KEY);
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
             container.connectToServer(this, new URI(wsUrl));

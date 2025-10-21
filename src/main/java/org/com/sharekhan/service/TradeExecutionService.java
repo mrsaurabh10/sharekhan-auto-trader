@@ -10,6 +10,7 @@ import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
@@ -42,7 +43,7 @@ public class TradeExecutionService {
 
     public void execute(TriggerTradeRequestEntity trigger, double ltp) {
         try {
-            String accessToken = tokenStoreService.getAccessToken(); // ✅ fetch fresh token
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
 
             SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
@@ -222,7 +223,7 @@ public class TradeExecutionService {
         exitOrder.disclosedQty = 0L;
         exitOrder.channelUser = TokenLoginAutomationService.clientCode;
 
-        String accessToken = tokenStoreService.getAccessToken(); // ✅ fetch fresh token
+        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
         SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
         JSONObject response = sharekhanConnect.placeOrder(exitOrder);

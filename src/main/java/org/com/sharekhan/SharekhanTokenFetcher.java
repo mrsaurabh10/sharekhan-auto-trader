@@ -1,16 +1,16 @@
 package org.com.sharekhan;
 
-
-
-//import com.sharekhan.api.util.TOTPGenerator;
-//import com.microsoft.playwright.*;
-import java.util.concurrent.atomic.AtomicReference;
-
 import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.WaitForSelectorState;
 import com.microsoft.playwright.options.WaitUntilState;
 import org.com.sharekhan.util.TOTPGenerator;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
+import java.util.concurrent.atomic.AtomicReference;
+
+@Component
+@Slf4j
 public class SharekhanTokenFetcher {
 
     private static final String LOGIN_URL = "https://www.sharekhan.com/login";
@@ -54,6 +54,9 @@ public class SharekhanTokenFetcher {
             }
 
             browser.close();
+        } catch (Exception e) {
+            log.error("Error fetching Sharekhan token", e);
+            throw new RuntimeException("Sharekhan token fetch failed: " + e.getMessage(), e);
         }
 
         return accessToken.get();

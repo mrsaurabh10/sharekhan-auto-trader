@@ -23,4 +23,8 @@ public class AccessTokenEntity {
 
     @Column(name = "expiry", nullable = false)
     private Instant expiry;
+
+    @Column(name = "brokerName", nullable = true)
+    private String brokerName;
+
 } 

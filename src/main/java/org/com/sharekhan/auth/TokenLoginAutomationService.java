@@ -19,7 +19,7 @@ import java.util.Map;
 import static com.microsoft.playwright.BrowserType.*;
 
 @Service
-public class TokenLoginAutomationService {
+public class TokenLoginAutomationService implements BrokerAuthProvider {
 
     public static final String clientCode = "SGUPTA78";
     public static final Long customerId = 73196L;
@@ -28,9 +28,11 @@ public class TokenLoginAutomationService {
     private static final String secretKey = "iOpn2GrHHzmjdWu795RRw79d0OPZn7jh";
     public static final String apiKey = "M57X7RqA9C43IOq8iJSySWv8LAD2DzkM";
 
+    // keep the old TokenResult for backward compatibility if some code relied on it
     public record TokenResult(String token, long expiresIn) {}
 
-    public TokenResult loginAndFetchToken() {
+    @Override
+    public AuthTokenResult loginAndFetchToken() {
         SharekhanConnect sharekhanConnect = new SharekhanConnect();
         String loginUrl = sharekhanConnect.getLoginURL(apiKey, null, "1234", 1234L);
         Browser browser;
@@ -92,10 +94,15 @@ public class TokenLoginAutomationService {
             JSONObject response = sharekhanConnect.generateSession(apiKey, encodedToken, null, 12345L, secretKey, 1005L);
             String accessToken = response.getJSONObject("data").getString("token");
 
-            return new TokenResult(accessToken, 8 * 60* 60); // Sharekhan expires in 6 hour?
+            return new AuthTokenResult(accessToken, 8 * 60 * 60); // Sharekhan expires in 6 hour?
         } catch (Exception e) {
             throw new RuntimeException("Login automation failed: " + e.getMessage(), e);
         }
+    }
+
+    @Override
+    public org.com.sharekhan.enums.Broker getBroker() {
+        return org.com.sharekhan.enums.Broker.SHAREKHAN;
     }
 
     private Map<String, String> extractTokensFromUrl(String url) {
