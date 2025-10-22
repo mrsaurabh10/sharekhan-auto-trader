@@ -298,80 +298,105 @@
             });
     }
 
-    // Build MStock option key in format: {mappedExchange}:{SYMBOL}{DDMMMYY}{STRIKE}{OPTIONTYPE}
-    // Example: NFO:CDSL25JAN22220CE  --> depending on strike formatting
     function buildQualifiedOptionKey(exchange, symbol, expiryStr, strike, optionType) {
         if (!exchange || !symbol || !expiryStr || !strike || !optionType) return null;
 
-        // map UI exchange to MStock exchange for options
-        const exchangeMap = { 'NF': 'NFO' };
+        const exchangeMap = {
+            'NF': 'NFO',
+            'BF': 'BFO'
+        };
         const mappedExchange = exchangeMap[exchange] || exchange;
 
-        // expiryStr may be 'dd/MM/yyyy' or already '25JAN22' — normalize to DDMMM (remove year)
-        let expiryFormatted = null;
-        try {
-            // If format contains '/', treat as dd/MM/yyyy
-            if (expiryStr.includes('/')) {
-                const parts = expiryStr.split('/').map(p => p.trim()); // dd/MM/yyyy
-                if (parts.length >= 2) {
-                    const day = parts[0].padStart(2, '0');
-                    // ensure parts[2] exists and take the last 2 digits of the year (e.g. "2025" -> "25")
-                    const year = String(parts[2] || '').slice(-2);
-
-                    const monthNum = parseInt(parts[1], 10);
-                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-                    const mon = months[Math.max(0, Math.min(11, monthNum - 1))];
-                    expiryFormatted = `${year}${mon}`.toUpperCase();
-                }
-            } else {
-                // Remove non-alphanumeric then analyze
-                const norm = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-                // Pattern: DDMONYYYY or DDMONYY or DDMON
-                const m1 = norm.match(/^(\d{1,2})([A-Z]{3})(\d{2,4})?$/);
-                if (m1) {
-                    const day = m1[1].padStart(2, '0');
-                    const mon = m1[2];
-                    expiryFormatted = `${day}${mon}`;
-                } else if (/^\d{8}$/.test(norm)) {
-                    // ddmmyyyy
-                    const day = norm.substring(0,2);
-                    const monthNum = parseInt(norm.substring(2,4), 10);
-                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-                    const mon = months[Math.max(0, Math.min(11, monthNum - 1))];
-                    expiryFormatted = `${day}${mon}`;
-                } else if (/^\d{6}$/.test(norm)) {
-                    // ddmmyy
-                    const day = norm.substring(0,2);
-                    const monthNum = parseInt(norm.substring(2,4), 10);
-                    const months = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-                    const mon = months[Math.max(0, Math.min(11, monthNum - 1))];
-                    expiryFormatted = `${day}${mon}`;
-                } else {
-                    // fallback: if string starts with DDMMM (e.g., 25JAN22 or 25JAN), take first 2+3 chars
-                    const m2 = expiryStr.trim().toUpperCase().match(/^(\d{1,2}\s*[A-Z]{3})/);
-                    if (m2) {
-                        // remove spaces between day and month
-                        const compact = m2[1].replace(/\s+/g, '');
-                        const day = compact.substring(0, compact.length - 3).padStart(2, '0');
-                        const mon = compact.substring(compact.length - 3);
-                        expiryFormatted = `${day}${mon}`;
-                    } else {
-                        // As a last resort use the original uppercased first 5 chars
-                        expiryFormatted = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase().substring(0,5);
-                    }
-                }
-            }
-        }catch (e) {
-            expiryFormatted = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase().substring(0,5);
+        // Custom month letter mapping based on your provided scheme
+        function monthNumToLetter(m) {
+            const monthLetterMap = {
+                1: 'J',  // JAN
+                2: 'F',  // FEB
+                3: 'M',  // MAR
+                4: 'A',  // APR
+                5: 'M',  // MAY
+                6: 'J',  // JUN
+                7: 'J',  // JUL
+                8: 'A',  // AUG
+                9: 'S',  // SEP
+                10: 'O', // OCT
+                11: 'N', // NOV
+                12: 'D'  // DEC
+            };
+            return monthLetterMap[m] || 'X';
         }
-        if (!expiryFormatted) expiryFormatted = expiryStr.replace(/[^A-Za-z0-9]/g, '').toUpperCase().substring(0,5);
 
-        // strike: ensure integer-like string without decimal and no thousand separators
-        let strikeStr = String(Math.round(Number(strike)));
+        // Parse expiry string to Date object
+        let expiryDate = null;
+        if (expiryStr.includes('/')) {
+            const parts = expiryStr.split('/').map(s => s.trim());
+            if (parts.length === 3) {
+                const day = Number(parts[0]);
+                const month = Number(parts[1]) - 1;
+                const year = Number(parts[2]);
+                expiryDate = new Date(year, month, day);
+            }
+        } else {
+            const norm = expiryStr.replace(/[^0-9]/g, '');
+            if (norm.length === 8) {
+                const year = Number(norm.substring(0,4));
+                const month = Number(norm.substring(4,6)) - 1;
+                const day = Number(norm.substring(6,8));
+                expiryDate = new Date(year, month, day);
+            }
+        }
 
-        const qualified = `${mappedExchange}:${symbol}${expiryFormatted}${strikeStr}${optionType}`;
-        return qualified;
+        if (!expiryDate || isNaN(expiryDate.getTime())) {
+            console.warn('Invalid expiry date format', expiryStr);
+            return null;
+        }
+
+        const year = expiryDate.getFullYear();
+        const month = expiryDate.getMonth();
+
+        // Find last expiry day in the month for a given weekday
+        function getLastExpiryDay(y, m, expiryWeekday) {
+            const lastDay = new Date(y, m + 1, 0);
+            const lastDate = lastDay.getDate();
+            for(let d = lastDate; d > lastDate - 7; d--) {
+                const date = new Date(y, m, d);
+                if (date.getDay() === expiryWeekday) return date;
+            }
+            return null;
+        }
+
+        // Weekly expiry weekday by symbol: Sunday=0 ... Tuesday=2, Thursday=4
+        let weeklyExpiryDay = null;
+        if(symbol === 'NIFTY') weeklyExpiryDay = 2; // Tuesday
+        else if(symbol === 'SENSEX') weeklyExpiryDay = 4; // Thursday
+        else weeklyExpiryDay = 4; // Default to Thursday
+
+        const lastExpiry = getLastExpiryDay(year, month, weeklyExpiryDay);
+
+        // Is weekly expiry if expiryDate is on weeklyExpiryDay AND not the last expiry of the month
+        const isWeekly = expiryDate.getDay() === weeklyExpiryDay &&
+            expiryDate.getDate() !== lastExpiry.getDate();
+
+        let expiryFormatted = '';
+        if (isWeekly) {
+            const yy = String(year).slice(-2);
+            const monLetter = monthNumToLetter(month + 1);
+            const dd = expiryDate.getDate().toString().padStart(2, '0');
+            expiryFormatted = `${yy}${monLetter}${dd}`;
+        } else {
+            const yy = String(year).slice(-2);
+            const monthNames = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+            expiryFormatted = `${yy}${monthNames[month]}`;
+        }
+
+        // Format strike, removing trailing decimal if whole number
+        const strikeNum = Number(strike);
+        const strikeStr = strikeNum % 1 === 0 ? `${strikeNum}` : strikeNum.toFixed(1);
+
+        return `${mappedExchange}:${symbol}${expiryFormatted}${strikeStr}${optionType}`;
     }
+
+
 
     // Load strikes and expiries when instrument is selected
     // When instrument is selected, load (or use cached) strikes
