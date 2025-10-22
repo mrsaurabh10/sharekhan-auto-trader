@@ -661,11 +661,28 @@
     function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
         // Map UI exchange to MStock underlying exchange codes
         const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
-        const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+        const fnIndices = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'];
+        const bfoIndices = ['SENSEX', 'BANKEX'];
+        let qualified = '';
+
+        const now = new Date();
+        const yy = String(now.getFullYear()).slice(-2);
+        const monthNames = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+        const mon = monthNames[now.getMonth()];
+
+        if (fnIndices.includes(instrument)) {
+            // NSE Index Futures: NFO:{symbol}{yy}{MON}FUT
+            qualified = `NFO:${instrument}${yy}${mon}FUT`;
+        } else if (bfoIndices.includes(instrument)) {
+            // BSE Index Futures: BFO:{symbol}{yy}{MON}FUT
+            qualified = `BFO:${instrument}${yy}${mon}FUT`;
+        } else {
+            // Regular NSE/BSE equity
+            let mappedExchange = underlyingExchangeMap[exchange] || exchange;
+            qualified = `${mappedExchange}:${instrument}`;
+        }
 
         // build qualified key like 'NSE:ACC' or 'BSE:ACC'
-        const qualified = `${mappedExchange}:${instrument}`;
-
         fetchMStockLtpForKey(qualified)
             .then(ltp => {
                 if (ltp == null) return;
