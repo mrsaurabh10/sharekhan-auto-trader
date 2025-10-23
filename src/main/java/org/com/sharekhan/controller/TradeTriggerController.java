@@ -28,46 +28,7 @@ public class TradeTriggerController {
 
     @PostMapping("/trigger-on-price")
     public ResponseEntity<?> createTriggerTrade(@RequestBody TriggerRequest request) {
-
-        // Lookup matching script in master table
-        ScriptMasterEntity script = scriptMasterRepository
-                .findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
-                        request.getInstrument(),
-                        request.getStrikePrice(),
-                        request.getOptionType(),
-                        request.getExpiry()
-                )
-                .orElseThrow(() -> new RuntimeException("Script not found in master DB"));
-
-        // Compute final quantity using lots × lotSize
-        int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
-        long finalQuantity = (long) request.getQuantity() * lotSize;
-
-        TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
-                .symbol(request.getInstrument())
-                .scripCode(script.getScripCode())
-                .exchange(script.getExchange())
-                .instrumentType(script.getInstrumentType())
-                .strikePrice(request.getStrikePrice())
-                .optionType(request.getOptionType())
-                .expiry(request.getExpiry())
-                .entryPrice(request.getEntryPrice())
-                .stopLoss(request.getStopLoss())
-                .target1(request.getTarget1())
-                .target2(request.getTarget2())
-                .target3(request.getTarget3())
-                .trailingSl(request.getTrailingSl())
-                .quantity(finalQuantity)
-                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
-                .createdAt(LocalDateTime.now())
-                .intraday(request.getIntraday())
-                .build();
-
-        TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
-
-        String key = request.getExchange() + entity.getScripCode(); // e.g., NC2885
-        webSocketSubscriptionService.subscribeToScrip(key);
-
+        TriggerTradeRequestEntity saved  = tradeExecutionService.executeTrade(request);
         return ResponseEntity.ok(saved);
     }
 

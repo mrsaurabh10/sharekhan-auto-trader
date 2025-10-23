@@ -8,11 +8,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.dto.TriggerRequest;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
+import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
@@ -22,6 +25,7 @@ import org.json.JSONObject;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 
 
@@ -40,6 +44,46 @@ public class TradeExecutionService {
     private final WebSocketSubscriptionService webSocketSubscriptionService;
 
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
+    private final ScriptMasterRepository scriptMasterRepository;
+    private final TriggerTradeRequestRepository triggerTradeRequestRepository;
+
+
+    public TriggerTradeRequestEntity executeTrade(TriggerRequest request) {
+        ScriptMasterEntity script = scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
+                request.getInstrument(),
+                request.getStrikePrice(),
+                request.getOptionType(),
+                request.getExpiry()
+        ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+
+        int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
+        long finalQuantity = (long) request.getQuantity() * lotSize;
+
+        TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
+                .symbol(request.getInstrument())
+                .scripCode(script.getScripCode())
+                .exchange(script.getExchange())
+                .instrumentType(script.getInstrumentType())
+                .strikePrice(request.getStrikePrice())
+                .optionType(request.getOptionType())
+                .expiry(request.getExpiry())
+                .entryPrice(request.getEntryPrice())
+                .stopLoss(request.getStopLoss())
+                .target1(request.getTarget1())
+                .target2(request.getTarget2())
+                .target3(request.getTarget3())
+                .trailingSl(request.getTrailingSl())
+                .quantity(finalQuantity)
+                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                .createdAt(LocalDateTime.now())
+                .intraday(request.getIntraday())
+                .build();
+
+        TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
+        String key = request.getExchange() + entity.getScripCode();
+        webSocketSubscriptionService.subscribeToScrip(key);
+        return saved;
+    }
 
     public void execute(TriggerTradeRequestEntity trigger, double ltp) {
         try {
