@@ -149,6 +149,9 @@
     const scripLtpMap = {}; // scripCode -> LTP
     const executedTrades = {}; // orderId -> { entryPrice, quantity }
 
+    const lastKnownLTP = {};
+    const lastKnownPNL = {};
+
     ltpSocket.onmessage = function (event) {
         const payload = JSON.parse(event.data);
         const scripCode = payload.scripCode;
@@ -188,8 +191,9 @@
 
     function updateExecutedTradeLTP(scripCode, ltp) {
         const scripKey = String(scripCode);
+        lastKnownLTP[scripKey] = ltp;
 
-        document.querySelectorAll(`#trades-executed-table tbody tr`).forEach(row => {
+        document.querySelectorAll('#trades-executed-table tbody tr').forEach(row => {
             const cell = row.querySelector(`[data-scrip="${scripKey}"]`);
             const pnlCell = row.querySelector(`[data-pnl="${scripKey}"]`);
 
@@ -197,13 +201,15 @@
                 const entry = parseFloat(row.dataset.entry) || 0;
                 const qty = parseInt(row.dataset.qty) || 1;
                 const pnl = (ltp - entry) * qty;
+                lastKnownPNL[scripKey] = pnl;
 
                 cell.textContent = ltp.toFixed(2);
-                pnlCell.textContent = pnl.toFixed(2);
+                pnlCell.textContent = pnl.toFixed(0);
                 pnlCell.style.color = pnl >= 0 ? "green" : "red";
             }
         });
     }
+
 
 
     // Fetch all symbols for NF and BF on page load
@@ -638,28 +644,29 @@
                 tbody.innerHTML = "";
                 data.forEach(setup => {
                     tbody.innerHTML += `
-                <tr data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity || 0}">
-                    <td>${setup.id}</td>
-                    <td>${setup.symbol}</td>
-                    <td>${setup.exchange || ''}</td>
-                    <td>${setup.strikePrice || ''}</td>
-                    <td>${setup.expiry || ''}</td>
-                    <td>${setup.entryPrice || ''}</td>
-                    <td>${setup.stopLoss || ''}</td>
-                    <td>${setup.target1 || ''}</td>
-                    <td>${setup.quantity || ''}</td>
-                    <td>${setup.optionType || ''}</td>
-                    <td>${setup.intraday || ''}</td>
-                    <td>${setup.status || ''}</td>
-                    <td>
-                            <button onclick="squareOffTrade(${setup.id})">Close</button>
-                        </td>
-                    <td class="ltp" data-scrip="${setup.scripCode}">-</td>
-                    <td class="pnl" data-pnl="${setup.scripCode}">-</td>
-                </tr>`;
+            <tr data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity || 0}">
+                <td>${setup.id}</td>
+                <td>${setup.symbol}</td>
+                <td>${setup.exchange || ''}</td>
+                <td>${setup.strikePrice || ''}</td>
+                <td>${setup.expiry || ''}</td>
+                <td>${setup.entryPrice || ''}</td>
+                <td>${setup.stopLoss || ''}</td>
+                <td>${setup.target1 || ''}</td>
+                <td>${setup.quantity || ''}</td>
+                <td>${setup.optionType || ''}</td>
+                <td>${setup.intraday || ''}</td>
+                <td>${setup.status || ''}</td>
+                <td>
+                        <button onclick="squareOffTrade(${setup.id})">Close</button>
+                    </td>
+                <td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
+                <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>
+            </tr>`;
                 });
             }).catch(err => console.error("Failed to load trade setups", err));
     }
+
 
 
 
