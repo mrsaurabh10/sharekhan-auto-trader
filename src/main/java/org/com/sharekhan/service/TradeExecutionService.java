@@ -80,7 +80,7 @@ public class TradeExecutionService {
                 .build();
 
         TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
-        String key = request.getExchange() + entity.getScripCode();
+        String key = entity.getExchange() + entity.getScripCode();
         webSocketSubscriptionService.subscribeToScrip(key);
         return saved;
     }
@@ -402,9 +402,18 @@ public class TradeExecutionService {
         // 2. Subscribe to ACK for all executed trades
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXECUTED);
 
-
         if(!executedTrades.isEmpty()){
             log.info("📄 Found {} executed trades for ACK monitoring", executedTrades.size());
+            for (TriggeredTradeSetupEntity tradeSetupEntity : executedTrades) {
+                try {
+                    Integer scripCode = tradeSetupEntity.getScripCode(); // Assuming you store this or convert symbol to code
+                    String feedKey = tradeSetupEntity.getExchange() + scripCode;
+                    webSocketSubscriptionHelper.subscribeToScrip(feedKey);
+                    log.info("🔁 Subscribed to LTP for executed scrip {}", scripCode);
+                } catch (Exception e) {
+                    log.error("❌ Failed to subscribe LTP for trade request {}", tradeSetupEntity.getId(), e);
+                }
+            }
             webSocketSubscriptionHelper.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
         }
 

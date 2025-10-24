@@ -187,21 +187,24 @@
     }
 
     function updateExecutedTradeLTP(scripCode, ltp) {
+        const scripKey = String(scripCode);
+
         document.querySelectorAll(`#trades-executed-table tbody tr`).forEach(row => {
-            const cell = row.querySelector(`[data-scrip="${scripCode}"]`);
-            const pnlCell = row.querySelector(`[data-pnl="${scripCode}"]`);
+            const cell = row.querySelector(`[data-scrip="${scripKey}"]`);
+            const pnlCell = row.querySelector(`[data-pnl="${scripKey}"]`);
 
             if (cell && pnlCell) {
-                const entry = parseFloat(row.dataset.entry);
-                const qty = parseInt(row.dataset.qty || "1");
+                const entry = parseFloat(row.dataset.entry) || 0;
+                const qty = parseInt(row.dataset.qty) || 1;
                 const pnl = (ltp - entry) * qty;
 
-                cell.innerText = ltp.toFixed(2);
-                pnlCell.innerText = pnl.toFixed(2);
+                cell.textContent = ltp.toFixed(2);
+                pnlCell.textContent = pnl.toFixed(2);
                 pnlCell.style.color = pnl >= 0 ? "green" : "red";
             }
         });
     }
+
 
     // Fetch all symbols for NF and BF on page load
     function preloadInstruments() {
@@ -651,8 +654,8 @@
                     <td>
                             <button onclick="squareOffTrade(${setup.id})">Close</button>
                         </td>
-                    <td class="ltp">-</td>
-                    <td class="pnl">-</td>
+                    <td class="ltp" data-scrip="${setup.scripCode}">-</td>
+                    <td class="pnl" data-pnl="${setup.scripCode}">-</td>
                 </tr>`;
                 });
             }).catch(err => console.error("Failed to load trade setups", err));
