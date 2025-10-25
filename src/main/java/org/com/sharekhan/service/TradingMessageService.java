@@ -1,10 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TriggerRequest;
-import org.com.sharekhan.parser.ParserChain;
-import org.com.sharekhan.parser.TelegramSignalParser;
-import org.com.sharekhan.parser.TradingSignalParser;
-import org.com.sharekhan.parser.WhatsappSignalParser;
+import org.com.sharekhan.parser.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import java.util.*;
@@ -17,7 +14,8 @@ public class TradingMessageService {
 
     private final TradingSignalParser parserChain = new ParserChain(
             new TelegramSignalParser(),
-            new WhatsappSignalParser()
+            new WhatsappSignalParser(),
+            new AartiSignalParser()
     );
 
 
