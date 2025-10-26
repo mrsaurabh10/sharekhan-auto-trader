@@ -22,6 +22,7 @@ import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
@@ -47,6 +48,9 @@ public class TradeExecutionService {
     private final ScriptMasterRepository scriptMasterRepository;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
 
+    @Autowired
+    private UserConfigService userConfigService;
+
 
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request) {
         ScriptMasterEntity script = scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
@@ -55,6 +59,15 @@ public class TradeExecutionService {
                 request.getOptionType(),
                 request.getExpiry()
         ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+
+
+        if(request.getQuantity() == null){
+
+            int maxAmtPerTrade = Integer.parseInt(userConfigService.
+                    getConfig("","max_amount_per_trade","25000"));
+            request.setQuantity((int) (maxAmtPerTrade / (request.getEntryPrice() * script.getLotSize())));
+        }
+
 
         int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
         long finalQuantity = (long) request.getQuantity() * lotSize;

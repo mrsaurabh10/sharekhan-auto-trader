@@ -48,7 +48,7 @@ public class AartiSignalParser implements TradingSignalParser {
             result.put("target3", null);
             result.put("stopLoss", stopLoss);
             result.put("trailingSl", 0.0);
-            result.put("quantity", 1);
+            result.put("quantity", null);
             result.put("expiry", expiry);
             result.put("exchange", null);
             result.put("intraday", true);

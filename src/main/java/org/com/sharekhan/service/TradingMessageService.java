@@ -43,7 +43,6 @@ public class TradingMessageService {
         request.setExpiry((String) parsed.get("expiry"));
         request.setExchange((String) parsed.get("exchange"));
         request.setIntraday(true);
-        request.setQuantity(1);
         return request;
     }
 

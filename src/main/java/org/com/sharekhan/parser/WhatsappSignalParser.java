@@ -91,7 +91,7 @@ public class WhatsappSignalParser implements TradingSignalParser {
             result.put("target2", target2 != null ? target2 : 0.0);
             result.put("target3", target3 != null ? target3 : 0.0);
             result.put("trailingSl", 0.0);
-            result.put("quantity", 1);
+            result.put("quantity", null);
             result.put("strike", strikePrice);
             result.put("optionType", optionType);
             result.put("expiry", expiryFormatted);
