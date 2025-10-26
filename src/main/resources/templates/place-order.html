@@ -606,6 +606,24 @@
         });
     }
 
+    function moveSLtoCost(id) {
+        if (!confirm("Are you sure you want to move the sl to cost?")) return;
+
+
+        fetch(`/api/trades/move-sl-to-cost/${id}`, {
+            method: 'POST'
+        }).then(res => {
+            if (!res.ok) throw new Error("MoveSltoCost failed");
+            return res.text();
+        }).then(() => {
+            alert("✅ Sl Moved to Cost");
+            loadTradeSetups();
+        }).catch(err => {
+            console.error("❌ Sl Cost failed", err);
+            alert("❌ Failed to move sl to cost");
+        });
+    }
+
     function loadRequestedOrders() {
         fetch('/api/orders/requests')
             .then(res => res.json())
@@ -659,7 +677,8 @@
                 <td>${setup.status || ''}</td>
                 <td>
                         <button onclick="squareOffTrade(${setup.id})">Close</button>
-                    </td>
+                        <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
+                </td>
                 <td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
                 <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>
             </tr>`;

@@ -85,6 +85,15 @@ public class TradeExecutionService {
         return saved;
     }
 
+    public boolean moveStopLossToCost(Long tradeId) {
+        TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(tradeId).orElse(null);
+        if (tradeSetupEntity == null) return false;
+
+        tradeSetupEntity.setStopLoss(tradeSetupEntity.getEntryPrice());
+        triggeredTradeRepo.save(tradeSetupEntity);
+        return true;
+    }
+
     public void execute(TriggerTradeRequestEntity trigger, double ltp) {
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token

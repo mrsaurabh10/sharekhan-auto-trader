@@ -26,4 +26,14 @@ public class TradeExecutionController {
                     .body("Failed to square off: " + e.getMessage());
         }
     }
+
+    @PostMapping("/move-sl-to-cost/{tradeId}")
+    public ResponseEntity<String> moveStopLossToCost(@PathVariable Long tradeId) {
+        boolean updated = tradeExecutionService.moveStopLossToCost(tradeId);
+        if (updated) {
+            return ResponseEntity.ok("Stop Loss moved to cost.");
+        } else {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Failed to update stop loss.");
+        }
+    }
 }
