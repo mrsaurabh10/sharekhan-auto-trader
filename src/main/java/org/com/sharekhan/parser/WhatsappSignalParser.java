@@ -56,23 +56,32 @@ public class WhatsappSignalParser implements TradingSignalParser {
                 }
             }
 
-            Object optionType;
+            Object optionType = null;
+            Double strikePrice = null;
             if (isFuture) {
                 optionType = "FUT";
             } else {
-                Pattern optionTypePattern = Pattern.compile("\\b(CALL|PUT)\\b", Pattern.CASE_INSENSITIVE);
-                Matcher optionMatcher = optionTypePattern.matcher(instrumentFull);
-                if (optionMatcher.find()) {
-                    String option = optionMatcher.group(0).toUpperCase();
-                    optionType = option.equals("CALL") ? "CE" : option.equals("PUT") ? "PE" : null;
-                } else {
-                    optionType = null;
+                // Strike & OptionType (robust logic)
+                Pattern strikeOptionPattern = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(CALL|PUT|CE|PE)", Pattern.CASE_INSENSITIVE);
+                Matcher strikeOptionMatcher = strikeOptionPattern.matcher(instrumentFull);
+
+
+                if (strikeOptionMatcher.find()) {
+                    strikePrice = Double.valueOf(strikeOptionMatcher.group(1));
+                    String type = strikeOptionMatcher.group(2).toUpperCase();
+                    optionType = type.equals("CALL") ? "CE" : type.equals("PUT") ? "PE" : type;
+                } else { // fallback, just use any number if not found
+                    Pattern strikeFallback = Pattern.compile("\\b(\\d{2,6}(?:\\.\\d+)?)\\b");
+                    Matcher strikeFallbackMatcher = strikeFallback.matcher(instrumentFull);
+                    while (strikeFallbackMatcher.find()) {
+                        strikePrice = Double.valueOf(strikeFallbackMatcher.group(1));
+                    }
                 }
             }
 
-            Pattern strikePricePattern = Pattern.compile("\\b(\\d{4,5})\\b", Pattern.CASE_INSENSITIVE);
-            Matcher strikePriceMatcher = strikePricePattern.matcher(instrumentFull);
-            Double strikePrice = strikePriceMatcher.find() && !isFuture ? Double.valueOf(strikePriceMatcher.group(1)) : null;
+            //Pattern strikePricePattern = Pattern.compile("\\b(\\d{2,6}(?:\\.\\d+)?)\\b");;
+            //Matcher strikePriceMatcher = strikePricePattern.matcher(instrumentFull);
+            //Double strikePrice = strikePriceMatcher.find() && !isFuture ? Double.valueOf(strikePriceMatcher.group(1)) : null;
 
             Double entryPrice = Double.parseDouble(entryStr);
             Double stopLoss = Double.parseDouble(stopLossStr);
