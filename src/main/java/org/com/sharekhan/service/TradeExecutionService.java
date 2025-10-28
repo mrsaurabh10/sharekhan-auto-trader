@@ -61,12 +61,34 @@ public class TradeExecutionService {
         ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
 
 
-        if(request.getQuantity() == null){
+        if (request.getQuantity() == null) {
+            int maxAmtPerTrade = Integer.parseInt(userConfigService.getConfig("", "max_amount_per_trade", "25000"));
+            int maxLossPerTrade = Integer.parseInt(userConfigService.getConfig("", "max_loss_per_trade", "8000"));
 
-            int maxAmtPerTrade = Integer.parseInt(userConfigService.
-                    getConfig("","max_amount_per_trade","25000"));
-            request.setQuantity((int) (maxAmtPerTrade / (request.getEntryPrice() * script.getLotSize())));
+            Double stopLoss = request.getStopLoss();
+            if (stopLoss == null) {
+                // You can set to entryPrice or throw error based on your logic
+                stopLoss = request.getEntryPrice();
+                request.setStopLoss(0.05);
+            }
+
+            double lossPerShare = Math.abs(request.getEntryPrice() - stopLoss);
+            if (lossPerShare == 0) {
+                request.setQuantity(0);
+            } else {
+                int lossPerLot = (int) (lossPerShare * script.getLotSize());
+                if (lossPerLot == 0) {  // avoid division by zero
+                    request.setQuantity(0);
+                } else {
+                    int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
+                    int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * script.getLotSize()));
+                    int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
+                    if (quantity < 0) quantity = 0;
+                    request.setQuantity(quantity);
+                }
+            }
         }
+
 
 
         int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
