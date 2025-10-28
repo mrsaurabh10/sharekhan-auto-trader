@@ -15,7 +15,7 @@ public class WebSocketLifecycleScheduler {
 
     private final WebSocketClientService webSocketClientService;
     private static final LocalTime START_TIME = LocalTime.of(9, 10);
-    private static final LocalTime END_TIME = LocalTime.of(15, 35);
+    private static final LocalTime END_TIME = LocalTime.of(23, 30);
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     @Scheduled(fixedRate = 30_000) // every 30 seconds

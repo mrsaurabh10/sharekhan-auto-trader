@@ -2,6 +2,7 @@ package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
+import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class TradeRequestController {
 
     private final TriggerTradeRequestRepository tradeRequestRepository;
+    private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
 
     @PostMapping("/cancel-request/{id}")
     public ResponseEntity<String> cancelRequest(@PathVariable Long id) {
@@ -21,6 +23,7 @@ public class TradeRequestController {
                 .map(request -> {
                     // Optional: Check status (e.g. only cancel if still "PENDING")
                     tradeRequestRepository.deleteById(id);
+                    webSocketSubscriptionHelper.unsubscribeFromScrip(request.getExchange() + request.getScripCode());
                     return ResponseEntity.ok("Request cancelled");
                 })
                 .orElse(ResponseEntity.notFound().build());

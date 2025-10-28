@@ -330,10 +330,10 @@ public class TradeExecutionService {
 
             trade.setExitOrderId(exitOrderId);
             trade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED); // ✅ New status
-            trade.setExitPrice(exitPrice);
+           // trade.setExitPrice(exitPrice);
             trade.setExitReason(exitReason);
             trade.setExitOrderId(exitOrderId);
-            trade.setPnl((exitPrice - trade.getEntryPrice()) * trade.getQuantity()); // adjust for B/S
+            //trade.setPnl((exitPrice - trade.getExitPrice()) * trade.getQuantity()); // adjust for B/S
             triggeredTradeRepo.save(trade);
             //subscribe to ack feed
             // 🔌 Subscribe to ACK
@@ -385,8 +385,12 @@ public class TradeExecutionService {
             JSONObject trade = trades.getJSONObject(i);
             String status = trade.optString("orderStatus", "").trim();
             if("Fully Executed".equals(status)) {
-                String orderPrice = trade.optString("orderPrice", "").trim();
-                tradeSetupEntity.setEntryPrice(Double.parseDouble(orderPrice));
+                String avgPrice = trade.optString("avgPrice", "").trim();
+                if(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus()) ) {
+                    tradeSetupEntity.setEntryPrice(Double.parseDouble(avgPrice));
+                }else if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus()) ) {
+                    tradeSetupEntity.setExitPrice(Double.parseDouble(avgPrice));
+                }
             }
             orderStatusSet.add(status);
 //

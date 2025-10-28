@@ -34,7 +34,6 @@ public class OrderStatusPollingService {
 
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
     private final TriggeredTradeSetupRepository tradeRepo;
-    private final SharekhanConnect sharekhanConnect;
     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
     @Lazy
     @Autowired
@@ -48,36 +47,28 @@ public class OrderStatusPollingService {
 
     public void monitorOrderStatus(TriggeredTradeSetupEntity trade) {
         Runnable pollTask = () -> {
+            String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
             try {
 
                 String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
-
-
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
-                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(), trade.getOrderId());
-                JSONArray data = response.getJSONArray("data");
 
+                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(),
+                        orderIdToMonitor);
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                     if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
                         trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-                        // since we have exited the trade then we can unsubscribe
-                        //String feedKey = trade.getExchange() + trade.getScripCode();
-                        //webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
                         webSocketSubscriptionHelper.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
-                    }else{
+                    }else if(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(trade.getStatus())) {
                         trade.setStatus(TriggeredTradeStatus.EXECUTED);
                     }
-
-
-//                    String feedKey = trade.getExchange() + trade.getScripCode();
-//                    webSocketSubscriptionHelper.subscribeToScrip(feedKey);
                     tradeRepo.save(trade);
                     //todo add executed price here
-                    ScheduledFuture<?> future = activePolls.remove(trade.getOrderId());
+                    ScheduledFuture<?> future = activePolls.remove(orderIdToMonitor);
                     if (future != null) {
                         future.cancel(true);
-                        log.info("🛑 Polling stopped for order {}", trade.getOrderId());
+                        log.info("🛑 Polling stopped for order {}", orderIdToMonitor);
                     }
                     return;
                 }else if (TradeStatus.REJECTED.equals(tradeStatus)) {
@@ -90,10 +81,10 @@ public class OrderStatusPollingService {
 
 
                     tradeRepo.save(trade);
-                    ScheduledFuture<?> future = activePolls.remove(trade.getOrderId());
+                    ScheduledFuture<?> future = activePolls.remove(orderIdToMonitor);
                     if (future != null) {
                         future.cancel(true);
-                        log.info("🛑 Polling stopped for order {}", trade.getOrderId());
+                        log.info("🛑 Polling stopped for order {}",orderIdToMonitor);
                     }
                     String feedKey = trade.getExchange() + trade.getScripCode();
                     webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
@@ -101,13 +92,11 @@ public class OrderStatusPollingService {
                 }else if(TradeStatus.PENDING.equals(tradeStatus)){
                     //need to write the logic of modification of order
                     if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
-                       // trade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                         Double ltp = ltpCacheService.getLtp(trade.getScripCode());
                         if(ltp > trade.getEntryPrice()){
                             ShareKhanOrderUtil.modifyOrder(sharekhanConnect,trade,ltp);
                         }
                     }else{
-                        //trade.setStatus(TriggeredTradeStatus.REJECTED);
                         Double ltp = ltpCacheService.getLtp(trade.getScripCode());
                         if(ltp > trade.getEntryPrice()){
                             ShareKhanOrderUtil.modifyOrder(sharekhanConnect,trade,ltp);
@@ -115,20 +104,384 @@ public class OrderStatusPollingService {
                     }
                 }
 
-                log.info("⌛ Order still pending: {}", trade.getOrderId());
-            } catch (Exception e) {
-                log.error("❌ Error polling order status for {}: {}", trade.getOrderId(), e.getMessage());
+                log.info("⌛ Order still pending: {}",orderIdToMonitor);
             } catch (SharekhanAPIException e) {
+                log.error("❌ Error polling order status for {}: {}", orderIdToMonitor, e.getMessage());
+            } catch (Exception e) {
                 throw new RuntimeException(e);
             }
         };
-        // Poll every 3 seconds, up to 2 minutes
+        // Poll every 0.5 seconds, up to 2 minutes
+        String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
         ScheduledFuture<?> future = executor.scheduleAtFixedRate(pollTask, 0, 500, TimeUnit.MILLISECONDS);
-        activePolls.put(trade.getOrderId(), future);
+        activePolls.put(orderIdToMonitor, future);
 
         // Optional: Cancel polling after 2 minutes
-        executor.schedule(() -> {
-            log.warn("⚠️ Stopping polling after timeout for order {}", trade.getOrderId());
-        }, 2, TimeUnit.MINUTES);
+//        executor.schedule(() -> {
+//            log.warn("⚠️ Stopping polling after timeout for order {}", orderIdToMonitor);
+//        }, 2, TimeUnit.MINUTES);
     }
+
+
+
+    /*
+    Example Response from Sharekhan
+
+    https://api.sharekhan.com/skapi/services/reports/NF/73196/136757437
+{
+    "data": [
+        {
+            "orderType": "Limit",
+            "orsExchangeMarketCode": "N",
+            "orderId": "136757437",
+            "fnoSquareOff": "",
+            "goodTillDate": "",
+            "fohExitDateTime": "",
+            "traderId": "111111111111100",
+            "childTrailingPrice": "0",
+            "optionType": "CE",
+            "lastModTime": "",
+            "ohEntryDateTime": "",
+            "coverOrderId": "0",
+            "orderQty": 1200,
+            "scripCode": "59004",
+            "orderTrailByPrice": "0",
+            "webResponseTime": "0",
+            "childTrailByPrice": "0",
+            "brokerage": "0",
+            "clientGroup": "",
+            "contract": "NIFTY 28Oct2025",
+            "disclosedQty": 0,
+            "orderMifQty": 0,
+            "childSlPrice": "0",
+            "openOrClose": "O",
+            "pvtOrderInd": "O",
+            "caLevel": 0,
+            "advOrderType": "NOR",
+            "orderTargetPrice": "0",
+            "trailingStatus": "",
+            "clientAcc": "",
+            "openQty": 1200,
+            "channelUser": "SGUPTA78",
+            "exchange": "NF",
+            "execQty": 0,
+            "strikePrice": "26000.00",
+            "fnoOrderType": "NOR",
+            "orderTrailingPrice": "0",
+            "updateDate": "2025-10-28 12:44:40.0",
+            "avgPrice": "0",
+            "orsOrderId": 0,
+            "orderStatus": "In-Process",
+            "goodtillDate": "2025-10-28 12:44:40.0",
+            "expiryDate": "28/10/2025",
+            "dpClientId": 0,
+            "orderTriggerPrice": "0",
+            "customerId": 73196,
+            "orderPrice": "24.35",
+            "afterHour": "N",
+            "tradingSymbol": "NIFTY",
+            "participantCode": 0,
+            "channelCode": "SKAPI",
+            "exchangeOrderId": "",
+            "orderDateTime": "2025-10-28 12:44:40.0",
+            "buySell": "B",
+            "instrumentType": "OI",
+            "fnoSquareoff": "N",
+            "dpId": 1,
+            "updateUser": "BOG",
+            "exchAckDateTime": "",
+            "segmentCode": "",
+            "userId": "SKNSEFO4",
+            "productCode": "0",
+            "allOrNone": "N",
+            "limitLossTo": "0",
+            "bookProfitPrice": "0",
+            "goodtill": "GFD",
+            "requestStatus": "NEW"
+        },
+        {
+            "orderType": "Limit",
+            "orsExchangeMarketCode": "N",
+            "orderId": "136757437",
+            "fnoSquareOff": "",
+            "goodTillDate": "",
+            "fohExitDateTime": "",
+            "traderId": "111111111111100",
+            "childTrailingPrice": "0",
+            "optionType": "CE",
+            "lastModTime": "",
+            "ohEntryDateTime": "",
+            "coverOrderId": "0",
+            "orderQty": 1200,
+            "scripCode": "59004",
+            "orderTrailByPrice": "0",
+            "webResponseTime": "0",
+            "childTrailByPrice": "0",
+            "brokerage": "-2951621",
+            "clientGroup": "",
+            "contract": "NIFTY 28Oct2025",
+            "disclosedQty": 0,
+            "orderMifQty": 0,
+            "childSlPrice": "0",
+            "openOrClose": "O",
+            "pvtOrderInd": "0",
+            "caLevel": 0,
+            "advOrderType": "NOR",
+            "orderTargetPrice": "0",
+            "trailingStatus": "",
+            "clientAcc": "",
+            "openQty": 1200,
+            "channelUser": "SGUPTA78",
+            "exchange": "NF",
+            "execQty": 0,
+            "strikePrice": "26000.00",
+            "fnoOrderType": "NOR",
+            "orderTrailingPrice": "0",
+            "updateDate": "2025-10-28 12:44:40.0",
+            "avgPrice": "0",
+            "orsOrderId": 136757437,
+            "orderStatus": "In-Process",
+            "goodtillDate": "2025-10-28 12:44:40.0",
+            "expiryDate": "28/10/2025",
+            "dpClientId": 0,
+            "orderTriggerPrice": "0",
+            "customerId": 73196,
+            "orderPrice": "24.35",
+            "afterHour": "N",
+            "tradingSymbol": "NIFTY",
+            "participantCode": 0,
+            "channelCode": "SKAPI",
+            "exchangeOrderId": "",
+            "orderDateTime": "2025-10-28 12:44:40.0",
+            "buySell": "B",
+            "instrumentType": "OI",
+            "fnoSquareoff": "N",
+            "dpId": 1,
+            "updateUser": "BOG",
+            "exchAckDateTime": "",
+            "segmentCode": "",
+            "userId": "SKNSEFO4",
+            "productCode": "0",
+            "allOrNone": "N",
+            "limitLossTo": "0",
+            "bookProfitPrice": "0",
+            "goodtill": "GFD",
+            "requestStatus": "NEW"
+        },
+        {
+            "orderType": "Limit",
+            "orsExchangeMarketCode": "N",
+            "orderId": "136757437",
+            "fnoSquareOff": "",
+            "goodTillDate": "",
+            "fohExitDateTime": "",
+            "traderId": "111111111111100",
+            "childTrailingPrice": "0",
+            "optionType": "CE",
+            "lastModTime": "2025-10-28 12:44:41.0",
+            "ohEntryDateTime": "",
+            "coverOrderId": "0",
+            "orderQty": 1200,
+            "scripCode": "59004",
+            "orderTrailByPrice": "0",
+            "webResponseTime": "0",
+            "childTrailByPrice": "0",
+            "brokerage": "-2951621",
+            "clientGroup": "",
+            "contract": "NIFTY 28Oct2025",
+            "disclosedQty": 0,
+            "orderMifQty": 0,
+            "childSlPrice": "0",
+            "openOrClose": "O",
+            "pvtOrderInd": "0",
+            "caLevel": 0,
+            "advOrderType": "NOR",
+            "orderTargetPrice": "0",
+            "trailingStatus": "",
+            "clientAcc": "",
+            "openQty": 1200,
+            "channelUser": "SGUPTA78",
+            "exchange": "NF",
+            "execQty": 0,
+            "strikePrice": "26000.00",
+            "fnoOrderType": "NOR",
+            "orderTrailingPrice": "0",
+            "updateDate": "2025-10-28 12:44:41.0",
+            "avgPrice": "0",
+            "orsOrderId": 1446122681227650728,
+            "orderStatus": "Pending",
+            "goodtillDate": "2025-10-28 12:44:40.0",
+            "expiryDate": "28/10/2025",
+            "dpClientId": 0,
+            "orderTriggerPrice": "0",
+            "customerId": 73196,
+            "orderPrice": "24.35",
+            "afterHour": "N",
+            "tradingSymbol": "NIFTY",
+            "participantCode": 0,
+            "channelCode": "SKAPI",
+            "exchangeOrderId": "1200000183352471",
+            "orderDateTime": "2025-10-28 12:44:40.0",
+            "buySell": "B",
+            "instrumentType": "OI",
+            "fnoSquareoff": "N",
+            "dpId": 1,
+            "updateUser": "FO_AH_NOR",
+            "exchAckDateTime": "2025-10-28 12:44:41.0",
+            "segmentCode": "",
+            "userId": "SKNSEFO4",
+            "productCode": "0",
+            "allOrNone": "N",
+            "limitLossTo": "0",
+            "bookProfitPrice": "0",
+            "goodtill": "GFD",
+            "requestStatus": "NEW"
+        },
+        {
+            "orderType": "Limit",
+            "orsExchangeMarketCode": "N",
+            "orderId": "136757437",
+            "fnoSquareOff": "",
+            "goodTillDate": "",
+            "fohExitDateTime": "",
+            "traderId": "111111111111100",
+            "childTrailingPrice": "0",
+            "optionType": "CE",
+            "lastModTime": "2025-10-28 12:44:41.0",
+            "ohEntryDateTime": "",
+            "coverOrderId": "0",
+            "orderQty": 1200,
+            "scripCode": "59004",
+            "orderTrailByPrice": "0",
+            "webResponseTime": "0",
+            "childTrailByPrice": "0",
+            "brokerage": "-2857079",
+            "clientGroup": "",
+            "contract": "NIFTY 28Oct2025",
+            "disclosedQty": 0,
+            "orderMifQty": 0,
+            "childSlPrice": "0",
+            "openOrClose": "O",
+            "pvtOrderInd": "0",
+            "caLevel": 0,
+            "advOrderType": "NOR",
+            "orderTargetPrice": "0",
+            "trailingStatus": "",
+            "clientAcc": "",
+            "openQty": 150,
+            "channelUser": "SGUPTA78",
+            "exchange": "NF",
+            "execQty": 1050,
+            "strikePrice": "26000.00",
+            "fnoOrderType": "NOR",
+            "orderTrailingPrice": "0",
+            "updateDate": "2025-10-28 12:44:41.0",
+            "avgPrice": "23.45",
+            "orsOrderId": 1446122681227656516,
+            "orderStatus": "Partly Executed",
+            "goodtillDate": "2025-10-28 12:44:40.0",
+            "expiryDate": "28/10/2025",
+            "dpClientId": 0,
+            "orderTriggerPrice": "0",
+            "customerId": 73196,
+            "orderPrice": "24.35",
+            "afterHour": "N",
+            "tradingSymbol": "NIFTY",
+            "participantCode": 0,
+            "channelCode": "SKAPI",
+            "exchangeOrderId": "1200000183352471",
+            "orderDateTime": "2025-10-28 12:44:40.0",
+            "buySell": "B",
+            "instrumentType": "OI",
+            "fnoSquareoff": "N",
+            "dpId": 1,
+            "updateUser": "FO_AH_TC",
+            "exchAckDateTime": "2025-10-28 12:44:41.0",
+            "segmentCode": "",
+            "userId": "SKNSEFO4",
+            "productCode": "0",
+            "allOrNone": "N",
+            "limitLossTo": "0",
+            "bookProfitPrice": "0",
+            "goodtill": "GFD",
+            "requestStatus": "NEW"
+        },
+        {
+            "orderType": "Limit",
+            "orsExchangeMarketCode": "N",
+            "orderId": "136757437",
+            "fnoSquareOff": "",
+            "goodTillDate": "",
+            "fohExitDateTime": "",
+            "traderId": "111111111111100",
+            "childTrailingPrice": "0",
+            "optionType": "CE",
+            "lastModTime": "2025-10-28 12:44:41.0",
+            "ohEntryDateTime": "",
+            "coverOrderId": "0",
+            "orderQty": 1200,
+            "scripCode": "59004",
+            "orderTrailByPrice": "0",
+            "webResponseTime": "0",
+            "childTrailByPrice": "0",
+            "brokerage": "-2843573",
+            "clientGroup": "",
+            "contract": "NIFTY 28Oct2025",
+            "disclosedQty": 0,
+            "orderMifQty": 0,
+            "childSlPrice": "0",
+            "openOrClose": "O",
+            "pvtOrderInd": "0",
+            "caLevel": 0,
+            "advOrderType": "NOR",
+            "orderTargetPrice": "0",
+            "trailingStatus": "",
+            "clientAcc": "",
+            "openQty": 0,
+            "channelUser": "SGUPTA78",
+            "exchange": "NF",
+            "execQty": 1200,
+            "strikePrice": "26000.00",
+            "fnoOrderType": "NOR",
+            "orderTrailingPrice": "0",
+            "updateDate": "2025-10-28 12:44:41.0",
+            "avgPrice": "23.45",
+            "orsOrderId": 1446122681227661860,
+            "orderStatus": "Fully Executed",
+            "goodtillDate": "2025-10-28 12:44:40.0",
+            "expiryDate": "28/10/2025",
+            "dpClientId": 0,
+            "orderTriggerPrice": "0",
+            "customerId": 73196,
+            "orderPrice": "24.35",
+            "afterHour": "N",
+            "tradingSymbol": "NIFTY",
+            "participantCode": 0,
+            "channelCode": "SKAPI",
+            "exchangeOrderId": "1200000183352471",
+            "orderDateTime": "2025-10-28 12:44:40.0",
+            "buySell": "B",
+            "instrumentType": "OI",
+            "fnoSquareoff": "N",
+            "dpId": 1,
+            "updateUser": "FO_AH_TC",
+            "exchAckDateTime": "2025-10-28 12:44:41.0",
+            "segmentCode": "",
+            "userId": "SKNSEFO4",
+            "productCode": "0",
+            "allOrNone": "N",
+            "limitLossTo": "0",
+            "bookProfitPrice": "0",
+            "goodtill": "GFD",
+            "requestStatus": "NEW"
+        }
+    ],
+    "message": "order_history",
+    "status": 200,
+    "timestamp": "2025-10-28T14:52:32+05:30"
+}
+
+
+
+     */
 }
