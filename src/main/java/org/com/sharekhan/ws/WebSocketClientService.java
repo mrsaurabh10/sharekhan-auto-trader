@@ -16,6 +16,7 @@ import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.OrderStatusPollingService;
 import org.com.sharekhan.service.PriceTriggerService;
+import org.com.sharekhan.service.ScripExecutorManager;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,6 +51,11 @@ public class WebSocketClientService  {
     @Autowired
     private final LtpCacheService ltpCacheService;
     private final ApplicationEventPublisher eventPublisher;
+
+    @Autowired
+    private  ScripExecutorManager scripExecutorManager;
+
+
 
     // 🧠 Cache to track active subscriptions (e.g., NC2885, NF42120, etc.)
     private final Set<String> activeLtpSubscriptions = ConcurrentHashMap.newKeySet();
@@ -117,8 +123,8 @@ public class WebSocketClientService  {
                 double ltp = data.get("ltp").asDouble();
                 log.info("📊 Tick received - Scrip: {}, LTP: {}", scripCode, ltp);
                 ltpCacheService.updateLtp(scripCode, ltp);
-                priceTriggerService.evaluatePriceTrigger(scripCode,ltp);
-                priceTriggerService.monitorOpenTrades(scripCode,ltp);
+                scripExecutorManager.submitTriggerTask(scripCode, () -> priceTriggerService.evaluatePriceTrigger(scripCode, ltp));
+                scripExecutorManager.submitMonitorTask(scripCode, () -> priceTriggerService.monitorOpenTrades(scripCode, ltp));
                 // Broadcast to frontend
                 ltpWebSocketHandler.broadcastLtp(
                        scripCode, ltp);

@@ -9,38 +9,47 @@ public class AartiSignalParser implements TradingSignalParser {
 
     @Override
     public Map<String, Object> parse(String text) {
-        if (text == null || text.isBlank()) {
-            return null;
-        }
+        if (text == null || text.isBlank()) return null;
 
         try {
-            Pattern pattern = Pattern.compile(
-                "(BUY|SELL)\\s+([A-Z]+)\\s+(\\d+)\\s+(CE|PE)\\s+(?:BUY|SELL)?\\s*ABOVE\\s+(\\d+)\\s+TGT\\s+(\\d+)\\s*-\\s*(\\d+)\\s+SL\\s+(\\d+)",
-                Pattern.CASE_INSENSITIVE
+            Pattern mainPattern = Pattern.compile(
+                    "(BUY|SELL)\\s+([A-Z]+)\\s+(\\d+)\\s+(CE|PE)",
+                    Pattern.CASE_INSENSITIVE
             );
+            Matcher m = mainPattern.matcher(text);
+            if (!m.find()) return null;
 
-            Matcher matcher = pattern.matcher(text);
-            if (!matcher.find()) {
-                return null;
+            String action = m.group(1).toUpperCase();
+            String symbol = m.group(2).toUpperCase();
+            String strike = m.group(3);
+            String optionType = m.group(4).toUpperCase();
+
+            String entryStr = null, target1Str = null, target2Str = null, slStr = null;
+            Matcher entryM = Pattern.compile("(?:BUY|SELL)?\\s*ABOVE\\s*(\\d+)", Pattern.CASE_INSENSITIVE).matcher(text);
+            if (entryM.find()) entryStr = entryM.group(1);
+
+            Matcher tgtM = Pattern.compile("(?:TGT|TARGET)[\\s:]+(\\d+)[\\s/-]+(\\d+)", Pattern.CASE_INSENSITIVE).matcher(text);
+            if (tgtM.find()) {
+                target1Str = tgtM.group(1);
+                target2Str = tgtM.group(2);
             }
 
-            String action = matcher.group(1).toUpperCase();
-            String symbol = matcher.group(2).toUpperCase();
-            String strike = matcher.group(3);
-            String optionType = matcher.group(4).toUpperCase();
-            Double entryPrice = Double.parseDouble(matcher.group(5));
-            Double target1 = Double.parseDouble(matcher.group(6));
-            Double target2 = Double.parseDouble(matcher.group(7));
-            Double stopLoss = Double.parseDouble(matcher.group(8));
+            Matcher slM = Pattern.compile("(?:SL|STOP ?LOSS)\\s*(\\d+)", Pattern.CASE_INSENSITIVE).matcher(text);
+            if (slM.find()) slStr = slM.group(1);
 
-            // Determine expiry
+            Double entryPrice = tryParseDouble(entryStr);
+            Double target1 = tryParseDouble(target1Str);
+            Double target2 = tryParseDouble(target2Str);
+            Double stopLoss = tryParseDouble(slStr);
+
+            // Expiry
             String expiry = calculateNearestExpiry(symbol);
 
             Map<String, Object> result = new HashMap<>();
             result.put("source", "nifty-signal");
             result.put("action", action);
             result.put("symbol", symbol);
-            result.put("strike", Double.parseDouble(strike));
+            result.put("strike", tryParseDouble(strike));
             result.put("optionType", optionType);
             result.put("entry", entryPrice);
             result.put("target1", target1);
@@ -54,9 +63,19 @@ public class AartiSignalParser implements TradingSignalParser {
             result.put("intraday", true);
 
             return result;
-
         } catch (Exception e) {
             e.printStackTrace();
+            return null;
+        }
+    }
+
+    private Double tryParseDouble(String val) {
+        if (val == null || val.isEmpty()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(val.trim());
+        } catch (NumberFormatException e) {
             return null;
         }
     }
@@ -96,11 +115,12 @@ public class AartiSignalParser implements TradingSignalParser {
     // Finds next specific weekday (for weekly contracts)
     private LocalDate getNextWeekday(LocalDate date, DayOfWeek targetDay) {
         DayOfWeek today = date.getDayOfWeek();
-        int daysUntil = (targetDay.getValue() - today.getValue() + 7) % 7;
-        if (daysUntil == 0 && LocalTime.now(ZoneId.of("Asia/Kolkata")).isAfter(LocalTime.of(15, 30))) {
-            daysUntil = 7;
+        LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
+        if (today == targetDay && now.isBefore(LocalTime.of(15, 30))) {
+            return date;
         }
-        if (daysUntil == 0) daysUntil = 7; // ensure future date
+        int daysUntil = (targetDay.getValue() - today.getValue() + 7) % 7;
+        if (daysUntil == 0) daysUntil = 7;
         return date.plusDays(daysUntil);
     }
 

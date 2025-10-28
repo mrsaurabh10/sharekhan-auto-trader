@@ -8,97 +8,94 @@ public class WhatsappSignalParser implements TradingSignalParser {
 
     @Override
     public Map<String, Object> parse(String text) {
-        // Only parse if message starts with specific prefix
-        String normalizedText = text.trim().replaceFirst("^\\*+", "").replaceFirst("\u200E", "");
-        if (!normalizedText.toLowerCase().startsWith("hi, your subscribed trading signal is ready:")) {
-            return null;
-        }
+        if (text == null || text.isBlank()) return null;
 
         try {
-            Pattern instrumentFullPattern = Pattern.compile("INSTRUMENT: ([^\\n]+)", Pattern.CASE_INSENSITIVE);
-            Pattern entryPattern = Pattern.compile("ENTRY: ([\\d.]+)", Pattern.CASE_INSENSITIVE);
-            Pattern stopLossPattern = Pattern.compile("STOP LOSS: ([\\d.]+)", Pattern.CASE_INSENSITIVE);
-            Pattern targetPattern = Pattern.compile("TARGET: ([\\d/.]+)", Pattern.CASE_INSENSITIVE);
-
-            Matcher instrumentFullMatcher = instrumentFullPattern.matcher(text);
-            Matcher entryMatcher = entryPattern.matcher(text);
-            Matcher stopLossMatcher = stopLossPattern.matcher(text);
-            Matcher targetMatcher = targetPattern.matcher(text);
-
-            String instrumentFull = instrumentFullMatcher.find() ? instrumentFullMatcher.group(1) : null;
-            String entryStr = entryMatcher.find() ? entryMatcher.group(1) : null;
-            String stopLossStr = stopLossMatcher.find() ? stopLossMatcher.group(1) : null;
-            String targetStr = targetMatcher.find() ? targetMatcher.group(1) : null;
-
-            if (instrumentFull == null || entryStr == null || stopLossStr == null || targetStr == null)
+            String normalizedText = text.trim().replaceFirst("^\\*+", "").replaceFirst("\u200E", "");
+            if (!normalizedText.toLowerCase().startsWith("hi, your subscribed trading signal is ready:")) {
                 return null;
-
-            String instrument;
-            if (instrumentFull.contains("-EQ")) {
-                instrument = instrumentFull.substring(0, instrumentFull.indexOf("-EQ"));
-            } else {
-                String[] parts = instrumentFull.split(" ");
-                instrument = parts.length > 0 ? parts[0] : "";
             }
 
-            boolean isFuture = instrumentFull.toUpperCase().contains("FUT");
+            // Extract instrument full line
+            Pattern instrumentFullPattern = Pattern.compile("INSTRUMENT:\\s*(.+)", Pattern.CASE_INSENSITIVE);
+            Matcher instrumentMatcher = instrumentFullPattern.matcher(text);
+            String instrumentFull = instrumentMatcher.find() ? instrumentMatcher.group(1).trim() : null;
 
-            Object expiryFormatted;
-            if (isFuture) {
-                expiryFormatted = null;
-            } else {
-                Pattern expiryPattern = Pattern.compile("\\d{1,2} [A-Z]{3}", Pattern.CASE_INSENSITIVE);
-                Matcher expiryMatcher = expiryPattern.matcher(instrumentFull);
-                if (expiryMatcher.find()) {
-                    expiryFormatted = formatExpiryDate(expiryMatcher.group(0));
-                } else {
-                    expiryFormatted = "";
-                }
-            }
-
-            Object optionType = null;
-            Double strikePrice = null;
-            if (isFuture) {
-                optionType = "FUT";
-            } else {
-                // Strike & OptionType (robust logic)
-                Pattern strikeOptionPattern = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(CALL|PUT|CE|PE)", Pattern.CASE_INSENSITIVE);
-                Matcher strikeOptionMatcher = strikeOptionPattern.matcher(instrumentFull);
-
-
-                if (strikeOptionMatcher.find()) {
-                    strikePrice = Double.valueOf(strikeOptionMatcher.group(1));
-                    String type = strikeOptionMatcher.group(2).toUpperCase();
-                    optionType = type.equals("CALL") ? "CE" : type.equals("PUT") ? "PE" : type;
-                } else { // fallback, just use any number if not found
-                    Pattern strikeFallback = Pattern.compile("\\b(\\d{2,6}(?:\\.\\d+)?)\\b");
-                    Matcher strikeFallbackMatcher = strikeFallback.matcher(instrumentFull);
-                    while (strikeFallbackMatcher.find()) {
-                        strikePrice = Double.valueOf(strikeFallbackMatcher.group(1));
-                    }
-                }
-            }
-
-            //Pattern strikePricePattern = Pattern.compile("\\b(\\d{2,6}(?:\\.\\d+)?)\\b");;
-            //Matcher strikePriceMatcher = strikePricePattern.matcher(instrumentFull);
-            //Double strikePrice = strikePriceMatcher.find() && !isFuture ? Double.valueOf(strikePriceMatcher.group(1)) : null;
-
-            Double entryPrice = Double.parseDouble(entryStr);
-            Double stopLoss = Double.parseDouble(stopLossStr);
-
-            String[] targetParts = targetStr.split("/");
+            // Extract Entry price
+            Double entryPrice = extractDoubleValue(text, "ENTRY");
+            // Extract Stop Loss
+            Double stopLoss = extractDoubleValue(text, "STOP LOSS");
+            // Extract Target(s)
+            String targetStr = extractStringValue(text, "TARGET");
+            String[] targetParts = targetStr != null ? targetStr.split("/") : new String[0];
             Double target1 = targetParts.length > 0 ? tryParseDouble(targetParts[0]) : 0.0;
             Double target2 = targetParts.length > 1 ? tryParseDouble(targetParts[1]) : 0.0;
             Double target3 = targetParts.length > 2 ? tryParseDouble(targetParts[2]) : 0.0;
 
+            if (instrumentFull == null || entryPrice == null || stopLoss == null || targetStr == null) {
+                return null;
+            }
+
+            // Symbol extraction
+            String instrument;
+            if (instrumentFull.contains("-EQ")) {
+                instrument = instrumentFull.substring(0, instrumentFull.indexOf("-EQ")).trim();
+            } else {
+                String[] parts = instrumentFull.split(" ");
+                instrument = parts.length > 0 ? parts[0].trim() : "";
+            }
+
+            boolean isFuture = instrumentFull.toUpperCase().contains("FUT");
+            String optionType = null;
+            Double strikePrice = null;
+            Object expiryFormatted = "";
+
+            if (isFuture) {
+                optionType = "FUT";
+
+                // Extract expiry month for FUT
+                Pattern expiryMonthPattern = Pattern.compile("\\b(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\\b", Pattern.CASE_INSENSITIVE);
+                Matcher monthMatcher = expiryMonthPattern.matcher(instrumentFull);
+                if (monthMatcher.find()) {
+                    String monthStr = monthMatcher.group(1).toUpperCase();
+                    // Optionally, set expiry day to 25th of that month (or adjust as needed)
+                    expiryFormatted = formatExpiryDate("25 " + monthStr);
+                } else {
+                    expiryFormatted = "";
+                }
+            } else {
+                // Strike & OptionType extraction for options
+                Pattern strikeOptionPattern = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(CALL|PUT|CE|PE)", Pattern.CASE_INSENSITIVE);
+                Matcher strikeOptionMatcher = strikeOptionPattern.matcher(instrumentFull);
+                if (strikeOptionMatcher.find()) {
+                    strikePrice = Double.valueOf(strikeOptionMatcher.group(1));
+                    String type = strikeOptionMatcher.group(2).toUpperCase();
+                    optionType = type.equals("CALL") ? "CE" : type.equals("PUT") ? "PE" : type;
+                } else {
+                    // fallback: last number in instrument
+                    Pattern numberPattern = Pattern.compile("\\b(\\d{2,6}(?:\\.\\d+)?)\\b");
+                    Matcher numberMatcher = numberPattern.matcher(instrumentFull);
+                    while (numberMatcher.find()) {
+                        strikePrice = Double.valueOf(numberMatcher.group(1));
+                    }
+                }
+
+                // Expiry extraction for options (ex: "25 NOV")
+                Pattern expiryPattern = Pattern.compile("\\b(\\d{1,2} [A-Z]{3})\\b", Pattern.CASE_INSENSITIVE);
+                Matcher expiryMatcher = expiryPattern.matcher(instrumentFull);
+                if (expiryMatcher.find()) {
+                    expiryFormatted = formatExpiryDate(expiryMatcher.group(1));
+                }
+            }
+
             Map<String, Object> result = new HashMap<>();
             result.put("symbol", instrument);
             result.put("exchange", null);
-            result.put("entry", entryPrice != null ? entryPrice : 0.0);
-            result.put("stopLoss", stopLoss != null ? stopLoss : 0.0);
-            result.put("target1", target1 != null ? target1 : 0.0);
-            result.put("target2", target2 != null ? target2 : 0.0);
-            result.put("target3", target3 != null ? target3 : 0.0);
+            result.put("entry", entryPrice);
+            result.put("stopLoss", stopLoss);
+            result.put("target1", target1);
+            result.put("target2", target2);
+            result.put("target3", target3);
             result.put("trailingSl", 0.0);
             result.put("quantity", null);
             result.put("strike", strikePrice);
@@ -112,6 +109,18 @@ public class WhatsappSignalParser implements TradingSignalParser {
             e.printStackTrace();
             return null;
         }
+    }
+
+    private Double extractDoubleValue(String text, String key) {
+        Pattern pattern = Pattern.compile(key + ":\\s*([\\d.]+)", Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? tryParseDouble(matcher.group(1)) : null;
+    }
+
+    private String extractStringValue(String text, String key) {
+        Pattern pattern = Pattern.compile(key + ":\\s*([^\\n]+)", Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? matcher.group(1).trim() : null;
     }
 
     private Double tryParseDouble(String val) {
