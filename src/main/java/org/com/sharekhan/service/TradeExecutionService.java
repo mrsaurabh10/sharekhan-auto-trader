@@ -79,17 +79,18 @@ public class TradeExecutionService {
                         try {
                             return LocalDate.parse(s, formatter);
                         } catch (DateTimeParseException e) {
-                            return null; // skip invalid date formats
+                            return null;
                         }
                     })
                     .filter(Objects::nonNull)
                     .filter(expiryDate -> {
                         LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
-                        // Check if expiry is after today or today before 3:30 PM
+                        // Keep only expiry dates that are today but before cutoff or future dates
                         return expiryDate.isAfter(now.toLocalDate()) ||
                                 (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
                     })
-                    .max(Comparator.naturalOrder()); // Get the latest date
+                    .min(Comparator.naturalOrder());  // Pick nearest valid expiry instead of max
+
 
             if (latestExpiryOpt.isPresent()) {
                 // Set expiry in request as string in dd/MM/yyyy format
