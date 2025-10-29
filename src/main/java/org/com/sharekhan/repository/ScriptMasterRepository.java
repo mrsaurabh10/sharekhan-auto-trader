@@ -25,6 +25,13 @@ public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity
     @Query("SELECT DISTINCT s.exchange FROM ScriptMasterEntity s")
     List<String> findDistinctExchanges();
 
+    @Query("SELECT s.expiry FROM ScriptMasterEntity s WHERE s.tradingSymbol = :symbol AND s.strikePrice = :strikePrice AND s.optionType = :optionType")
+    List<String> findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
+            @Param("symbol") String symbol,
+            @Param("strikePrice") Double strikePrice,
+            @Param("optionType") String optionType
+    );
+
     List<ScriptMasterEntity> findByExchange(String exchange);
 
     @Query("SELECT DISTINCT s.strikePrice FROM ScriptMasterEntity s WHERE s.exchange = :exchange AND s.tradingSymbol = :instrument AND s.strikePrice IS NOT NULL")

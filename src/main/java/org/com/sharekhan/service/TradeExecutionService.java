@@ -26,7 +26,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 
 
@@ -53,6 +58,48 @@ public class TradeExecutionService {
 
 
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request) {
+
+        // Initialize formatter for expiry date parsing
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        LocalDateTime now = LocalDateTime.now(zoneId);
+        LocalTime cutoff = LocalTime.of(15, 30); // 3:30 PM IST
+
+        // Handle null expiry: fetch all expiry strings from DB
+        if (request.getExpiry() == null && request.getStrikePrice() != null) {
+            List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
+                    request.getInstrument(),
+                    request.getStrikePrice(),
+                    request.getOptionType()
+            );
+
+            // Parse expiry strings to LocalDate objects
+            Optional<LocalDate> latestExpiryOpt = allExpiryStrings.stream()
+                    .map(s -> {
+                        try {
+                            return LocalDate.parse(s, formatter);
+                        } catch (DateTimeParseException e) {
+                            return null; // skip invalid date formats
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .filter(expiryDate -> {
+                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
+                        // Check if expiry is after today or today before 3:30 PM
+                        return expiryDate.isAfter(now.toLocalDate()) ||
+                                (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+                    })
+                    .max(Comparator.naturalOrder()); // Get the latest date
+
+            if (latestExpiryOpt.isPresent()) {
+                // Set expiry in request as string in dd/MM/yyyy format
+                String latestExpiryStr = latestExpiryOpt.get().format(formatter);
+                request.setExpiry(latestExpiryStr);
+            } else {
+                throw new RuntimeException("No valid expiry found for the given instrument and strike price");
+            }
+        }
+
         ScriptMasterEntity script = scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
                 request.getInstrument(),
                 request.getStrikePrice(),
