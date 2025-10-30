@@ -110,8 +110,8 @@ public class TradeExecutionService {
 
 
         if (request.getQuantity() == null) {
-            int maxAmtPerTrade = Integer.parseInt(userConfigService.getConfig("", "max_amount_per_trade", "25000"));
-            int maxLossPerTrade = Integer.parseInt(userConfigService.getConfig("", "max_loss_per_trade", "8000"));
+            int maxAmtPerTrade = Integer.parseInt(userConfigService.getConfig("saurabh", "max_amount_per_trade", "25000"));
+            int maxLossPerTrade = Integer.parseInt(userConfigService.getConfig("saurabh", "max_loss_per_trade", "8000"));
 
             Double stopLoss = request.getStopLoss();
             if (stopLoss == null) {
