@@ -46,6 +46,7 @@ public class PriceTriggerService {
 
     public void monitorOpenTrades(Integer scripCode, double ltp) {
         try {
+            log.debug("Invoked monitorOpenTrades for scripCode={} with ltp={}", scripCode, ltp);
             Optional<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatus(
                     scripCode, TriggeredTradeStatus.EXECUTED
             );

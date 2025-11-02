@@ -2,8 +2,6 @@ package org.com.sharekhan.ws;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
-import jakarta.annotation.PostConstruct;
 import jakarta.websocket.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,14 +16,12 @@ import org.com.sharekhan.service.OrderStatusPollingService;
 import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.ScripExecutorManager;
 import org.com.sharekhan.service.TradeExecutionService;
-import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.stereotype.Service;
 
-import javax.swing.text.html.Option;
 import java.io.IOException;
 import java.net.URI;
 import java.time.LocalTime;
@@ -90,9 +86,9 @@ public class WebSocketClientService  {
     private void sendSubscribeMessage() {
         String subscribeMsg = "{\"action\":\"subscribe\",\"key\":[\"feed\",\"ack\"],\"value\":[\"\"]}";
         session.getAsyncRemote().sendText(subscribeMsg);
-        String subscribeAckMsg = "{\"action\":\"ack\",\"key\":[\"\"],\"value\":[\"" + String.valueOf(TokenLoginAutomationService.customerId)+ "\"]}";
-        session.getAsyncRemote().sendText(subscribeMsg);
-        log.info("📡 Subscribing Ack to {}",subscribeAckMsg);
+        String subscribeAckMsg = "{\"action\":\"ack\",\"key\":[\"\"],\"value\":[\"" + TokenLoginAutomationService.customerId + "\"]}";
+        session.getAsyncRemote().sendText(subscribeAckMsg);
+        log.info("📡 Subscribing Ack to {}", subscribeAckMsg);
     }
 
 
@@ -116,36 +112,80 @@ public class WebSocketClientService  {
         }
         try {
             JsonNode json = OBJECT_MAPPER.readTree(message);
-            if (json.has("message") && "feed".equals(json.get("message").asText())
-                    && json.has("data") && json.get("data").has("ltp")) {
-                JsonNode data = json.get("data");
-                int scripCode = data.get("scripCode").asInt();
-                double ltp = data.get("ltp").asDouble();
-                log.info("📊 Tick received - Scrip: {}, LTP: {}", scripCode, ltp);
-                ltpCacheService.updateLtp(scripCode, ltp);
-                scripExecutorManager.submitTriggerTask(scripCode, () -> priceTriggerService.evaluatePriceTrigger(scripCode, ltp));
-                scripExecutorManager.submitMonitorTask(scripCode, () -> priceTriggerService.monitorOpenTrades(scripCode, ltp));
-                // Broadcast to frontend
-                ltpWebSocketHandler.broadcastLtp(
-                       scripCode, ltp);
-            }else if (json.has("message")  && "ack".equals(json.get("message").asText())
-                    && json.has("data") && json.get("data").has("AckState")) {
-                {
-                    log.info("📊 Ack received -  {}", message);
-                    JsonNode data = json.get("data");
-                    String orderId = data.get("SharekhanOrderID").asText();
-                    // need to find the buy price for calculation of pnl
-                    String ackState = data.get("AckState").asText();
-                    if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
-                        // Order is confirmed trigger a thread to poll the status
-                        Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
-                        triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity.get())));// .monitorOrderStatus(tradeSetupEntity));
-                        //tradeExecutionService.markOrderExecuted(orderId);
-                    } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
-                        tradeExecutionService.markOrderRejected(orderId);
+            if (json.has("message") && "feed".equalsIgnoreCase(json.get("message").asText())) {
+                JsonNode data = json.has("data") ? json.get("data") : null;
+                if (data == null) {
+                    log.debug("Received feed message without data: {}", message);
+                } else {
+                    // Try various common field names for scripCode and ltp
+                    Integer scripCode = null;
+                    Double ltp = null;
+
+                    // scripCode may be number or string field named scripCode, scrip, ScripCode
+                    if (data.has("scripCode") && data.get("scripCode").canConvertToInt()) scripCode = data.get("scripCode").asInt();
+                    else if (data.has("scrip") && data.get("scrip").canConvertToInt()) scripCode = data.get("scrip").asInt();
+                    else if (data.has("ScripCode") && data.get("ScripCode").canConvertToInt()) scripCode = data.get("ScripCode").asInt();
+                    else if (data.has("scripCode") && data.get("scripCode").isTextual()) {
+                        try { scripCode = Integer.parseInt(data.get("scripCode").asText()); } catch (NumberFormatException ignored) {}
+                    }
+
+                    // ltp may be number or string under 'ltp' or 'last_price' or 'lastPrice'
+                    if (data.has("ltp") && data.get("ltp").isNumber()) ltp = data.get("ltp").asDouble();
+                    else if (data.has("ltp") && data.get("ltp").isTextual()) {
+                        try { ltp = Double.parseDouble(data.get("ltp").asText()); } catch (NumberFormatException ignored) {}
+                    } else if (data.has("last_price") && data.get("last_price").isNumber()) ltp = data.get("last_price").asDouble();
+                    else if (data.has("lastPrice") && data.get("lastPrice").isNumber()) ltp = data.get("lastPrice").asDouble();
+
+                    if (scripCode == null || ltp == null || scripCode == 0) {
+                        log.debug("Feed message missing scripCode or ltp. scripCode={}, ltp={}, raw={}", scripCode, ltp, data);
+                    } else {
+                        // make effectively-final copies for use inside lambdas
+                        final int sc = scripCode;
+                        final double lv = ltp;
+
+                        log.info("📊 Tick received - Scrip: {}, LTP: {}", sc, lv);
+                        try {
+                            ltpCacheService.updateLtp(sc, lv);
+                        } catch (Exception e) {
+                            log.warn("Failed to update LTP cache for {}: {}", sc, e.getMessage());
+                        }
+
+                        try {
+                            scripExecutorManager.submitTriggerTask(sc, () -> priceTriggerService.evaluatePriceTrigger(sc, lv));
+                        } catch (Exception e) {
+                            log.error("Failed to submit trigger task for scrip {}: {}", sc, e.getMessage(), e);
+                        }
+
+                        try {
+                            scripExecutorManager.submitMonitorTask(sc, () -> priceTriggerService.monitorOpenTrades(sc, lv));
+                        } catch (Exception e) {
+                            log.error("Failed to submit monitor task for scrip {}: {}", sc, e.getMessage(), e);
+                        }
+
+                        try {
+                            ltpWebSocketHandler.broadcastLtp(sc, lv);
+                        } catch (Exception e) {
+                            log.warn("Failed to broadcast LTP to frontend for {}: {}", sc, e.getMessage());
+                        }
                     }
                 }
-            }
+            } else if (json.has("message")  && "ack".equalsIgnoreCase(json.get("message").asText()) ) {
+                 {
+                     log.info("📊 Ack received -  {}", message);
+                     JsonNode data = json.get("data");
+                     String orderId = data.get("SharekhanOrderID").asText();
+                     // need to find the buy price for calculation of pnl
+                     String ackState = data.get("AckState").asText();
+                     if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
+                         // Order is confirmed trigger a thread to poll the status
+                         Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
+                         triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity.get())));// .monitorOrderStatus(tradeSetupEntity));
+                         //tradeExecutionService.markOrderExecuted(orderId);
+                     } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
+                         tradeExecutionService.markOrderRejected(orderId);
+                     }
+                 }
+             }
         } catch (Exception e) {
             log.error("❌ Failed to parse message: {}", message, e);
         }
