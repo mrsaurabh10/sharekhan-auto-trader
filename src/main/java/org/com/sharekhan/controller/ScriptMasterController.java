@@ -88,6 +88,25 @@ public class ScriptMasterController {
         return ResponseEntity.ok(resp);
     }
 
+    // Debug endpoint: return raw script master rows for an exchange (useful to inspect NC/BC data)
+    @GetMapping("/raw")
+    public ResponseEntity<?> getRawScripts(@RequestParam String exchange) {
+        List<ScriptMasterEntity> rows = service.getRawScriptsForExchange(exchange);
+        List<Map<String,Object>> out = rows.stream().map(s -> {
+            Map<String,Object> m = new HashMap<>();
+            m.put("tradingSymbol", s.getTradingSymbol());
+            m.put("scripCode", s.getScripCode());
+            m.put("exchange", s.getExchange());
+            m.put("strikePrice", s.getStrikePrice());
+            m.put("expiry", s.getExpiry());
+            m.put("optionType", s.getOptionType());
+            return m;
+        }).toList();
+        Map<String,Object> resp = new HashMap<>();
+        resp.put("rows", out);
+        return ResponseEntity.ok(resp);
+    }
+
 
 //    @GetMapping("/lot-size")
 //    public ResponseEntity<Map<String, Integer>> getLotSize(

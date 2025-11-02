@@ -65,15 +65,19 @@ public class TradeExecutionService {
         LocalDateTime now = LocalDateTime.now(zoneId);
         LocalTime cutoff = LocalTime.of(15, 30); // 3:30 PM IST
 
-        // Handle null expiry: fetch all expiry strings from DB
-        if (request.getExpiry() == null && request.getStrikePrice() != null) {
+        // Determine exchange and whether it's a no-strike exchange (NC/BC)
+        final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
+        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+
+        // Handle null expiry: for regular option trades (NOT NC/BC and strikePrice != 0.0) attempt to select nearest valid expiry
+        if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
             List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
                     request.getInstrument(),
                     request.getStrikePrice(),
                     request.getOptionType()
             );
 
-            // Parse expiry strings to LocalDate objects
+            // Parse expiry strings to LocalDate objects and pick the nearest valid one
             Optional<LocalDate> latestExpiryOpt = allExpiryStrings.stream()
                     .map(s -> {
                         try {
@@ -101,12 +105,47 @@ public class TradeExecutionService {
             }
         }
 
-        ScriptMasterEntity script = scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
-                request.getInstrument(),
-                request.getStrikePrice(),
-                request.getOptionType(),
-                request.getExpiry()
-        ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+        ScriptMasterEntity script;
+        // If exchange is NC or BC, treat this as an equity/no-strike instrument and lookup by exchange + tradingSymbol
+        if (isNoStrikeExchange) {
+            // Try exact match first
+            Optional<ScriptMasterEntity> opt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull(
+                    exch, request.getInstrument()
+            );
+            if (opt.isPresent()) {
+                script = opt.get();
+            } else {
+                // Fallback: try case-insensitive fetch of all rows for the exchange and match tradingSymbol ignoring case
+                List<ScriptMasterEntity> allForExchange = scriptMasterRepository.findByExchangeIgnoreCase(exch);
+                if (allForExchange == null) allForExchange = List.of();
+                Optional<ScriptMasterEntity> match = allForExchange.stream()
+                        .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(request.getInstrument()))
+                        .filter(s -> (s.getStrikePrice() == null || Double.compare(s.getStrikePrice(), 0.0) == 0)
+                                && (s.getExpiry() == null || s.getExpiry().isBlank()))
+                        .findFirst();
+                if (match.isPresent()) {
+                    script = match.get();
+                } else {
+                    // Last effort: try any tradingSymbol match for the exchange (ignore strike/expiry) and accept if instrument matches
+                    Optional<ScriptMasterEntity> anyMatch = allForExchange.stream()
+                            .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(request.getInstrument()))
+                            .findFirst();
+                    if (anyMatch.isPresent()) {
+                        script = anyMatch.get();
+                    } else {
+                        throw new RuntimeException("Script not found in master DB for instrument on exchange " + exch + " (strike & expiry null)");
+                    }
+                }
+            }
+        } else {
+            // Regular option/future lookup (strike and expiry expected)
+            script = scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
+                    request.getInstrument(),
+                    request.getStrikePrice(),
+                    request.getOptionType(),
+                    request.getExpiry()
+            ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+        }
 
 
         if (request.getQuantity() == null) {
@@ -115,7 +154,7 @@ public class TradeExecutionService {
 
             Double stopLoss = request.getStopLoss();
             if (stopLoss == null) {
-                // You can set to entryPrice or throw error based on your logic
+                // keep existing behavior: fallback stopLoss set to entryPrice (and keep trailing default marker)
                 stopLoss = request.getEntryPrice();
                 request.setStopLoss(0.05);
             }
@@ -124,23 +163,37 @@ public class TradeExecutionService {
             if (lossPerShare == 0) {
                 request.setQuantity(0);
             } else {
-                int lossPerLot = (int) (lossPerShare * script.getLotSize());
-                if (lossPerLot == 0) {  // avoid division by zero
-                    request.setQuantity(0);
-                } else {
-                    int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
-                    int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * script.getLotSize()));
+                // If this is a no-strike exchange (NC/BC) we compute quantity directly per-share (no lot-size)
+                if (isNoStrikeExchange) {
+                    int quantityAsPerLoss = (int) (maxLossPerTrade / lossPerShare);
+                    int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / request.getEntryPrice());
                     int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
                     if (quantity < 0) quantity = 0;
                     request.setQuantity(quantity);
+                } else {
+                    int lotSizeForCalc = script.getLotSize() != null ? script.getLotSize() : 1;
+                    int lossPerLot = (int) (lossPerShare * lotSizeForCalc);
+                    if (lossPerLot == 0) {  // avoid division by zero
+                        request.setQuantity(0);
+                    } else {
+                        int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
+                        int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * lotSizeForCalc));
+                        int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
+                        if (quantity < 0) quantity = 0;
+                        request.setQuantity(quantity);
+                    }
                 }
             }
         }
 
-
-
         int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
-        long finalQuantity = (long) request.getQuantity() * lotSize;
+        long finalQuantity;
+        if (isNoStrikeExchange) {
+            // For NC/BC quantity is per-share (no lot multiplication)
+            finalQuantity = request.getQuantity() != null ? request.getQuantity().longValue() : 0L;
+        } else {
+            finalQuantity = (long) request.getQuantity() * lotSize;
+        }
 
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
                 .symbol(request.getInstrument())
