@@ -236,8 +236,8 @@
          lastKnownLTP[scripKey] = ltp;
 
          document.querySelectorAll('#trades-executed-table tbody tr').forEach(row => {
-            // skip rejected rows
-            if (row.dataset.rejected === 'true') return;
+            // skip rejected or inactive (EXITED_SUCCESS) rows
+            if (row.dataset.inactive === 'true' || row.dataset.rejected === 'true') return;
              const cell = row.querySelector(`[data-scrip="${scripKey}"]`);
              const pnlCell = row.querySelector(`[data-pnl="${scripKey}"]`);
 
