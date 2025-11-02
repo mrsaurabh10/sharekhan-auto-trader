@@ -52,7 +52,7 @@
         <option value="BF">BF</option>
         <option value="MX">MX</option>
         <option value="NC">NC</option>
-        <option value="BF">BF</option>
+        <option value="BC">BC</option>
     </select>
 
     <label for="instrument">Instrument</label>
@@ -104,6 +104,7 @@
 </form>
 
 <div id="result"></div>
+<div id="last-refresh" style="margin-top:0.5rem;color:#666;font-size:0.9rem"></div>
 
 <h3>Trading Requests</h3>
 <table id="trading-requests-table" border="1" style="margin-bottom: 2rem; width: 100%;">
@@ -154,6 +155,18 @@
 
 <script>
 
+    // Global error handlers so uncaught exceptions don't silently stop other JS
+    window.addEventListener('error', function (ev) {
+        console.error('Global error caught:', ev.error || ev.message, ev);
+        const r = document.getElementById('result');
+        if (r) r.innerText = 'JS error: ' + (ev.error?.message || ev.message || ev.error || 'unknown');
+    });
+    window.addEventListener('unhandledrejection', function (ev) {
+        console.error('Unhandled promise rejection:', ev.reason);
+        const r = document.getElementById('result');
+        if (r) r.innerText = 'Unhandled promise rejection: ' + (ev.reason?.message || ev.reason);
+    });
+
     const instrumentCache = {}; // { exchange: [symbols] }
     const strikeCache = {};     // { exchange_instrument: [strikes] }
     const ltpSocket = new WebSocket(`ws://${window.location.host}/ws/ltp`);
@@ -164,6 +177,20 @@
 
     const lastKnownLTP = {};
     const lastKnownPNL = {};
+
+    function updateLastRefresh() {
+        const el = document.getElementById('last-refresh');
+        if (el) el.innerText = 'Last refresh: ' + new Date().toLocaleTimeString();
+    }
+
+    // Utility: fetch with AbortController timeout to avoid hanging requests
+    function fetchWithTimeout(url, opts = {}, timeoutMs = 6000) {
+        const controller = new AbortController();
+        const signal = controller.signal;
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        return fetch(url, { ...opts, signal })
+            .finally(() => clearTimeout(timer));
+    }
 
     ltpSocket.onmessage = function (event) {
         const payload = JSON.parse(event.data);
@@ -180,7 +207,7 @@
     function fetchMStockLtpForKey(qualifiedKey) {
         if (!qualifiedKey) return Promise.resolve(null);
         const url = `/api/mstock/ltp?i=${encodeURIComponent(qualifiedKey)}`;
-        return fetch(url)
+        return fetchWithTimeout(url)
             .then(res => res.json())
             .then(json => {
                 if (!json || json.status !== 'success' || !json.data) return null;
@@ -196,9 +223,11 @@
     }
 
     function updateTradingRequestLTP(scripCode, ltp) {
+        const formatted = (ltp != null && !isNaN(ltp)) ? ltp.toFixed(2) : '-';
         document.querySelectorAll(`#trading-requests-table tbody tr`).forEach(row => {
             const cell = row.querySelector(`[data-scrip="${scripCode}"]`);
-            if (cell) cell.innerText = ltp.toFixed(2);
+            if (!cell) return;
+            if ((cell.innerText || '') !== formatted) cell.innerText = formatted;
         });
     }
 
@@ -212,66 +241,87 @@
              const cell = row.querySelector(`[data-scrip="${scripKey}"]`);
              const pnlCell = row.querySelector(`[data-pnl="${scripKey}"]`);
 
-             if (cell && pnlCell) {
-                 const entry = parseFloat(row.dataset.entry) || 0;
-                 const qty = parseInt(row.dataset.qty) || 1;
-                 const pnl = (ltp - entry) * qty;
-                 lastKnownPNL[scripKey] = pnl;
+             if (!cell || !pnlCell) return;
 
-                 cell.textContent = ltp.toFixed(2);
-                 pnlCell.textContent = pnl.toFixed(0);
-                 pnlCell.style.color = pnl >= 0 ? "green" : "red";
+             const entry = parseFloat(row.dataset.entry) || 0;
+             const qty = parseInt(row.dataset.qty) || 1;
+             const pnl = (ltp - entry) * qty;
+             lastKnownPNL[scripKey] = pnl;
+
+             const ltpStr = (ltp != null && !isNaN(ltp)) ? ltp.toFixed(2) : '-';
+             const pnlStr = isFinite(pnl) ? pnl.toFixed(0) : '-';
+
+             if ((cell.textContent || '') !== ltpStr) cell.textContent = ltpStr;
+             if ((pnlCell.textContent || '') !== pnlStr) {
+                 pnlCell.textContent = pnlStr;
+                 pnlCell.style.color = (Number(pnl) >= 0) ? 'green' : 'red';
+             } else {
+                 // Still ensure color is correct if value unchanged but sign might have changed (rare)
+                 pnlCell.style.color = (Number(pnl) >= 0) ? 'green' : 'red';
              }
          });
      }
 
 
 
-    // Fetch all symbols for NF and BF on page load
+    // Fetch all symbols for NF, BF, NC and BC on page load
     function preloadInstruments() {
-        ['NF', 'BF'].forEach(exchange => {
-            const url = `/api/scripts/instruments/${encodeURIComponent(exchange)}`;
-            console.debug('Preloading instruments from', url);
-            fetch(url)
-                .then(res => {
-                    if (!res.ok) throw new Error('HTTP ' + res.status + ' when fetching instruments for ' + exchange);
-                    return res.json();
-                })
-                .then(data => {
-                    instrumentCache[exchange] = Array.isArray(data?.instruments) ? data.instruments : [];
-                    console.debug('Instruments cached for', exchange, instrumentCache[exchange].length);
-                })
-                .catch(err => {
-                    console.error(`Failed to preload instruments for ${exchange}:`, err);
-                    const r = document.getElementById('result');
-                    if (r) r.innerText = `Failed to preload instruments for ${exchange}: ${err.message}`;
-                });
-        });
-    }
+        ['NF', 'BF', 'NC', 'BC'].forEach(exchange => {
+             const url = `/api/scripts/instruments/${encodeURIComponent(exchange)}`;
+             console.debug('Preloading instruments from', url);
+             fetchWithTimeout(url)
+                 .then(res => {
+                     if (!res.ok) throw new Error('HTTP ' + res.status + ' when fetching instruments for ' + exchange);
+                     return res.json();
+                 })
+                 .then(data => {
+                     instrumentCache[exchange] = Array.isArray(data?.instruments) ? data.instruments : [];
+                     console.debug('Instruments cached for', exchange, instrumentCache[exchange].length);
+                 })
+                 .catch(err => {
+                     console.error(`Failed to preload instruments for ${exchange}:`, err);
+                     const r = document.getElementById('result');
+                     if (r) r.innerText = `Failed to preload instruments for ${exchange}: ${err.message}`;
+                 });
+         });
+     }
 
     // Load instruments when exchange is selected
     document.getElementById('exchange').addEventListener('change', function () {
-        const exchange = this.value;
-        console.debug('Exchange selected:', exchange);
+        try {
+            const exchange = this.value;
+            console.debug('Exchange selected:', exchange);
 
-        const instrumentSelect = document.getElementById('instrument');
-        instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
+            // Debug: show cache state
+            try { console.debug('instrumentCache entry for', exchange, instrumentCache[exchange]); } catch (e) { console.debug('instrumentCache check failed', e); }
 
-        if (!exchange) return;
-        if (Array.isArray(instrumentCache[exchange]) && instrumentCache[exchange].length > 0) {
-            // ✅ Already cached
-            console.debug('Using cached instruments for', exchange);
-            populateInstruments(instrumentCache[exchange]);
-            // also fetch underlying LTP and auto-select nearest strike (if strikes cached)
-            const cacheKey = `${exchange}_${instrumentSelect.value}`;
-            if (strikeCache[cacheKey]) {
-                fetchUnderlyingAndSelectNearestStrike(exchange, instrumentSelect.value, strikeCache[cacheKey]);
+            const instrumentSelect = document.getElementById('instrument');
+            instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
+
+            if (!exchange) return;
+            // Disable optionType for no-strike exchanges (NC/BC)
+            const optionTypeSelect = document.getElementById('optionType');
+            const exchUpper = (exchange || '').toUpperCase();
+            const noStrikeExchanges = new Set(['NC','BC']);
+            if (noStrikeExchanges.has(exchUpper)) {
+                if (optionTypeSelect) {
+                    optionTypeSelect.value = '';
+                    optionTypeSelect.disabled = true;
+                }
+            } else {
+                if (optionTypeSelect) optionTypeSelect.disabled = false;
             }
-        } else {
-            // ❌ Not cached – fetch and cache
+
+            // If we have cached instruments (non-empty) populate immediately so the UI is responsive.
+            if (Array.isArray(instrumentCache[exchange]) && instrumentCache[exchange].length > 0) {
+                console.debug('Using cached instruments for', exchange, '(populating immediately)');
+                populateInstruments(instrumentCache[exchange]);
+            }
+
+            // Always fetch fresh from the API to ensure the latest data and to handle cases where preload returned empty.
             const url = `/api/scripts/instruments/${encodeURIComponent(exchange)}`;
-            console.debug('Fetching instruments from', url);
-            fetch(url)
+            console.debug('Fetching instruments from (always):', url, 'cachePresent=', Array.isArray(instrumentCache[exchange]));
+            fetchWithTimeout(url)
                 .then(res => {
                     if (!res.ok) throw new Error('HTTP ' + res.status + ' when fetching instruments for ' + exchange);
                     return res.json();
@@ -279,24 +329,120 @@
                 .then(data => {
                     const instruments = Array.isArray(data?.instruments) ? data.instruments : [];
                     instrumentCache[exchange] = instruments; // 💾 Cache it
-                    console.debug('Fetched instruments', instruments.length, 'for', exchange);
+                    console.debug('Fetched instruments', instruments.length, 'for', exchange, '(post-fetch)');
+                    if (instruments.length === 0) {
+                        instrumentSelect.innerHTML = '<option value="">No instruments available</option>';
+                        instrumentSelect.disabled = true;
+                        document.getElementById('strikePrice').innerHTML = '<option value="">-</option>';
+                        document.getElementById('strikePrice').disabled = true;
+                        document.getElementById('expiry').innerHTML = '<option value="">-</option>';
+                        document.getElementById('expiry').disabled = true;
+                        document.getElementById('entryPrice').value = '';
+                        return;
+                    }
+                    // ensure instrument select is enabled before populating
+                    instrumentSelect.disabled = false;
                     populateInstruments(instruments);
-                })
+                    // If this is a no-strike exchange, also ensure optionType is disabled (in case fetch changed state)
+                    const optionTypeSelect2 = document.getElementById('optionType');
+                    if (optionTypeSelect2) {
+                        const exUp = (exchange || '').toUpperCase();
+                        if (exUp === 'NC' || exUp === 'BC') {
+                            optionTypeSelect2.value = '';
+                            optionTypeSelect2.disabled = true;
+                        } else {
+                            optionTypeSelect2.disabled = false;
+                        }
+                    }
+                 })
                 .catch(err => {
-                    console.error("Failed to load instruments:", err);
+                    console.error('Failed to load instruments:', err);
                     const r = document.getElementById('result');
                     if (r) r.innerText = `Failed to load instruments for ${exchange}: ${err.message}`;
                 });
+        } catch (e) {
+            console.error('Exchange change handler failed', e);
+            const r = document.getElementById('result'); if (r) r.innerText = 'Exchange handler error: ' + e.message;
         }
     });
 
     function populateInstruments(instruments) {
         const instrumentSelect = document.getElementById('instrument');
-        instrumentSelect.innerHTML = '<option value="">Select Instrument</option>';
-        instruments.forEach(symbol => {
-            instrumentSelect.innerHTML += `<option value="${symbol}">${symbol}</option>`;
-        });
-    }
+        const parent = instrumentSelect.parentNode;
+        const existingSearch = document.getElementById('instrument-search');
+
+        // Configuration: thresholds
+        const RENDER_THRESHOLD = 500; // if more than this, show search box and render limited results
+        const RENDER_LIMIT = 300;     // max number of options to render at a time
+
+        // Helper to populate select quickly using innerHTML once
+        function renderOptions(list) {
+            instrumentSelect.disabled = false;
+            let html = '<option value="">Select Instrument</option>';
+            if (list && list.length) {
+                // join string to avoid many DOM updates
+                html += list.map(s => `<option value="${s}">${s}</option>`).join('');
+            }
+            instrumentSelect.innerHTML = html;
+        }
+
+        // Filter function used by search input
+        function filterAndRender(q) {
+            const term = (q || '').trim().toUpperCase();
+            let matched = instruments;
+            if (term) matched = instruments.filter(s => s.toUpperCase().includes(term));
+            if (matched.length > RENDER_LIMIT) {
+                // show only first RENDER_LIMIT matches
+                renderOptions(matched.slice(0, RENDER_LIMIT));
+                const r = document.getElementById('result');
+                if (r) r.innerText = `${matched.length} matches — showing first ${RENDER_LIMIT}. Keep typing to narrow.`;
+            } else {
+                renderOptions(matched);
+                const r = document.getElementById('result'); if (r) r.innerText = '';
+            }
+        }
+
+        // If the list is small, just render all options (fast path)
+        if (!Array.isArray(instruments) || instruments.length === 0) {
+            // empty
+            if (existingSearch) existingSearch.remove();
+            renderOptions([]);
+            return;
+        }
+
+        if (instruments.length <= RENDER_THRESHOLD) {
+            // remove any existing search UI
+            if (existingSearch) existingSearch.remove();
+            renderOptions(instruments);
+            const r = document.getElementById('result'); if (r) r.innerText = '';
+            return;
+        }
+
+        // Large list: show a search input (create if missing)
+        let searchEl = existingSearch;
+        if (!searchEl) {
+            searchEl = document.createElement('input');
+            searchEl.id = 'instrument-search';
+            searchEl.type = 'search';
+            searchEl.placeholder = `Type to filter ${instruments.length} instruments...`;
+            searchEl.style.width = '100%';
+            searchEl.style.marginBottom = '0.5rem';
+            parent.insertBefore(searchEl, instrumentSelect);
+            // listen for input and debounce
+            let debounceTimer = null;
+            searchEl.addEventListener('input', function () {
+                clearTimeout(debounceTimer);
+                const v = this.value;
+                debounceTimer = setTimeout(() => filterAndRender(v), 150);
+            });
+        } else {
+            searchEl.placeholder = `Type to filter ${instruments.length} instruments...`;
+            searchEl.value = '';
+        }
+
+        // initial render: first N instruments (no filter)
+        filterAndRender('');
+     }
 
     // Resolve option trading symbol (and scripCode) for the given selection using backend lookup
     function resolveOptionTradingSymbol(exchange, instrument, strikePrice, optionType, expiry) {
@@ -307,16 +453,13 @@
         params.set('optionType', optionType);
         params.set('expiry', expiry);
 
-        return fetch(`/api/scripts/option?${params.toString()}`)
-            .then(res => {
-                if (!res.ok) return null;
-                return res.json();
-            })
-            .then(json => {
-                // expected { tradingSymbol: '...', scripCode: 12345 }
-                return json;
-            })
-            .catch(err => {
+        return fetchWithTimeout(`/api/scripts/option?${params.toString()}`)
+            .then(res => { if (!res.ok) return null; return res.json(); })
+             .then(json => {
+                 // expected { tradingSymbol: '...', scripCode: 12345 }
+                 return json;
+             })
+             .catch(err => {
                 console.error('Failed to resolve option trading symbol', err);
                 return null;
             });
@@ -430,13 +573,38 @@
 
         if (!exchange || !instrument) return;
 
+        const noStrikeExchanges = new Set(['NC','BC']);
+        const isNoStrike = noStrikeExchanges.has((exchange || '').toUpperCase());
+
+        if (isNoStrike) {
+            // disable strike and expiry UI and fetch underlying LTP for the instrument
+            const strikeSelect = document.getElementById('strikePrice');
+            strikeSelect.innerHTML = `<option value="">-</option>`;
+            strikeSelect.value = '';
+            strikeSelect.disabled = true;
+
+            const expirySelect = document.getElementById('expiry');
+            expirySelect.innerHTML = `<option value="">-</option>`;
+            expirySelect.value = '';
+            expirySelect.disabled = true;
+
+            // fetch underlying LTP and set as entry price (map NF->NSE, BF->BSE as before)
+            const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' };
+            const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+            const qualified = `${mappedExchange}:${instrument}`;
+            fetchMStockLtpForKey(qualified).then(ltp => {
+                if (ltp != null) document.getElementById('entryPrice').value = ltp;
+            }).catch(err => console.warn('Failed to fetch underlying LTP for instrument', err));
+            return;
+        }
+
         const cacheKey = `${exchange}_${instrument}`;
         if (strikeCache[cacheKey]) {
             populateStrikeDropdown(strikeCache[cacheKey]);
-            // after populating strikes from cache, fetch underlying LTP and pick nearest strike
+            // after populating strikes from cache, fetch underlying LTP and pick nearest strike (if strikes cached)
             fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikeCache[cacheKey]);
         } else {
-            fetch(`/api/scripts/strikes?exchange=${encodeURIComponent(exchange)}&instrument=${encodeURIComponent(instrument)}`)
+            fetchWithTimeout(`/api/scripts/strikes?exchange=${encodeURIComponent(exchange)}&instrument=${encodeURIComponent(instrument)}`)
                 .then(res => res.json())
                 .then(data => {
                     const strikes = data.strikes || [];
@@ -477,7 +645,7 @@
 
         if (!exchange || !instrument || !strikePrice) return;
 
-        fetch(`/api/scripts/expiries?exchange=${encodeURIComponent(exchange)}&instrument=${encodeURIComponent(instrument)}&strikePrice=${encodeURIComponent(strikePrice)}`)
+        fetchWithTimeout(`/api/scripts/expiries?exchange=${encodeURIComponent(exchange)}&instrument=${encodeURIComponent(instrument)}&strikePrice=${encodeURIComponent(strikePrice)}`)
             .then(res => res.json())
             .then(data => {
                 const expiries = data.expiries || [];
@@ -519,6 +687,21 @@
         const optionType = document.getElementById('optionType').value || 'CE';
         const expiry = document.getElementById('expiry').value;
 
+        const noStrikeExchanges = new Set(['NC','BC']);
+        const isNoStrike = noStrikeExchanges.has((exchange || '').toUpperCase());
+
+        // For NC/BC exchanges, fetch underlying LTP directly
+        if (isNoStrike) {
+            if (!exchange || !instrument) return;
+            const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' };
+            const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+            const qualified = `${mappedExchange}:${instrument}`;
+            fetchMStockLtpForKey(qualified)
+                .then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; })
+                .catch(err => console.warn('Failed to fetch underlying LTP for instrument', err));
+            return;
+        }
+
         if (!exchange || !instrument || !strikePrice || !expiry) return;
 
         const qualifiedKey = buildQualifiedOptionKey(exchange, instrument, expiry, strikePrice, optionType);
@@ -536,30 +719,32 @@
         fetchOptionLtpAndPopulateEntry();
     });
 
-    document.getElementById('optionType').addEventListener('change', function () {
-        // when option type changes we may need to re-resolve symbol and fetch LTP
-        fetchOptionLtpAndPopulateEntry();
-    });
+    document.getElementById('optionType').addEventListener('change', function () { fetchOptionLtpAndPopulateEntry(); });
 
     // Submit form via REST
     document.getElementById('placeOrderForm').addEventListener('submit', function (e) {
-        e.preventDefault();
+         e.preventDefault();
 
-        const form = e.target;
-        const data = {
-            exchange: form.exchange.value,
-            instrument: form.instrument.value,
-            strikePrice: form.strikePrice.value ? parseFloat(form.strikePrice.value):null,
-            expiry: form.expiry.value || null,
-            entryPrice: parseFloat(form.entryPrice.value),
-            stopLoss: parseFloat(form.stopLoss.value),
-            target1: parseFloat(form.target1.value) || 0,
-            target2: parseFloat(form.target2.value) || 0,
-            target3: parseFloat(form.target3.value) || 0,
-            optionType: form.optionType.value || null,
-            quantity: parseInt(form.quantity.value),
-            intraday: form.intraday.checked
-        };
+         const form = e.target;
+        const exch = (form.exchange && form.exchange.value) ? form.exchange.value.toUpperCase() : '';
+        const noStrikeExchanges = new Set(['NC','BC']);
+        const isNoStrike = noStrikeExchanges.has(exch);
+         const data = {
+             exchange: form.exchange.value,
+             instrument: form.instrument.value,
+            // If NC/BC (no-strike exchanges) send strikePrice as null and expiry as null
+            strikePrice: isNoStrike ? null : (form.strikePrice.value ? parseFloat(form.strikePrice.value) : null),
+            expiry: isNoStrike ? null : (form.expiry.value || null),
+             entryPrice: parseFloat(form.entryPrice.value),
+             stopLoss: parseFloat(form.stopLoss.value),
+             target1: parseFloat(form.target1.value) || 0,
+             target2: parseFloat(form.target2.value) || 0,
+             target3: parseFloat(form.target3.value) || 0,
+             // Per request, optionType should be empty for equities
+            optionType: isNoStrike ? '' : (form.optionType.value || null),
+              quantity: parseInt(form.quantity.value),
+              intraday: form.intraday.checked
+          };
 
         fetch('/api/trades/trigger-on-price', {
             method: 'POST',
@@ -930,90 +1115,228 @@
 
     // Update loadRequestedOrders to add Edit button and data for editing
     function loadRequestedOrders() {
-        // If user is editing a request inline, skip the automatic refresh to avoid wiping the editor
-        if (document.querySelector('.edit-row[data-editing-for^="req_"]')) {
-            console.debug('Skipping loadRequestedOrders() because a request is being edited');
-            return;
+        try {
+            // If user is editing a request inline, skip the automatic refresh to avoid wiping the editor
+            if (document.querySelector('.edit-row[data-editing-for^="req_"]')) {
+                console.debug('Skipping loadRequestedOrders() because a request is being edited');
+                return;
+            }
+
+            console.debug('loadRequestedOrders() starting');
+            fetchWithTimeout('/api/orders/requests')
+                 .then(res => res.json())
+                 .then(data => {
+                    updateLastRefresh();
+                    const tbody = document.querySelector('#trading-requests-table tbody');
+                    // build set of current ids present in new data
+                    const incomingIds = new Set();
+
+                    data.forEach(order => {
+                        requestMap[order.id] = order; // cache
+                        const id = String(order.id);
+                        incomingIds.add(id);
+
+                        let row = tbody.querySelector(`tr[data-id="${id}"]`);
+                        if (!row) {
+                            // create new row (same structure as before)
+                            row = document.createElement('tr');
+                            row.dataset.id = id;
+                            row.innerHTML = `
+                                <td>${order.id}</td>
+                                <td>${order.symbol}</td>
+                                <td>${order.exchange}</td>
+                                <td>${order.strikePrice}</td>
+                                <td>${order.expiry}</td>
+                                <td>${order.entryPrice}</td>
+                                <td>${order.stopLoss}</td>
+                                <td>${order.target1}</td>
+                                <td>${order.quantity || ''}</td>
+                                <td>${order.optionType || ''}</td>
+                                <td>${order.intraday || ''}</td>
+                                <td>${order.status || ''}</td>
+                                <td>
+                                    <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
+                                    <button onclick="editRequest(${order.id})">Edit</button>
+                                </td>
+                                <td data-scrip="${order.scripCode || ''}">--</td>`;
+                            tbody.appendChild(row);
+                        } else {
+                            // update only changed cells to avoid flicker
+                            const tds = row.children;
+                            function updateCell(idx, value) {
+                                value = value == null ? '' : String(value);
+                                if ((tds[idx].innerText || '') !== value) tds[idx].innerText = value;
+                            }
+
+                            updateCell(1, order.symbol);
+                            updateCell(2, order.exchange);
+                            updateCell(3, order.strikePrice);
+                            updateCell(4, order.expiry);
+                            updateCell(5, order.entryPrice);
+                            updateCell(6, order.stopLoss);
+                            updateCell(7, order.target1);
+                            updateCell(8, order.quantity || '');
+                            updateCell(9, order.optionType || '');
+                            updateCell(10, order.intraday || '');
+                            updateCell(11, order.status || '');
+
+                            // update scrip cell attribute if changed
+                            const scripCell = row.querySelector('td[data-scrip]');
+                            if (scripCell && (scripCell.dataset.scrip !== String(order.scripCode))) {
+                                scripCell.dataset.scrip = order.scripCode || '';
+                                scripCell.innerText = '--';
+                            }
+                        }
+                    });
+
+                    // Remove rows that are no longer present
+                    Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
+                        if (!incomingIds.has(r.dataset.id)) r.remove();
+                    });
+                })
+                .catch(err => {
+                    console.error('Failed to load requested orders', err);
+                    const r = document.getElementById('result'); if (r) r.innerText = 'Failed to load requested orders: ' + err.message;
+                });
+        } catch (e) {
+            console.error('loadRequestedOrders() error', e);
+            const r = document.getElementById('result'); if (r) r.innerText = 'loadRequestedOrders error: ' + e.message;
         }
-         fetch('/api/orders/requests')
-             .then(res => res.json())
-             .then(data => {
-                 const tbody = document.querySelector("#trading-requests-table tbody");
-                 tbody.innerHTML = "";
-                 data.forEach(order => {
-                     // store into requestMap for safe retrieval when Edit is clicked
-                     requestMap[order.id] = order;
-                     tbody.innerHTML += `
-                     <tr data-id="${order.id}">
-                         <td>${order.id}</td>
-                         <td>${order.symbol}</td>
-                         <td>${order.exchange}</td>
-                         <td>${order.strikePrice}</td>
-                         <td>${order.expiry}</td>
-                         <td>${order.entryPrice}</td>
-                         <td>${order.stopLoss}</td>
-                         <td>${order.target1}</td>
-                         <td>${order.quantity || ''}</td>
-                         <td>${order.optionType || ''}</td>
-                         <td>${order.intraday || ''}</td>
-                         <td>${order.status || ''}</td>
-                         <td>
-                             <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
-                             <button onclick="editRequest(${order.id})">Edit</button>
-                         </td>
-                          <td data-scrip="${order.scripCode || ''}">--</td>
-                     </tr>`;
-                 });
-             }).catch(err => console.error("Failed to load requested orders", err));
      }
 
      // Update loadTradeSetups to add Edit button for executed trades
      function loadTradeSetups() {
-        // If user is editing an execution inline, skip the automatic refresh to avoid wiping the editor
-        if (document.querySelector('.edit-row[data-editing-for^="exec_"]')) {
-            console.debug('Skipping loadTradeSetups() because an execution is being edited');
-            return;
+        try {
+            // If user is editing an execution inline, skip the automatic refresh to avoid wiping the editor
+            if (document.querySelector('.edit-row[data-editing-for^="exec_"]')) {
+                console.debug('Skipping loadTradeSetups() because an execution is being edited');
+                return;
+            }
+
+            console.debug('loadTradeSetups() starting');
+            fetchWithTimeout('/api/orders/executed')
+                .then(res => res.json())
+                .then(data => {
+                    updateLastRefresh();
+                    const tbody = document.querySelector('#trades-executed-table tbody');
+                    const incomingIds = new Set();
+
+                    data.forEach(setup => {
+                        executionMap[setup.id] = setup;
+                        const id = String(setup.id);
+                        incomingIds.add(id);
+                        const isRejected = setup.status === 'REJECTED';
+
+                        let row = tbody.querySelector(`tr[data-id="${id}"]`);
+                        if (!row) {
+                            // build row
+                            const actionCellHtml = isRejected ? '<td></td>' : `
+                                <td>
+                                    <button onclick="squareOffTrade(${setup.id})">Close</button>
+                                    <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
+                                    <button onclick="editExecution(${setup.id})">Edit</button>
+                                </td>`;
+
+                            const ltpHtml = isRejected ? '<td class="ltp">-</td><td class="pnl">-</td>' :
+                                `<td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
+                                 <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>`;
+
+                            row = document.createElement('tr');
+                            row.dataset.id = id;
+                            row.dataset.scrip = setup.scripCode || '';
+                            row.dataset.entry = setup.entryPrice || '';
+                            row.dataset.qty = setup.quantity || 0;
+                            row.dataset.rejected = isRejected ? 'true' : 'false';
+
+                            row.innerHTML = `
+                                <td>${setup.id}</td>
+                                <td>${setup.symbol}</td>
+                                <td>${setup.exchange || ''}</td>
+                                <td>${setup.strikePrice || ''}</td>
+                                <td>${setup.expiry || ''}</td>
+                                <td>${setup.entryPrice || ''}</td>
+                                <td>${setup.stopLoss || ''}</td>
+                                <td>${setup.target1 || ''}</td>
+                                <td>${setup.quantity || ''}</td>
+                                <td>${setup.optionType || ''}</td>
+                                <td>${setup.intraday || ''}</td>
+                                <td>${setup.status || ''}</td>
+                                ${actionCellHtml}
+                                ${ltpHtml}`;
+                            tbody.appendChild(row);
+                        } else {
+                            // update only changed cells
+                            const tds = row.children;
+                            function updateCell(idx, value) {
+                                value = value == null ? '' : String(value);
+                                if ((tds[idx].innerText || '') !== value) tds[idx].innerText = value;
+                            }
+
+                            updateCell(1, setup.symbol);
+                            updateCell(2, setup.exchange || '');
+                            updateCell(3, setup.strikePrice || '');
+                            updateCell(4, setup.expiry || '');
+                            updateCell(5, setup.entryPrice || '');
+                            updateCell(6, setup.stopLoss || '');
+                            updateCell(7, setup.target1 || '');
+                            updateCell(8, setup.quantity || '');
+                            updateCell(9, setup.optionType || '');
+                            updateCell(10, setup.intraday || '');
+                            updateCell(11, setup.status || '');
+
+                            // update attributes
+                            if (row.dataset.rejected !== (isRejected ? 'true' : 'false')) {
+                                row.dataset.rejected = isRejected ? 'true' : 'false';
+                            }
+                            if (row.dataset.entry !== String(setup.entryPrice)) row.dataset.entry = setup.entryPrice || '';
+                            if (row.dataset.qty !== String(setup.quantity || 0)) row.dataset.qty = String(setup.quantity || 0);
+
+                            // update action cell and ltp/pnl if rejection state changed
+                            if (isRejected) {
+                                // ensure action cell empty and ltp/pnl show '-'
+                                const actionTd = tds[12];
+                                if (actionTd) actionTd.innerHTML = '';
+                                const ltpTd = tds[13];
+                                const pnlTd = tds[14];
+                                if (ltpTd) ltpTd.innerText = '-';
+                                if (pnlTd) pnlTd.innerText = '-';
+                            } else {
+                                // if previously rejected we should re-insert buttons and data-scrip attributes
+                                const actionTd = tds[12];
+                                if (actionTd && actionTd.innerHTML.trim() === '') {
+                                    actionTd.innerHTML = ` <button onclick="squareOffTrade(${setup.id})">Close</button> <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button> <button onclick="editExecution(${setup.id})">Edit</button>`;
+                                }
+                                const ltpTd = tds[13];
+                                const pnlTd = tds[14];
+                                if (ltpTd) {
+                                    ltpTd.dataset.scrip = setup.scripCode || '';
+                                    if ((ltpTd.innerText || '') !== (lastKnownLTP[setup.scripCode] != null ? String(lastKnownLTP[setup.scripCode]) : '-')) {
+                                        ltpTd.innerText = lastKnownLTP[setup.scripCode] != null ? (lastKnownLTP[setup.scripCode]).toString() : '-';
+                                    }
+                                }
+                                if (pnlTd) {
+                                    pnlTd.dataset.pnl = setup.scripCode || '';
+                                    if ((pnlTd.innerText || '') !== (lastKnownPNL[setup.scripCode] != null ? String(lastKnownPNL[setup.scripCode]) : '-')) {
+                                        pnlTd.innerText = lastKnownPNL[setup.scripCode] != null ? (lastKnownPNL[setup.scripCode]).toString() : '-';
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    // Remove rows that are no longer present
+                    Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
+                        if (!incomingIds.has(r.dataset.id)) r.remove();
+                    });
+                })
+                .catch(err => {
+                    console.error('Failed to load trade setups', err);
+                    const r = document.getElementById('result'); if (r) r.innerText = 'Failed to load trade setups: ' + err.message;
+                });
+        } catch (e) {
+            console.error('loadTradeSetups() error', e);
+            const r = document.getElementById('result'); if (r) r.innerText = 'loadTradeSetups error: ' + e.message;
         }
-         fetch('/api/orders/executed')
-             .then(res => res.json())
-             .then(data => {
-                 const tbody = document.querySelector("#trades-executed-table tbody");
-                 tbody.innerHTML = "";
-                 data.forEach(setup => {
-                     executionMap[setup.id] = setup;
-                     // If the execution is rejected, hide actions and don't show LTP / PnL
-                     const isRejected = setup.status === 'REJECTED';
-                     const actionCell = isRejected ? '<td></td>' : `
-                         <td>
-                             <button onclick="squareOffTrade(${setup.id})">Close</button>
-                             <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
-                             <button onclick="editExecution(${setup.id})">Edit</button>
-                         </td>`;
-
-                     const ltpCells = isRejected ?
-                         `<td class="ltp">-</td><td class="pnl">-</td>` :
-                         `<td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
-                          <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>`;
-
-                     tbody.innerHTML += `
-             <tr data-id="${setup.id}" data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity || 0}" data-rejected="${isRejected ? 'true' : 'false'}">
-                 <td>${setup.id}</td>
-                 <td>${setup.symbol}</td>
-                 <td>${setup.exchange || ''}</td>
-                 <td>${setup.strikePrice || ''}</td>
-                 <td>${setup.expiry || ''}</td>
-                 <td>${setup.entryPrice || ''}</td>
-                 <td>${setup.stopLoss || ''}</td>
-                 <td>${setup.target1 || ''}</td>
-                 <td>${setup.quantity || ''}</td>
-                 <td>${setup.optionType || ''}</td>
-                 <td>${setup.intraday || ''}</td>
-                 <td>${setup.status || ''}</td>
-                 ${actionCell}
-                 ${ltpCells}
-             </tr>`;
-                  });
-             }).catch(err => console.error("Failed to load trade setups", err));
      }
 
 
