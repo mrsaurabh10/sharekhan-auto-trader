@@ -27,6 +27,17 @@
             margin-top: 1rem;
             font-weight: bold;
         }
+        /* Inline edit row styling */
+        .edit-row td {
+            background: #f7f7f9;
+        }
+        .edit-input {
+            width: 90px;
+        }
+        .small-btn {
+            padding: 0.25rem 0.5rem;
+            margin-left: 0.25rem;
+        }
     </style>
 </head>
 <body>
@@ -148,6 +159,8 @@
     const ltpSocket = new WebSocket(`ws://${window.location.host}/ws/ltp`);
     const scripLtpMap = {}; // scripCode -> LTP
     const executedTrades = {}; // orderId -> { entryPrice, quantity }
+    const requestMap = {};
+    const executionMap = {};
 
     const lastKnownLTP = {};
     const lastKnownPNL = {};
@@ -190,25 +203,27 @@
     }
 
     function updateExecutedTradeLTP(scripCode, ltp) {
-        const scripKey = String(scripCode);
-        lastKnownLTP[scripKey] = ltp;
+         const scripKey = String(scripCode);
+         lastKnownLTP[scripKey] = ltp;
 
-        document.querySelectorAll('#trades-executed-table tbody tr').forEach(row => {
-            const cell = row.querySelector(`[data-scrip="${scripKey}"]`);
-            const pnlCell = row.querySelector(`[data-pnl="${scripKey}"]`);
+         document.querySelectorAll('#trades-executed-table tbody tr').forEach(row => {
+            // skip rejected rows
+            if (row.dataset.rejected === 'true') return;
+             const cell = row.querySelector(`[data-scrip="${scripKey}"]`);
+             const pnlCell = row.querySelector(`[data-pnl="${scripKey}"]`);
 
-            if (cell && pnlCell) {
-                const entry = parseFloat(row.dataset.entry) || 0;
-                const qty = parseInt(row.dataset.qty) || 1;
-                const pnl = (ltp - entry) * qty;
-                lastKnownPNL[scripKey] = pnl;
+             if (cell && pnlCell) {
+                 const entry = parseFloat(row.dataset.entry) || 0;
+                 const qty = parseInt(row.dataset.qty) || 1;
+                 const pnl = (ltp - entry) * qty;
+                 lastKnownPNL[scripKey] = pnl;
 
-                cell.textContent = ltp.toFixed(2);
-                pnlCell.textContent = pnl.toFixed(0);
-                pnlCell.style.color = pnl >= 0 ? "green" : "red";
-            }
-        });
-    }
+                 cell.textContent = ltp.toFixed(2);
+                 pnlCell.textContent = pnl.toFixed(0);
+                 pnlCell.style.color = pnl >= 0 ? "green" : "red";
+             }
+         });
+     }
 
 
 
@@ -624,67 +639,382 @@
         });
     }
 
-    function loadRequestedOrders() {
-        fetch('/api/orders/requests')
-            .then(res => res.json())
-            .then(data => {
-                const tbody = document.querySelector("#trading-requests-table tbody");
-                tbody.innerHTML = "";
-                data.forEach(order => {
-                    tbody.innerHTML += `
-                    <tr>
-                        <td>${order.id}</td>
-                        <td>${order.symbol}</td>
-                        <td>${order.exchange}</td>
-                        <td>${order.strikePrice}</td>
-                        <td>${order.expiry}</td>
-                        <td>${order.entryPrice}</td>
-                        <td>${order.stopLoss}</td>
-                        <td>${order.target1}</td>
-                        <td>${order.quantity || ''}</td>
-                        <td>${order.optionType || ''}</td>
-                        <td>${order.intraday || ''}</td>
-                        <td>${order.status || ''}</td>
-                        <td>
-                            <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
-                        </td>
-                         <td data-scrip="${order.scripCode || ''}">--</td>
-                    </tr>`;
-                });
-            }).catch(err => console.error("Failed to load requested orders", err));
+    // Inline edit helpers for Requests & Executions
+    function createEditRow(columnsCount, id) {
+        const tr = document.createElement('tr');
+        tr.className = 'edit-row';
+        tr.dataset.editingFor = id;
+        // create TDs equal to columnsCount
+        for (let i = 0; i < columnsCount; i++) {
+            const td = document.createElement('td');
+            tr.appendChild(td);
+        }
+        return tr;
     }
 
-    function loadTradeSetups() {
-        fetch('/api/orders/executed')
-            .then(res => res.json())
-            .then(data => {
-                const tbody = document.querySelector("#trades-executed-table tbody");
-                tbody.innerHTML = "";
-                data.forEach(setup => {
-                    tbody.innerHTML += `
-            <tr data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity || 0}">
-                <td>${setup.id}</td>
-                <td>${setup.symbol}</td>
-                <td>${setup.exchange || ''}</td>
-                <td>${setup.strikePrice || ''}</td>
-                <td>${setup.expiry || ''}</td>
-                <td>${setup.entryPrice || ''}</td>
-                <td>${setup.stopLoss || ''}</td>
-                <td>${setup.target1 || ''}</td>
-                <td>${setup.quantity || ''}</td>
-                <td>${setup.optionType || ''}</td>
-                <td>${setup.intraday || ''}</td>
-                <td>${setup.status || ''}</td>
-                <td>
-                        <button onclick="squareOffTrade(${setup.id})">Close</button>
-                        <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
-                </td>
-                <td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
-                <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>
-            </tr>`;
-                });
-            }).catch(err => console.error("Failed to load trade setups", err));
+    function editRequest(id) {
+        const order = requestMap[id];
+        if (!order) {
+            alert('Trade request data not available locally. Refreshing requests.');
+            loadRequestedOrders();
+            return;
+        }
+        // remove any existing edit row
+        cancelEditRow();
+
+        const tbody = document.querySelector('#trading-requests-table tbody');
+        // find row by data-id attribute (more robust than matching innerText)
+        const row = tbody.querySelector(`tr[data-id="${id}"]`);
+        const headerRow = document.querySelector('#trading-requests-table thead tr');
+        const columnsCount = headerRow ? headerRow.children.length : 14; // fallback to 14 columns if header not found
+        const editRow = createEditRow(columnsCount, 'req_' + id);
+
+        // build inputs for SL, target1, target2, target3 and intraday and save/cancel buttons
+        editRow.children[0].innerText = '';
+        editRow.children[1].innerText = order.symbol || '';
+        editRow.children[2].innerText = order.exchange || '';
+        editRow.children[3].innerText = order.strikePrice || '';
+        editRow.children[4].innerText = order.expiry || '';
+
+        // Entry
+        const entryInput = document.createElement('input');
+        entryInput.type = 'number'; entryInput.step = '0.01'; entryInput.value = order.entryPrice || '';
+        entryInput.className = 'edit-input';
+        editRow.children[5].appendChild(entryInput);
+
+        // SL
+        const slInput = document.createElement('input');
+        slInput.type = 'number'; slInput.step = '0.01'; slInput.value = order.stopLoss || '';
+        slInput.className = 'edit-input';
+        editRow.children[6].appendChild(slInput);
+
+        // Target1
+        const t1Input = document.createElement('input');
+        t1Input.type = 'number'; t1Input.step = '0.01'; t1Input.value = order.target1 || '';
+        t1Input.className = 'edit-input';
+        editRow.children[7].appendChild(t1Input);
+
+        // Target2
+        const t2Input = document.createElement('input');
+        t2Input.type = 'number'; t2Input.step = '0.01'; t2Input.value = order.target2 || '';
+        t2Input.className = 'edit-input';
+        // small spacing
+        const t2Label = document.createElement('div'); t2Label.style.display='inline-block'; t2Label.style.marginLeft='6px';
+        t2Label.appendChild(t2Input);
+        editRow.children[7].appendChild(t2Label);
+
+        // Target3
+        const t3Input = document.createElement('input');
+        t3Input.type = 'number'; t3Input.step = '0.01'; t3Input.value = order.target3 || '';
+        t3Input.className = 'edit-input';
+        const t3Label = document.createElement('div'); t3Label.style.display='inline-block'; t3Label.style.marginLeft='6px';
+        t3Label.appendChild(t3Input);
+        editRow.children[7].appendChild(t3Label);
+
+        // Qty
+        const qtyInput = document.createElement('input');
+        qtyInput.type = 'number'; qtyInput.step = '1'; qtyInput.value = order.quantity || '';
+        qtyInput.className = 'edit-input';
+        editRow.children[8].appendChild(qtyInput);
+
+        // OptionType
+         editRow.children[9].innerText = order.optionType || '';
+
+        // Intraday checkbox
+        const intradayBox = document.createElement('input');
+        intradayBox.type = 'checkbox';
+        intradayBox.checked = !!order.intraday;
+        editRow.children[10].appendChild(intradayBox);
+
+        // Status
+        editRow.children[11].innerText = order.status || '';
+
+        // Actions: Save/Cancel
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'small-btn';
+        saveBtn.innerText = 'Save';
+        saveBtn.onclick = function () {
+            saveRequestEdit(id, {
+                stopLoss: slInput.value,
+                target1: t1Input.value,
+                quantity: qtyInput.value,
+                target2: t2Input.value,
+                target3: t3Input.value,
+                intraday: intradayBox.checked
+            });
+            return false;
+        };
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'small-btn';
+        cancelBtn.innerText = 'Cancel';
+        cancelBtn.onclick = function () { cancelEditRow(); return false; };
+
+        editRow.children[12].appendChild(saveBtn);
+        editRow.children[12].appendChild(cancelBtn);
+
+        // LTP cell left blank (last cell)
+        editRow.children[13].innerText = '--';
+
+        // insert after the target row
+        if (row) row.parentNode.insertBefore(editRow, row.nextSibling);
+        else tbody.appendChild(editRow);
     }
+
+    function saveRequestEdit(id, payload) {
+        // build object with only non-empty values
+        const body = {};
+        if (payload.stopLoss !== null && payload.stopLoss !== '') body.stopLoss = parseFloat(payload.stopLoss);
+        if (payload.target1 !== null && payload.target1 !== '') body.target1 = parseFloat(payload.target1);
+        if (payload.target2 !== null && payload.target2 !== '') body.target2 = parseFloat(payload.target2);
+        if (payload.target3 !== null && payload.target3 !== '') body.target3 = parseFloat(payload.target3);
+        if (payload.quantity !== null && payload.quantity !== '' && !isNaN(payload.quantity)) body.quantity = parseInt(payload.quantity);
+         if (typeof payload.intraday === 'boolean') body.intraday = payload.intraday;
+
+         if (Object.keys(body).length === 0) { alert('No changes to save'); return; }
+
+         fetch(`/api/trades/request/${id}`, {
+             method: 'PUT',
+             headers: {'Content-Type': 'application/json'},
+             body: JSON.stringify(body)
+         }).then(res => {
+             if (!res.ok) throw new Error('Update failed');
+             return res.json();
+         }).then(updated => {
+             alert('✅ Updated request');
+             cancelEditRow();
+             loadRequestedOrders();
+         }).catch(err => {
+             console.error('Failed to update request', err);
+             alert('❌ Failed to update request');
+         });
+     }
+
+    function editExecution(id) {
+         const setup = executionMap[id];
+         if (!setup) {
+            alert('Executed trade data not available locally. Refreshing executions.');
+            loadTradeSetups();
+            return;
+        }
+        // Do not allow editing rejected trades
+        if (setup.status === 'REJECTED') {
+            alert('Cannot edit a rejected execution');
+            return;
+        }
+         cancelEditRow();
+
+         const tbody = document.querySelector('#trades-executed-table tbody');
+         // find row by data-id attribute (more robust than matching innerText)
+         const row = tbody.querySelector(`tr[data-id="${id}"]`);
+        const headerRow = document.querySelector('#trades-executed-table thead tr');
+        const columnsCount = headerRow ? headerRow.children.length : 15; // fallback to 15 columns if header not found
+        const editRow = createEditRow(columnsCount, 'exec_' + id);
+
+        editRow.children[0].innerText = '';
+        editRow.children[1].innerText = setup.symbol || '';
+        editRow.children[2].innerText = setup.exchange || '';
+        editRow.children[3].innerText = setup.strikePrice || '';
+        editRow.children[4].innerText = setup.expiry || '';
+
+        // Entry
+        const entryInput = document.createElement('input');
+        entryInput.type = 'number'; entryInput.step = '0.01'; entryInput.value = setup.entryPrice || '';
+        entryInput.className = 'edit-input';
+        editRow.children[5].appendChild(entryInput);
+
+        // SL
+        const slInput = document.createElement('input');
+        slInput.type = 'number'; slInput.step = '0.01'; slInput.value = setup.stopLoss || '';
+        slInput.className = 'edit-input';
+        editRow.children[6].appendChild(slInput);
+
+        // Target1
+        const t1Input = document.createElement('input');
+        t1Input.type = 'number'; t1Input.step = '0.01'; t1Input.value = setup.target1 || '';
+        t1Input.className = 'edit-input';
+        editRow.children[7].appendChild(t1Input);
+
+        // Target2
+        const t2Input = document.createElement('input');
+        t2Input.type = 'number'; t2Input.step = '0.01'; t2Input.value = setup.target2 || '';
+        t2Input.className = 'edit-input';
+        const t2Label = document.createElement('div'); t2Label.style.display='inline-block'; t2Label.style.marginLeft='6px';
+        t2Label.appendChild(t2Input);
+        editRow.children[7].appendChild(t2Label);
+
+        // Target3
+        const t3Input = document.createElement('input');
+        t3Input.type = 'number'; t3Input.step = '0.01'; t3Input.value = setup.target3 || '';
+        t3Input.className = 'edit-input';
+        const t3Label = document.createElement('div'); t3Label.style.display='inline-block'; t3Label.style.marginLeft='6px';
+        t3Label.appendChild(t3Input);
+        editRow.children[7].appendChild(t3Label);
+
+        // Qty
+        editRow.children[8].innerText = setup.quantity || '';
+
+        // OptionType
+        editRow.children[9].innerText = setup.optionType || '';
+
+        // Intraday checkbox
+        const intradayBox = document.createElement('input');
+        intradayBox.type = 'checkbox';
+        intradayBox.checked = !!setup.intraday;
+        editRow.children[10].appendChild(intradayBox);
+
+        // Status
+        editRow.children[11].innerText = setup.status || '';
+
+        // Actions: Save/Cancel
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'small-btn';
+        saveBtn.innerText = 'Save';
+        saveBtn.onclick = function () {
+            saveExecutionEdit(id, {
+                stopLoss: slInput.value,
+                target1: t1Input.value,
+                target2: t2Input.value,
+                target3: t3Input.value,
+                intraday: intradayBox.checked
+            });
+            return false;
+        };
+
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'small-btn';
+        cancelBtn.innerText = 'Cancel';
+        cancelBtn.onclick = function () { cancelEditRow(); return false; };
+
+        editRow.children[12].appendChild(saveBtn);
+        editRow.children[12].appendChild(cancelBtn);
+
+        // LTP and PnL cells
+        editRow.children[13].innerText = lastKnownLTP[setup.scripCode] ?? '-';
+        editRow.children[14].innerText = lastKnownPNL[setup.scripCode] ?? '-';
+
+        if (row) row.parentNode.insertBefore(editRow, row.nextSibling);
+        else tbody.appendChild(editRow);
+    }
+
+    function saveExecutionEdit(id, payload) {
+        const body = {};
+        if (payload.stopLoss !== null && payload.stopLoss !== '') body.stopLoss = parseFloat(payload.stopLoss);
+        if (payload.target1 !== null && payload.target1 !== '') body.target1 = parseFloat(payload.target1);
+        if (payload.target2 !== null && payload.target2 !== '') body.target2 = parseFloat(payload.target2);
+        if (payload.target3 !== null && payload.target3 !== '') body.target3 = parseFloat(payload.target3);
+        if (typeof payload.intraday === 'boolean') body.intraday = payload.intraday;
+
+        if (Object.keys(body).length === 0) { alert('No changes to save'); return; }
+
+        fetch(`/api/trades/execution/${id}`, {
+            method: 'PUT',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        }).then(res => {
+            if (!res.ok) throw new Error('Update failed');
+            return res.json();
+        }).then(updated => {
+            alert('✅ Updated execution');
+            cancelEditRow();
+            loadTradeSetups();
+        }).catch(err => {
+            console.error('Failed to update execution', err);
+            alert('❌ Failed to update execution');
+        });
+    }
+
+    function cancelEditRow() {
+        document.querySelectorAll('.edit-row').forEach(r => r.remove());
+    }
+
+    // Update loadRequestedOrders to add Edit button and data for editing
+    function loadRequestedOrders() {
+        // If user is editing a request inline, skip the automatic refresh to avoid wiping the editor
+        if (document.querySelector('.edit-row[data-editing-for^="req_"]')) {
+            console.debug('Skipping loadRequestedOrders() because a request is being edited');
+            return;
+        }
+         fetch('/api/orders/requests')
+             .then(res => res.json())
+             .then(data => {
+                 const tbody = document.querySelector("#trading-requests-table tbody");
+                 tbody.innerHTML = "";
+                 data.forEach(order => {
+                     // store into requestMap for safe retrieval when Edit is clicked
+                     requestMap[order.id] = order;
+                     tbody.innerHTML += `
+                     <tr data-id="${order.id}">
+                         <td>${order.id}</td>
+                         <td>${order.symbol}</td>
+                         <td>${order.exchange}</td>
+                         <td>${order.strikePrice}</td>
+                         <td>${order.expiry}</td>
+                         <td>${order.entryPrice}</td>
+                         <td>${order.stopLoss}</td>
+                         <td>${order.target1}</td>
+                         <td>${order.quantity || ''}</td>
+                         <td>${order.optionType || ''}</td>
+                         <td>${order.intraday || ''}</td>
+                         <td>${order.status || ''}</td>
+                         <td>
+                             <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
+                             <button onclick="editRequest(${order.id})">Edit</button>
+                         </td>
+                          <td data-scrip="${order.scripCode || ''}">--</td>
+                     </tr>`;
+                 });
+             }).catch(err => console.error("Failed to load requested orders", err));
+     }
+
+     // Update loadTradeSetups to add Edit button for executed trades
+     function loadTradeSetups() {
+        // If user is editing an execution inline, skip the automatic refresh to avoid wiping the editor
+        if (document.querySelector('.edit-row[data-editing-for^="exec_"]')) {
+            console.debug('Skipping loadTradeSetups() because an execution is being edited');
+            return;
+        }
+         fetch('/api/orders/executed')
+             .then(res => res.json())
+             .then(data => {
+                 const tbody = document.querySelector("#trades-executed-table tbody");
+                 tbody.innerHTML = "";
+                 data.forEach(setup => {
+                     executionMap[setup.id] = setup;
+                     // If the execution is rejected, hide actions and don't show LTP / PnL
+                     const isRejected = setup.status === 'REJECTED';
+                     const actionCell = isRejected ? '<td></td>' : `
+                         <td>
+                             <button onclick="squareOffTrade(${setup.id})">Close</button>
+                             <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
+                             <button onclick="editExecution(${setup.id})">Edit</button>
+                         </td>`;
+
+                     const ltpCells = isRejected ?
+                         `<td class="ltp">-</td><td class="pnl">-</td>` :
+                         `<td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
+                          <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>`;
+
+                     tbody.innerHTML += `
+             <tr data-id="${setup.id}" data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity || 0}" data-rejected="${isRejected ? 'true' : 'false'}">
+                 <td>${setup.id}</td>
+                 <td>${setup.symbol}</td>
+                 <td>${setup.exchange || ''}</td>
+                 <td>${setup.strikePrice || ''}</td>
+                 <td>${setup.expiry || ''}</td>
+                 <td>${setup.entryPrice || ''}</td>
+                 <td>${setup.stopLoss || ''}</td>
+                 <td>${setup.target1 || ''}</td>
+                 <td>${setup.quantity || ''}</td>
+                 <td>${setup.optionType || ''}</td>
+                 <td>${setup.intraday || ''}</td>
+                 <td>${setup.status || ''}</td>
+                 ${actionCell}
+                 ${ltpCells}
+             </tr>`;
+                  });
+             }).catch(err => console.error("Failed to load trade setups", err));
+     }
 
 
 
