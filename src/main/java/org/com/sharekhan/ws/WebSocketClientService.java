@@ -177,12 +177,29 @@ public class WebSocketClientService  {
                      // need to find the buy price for calculation of pnl
                      String ackState = data.get("AckState").asText();
                      if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
-                         // Order is confirmed trigger a thread to poll the status
-                         Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
-                         triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity.get())));// .monitorOrderStatus(tradeSetupEntity));
-                         //tradeExecutionService.markOrderExecuted(orderId);
+                        // Order is confirmed - find the matching trade by orderId or exitOrderId and publish event to start polling
+                        Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByExitOrderId(orderId);
+                        if (triggeredTradeSetupEntity.isEmpty()) {
+                            // try matching exit order id
+                            triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
+                        }
+                        triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> eventPublisher.publishEvent(new OrderPlacedEvent(tradeSetupEntity)));
                      } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
-                         tradeExecutionService.markOrderRejected(orderId);
+                        // If rejected, mark appropriate trade (order or exit order)
+                        Optional<TriggeredTradeSetupEntity> t = triggeredTradeSetupRepository.findByExitOrderId(orderId);
+                        if (t.isEmpty()) t = triggeredTradeSetupRepository.findByOrderId(orderId);
+                        if (t.isPresent()) {
+                            // if this is an exit order, mark exit failed; otherwise mark rejected
+                            TriggeredTradeSetupEntity trade = t.get();
+                            if (orderId.equals(trade.getExitOrderId())) {
+                                tradeExecutionService.markOrderRejected(orderId); // method will handle mapping
+                            } else {
+                                tradeExecutionService.markOrderRejected(orderId);
+                            }
+                        } else {
+                            // fallback: call markOrderRejected which will lookup by order id
+                            tradeExecutionService.markOrderRejected(orderId);
+                        }
                      }
                  }
              }

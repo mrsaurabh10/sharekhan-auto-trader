@@ -57,21 +57,41 @@ public class OrderStatusPollingService {
                         orderIdToMonitor);
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
+                    // Determine if this was an exit order or entry order
                     if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
                         trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
                         webSocketSubscriptionHelper.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
-                    }else if(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(trade.getStatus())) {
+                    } else if(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(trade.getStatus())) {
                         trade.setStatus(TriggeredTradeStatus.EXECUTED);
                     }
+
+                    // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
+                    try {
+                        Double exitPrice = trade.getExitPrice();
+                        if (exitPrice == null) {
+                            // fallback to LTP cache
+                            exitPrice = ltpCacheService.getLtp(trade.getScripCode());
+                            if (exitPrice != null) trade.setExitPrice(exitPrice);
+                        }
+                        if (trade.getPnl() == null && trade.getEntryPrice() != null && trade.getQuantity() != null && trade.getQuantity() > 0) {
+                            double rawPnl = (trade.getExitPrice() != null ? trade.getExitPrice() : exitPrice) - trade.getEntryPrice();
+                            rawPnl = rawPnl * trade.getQuantity();
+                            trade.setPnl(Math.round(rawPnl * 100.0) / 100.0);
+                        }
+                        trade.setExitedAt(java.time.LocalDateTime.now());
+                    } catch (Exception e) {
+                        log.warn("⚠️ Failed computing PnL/exit price for trade {}: {}", trade.getId(), e.getMessage());
+                    }
+
                     tradeRepo.save(trade);
-                    //todo add executed price here
+
                     ScheduledFuture<?> future = activePolls.remove(orderIdToMonitor);
                     if (future != null) {
                         future.cancel(true);
                         log.info("🛑 Polling stopped for order {}", orderIdToMonitor);
                     }
                     return;
-                }else if (TradeStatus.REJECTED.equals(tradeStatus)) {
+                } else if (TradeStatus.REJECTED.equals(tradeStatus)) {
 
                     if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
                         trade.setStatus(TriggeredTradeStatus.EXIT_FAILED);

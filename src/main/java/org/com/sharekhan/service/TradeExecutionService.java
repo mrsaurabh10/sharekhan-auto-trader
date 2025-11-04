@@ -484,45 +484,50 @@ public class TradeExecutionService {
         Set<String> orderStatusSet = new HashSet<>();
         for (int i = 0; i < trades.length(); i++) {
             JSONObject trade = trades.getJSONObject(i);
-            String status = trade.optString("orderStatus", "").trim();
-            if("Fully Executed".equals(status)) {
+            String statusRaw = trade.optString("orderStatus", "").trim();
+            String status = statusRaw;
+            String normalized = statusRaw.toLowerCase();
+
+            // Normalize known statuses
+            if (normalized.contains("fully") || normalized.contains("executed")) {
+                status = "Fully Executed";
+            } else if (normalized.contains("reject") || normalized.contains("rejected")) {
+                status = "Rejected";
+            } else if (normalized.contains("pending") || normalized.contains("process")) {
+                status = "Pending";
+            } else if (normalized.contains("partially")) {
+                status = "Pending"; // treat partially executed as pending for now
+            }
+
+            // If fully executed, use avgPrice if available else try orderPrice
+            if ("Fully Executed".equals(status)) {
                 String avgPrice = trade.optString("avgPrice", "").trim();
-                if(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus()) ) {
-                    tradeSetupEntity.setEntryPrice(Double.parseDouble(avgPrice));
-                }else if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus()) ) {
-                    tradeSetupEntity.setExitPrice(Double.parseDouble(avgPrice));
+                String orderPrice = trade.optString("orderPrice", "").trim();
+                Double price = null;
+                if (!avgPrice.isBlank()) {
+                    try { price = Double.parseDouble(avgPrice); } catch (Exception ignored) {}
+                }
+                if (price == null && !orderPrice.isBlank()) {
+                    try { price = Double.parseDouble(orderPrice); } catch (Exception ignored) {}
+                }
+                if (price != null) {
+                    if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus())) {
+                        tradeSetupEntity.setEntryPrice(price);
+                    } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
+                        tradeSetupEntity.setExitPrice(price);
+                    }
                 }
             }
+
             orderStatusSet.add(status);
-//
-//            switch (status) {
-//                case "Rejected":
-//                    String reason = trade.optString("clientGroup", "Unknown");
-//                    log.warn("❌ Order Rejected - Reason: {}", reason);
-//                    return TradeStatus.REJECTED;
-//
-//                case "Fully Executed":
-//                    log.info("✅ Order Fully Executed - Order ID: {}", trade.optString("orderId"));
-//                    String orderPrice = trade.optString("orderPrice", "").trim();
-//                    tradeSetupEntity.setEntryPrice(Double.parseDouble(orderPrice));
-//                    return TradeStatus.FULLY_EXECUTED;
-//            }
         }
 
-        if(orderStatusSet.contains("Fully Executed")){
-            return TradeStatus.FULLY_EXECUTED;
-        }
+        if (orderStatusSet.contains("Fully Executed")) return TradeStatus.FULLY_EXECUTED;
+        if (orderStatusSet.contains("Pending")) return TradeStatus.PENDING;
+        if (orderStatusSet.contains("Rejected")) return TradeStatus.REJECTED;
 
-        if(orderStatusSet.contains("Pending")){
-            return TradeStatus.PENDING;
-        }
-
-        if(orderStatusSet.contains("Rejected")){
-            return TradeStatus.REJECTED;
-        }
-
-        // Still in progress or partially executed
-        log.info("⏳ Order is still pending or partially executed.");
+        // Still in progress or unknown status
+        log.info("⏳ Order status set did not contain final state (seen={}): treating as NO_RECORDS/IN_PROGRESS", orderStatusSet);
         return TradeStatus.NO_RECORDS;
     }
 
