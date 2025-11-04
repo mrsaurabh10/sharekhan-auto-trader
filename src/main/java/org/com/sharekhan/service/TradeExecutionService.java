@@ -390,62 +390,80 @@ public class TradeExecutionService {
 
     @Transactional
     public void squareOff(TriggeredTradeSetupEntity trade, double exitPrice, String exitReason) {
-        // Place opposite order (SELL for buy-side trades)
+        // Re-load the trade from DB (within transaction) to avoid races. Claim the trade by setting status
+        TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId())
+                .orElseThrow(() -> new RuntimeException("Trade not found: " + trade.getId()));
+
+        // If already in exit flow or already exited, do not place duplicate exit orders
+        if (persisted.getStatus() == TriggeredTradeStatus.EXIT_ORDER_PLACED
+                || persisted.getStatus() == TriggeredTradeStatus.EXITED_SUCCESS
+                || persisted.getStatus() == TriggeredTradeStatus.EXIT_FAILED) {
+            log.info("⚠️ Square-off skipped: trade {} already in exit state {}", persisted.getId(), persisted.getStatus());
+            return;
+        }
+
+        // Claim the trade: mark as EXIT_ORDER_PLACED before placing the broker exit order so other threads will skip
+        persisted.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        persisted.setExitReason(exitReason);
+        // do not set exitOrderId yet; save claim
+        triggeredTradeRepo.save(persisted);
+
+        // Build exit order params using persisted (fresh) values
         OrderParams exitOrder = new OrderParams();
-        exitOrder.customerId =     trade.getCustomerId();
-        exitOrder.exchange = trade.getExchange();
-        exitOrder.scripCode = trade.getScripCode();
-        exitOrder.strikePrice = String.valueOf(trade.getStrikePrice());
-        exitOrder.optionType = trade.getOptionType();
-        exitOrder.tradingSymbol = trade.getSymbol();
-        exitOrder.quantity = trade.getQuantity().longValue();
-        exitOrder.instrumentType = trade.getInstrumentType();
+        exitOrder.customerId = persisted.getCustomerId();
+        exitOrder.exchange = persisted.getExchange();
+        exitOrder.scripCode = persisted.getScripCode();
+        exitOrder.strikePrice = String.valueOf(persisted.getStrikePrice());
+        exitOrder.optionType = persisted.getOptionType();
+        exitOrder.tradingSymbol = persisted.getSymbol();
+        exitOrder.quantity = persisted.getQuantity().longValue();
+        exitOrder.instrumentType = persisted.getInstrumentType();
         exitOrder.productType = "INVESTMENT";
-        exitOrder.price = String.valueOf(exitPrice); //0.0 means Market Price
-        exitOrder.transactionType = "S"; // Assuming original was "B"
+        exitOrder.price = String.valueOf(exitPrice);
+        exitOrder.transactionType = "S";
         exitOrder.orderType = "NORMAL";
-        exitOrder.expiry = trade.getExpiry();
+        exitOrder.expiry = persisted.getExpiry();
         exitOrder.requestType = "NEW";
-        exitOrder.afterHour =  "N";
+        exitOrder.afterHour = "N";
         exitOrder.validity = "GFD";
         exitOrder.rmsCode = "ANY";
         exitOrder.disclosedQty = 0L;
         exitOrder.channelUser = TokenLoginAutomationService.clientCode;
 
-        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
+        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
         SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
         JSONObject response = sharekhanConnect.placeOrder(exitOrder);
 
-        if (response == null ) {
-            log.error("❌ Sharekhan order failed or returned null for trigger {}", trade.getScripCode());
+        if (response == null) {
+            log.error("❌ Sharekhan exit order failed or returned null for trade {}", persisted.getId());
+            persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
+            triggeredTradeRepo.save(persisted);
             return;
-        }else if (!response.has("data")){
-            log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trade.getScripCode());
+        } else if (!response.has("data")) {
+            log.error("❌ Sharekhan exit order failed or returned invalid response for trade {}: {}", persisted.getId(), response);
+            persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
+            triggeredTradeRepo.save(persisted);
             return;
-        }else if (response.getJSONObject("data").getString("orderId") != null){
-            String exitOrderId = response.getJSONObject("data").getString("orderId");
-            //order placed  successfully
-            log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
+        } else {
+            String exitOrderId = response.getJSONObject("data").optString("orderId", null);
+            if (exitOrderId == null || exitOrderId.isBlank()) {
+                log.error("❌ Sharekhan exit order response missing orderId for trade {}: {}", persisted.getId(), response);
+                persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
+                triggeredTradeRepo.save(persisted);
+                return;
+            }
 
+            // Order placed successfully - update persisted entity with exitOrderId (status already set to EXIT_ORDER_PLACED)
+            persisted.setExitOrderId(exitOrderId);
+            persisted.setExitReason(exitReason);
+            triggeredTradeRepo.save(persisted);
 
-            trade.setExitOrderId(exitOrderId);
-            trade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED); // ✅ New status
-           // trade.setExitPrice(exitPrice);
-            trade.setExitReason(exitReason);
-            trade.setExitOrderId(exitOrderId);
-            //trade.setPnl((exitPrice - trade.getExitPrice()) * trade.getQuantity()); // adjust for B/S
-            triggeredTradeRepo.save(trade);
-            //subscribe to ack feed
-            // 🔌 Subscribe to ACK
-            webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
-            //String feedKey = trade.getExchange() + trade.getScripCode();
-            //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
+            // Subscribe to ACK and publish event to start polling
+            webSocketSubscriptionService.subscribeToAck(String.valueOf(persisted.getCustomerId()));
+            eventPublisher.publishEvent(new OrderPlacedEvent(persisted));
 
-            //monitor trade
-            eventPublisher.publishEvent(new OrderPlacedEvent(trade));
-
-            log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trade.getScripCode(), exitPrice);
+            log.info("✅ Exit order placed for trade {}: exitOrderId={}", persisted.getId(), exitOrderId);
         }
 
 
