@@ -86,9 +86,8 @@ public class WebSocketClientService  {
     private void sendSubscribeMessage() {
         String subscribeMsg = "{\"action\":\"subscribe\",\"key\":[\"feed\",\"ack\"],\"value\":[\"\"]}";
         session.getAsyncRemote().sendText(subscribeMsg);
-        String subscribeAckMsg = "{\"action\":\"ack\",\"key\":[\"\"],\"value\":[\"" + TokenLoginAutomationService.customerId + "\"]}";
-        session.getAsyncRemote().sendText(subscribeAckMsg);
-        log.info("📡 Subscribing Ack to {}", subscribeAckMsg);
+        // NOTE: Per-customer ACK subscriptions will be created when trades are placed.
+        log.info("📡 Sent initial subscribe message (ACK subscriptions will be created per customer when trades are placed)");
     }
 
 

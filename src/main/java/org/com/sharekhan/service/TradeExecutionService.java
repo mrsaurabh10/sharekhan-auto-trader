@@ -2,7 +2,6 @@ package org.com.sharekhan.service;
 
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.model.OrderParams;
-import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
@@ -195,6 +194,9 @@ public class TradeExecutionService {
             finalQuantity = (long) request.getQuantity() * lotSize;
         }
 
+        // determine customer id (userId) - prefer request.userId, fallback to token-based default
+        Long customerIdToUse = request.getUserId() != null ? request.getUserId() : TokenLoginAutomationService.customerId;
+
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
                 .symbol(request.getInstrument())
                 .scripCode(script.getScripCode())
@@ -215,6 +217,8 @@ public class TradeExecutionService {
                 .intraday(request.getIntraday())
                 .build();
 
+        // attach customer id
+        entity.setCustomerId(customerIdToUse);
         TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
         String key = entity.getExchange() + entity.getScripCode();
         webSocketSubscriptionService.subscribeToScrip(key);
@@ -232,13 +236,15 @@ public class TradeExecutionService {
 
     public void execute(TriggerTradeRequestEntity trigger, double ltp) {
         try {
-            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
-
+            // Prefer a customer specific token when placing the order
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, trigger.getCustomerId());
+            if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
             SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
             // 🧾 Build order request
             OrderParams order = new OrderParams();
-            order.customerId = TokenLoginAutomationService.customerId; // You may later fetch this from the user/session
+            // Use the customerId stored on the trigger (set when the trigger was created); fallback to default if missing
+            order.customerId = trigger.getCustomerId() != null ? trigger.getCustomerId() : TokenLoginAutomationService.customerId;
             order.scripCode =  trigger.getScripCode();
             order.tradingSymbol = trigger.getSymbol();
             order.exchange = trigger.getExchange();
@@ -295,7 +301,8 @@ public class TradeExecutionService {
 
                 triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
                 triggeredTradeSetupEntity.setExchange(trigger.getExchange());
-                triggeredTradeSetupEntity.setCustomerId(TokenLoginAutomationService.customerId);
+                // attach customer id from the trigger (fallback to default token-based customer id)
+                triggeredTradeSetupEntity.setCustomerId(trigger.getCustomerId() != null ? trigger.getCustomerId() : TokenLoginAutomationService.customerId);
                 triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
                 triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
                 triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());
@@ -381,82 +388,25 @@ public class TradeExecutionService {
 
             log.info("🛑 Force-closing trade {} at price: {}", trade.getId(), exitPrice);
 
-            squareOff(trade, exitPrice,"Force fully close the trade"); // reuse existing logic
+            // delegate directly to OrderExitService to avoid self-invocation of transactional logic
+            orderExitService.performSquareOff(trade, exitPrice, "Force fully close the trade"); // reuse existing logic
             return true;
         } else {
             return false;
         }
     }
 
-    @Transactional
+    @Autowired
+    private OrderExitService orderExitService;
+
     public void squareOff(TriggeredTradeSetupEntity trade, double exitPrice, String exitReason) {
-        // Place opposite order (SELL for buy-side trades)
-        OrderParams exitOrder = new OrderParams();
-        exitOrder.customerId =     trade.getCustomerId();
-        exitOrder.exchange = trade.getExchange();
-        exitOrder.scripCode = trade.getScripCode();
-        exitOrder.strikePrice = String.valueOf(trade.getStrikePrice());
-        exitOrder.optionType = trade.getOptionType();
-        exitOrder.tradingSymbol = trade.getSymbol();
-        exitOrder.quantity = trade.getQuantity().longValue();
-        exitOrder.instrumentType = trade.getInstrumentType();
-        exitOrder.productType = "INVESTMENT";
-        exitOrder.price = String.valueOf(exitPrice); //0.0 means Market Price
-        exitOrder.transactionType = "S"; // Assuming original was "B"
-        exitOrder.orderType = "NORMAL";
-        exitOrder.expiry = trade.getExpiry();
-        exitOrder.requestType = "NEW";
-        exitOrder.afterHour =  "N";
-        exitOrder.validity = "GFD";
-        exitOrder.rmsCode = "ANY";
-        exitOrder.disclosedQty = 0L;
-        exitOrder.channelUser = TokenLoginAutomationService.clientCode;
-
-        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
-        SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
-
-        JSONObject response = sharekhanConnect.placeOrder(exitOrder);
-
-        if (response == null ) {
-            log.error("❌ Sharekhan order failed or returned null for trigger {}", trade.getScripCode());
-            return;
-        }else if (!response.has("data")){
-            log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trade.getScripCode());
-            return;
-        }else if (response.getJSONObject("data").getString("orderId") != null){
-            String exitOrderId = response.getJSONObject("data").getString("orderId");
-            //order placed  successfully
-            log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
-
-
-            trade.setExitOrderId(exitOrderId);
-            trade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED); // ✅ New status
-           // trade.setExitPrice(exitPrice);
-            trade.setExitReason(exitReason);
-            trade.setExitOrderId(exitOrderId);
-            //trade.setPnl((exitPrice - trade.getExitPrice()) * trade.getQuantity()); // adjust for B/S
-            triggeredTradeRepo.save(trade);
-            //subscribe to ack feed
-            // 🔌 Subscribe to ACK
-            webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
-            //String feedKey = trade.getExchange() + trade.getScripCode();
-            //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
-
-            //monitor trade
-            eventPublisher.publishEvent(new OrderPlacedEvent(trade));
-
-            log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trade.getScripCode(), exitPrice);
-        }
-
-
-
-        log.info("✅ Trade exited [{}]: PnL = {}", exitReason, trade.getPnl());
+        orderExitService.performSquareOff(trade, exitPrice, exitReason);
     }
 
     public void squareOffTrade(Long id) {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Trade not found"));
-        this.squareOff(tradeSetupEntity,ltpCacheService.getLtp(tradeSetupEntity.getScripCode()),
+        orderExitService.performSquareOff(tradeSetupEntity, ltpCacheService.getLtp(tradeSetupEntity.getScripCode()),
                 "Manual Exit");
     }
 
@@ -530,6 +480,11 @@ public class TradeExecutionService {
         return triggeredTradeRepo.findTop10ByOrderByIdDesc();
     }
 
+    public List<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId) {
+        if (userId == null) return getRecentExecutions();
+        return triggeredTradeRepo.findTop10ByCustomerIdOrderByIdDesc(userId);
+    }
+
     public void subscribeForOpenTrades(){
         log.info("🚀 Starting to monitor trades...");
         // 1. Subscribe to LTP for all pending trade requests
@@ -563,7 +518,8 @@ public class TradeExecutionService {
                     log.error("❌ Failed to subscribe LTP for trade request {}", tradeSetupEntity.getId(), e);
                 }
             }
-            webSocketSubscriptionHelper.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
+            // subscribe to ACK for this customer's feed
+            webSocketSubscriptionService.subscribeToAck(String.valueOf(executedTrades.get(0).getCustomerId()));
         }
 
         log.info("✅ Monitoring setup complete.");
@@ -572,4 +528,17 @@ public class TradeExecutionService {
 
 
 
+    /**
+     * Admin helper: execute a saved TriggerTradeRequestEntity (re-use existing execute flow)
+     */
+    public void executeTradeFromEntity(TriggerTradeRequestEntity requestEntity) {
+        // attempt to fetch current LTP for the scrip
+        Double ltp = ltpCacheService.getLtp(requestEntity.getScripCode());
+        if (ltp == null) {
+            // if LTP not available, fall back to entry price
+            ltp = requestEntity.getEntryPrice();
+        }
+        // run execution asynchronously or synchronously — here synchronous call
+        execute(requestEntity, ltp);
+    }
 }

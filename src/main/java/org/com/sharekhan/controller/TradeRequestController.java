@@ -11,7 +11,10 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @RestController
 @RequestMapping("/api/trades")
@@ -22,10 +25,14 @@ public class TradeRequestController {
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
 
     @PostMapping("/cancel-request/{id}")
-    public ResponseEntity<String> cancelRequest(@PathVariable Long id) {
+    public ResponseEntity<String> cancelRequest(@PathVariable Long id, @RequestParam(name = "userId", required = false) Long userId) {
         return tradeRequestRepository.findById(id)
                 .map(request -> {
-                    // Optional: Check status (e.g. only cancel if still "PENDING")
+                    Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                    boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+                    if (!isAdmin && userId != null && request.getCustomerId() != null && !request.getCustomerId().equals(userId)) {
+                        return ResponseEntity.status(403).body("Forbidden: request does not belong to user");
+                    }
                     tradeRequestRepository.deleteById(id);
                     webSocketSubscriptionHelper.unsubscribeFromScrip(request.getExchange() + request.getScripCode());
                     return ResponseEntity.ok("Request cancelled");
@@ -63,6 +70,11 @@ public class TradeRequestController {
                         changed = true;
                     }
                     if (changed) {
+                        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                        boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+                        if (!isAdmin && update.getUserId() != null && request.getCustomerId() != null && !request.getCustomerId().equals(update.getUserId())) {
+                            return ResponseEntity.status(403).body("Forbidden: cannot modify another user's request");
+                        }
                         TriggerTradeRequestEntity saved = tradeRequestRepository.save(request);
                         return ResponseEntity.ok(saved);
                     }

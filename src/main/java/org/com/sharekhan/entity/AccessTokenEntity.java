@@ -27,4 +27,7 @@ public class AccessTokenEntity {
     @Column(name = "brokerName", nullable = true)
     private String brokerName;
 
-} 
+    @Column(name = "customer_id", nullable = true)
+    private Long customerId;
+
+}

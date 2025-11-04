@@ -1,0 +1,50 @@
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/scriptdbusertest  # file-based for persistence
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+      settings:
+        web-allow-others: true
+  jpa:
+    hibernate:
+      ddl-auto: update   # or 'create' for fresh schema every run
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+  jackson:
+    time-zone: Asia/Kolkata
+server:
+  port: 8080
+logging:
+  level:
+    org:
+      hibernate:
+        SQL: OFF
+        type:
+          descriptor:
+            sql: OFF
+        orm:
+          jdbc:
+            bind: OFF
+        tool:
+          hbm2ddl: ERROR
+      springframework:
+        orm:
+          jpa: ERROR
+
+# Application specific
+app:
+  default-broker: SHAREKHAN
+  mstock:
+    api-key: "MusnORunrjCcP+x8+Fw0YSaiELJKBT5OL3ipnUptoD4="
+    totp-secret: "3TWOBV56LA63H7JLWEY57K6DFIXOR5ED"
+  sharekhan:
+    client-code: "SGUPTA78"
+    password: "Anvi@2023"
+    totp-secret: "3VNUAS5GNB5UXCXR"

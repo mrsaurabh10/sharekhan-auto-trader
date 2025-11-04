@@ -3,6 +3,7 @@ package org.com.sharekhan.repository;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -15,4 +16,10 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     List<TriggerTradeRequestEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
 
     List<TriggerTradeRequestEntity>  findTop10ByOrderByIdDesc();
+
+    // customer-scoped recent requests
+    List<TriggerTradeRequestEntity> findTop10ByCustomerIdOrderByIdDesc(Long customerId);
+
+    @Query("select distinct t.customerId from TriggerTradeRequestEntity t where t.customerId is not null")
+    List<Long> findDistinctCustomerIds();
 }

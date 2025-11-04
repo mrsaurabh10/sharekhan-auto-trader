@@ -50,7 +50,11 @@ public class OrderStatusPollingService {
             String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
             try {
 
-                String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
+                // Prefer a customer-specific token if available
+                String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, trade.getCustomerId()); // ✅ fetch fresh token per-customer
+                if (accessToken == null) {
+                    accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+                }
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
                 JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(),

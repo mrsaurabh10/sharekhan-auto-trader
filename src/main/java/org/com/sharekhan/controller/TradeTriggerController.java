@@ -23,13 +23,21 @@ public class TradeTriggerController {
 
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final ScriptMasterRepository scriptMasterRepository;
-        private final WebSocketSubscriptionService webSocketSubscriptionService;
+    private final WebSocketSubscriptionService webSocketSubscriptionService;
     private final TradeExecutionService tradeExecutionService;
 
     @PostMapping("/trigger-on-price")
     public ResponseEntity<?> createTriggerTrade(@RequestBody TriggerRequest request) {
+        if (request.getUserId() == null) {
+            // allow null — service will fallback to default customer id, but we still accept it
+        }
         TriggerTradeRequestEntity saved  = tradeExecutionService.executeTrade(request);
         return ResponseEntity.ok(saved);
+    }
+
+    @GetMapping("/requests/user/{userId}")
+    public ResponseEntity<?> getRequestsForUser(@PathVariable Long userId) {
+        return ResponseEntity.ok(triggerTradeRequestRepository.findTop10ByCustomerIdOrderByIdDesc(userId));
     }
 
     @PutMapping("/force-close/{scripCode}")

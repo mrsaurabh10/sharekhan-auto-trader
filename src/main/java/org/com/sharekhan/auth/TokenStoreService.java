@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -20,10 +21,15 @@ public class TokenStoreService {
     // use the new persistence service instead of direct repository access
     private final AccessTokenPersistenceService persistenceService;
     private final BrokerAuthProviderRegistry providerRegistry;
+    private final org.com.sharekhan.service.BrokerCredentialsService brokerCredentialsService;
 
-    // token storage per broker
+    // token storage per broker (global default)
     private final Map<Broker, String> tokenMap = new ConcurrentHashMap<>();
     private final Map<Broker, Instant> expiryMap = new ConcurrentHashMap<>();
+
+    // token storage per broker+customer
+    private final Map<String, String> tokenByCustomer = new ConcurrentHashMap<>(); // key = broker.displayName + ':' + customerId
+    private final Map<String, Instant> expiryByCustomer = new ConcurrentHashMap<>();
 
     @Value("${app.default-broker:SHAREKHAN}")
     private String defaultBrokerName;
@@ -49,7 +55,7 @@ public class TokenStoreService {
 
         log.info("🔧 Using default broker: {}", defaultBroker);
 
-        // load tokens for all known brokers; if missing/expired, try to fetch via provider
+        // load global tokens for all brokers
         for (Broker broker : Broker.values()) {
             try {
                 AccessTokenEntity latest = persistenceService.findLatestByBroker(broker.getDisplayName());
@@ -103,6 +109,21 @@ public class TokenStoreService {
         }
     }
 
+    // Per-customer load
+    public void loadFromDb(Broker broker, Long customerId) {
+        if (customerId == null) return;
+        Optional<AccessTokenEntity> latestOpt = persistenceService.findLatestByBrokerAndCustomer(broker.getDisplayName(), customerId);
+        if (latestOpt.isPresent()) {
+            AccessTokenEntity latest = latestOpt.get();
+            if (Instant.now().isBefore(latest.getExpiry())) {
+                String key = broker.getDisplayName() + ":" + customerId;
+                tokenByCustomer.put(key, latest.getToken());
+                expiryByCustomer.put(key, latest.getExpiry());
+                log.info("🔐 Loaded access token for broker {} customer {} from DB. Expiry: {}", broker, customerId, latest.getExpiry());
+            }
+        }
+    }
+
     // Backwards-compatible default methods (use configured default broker)
     public void updateToken(String token, long expiresInSeconds) {
         updateToken(defaultBroker, token, expiresInSeconds);
@@ -118,6 +139,17 @@ public class TokenStoreService {
         persistenceService.replaceToken(broker.getDisplayName(), token, expiry);
     }
 
+    // Per-customer update
+    public void updateTokenForCustomer(Broker broker, Long customerId, String token, long expiresInSeconds) {
+        if (customerId == null) return;
+        Instant expiry = Instant.now().plusSeconds(expiresInSeconds - 60);
+        String key = broker.getDisplayName() + ":" + customerId;
+        tokenByCustomer.put(key, token);
+        expiryByCustomer.put(key, expiry);
+        log.info("🔐 Access token updated for {} customer {}. New expiry: {}", broker, customerId, expiry);
+        persistenceService.replaceTokenForCustomer(broker.getDisplayName(), customerId, token, expiry);
+    }
+
     public boolean isExpired() {
         return isExpired(defaultBroker);
     }
@@ -125,6 +157,14 @@ public class TokenStoreService {
     public boolean isExpired(Broker broker) {
         String token = tokenMap.get(broker);
         Instant exp = expiryMap.get(broker);
+        return token == null || exp == null || Instant.now().isAfter(exp);
+    }
+
+    public boolean isExpired(Broker broker, Long customerId) {
+        if (customerId == null) return isExpired(broker);
+        String key = broker.getDisplayName() + ":" + customerId;
+        String token = tokenByCustomer.get(key);
+        Instant exp = expiryByCustomer.get(key);
         return token == null || exp == null || Instant.now().isAfter(exp);
     }
 
@@ -136,12 +176,57 @@ public class TokenStoreService {
         return isExpired(broker) ? null : tokenMap.get(broker);
     }
 
+    // Per-customer getter (prefer customer-specific token if available and valid)
+    public String getValidTokenOrNull(Broker broker, Long customerId) {
+        if (customerId != null) {
+            String key = broker.getDisplayName() + ":" + customerId;
+            // 1) in-memory
+            if (!isExpired(broker, customerId) && tokenByCustomer.containsKey(key)) return tokenByCustomer.get(key);
+
+            // 2) try load from DB persistence
+            try {
+                var opt = persistenceService.findLatestByBrokerAndCustomer(broker.getDisplayName(), customerId);
+                if (opt.isPresent()) {
+                    var ent = opt.get();
+                    if (ent.getExpiry() != null && Instant.now().isBefore(ent.getExpiry())) {
+                        tokenByCustomer.put(key, ent.getToken());
+                        expiryByCustomer.put(key, ent.getExpiry());
+                        return ent.getToken();
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            // 3) try provider auto-login using stored credentials
+            try {
+                var credsOpt = brokerCredentialsService.findForBrokerAndCustomer(broker.getDisplayName(), customerId);
+                var provider = providerRegistry.getProvider(broker);
+                if (provider != null && credsOpt.isPresent()) {
+                    try {
+                        AuthTokenResult res = provider.loginAndFetchToken(credsOpt.get());
+                        if (res != null && res.token() != null) {
+                            updateTokenForCustomer(broker, customerId, res.token(), res.expiresIn());
+                            return res.token();
+                        }
+                    } catch (Exception e) {
+                        // swallow and fallback
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        return getValidTokenOrNull(broker);
+    }
+
     public String getAccessToken() {
         return getValidTokenOrNull();
     }
 
     public String getAccessToken(Broker broker) {
         return getValidTokenOrNull(broker);
+    }
+
+    public String getAccessToken(Broker broker, Long customerId) {
+        return getValidTokenOrNull(broker, customerId);
     }
 
     public void clear() {
@@ -153,5 +238,17 @@ public class TokenStoreService {
         expiryMap.remove(broker);
         persistenceService.deleteByBroker(broker.getDisplayName());
         log.info("🔐 Access token cleared for {}.", broker);
+    }
+
+    public void clear(Broker broker, Long customerId) {
+        if (customerId == null) {
+            clear(broker);
+            return;
+        }
+        String key = broker.getDisplayName() + ":" + customerId;
+        tokenByCustomer.remove(key);
+        expiryByCustomer.remove(key);
+        persistenceService.deleteByBroker(broker.getDisplayName());
+        log.info("🔐 Access token cleared for {} customer {}.", broker, customerId);
     }
 }

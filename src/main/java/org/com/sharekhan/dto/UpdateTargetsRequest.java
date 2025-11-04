@@ -10,4 +10,5 @@ public class UpdateTargetsRequest {
     private Double target3;
     private Long quantity;
     private Boolean intraday;
+    private Long userId; // optional user id to validate ownership
 }

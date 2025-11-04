@@ -1,12 +1,13 @@
 package org.com.sharekhan.controller;
 
-import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.UpdateTargetsRequest;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -16,11 +17,15 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping("/api/trades")
-@RequiredArgsConstructor
 public class TradeExecutionController {
 
     private final TradeExecutionService tradeExecutionService;
     private final TriggeredTradeSetupRepository triggeredTradeSetupRepository;
+
+    public TradeExecutionController(TradeExecutionService tradeExecutionService, TriggeredTradeSetupRepository triggeredTradeSetupRepository) {
+        this.tradeExecutionService = tradeExecutionService;
+        this.triggeredTradeSetupRepository = triggeredTradeSetupRepository;
+    }
 
     @PostMapping("/square-off/{id}")
     public ResponseEntity<String> squareOff(@PathVariable Long id) {
@@ -69,6 +74,11 @@ public class TradeExecutionController {
                         changed = true;
                     }
                     if (changed) {
+                        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+                        boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+                        if (!isAdmin && update.getUserId() != null && trade.getCustomerId() != null && !trade.getCustomerId().equals(update.getUserId())) {
+                            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: cannot update another user's execution");
+                        }
                         TriggeredTradeSetupEntity saved = triggeredTradeSetupRepository.save(trade);
                         return ResponseEntity.ok(saved);
                     }

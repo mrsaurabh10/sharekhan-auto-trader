@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -19,12 +20,12 @@ public class OrderViewController {
     @Autowired private TradeExecutionService tradeExecutionService;
 
     @GetMapping("/requests")
-    public ResponseEntity<?>  getRequestedOrders() {
-            return ResponseEntity.ok(tradingRequestService.getRecentRequests());
+    public ResponseEntity<?>  getRequestedOrders(@RequestParam(name = "userId", required = false) Long userId) {
+            return ResponseEntity.ok(tradingRequestService.getRecentRequestsForUser(userId));
      }
 
     @GetMapping("/executed")
-    public ResponseEntity<?> getExecuted() {
-        return ResponseEntity.ok(tradeExecutionService.getRecentExecutions());
+    public ResponseEntity<?> getExecuted(@RequestParam(name = "userId", required = false) Long userId) {
+        return ResponseEntity.ok(tradeExecutionService.getRecentExecutionsForUser(userId));
     }
 }

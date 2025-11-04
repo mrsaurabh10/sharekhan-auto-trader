@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <title>Admin Dashboard</title>
+    <style>
+        body{font-family:Arial,Helvetica,sans-serif;background:#f6f8fb;margin:0;padding:1rem}
+        .top{display:flex;justify-content:space-between;align-items:center}
+        .card{background:#fff;padding:1rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.06);margin-top:1rem}
+        table{width:100%;border-collapse:collapse}
+        th,td{padding:0.5rem;border-bottom:1px solid #eee;text-align:left}
+        .btn{padding:0.35rem 0.5rem;border-radius:6px;border:0;cursor:pointer}
+        .btn-primary{background:#2563eb;color:#fff}
+        .btn-danger{background:#ef4444;color:#fff}
+    </style>
+</head>
+<body>
+<div class="top">
+    <h1>Admin Dashboard</h1>
+    <div>
+        <label>User ID: <input id="filterUser" type="number" /></label>
+        <button class="btn btn-primary" onclick="loadData()">Load</button>
+        <button class="btn" style="margin-left:1rem;" onclick="doLogout()">Logout</button>
+    </div>
+</div>
+
+<div class="card">
+    <h3>Users</h3>
+    <div id="userTabs" style="display:flex;gap:0.5rem;flex-wrap:wrap"></div>
+    <div id="userContents" style="margin-top:1rem"></div>
+</div>
+
+<div class="card">
+    <h3>Admin Users</h3>
+    <div id="adminUsersList" style="margin-bottom:0.5rem"></div>
+    <div style="display:flex;gap:0.5rem;align-items:center;">
+        <input id="newAdminUser" placeholder="username" />
+        <input id="newAdminPass" placeholder="password" type="password" />
+        <button class="btn btn-primary" onclick="createAdminUser()">Create</button>
+    </div>
+    <small style="display:block;margin-top:0.5rem;color:#666">You cannot delete the currently logged-in admin.</small>
+</div>
+
+<div class="card">
+    <h3>Regular Users</h3>
+    <div id="appUsersList" style="margin-bottom:0.5rem"></div>
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.5rem;">
+        <input id="newAppUsername" placeholder="username" />
+        <input id="newAppCustomerId" placeholder="customerId" type="number" style="width:140px" />
+        <input id="newAppBrokerApiKey" placeholder="brokerApiKey" />
+        <input id="newAppBrokerUser" placeholder="brokerUsername" />
+        <input id="newAppBrokerPw" placeholder="brokerPassword" />
+        <input id="newAppNotes" placeholder="notes" />
+        <button class="btn btn-primary" onclick="createAppUser()">Create User</button>
+    </div>
+    <small style="display:block;margin-top:0.5rem;color:#666">Broker credentials are stored encrypted.</small>
+</div>
+
+<div class="card">
+    <h3>Pending Requests</h3>
+    <table id="requestsTbl">
+        <thead><tr><th>ID</th><th>User</th><th>Symbol</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<div class="card">
+    <h3>Triggered / Executed Trades</h3>
+    <table id="execTbl">
+        <thead><tr><th>ID</th><th>User</th><th>Symbol</th><th>Entry</th><th>Exit</th><th>PNL</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody></tbody>
+    </table>
+</div>
+
+<script th:inline="javascript">
+    /*<![CDATA[*/
+    // CSRF settings from server-rendered model
+    const csrfToken = /*[[${_csrf.token}]]*/ '';
+    const csrfHeader = /*[[${_csrf.headerName}]]*/ '';
+    const csrfParam = /*[[${_csrf.parameterName}]]*/ '_csrf';
+    /*]]>*/
+
+    // load users and render tabs
+    async function loadUsers(){
+        const res = await fetch('/admin/users');
+        const users = await res.json();
+        const tabs = document.getElementById('userTabs');
+        const contents = document.getElementById('userContents');
+        tabs.innerHTML=''; contents.innerHTML='';
+        if(!users || users.length===0){
+            tabs.innerHTML = '<div style="color:#666">No configured users</div>';
+            return;
+        }
+        users.forEach((u, idx) => {
+            const btn = document.createElement('button');
+            btn.className='btn';
+            btn.textContent = 'User '+u;
+            btn.onclick = () => selectUserTab(u);
+            tabs.appendChild(btn);
+            if(idx===0) selectUserTab(u);
+        })
+    }
+
+    async function selectUserTab(userId){
+        document.getElementById('filterUser').value = userId;
+        // render place-order form for this user
+        const contents = document.getElementById('userContents');
+        contents.innerHTML = `
+            <div class="card">
+                <h4>Place Order for User ${userId}</h4>
+                <label>Instrument <input id="po-instrument-${userId}"/></label>
+                <label>Exchange <input id="po-exchange-${userId}"/></label>
+                <label>Entry Price <input id="po-entry-${userId}" type="number" step="0.01"/></label>
+                <label>SL <input id="po-sl-${userId}" type="number" step="0.01"/></label>
+                <label>Target1 <input id="po-t1-${userId}" type="number" step="0.01"/></label>
+                <label>Quantity <input id="po-qty-${userId}" type="number"/></label>
+                <div style="margin-top:0.5rem"><button class='btn btn-primary' onclick="placeOrderForUser(${userId})">Place Order</button></div>
+            </div>
+        `;
+        // load requests+exec for this user into main tables
+        loadData();
+    }
+
+    async function placeOrderForUser(userId){
+        const instrument = document.getElementById('po-instrument-'+userId).value;
+        const exchange = document.getElementById('po-exchange-'+userId).value;
+        const entry = parseFloat(document.getElementById('po-entry-'+userId).value);
+        const sl = parseFloat(document.getElementById('po-sl-'+userId).value);
+        const t1 = parseFloat(document.getElementById('po-t1-'+userId).value);
+        const qty = parseInt(document.getElementById('po-qty-'+userId).value);
+        const body = { instrument: instrument, exchange: exchange, entryPrice: entry, stopLoss: sl, target1: t1, quantity: qty, userId: userId };
+        const res = await fetch('/api/trades/trigger-on-price', { method:'POST', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify(body) });
+        if(res.ok){ alert('Order placed'); loadData(); } else { alert('Failed to place'); }
+    }
+
+    async function loadData(){
+        const userId = document.getElementById('filterUser').value || '';
+        const reqRes = await fetch('/api/orders/requests' + (userId ? '?userId='+userId : ''));
+        const reqJson = await reqRes.json();
+        renderRequests(reqJson);
+
+        const execRes = await fetch('/api/orders/executed' + (userId ? '?userId='+userId : ''));
+        const execJson = await execRes.json();
+        renderExec(execJson);
+    }
+
+    function renderRequests(list){
+        const tbody = document.querySelector('#requestsTbl tbody'); tbody.innerHTML='';
+        list.forEach(r=>{
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${r.id}</td><td>${r.customerId||''}</td><td>${r.symbol}</td><td>${r.entryPrice}</td><td>${r.stopLoss}</td><td>${r.target1||''}</td><td>${r.quantity}</td><td><button class='btn btn-primary' onclick='trigger(${r.id})'>Trigger</button> <button class='btn btn-primary' onclick='editRequest(${r.id})'>Edit</button> <button class='btn btn-danger' onclick='cancel(${r.id})'>Cancel</button></td>`;
+            tbody.appendChild(tr);
+        })
+    }
+
+    function renderExec(list){
+        const tbody = document.querySelector('#execTbl tbody'); tbody.innerHTML='';
+        list.forEach(t=>{
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${t.id}</td><td>${t.customerId||''}</td><td>${t.symbol}</td><td>${t.entryPrice}</td><td>${t.exitPrice||''}</td><td>${t.pnl||''}</td><td>${t.status}</td><td><button class='btn btn-primary' onclick='squareOff(${t.id})'>SquareOff</button> <button class='btn btn-primary' onclick='editExecution(${t.id})'>Edit</button></td>`;
+            tbody.appendChild(tr);
+        })
+    }
+
+    async function trigger(id){
+        const res = await fetch('/admin/trigger/' + id, { method:'POST', headers: { [csrfHeader]: csrfToken } });
+        if(res.ok) loadData(); else alert('Failed to trigger');
+    }
+    async function cancel(id){
+        const res = await fetch('/api/trades/cancel-request/' + id + '?userId=', { method:'POST', headers: { [csrfHeader]: csrfToken } });
+        if(res.ok) loadData(); else alert('Failed to cancel');
+    }
+    async function squareOff(id){
+        const res = await fetch('/api/trades/square-off/' + id, { method:'POST', headers: { [csrfHeader]: csrfToken } });
+        if(res.ok) loadData(); else alert('Failed to square off');
+    }
+
+    async function editRequest(id){
+        const sl = prompt('New Stop Loss (leave blank to skip)');
+        const t1 = prompt('New Target1 (leave blank to skip)');
+        const qty = prompt('New Quantity (leave blank to skip)');
+        const body = {};
+        if (sl) body.stopLoss = parseFloat(sl);
+        if (t1) body.target1 = parseFloat(t1);
+        if (qty) body.quantity = parseInt(qty);
+        const res = await fetch('/admin/update-request/' + id, { method:'POST', headers:{'Content-Type':'application/json', [csrfHeader]: csrfToken}, body: JSON.stringify(body) });
+        if (res.ok) loadData(); else alert('Failed');
+    }
+
+    async function editExecution(id){
+        const sl = prompt('New Stop Loss (leave blank to skip)');
+        const t1 = prompt('New Target1 (leave blank to skip)');
+        const body = {};
+        if (sl) body.stopLoss = parseFloat(sl);
+        if (t1) body.target1 = parseFloat(t1);
+        const res = await fetch('/admin/update-execution/' + id, { method:'POST', headers:{'Content-Type':'application/json', [csrfHeader]: csrfToken}, body: JSON.stringify(body) });
+        if (res.ok) loadData(); else alert('Failed');
+    }
+
+    async function doLogout(){
+        try{
+            // Try header first
+            let res = await fetch('/admin/logout', { method: 'POST', credentials: 'same-origin', headers: { [csrfHeader]: csrfToken } });
+            if (!res.ok) {
+                // fallback: send as form-encoded body with parameter name
+                const body = encodeURIComponent(csrfParam) + '=' + encodeURIComponent(csrfToken);
+                res = await fetch('/admin/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+            }
+        }catch(e){
+            console.warn('Logout request failed', e);
+        }
+        // redirect to login (logout handler will invalidate session)
+        window.location = '/admin/login?logout';
+    }
+
+    // Admin user mgmt
+    async function loadAdminUsers(){
+        const res = await fetch('/admin/admin-users');
+        const list = await res.json();
+        const el = document.getElementById('adminUsersList');
+        el.innerHTML = '';
+        list.forEach(u=>{
+            const div = document.createElement('div');
+            div.style.marginBottom='0.25rem';
+            div.innerHTML = `${u.username} <button class='btn' onclick='promptChange(${u.id})'>Change PW</button> <button class='btn btn-danger' onclick='deleteAdmin(${u.id})'>Delete</button>`;
+            el.appendChild(div);
+        })
+    }
+
+    async function createAdminUser(){
+        const username = document.getElementById('newAdminUser').value;
+        const password = document.getElementById('newAdminPass').value;
+        const res = await fetch('/admin/admin-users', { method:'POST', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify({ username, password }) });
+        if(res.ok){ alert('Created'); document.getElementById('newAdminUser').value=''; document.getElementById('newAdminPass').value=''; loadAdminUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
+    }
+
+    async function deleteAdmin(id){
+        if(!confirm('Delete admin?')) return;
+        const res = await fetch('/admin/admin-users/'+id, { method:'DELETE', headers: { [csrfHeader]: csrfToken } });
+        if(res.ok) { alert('Deleted'); loadAdminUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
+    }
+
+    function promptChange(id){
+        const pw = prompt('New password');
+        if(!pw) return;
+        changeAdminPassword(id, pw);
+    }
+
+    async function changeAdminPassword(id, password){
+        const res = await fetch('/admin/admin-users/'+id+'/password', { method:'POST', headers:{ 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify({ password }) });
+        if(res.ok){ alert('Updated'); loadAdminUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
+    }
+
+    // App user mgmt
+    async function loadAppUsers(){
+        const res = await fetch('/admin/app-users');
+        const list = await res.json();
+        const el = document.getElementById('appUsersList');
+        el.innerHTML = '';
+        list.forEach(u=>{
+            const div = document.createElement('div');
+            div.style.marginBottom='0.25rem';
+            div.innerHTML = `${u.username} (id:${u.customerId||''}) <button class='btn' onclick='editAppUser(${u.id})'>Edit</button> <button class='btn btn-danger' onclick='deleteAppUser(${u.id})'>Delete</button>`;
+            el.appendChild(div);
+        })
+    }
+
+    async function createAppUser(){
+        const username = document.getElementById('newAppUsername').value;
+        const customerId = document.getElementById('newAppCustomerId').value || null;
+        const brokerApiKey = document.getElementById('newAppBrokerApiKey').value || null;
+        const brokerUser = document.getElementById('newAppBrokerUser').value || null;
+        const brokerPw = document.getElementById('newAppBrokerPw').value || null;
+        const notes = document.getElementById('newAppNotes').value || null;
+        const payload = { username, customerId: customerId ? Number(customerId) : null, brokerApiKey, brokerUsername: brokerUser, brokerPassword: brokerPw, notes };
+        const res = await fetch('/admin/app-users', { method:'POST', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify(payload) });
+        if(res.ok){ alert('User created'); document.getElementById('newAppUsername').value=''; document.getElementById('newAppCustomerId').value=''; document.getElementById('newAppBrokerApiKey').value=''; document.getElementById('newAppBrokerUser').value=''; document.getElementById('newAppBrokerPw').value=''; document.getElementById('newAppNotes').value=''; loadAppUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
+    }
+
+    function editAppUser(id){
+        // simple prompt-based edit: load current values then prompt for new ones
+        const api = '/admin/app-users/'+id;
+        fetch(api).then(r=>r.json()).then(u=>{
+            const newCustomer = prompt('customerId', u.customerId || '');
+            const newApiKey = prompt('brokerApiKey (leave blank to keep)', '');
+            const newBrokerUser = prompt('brokerUsername (leave blank to keep)', '');
+            const newBrokerPw = prompt('brokerPassword (leave blank to keep)', '');
+            const newNotes = prompt('notes', u.notes || '');
+            const body = {};
+            if (newCustomer !== null) body.customerId = newCustomer === '' ? null : Number(newCustomer);
+            if (newApiKey !== null && newApiKey !== '') body.brokerApiKey = newApiKey;
+            if (newBrokerUser !== null && newBrokerUser !== '') body.brokerUsername = newBrokerUser;
+            if (newBrokerPw !== null && newBrokerPw !== '') body.brokerPassword = newBrokerPw;
+            if (newNotes !== null) body.notes = newNotes;
+            fetch(api, { method: 'PUT', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify(body) })
+                .then(r=>{ if(r.ok) { alert('Updated'); loadAppUsers(); } else r.text().then(t=>alert('Failed: '+t)); });
+        });
+    }
+
+    async function deleteAppUser(id){
+        if(!confirm('Delete user?')) return;
+        const res = await fetch('/admin/app-users/'+id, { method:'DELETE', headers: { [csrfHeader]: csrfToken } });
+        if(res.ok) { alert('Deleted'); loadAppUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
+    }
+
+    // Auto-load
+    loadUsers();
+    loadData();
+    loadAdminUsers();
+    loadAppUsers();
+ </script>
+</body>
+</html>

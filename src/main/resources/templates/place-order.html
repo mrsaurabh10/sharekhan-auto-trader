@@ -95,6 +95,9 @@
     <label for="quantity">Quantity (Lots)</label>
     <input type="number" id="quantity" name="quantity" required th:default="1">
 
+    <label for="userId">User ID (optional)</label>
+    <input type="number" id="userId" name="userId" placeholder="e.g. 73196">
+
     <label>
         <input type="checkbox" id="intraday" name="intraday">
         Intraday
@@ -744,6 +747,9 @@
             optionType: isNoStrike ? '' : (form.optionType.value || null),
               quantity: parseInt(form.quantity.value),
               intraday: form.intraday.checked
++            ,
++            // include optional user id
++            userId: form.userId && form.userId.value ? parseInt(form.userId.value) : null
           };
 
         fetch('/api/trades/trigger-on-price', {

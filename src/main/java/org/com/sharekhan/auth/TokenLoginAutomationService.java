@@ -33,8 +33,21 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
 
     @Override
     public AuthTokenResult loginAndFetchToken() {
+        // delegate to credential-based method with null to preserve old behavior
+        return loginAndFetchToken((org.com.sharekhan.entity.BrokerCredentialsEntity) null);
+    }
+
+    @Override
+    public AuthTokenResult loginAndFetchToken(org.com.sharekhan.entity.BrokerCredentialsEntity creds) {
+        // If creds provided, prefer values from creds; otherwise fall back to static defaults
+        final String apiKeyToUse = (creds != null && creds.getApiKey() != null && !creds.getApiKey().isBlank()) ? creds.getApiKey() : apiKey;
+        final String pwdToUse = (creds != null && creds.getBrokerPassword() != null && !creds.getBrokerPassword().isBlank()) ? creds.getBrokerPassword() : password;
+        final String totpToUse = (creds != null && creds.getTotpSecret() != null && !creds.getTotpSecret().isBlank()) ? creds.getTotpSecret() : totpSecret;
+        final String secretToUse = (creds != null && creds.getSecretKey() != null && !creds.getSecretKey().isBlank()) ? creds.getSecretKey() : secretKey;
+        final String clientToUse = (creds != null && creds.getClientCode() != null && !creds.getClientCode().isBlank()) ? creds.getClientCode() : clientCode;
+
         SharekhanConnect sharekhanConnect = new SharekhanConnect();
-        String loginUrl = sharekhanConnect.getLoginURL(apiKey, null, "1234", 1234L);
+        String loginUrl = sharekhanConnect.getLoginURL(apiKeyToUse, null, "1234", 1234L);
         Browser browser;
         try (Playwright playwright = Playwright.create()) {
             LaunchOptions options = new LaunchOptions()
@@ -63,24 +76,18 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
             passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
             passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
 
-            page.locator("#mpwd").fill(password, new Locator.FillOptions().setForce(true));
+            page.locator("#mpwd").fill(pwdToUse, new Locator.FillOptions().setForce(true));
 
             Locator loginButton = page.locator("#lg_btn");
             loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
             loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
-            //loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.).setTimeout(30000));
             loginButton.click(new Locator.ClickOptions().setForce(true));
-            //page.waitForURL(url -> url.contains("expected-part-of-url"), new Page.WaitForURLOptions().setTimeout(60000));
-            //loginButton.click();
-
-            //page.locator("#lg_btn").click();
 
             Locator totpLocator = page.locator("#totp");
             totpLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
             totpLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
 
-            //page.waitForSelector("#totp", new Page.WaitForSelectorOptions().setTimeout(30000));
-            Totp totp = new Totp(totpSecret);
+            Totp totp = new Totp(totpToUse);
             String otpCode = totp.now();
             totpLocator.fill(otpCode, new Locator.FillOptions().setForce(true));
             page.locator("button[onclick=\"submitOTP('TOTP')\"]").click();
@@ -91,10 +98,10 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
             Map<String, String> tokens = extractTokensFromUrl(redirectedUrl);
             String encodedToken = URLEncoder.encode(tokens.get("request_token"), StandardCharsets.UTF_8);
 
-            JSONObject response = sharekhanConnect.generateSession(apiKey, encodedToken, null, 12345L, secretKey, 1005L);
+            JSONObject response = sharekhanConnect.generateSession(apiKeyToUse, encodedToken, null, 12345L, secretToUse, 1005L);
             String accessToken = response.getJSONObject("data").getString("token");
 
-            return new AuthTokenResult(accessToken, 8 * 60 * 60); // Sharekhan expires in 6 hour?
+            return new AuthTokenResult(accessToken, 8 * 60 * 60);
         } catch (Exception e) {
             throw new RuntimeException("Login automation failed: " + e.getMessage(), e);
         }

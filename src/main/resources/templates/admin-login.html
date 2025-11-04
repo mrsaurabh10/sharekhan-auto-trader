@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8" />
+    <title>Admin Login</title>
+    <style>
+        body { font-family: Arial, sans-serif; background:#f5f6fa; }
+        .container { max-width:420px; margin:6rem auto; background:#fff;padding:2rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.06);}
+        h2{margin-top:0}
+        label{display:block;margin:0.5rem 0 0.25rem}
+        input[type=password], input[type=text]{width:100%;padding:0.6rem;border:1px solid #ddd;border-radius:4px}
+        button{margin-top:1rem;padding:0.6rem 1rem;border:0;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer}
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Admin Login</h2>
+    <form method="post" action="/admin/login">
+        <!-- CSRF token provided by controller as model attribute _csrf -->
+        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
+
+        <label for="username">Username</label>
+        <input id="username" name="username" type="text" required />
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required />
+        <div style="margin-top:1rem;">
+            <button type="submit">Login</button>
+        </div>
+    </form>
+    <p style="margin-top:1rem;color:#666;font-size:0.9rem">Default admin password taken from env/system property APP_ADMIN_PW or app.admin.pw; otherwise it's 'admin' for dev.</p>
+</div>
+</body>
+</html>

@@ -29,6 +29,7 @@ public class TriggerTradeRequestEntity {
     private String expiry;
 
     private Long quantity; // Final quantity = lots × lotSize
+    private Long customerId;
 
     private Double entryPrice;
     private Double stopLoss;

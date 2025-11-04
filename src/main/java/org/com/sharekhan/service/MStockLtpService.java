@@ -207,4 +207,110 @@ public class MStockLtpService {
         }
         return false;
     }
+
+    /** Fetch LTP using a customer-specific token when available */
+    public Map<String, Map<String, Object>> fetchLtp(List<String> instruments, Long customerId) {
+        if (instruments == null || instruments.isEmpty()) return Collections.emptyMap();
+
+        String storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK, customerId);
+        if (storedToken == null) {
+            // fallback to global token
+            storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK);
+        }
+        if (storedToken == null) {
+            throw new IllegalStateException("No MStock access token available. Please authenticate first.");
+        }
+
+        // delegate to existing implementation by temporarily using the storedToken path
+        // To avoid duplicating logic, we will copy the implementation but using storedToken variable
+        try {
+            StringBuilder sb = new StringBuilder(LTP_URL);
+            sb.append("?");
+            boolean first = true;
+            for (String inst : instruments) {
+                if (!first) sb.append("&");
+                first = false;
+                sb.append("i=").append(URLEncoder.encode(inst, StandardCharsets.UTF_8));
+            }
+
+            String urlStr = sb.toString();
+            log.debug("MStock LTP URL: {}", urlStr);
+
+            HttpResult res = doRequestWithApiKey(urlStr, storedToken);
+
+            if (res.code == 401 || indicatesTokenException(res.body)) {
+                log.warn("MStock LTP returned token error (http {}), attempting refresh via provider", res.code);
+                BrokerAuthProvider provider = providerRegistry.getProvider(Broker.MSTOCK);
+                if (provider != null) {
+                    try {
+                        AuthTokenResult auth = provider.loginAndFetchToken();
+                        if (auth != null && auth.token() != null) {
+                            tokenStoreService.updateToken(Broker.MSTOCK, auth.token(), auth.expiresIn());
+                            storedToken = auth.token();
+                            res = doRequestWithApiKey(urlStr, storedToken);
+                        } else {
+                            log.warn("Provider returned no token during refresh");
+                        }
+                    } catch (Exception e) {
+                        log.error("Failed to refresh MStock token via provider", e);
+                    }
+                } else {
+                    log.warn("No MStock auth provider registered to refresh token");
+                }
+            }
+
+            if (res == null) {
+                throw new RuntimeException("MStock LTP request failed: empty response");
+            }
+
+            if (res.code != 200) {
+                log.warn("MStock LTP failed (http {}): {}", res.code, res.body);
+                throw new RuntimeException("MStock LTP request failed (http:" + res.code + "): " + res.body);
+            }
+
+            log.debug("MStock LTP response (http {}): {}", res.code, res.body);
+
+            JSONObject root = new JSONObject(res.body);
+            String status = root.optString("status", "");
+            if (!"success".equalsIgnoreCase(status)) {
+                throw new RuntimeException("MStock LTP request failed (http:" + res.code + "): " + res.body);
+            }
+
+            JSONObject data = root.optJSONObject("data");
+            Map<String, Map<String, Object>> result = new LinkedHashMap<>();
+            for (String inst : instruments) {
+                if (data == null || data.isNull(inst)) {
+                    result.put(inst, null);
+                } else {
+                    JSONObject instObj = data.optJSONObject(inst);
+                    if (instObj == null) {
+                        result.put(inst, null);
+                    } else {
+                        Map<String, Object> obj = new LinkedHashMap<>();
+                        if (instObj.has("instrument_token") && !instObj.isNull("instrument_token")) {
+                            long token = instObj.optLong("instrument_token", -1);
+                            obj.put("instrument_token", token == -1 ? null : token);
+                        } else {
+                            obj.put("instrument_token", null);
+                        }
+
+                        if (instObj.has("last_price") && !instObj.isNull("last_price")) {
+                            double lastPrice = instObj.optDouble("last_price");
+                            obj.put("last_price", lastPrice);
+                        } else {
+                            obj.put("last_price", null);
+                        }
+
+                        result.put(inst, obj);
+                    }
+                }
+            }
+
+            return result;
+
+        } catch (Exception e) {
+            log.error("❌ Failed to fetch MStock LTP", e);
+            throw new RuntimeException("Failed to fetch MStock LTP: " + e.getMessage(), e);
+        }
+    }
 }
