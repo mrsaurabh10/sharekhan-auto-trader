@@ -1221,114 +1221,205 @@
                     const tbody = document.querySelector('#trades-executed-table tbody');
                     const incomingIds = new Set();
 
-                    data.forEach(setup => {
-                        executionMap[setup.id] = setup;
-                        const id = String(setup.id);
-                        incomingIds.add(id);
-                        const isRejected = setup.status === 'REJECTED';
++                    // Filter data to only include the required statuses
++                    try {
++                        const allowed = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'EXITED_SUCCESS']);
++                        // Keep only entries with allowed status
++                        const filtered = (data || []).filter(d => allowed.has(String(d.status)));
++
++                        // For EXITED_SUCCESS keep only the latest per symbol+qty+entry (assume higher id is latest)
++                        const latestExitByKey = new Map();
++                        filtered.forEach(d => {
++                            if (String(d.status) === 'EXITED_SUCCESS') {
++                                const key = `${d.symbol || d.tradingSymbol || d.scripCode || ''}|${d.quantity || ''}|${d.entryPrice || ''}`;
++                                const existing = latestExitByKey.get(key);
++                                if (!existing || (Number(d.id || 0) > Number(existing.id || 0))) {
++                                    latestExitByKey.set(key, d);
++                                }
++                            }
++                        });
++
++                        // Build finalData: include EXECUTED and EXIT_ORDER_PLACED as-is, and only the latest EXITED_SUCCESS entries from map
++                        const finalData = [];
++                        filtered.forEach(d => {
++                            if (d.status === 'EXITED_SUCCESS') {
++                                const key = `${d.symbol || d.tradingSymbol || d.scripCode || ''}|${d.quantity || ''}|${d.entryPrice || ''}`;
++                                const chosen = latestExitByKey.get(key);
++                                if (chosen && String(chosen.id) === String(d.id)) finalData.push(d);
++                            } else {
++                                finalData.push(d);
++                            }
++                        });
++
++                        data = finalData; // replace data with filtered set for rendering below
++                    } catch (e) {
++                        console.debug('Failed to filter executed trades, falling back to original data', e);
++                    }
++
+                     data.forEach(setup => {
+                         executionMap[setup.id] = setup;
+                         const id = String(setup.id);
+                         incomingIds.add(id);
++                        const isRejected = setup.status === 'REJECTED';
++                        const isExitedSuccess = setup.status === 'EXITED_SUCCESS';
++                        const isInactive = isRejected || isExitedSuccess;
 
-                        let row = tbody.querySelector(`tr[data-id="${id}"]`);
-                        if (!row) {
-                            // build row
-                            const actionCellHtml = isRejected ? '<td></td>' : `
-                                <td>
-                                    <button onclick="squareOffTrade(${setup.id})">Close</button>
-                                    <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
-                                    <button onclick="editExecution(${setup.id})">Edit</button>
-                                </td>`;
+                         let row = tbody.querySelector(`tr[data-id="${id}"]`);
+                         if (!row) {
+                             // build row
+-                            const actionCellHtml = isRejected ? '<td></td>' : `
+-                                <td>
+-                                    <button onclick="squareOffTrade(${setup.id})">Close</button>
+-                                    <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
+-                                    <button onclick="editExecution(${setup.id})">Edit</button>
+-                                </td>`;
+-
+-                            const ltpHtml = isRejected ? '<td class="ltp">-</td><td class="pnl">-</td>' :
+-                                `<td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
+-                                 <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>`;
++                            const actionCellHtml = isInactive ? '<td></td>' : `
++                                <td>
++                                    <button onclick="squareOffTrade(${setup.id})">Close</button>
++                                    <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
++                                    <button onclick="editExecution(${setup.id})">Edit</button>
++                                </td>`;
++
++                            const ltpHtml = isInactive ? '<td class="ltp">-</td><td class="pnl">-</td>' :
++                                `<td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
++                                 <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>`;
 
-                            const ltpHtml = isRejected ? '<td class="ltp">-</td><td class="pnl">-</td>' :
-                                `<td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
-                                 <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>`;
+                             row = document.createElement('tr');
+                             row.dataset.id = id;
+                             row.dataset.scrip = setup.scripCode || '';
+                             row.dataset.entry = setup.entryPrice || '';
+                             row.dataset.qty = setup.quantity || 0;
+-                            row.dataset.rejected = isRejected ? 'true' : 'false';
++                            row.dataset.rejected = isRejected ? 'true' : 'false';
++                            row.dataset.inactive = isExitedSuccess ? 'true' : 'false';
 
-                            row = document.createElement('tr');
-                            row.dataset.id = id;
-                            row.dataset.scrip = setup.scripCode || '';
-                            row.dataset.entry = setup.entryPrice || '';
-                            row.dataset.qty = setup.quantity || 0;
-                            row.dataset.rejected = isRejected ? 'true' : 'false';
+                             row.innerHTML = `
+                                 <td>${setup.id}</td>
+                                 <td>${setup.symbol}</td>
+                                 <td>${setup.exchange || ''}</td>
+                                 <td>${setup.strikePrice || ''}</td>
+                                 <td>${setup.expiry || ''}</td>
+                                 <td>${setup.entryPrice || ''}</td>
+                                 <td>${setup.stopLoss || ''}</td>
+                                 <td>${setup.target1 || ''}</td>
+                                 <td>${setup.quantity || ''}</td>
+                                 <td>${setup.optionType || ''}</td>
+-                                <td>${setup.intraday || ''}</td>
+-                                <td>${setup.status || ''}</td>
+-                                ${actionCellHtml}
+-                                ${ltpHtml}`;
++                                <td>${setup.intraday || ''}</td>
++                                <td>${setup.status || ''}</td>
++                                ${actionCellHtml}
++                                ${ltpHtml}`;
+                             tbody.appendChild(row);
+                         } else {
+                             // update only changed cells
+                             const tds = row.children;
+                             function updateCell(idx, value) {
+                                 value = value == null ? '' : String(value);
+                                 if ((tds[idx].innerText || '') !== value) tds[idx].innerText = value;
+                             }
 
-                            row.innerHTML = `
-                                <td>${setup.id}</td>
-                                <td>${setup.symbol}</td>
-                                <td>${setup.exchange || ''}</td>
-                                <td>${setup.strikePrice || ''}</td>
-                                <td>${setup.expiry || ''}</td>
-                                <td>${setup.entryPrice || ''}</td>
-                                <td>${setup.stopLoss || ''}</td>
-                                <td>${setup.target1 || ''}</td>
-                                <td>${setup.quantity || ''}</td>
-                                <td>${setup.optionType || ''}</td>
-                                <td>${setup.intraday || ''}</td>
-                                <td>${setup.status || ''}</td>
-                                ${actionCellHtml}
-                                ${ltpHtml}`;
-                            tbody.appendChild(row);
-                        } else {
-                            // update only changed cells
-                            const tds = row.children;
-                            function updateCell(idx, value) {
-                                value = value == null ? '' : String(value);
-                                if ((tds[idx].innerText || '') !== value) tds[idx].innerText = value;
-                            }
+                             updateCell(1, setup.symbol);
+                             updateCell(2, setup.exchange || '');
+                             updateCell(3, setup.strikePrice || '');
+                             updateCell(4, setup.expiry || '');
+                             updateCell(5, setup.entryPrice || '');
+                             updateCell(6, setup.stopLoss || '');
+                             updateCell(7, setup.target1 || '');
+                             updateCell(8, setup.quantity || '');
+                             updateCell(9, setup.optionType || '');
+                             updateCell(10, setup.intraday || '');
+                             updateCell(11, setup.status || '');
 
-                            updateCell(1, setup.symbol);
-                            updateCell(2, setup.exchange || '');
-                            updateCell(3, setup.strikePrice || '');
-                            updateCell(4, setup.expiry || '');
-                            updateCell(5, setup.entryPrice || '');
-                            updateCell(6, setup.stopLoss || '');
-                            updateCell(7, setup.target1 || '');
-                            updateCell(8, setup.quantity || '');
-                            updateCell(9, setup.optionType || '');
-                            updateCell(10, setup.intraday || '');
-                            updateCell(11, setup.status || '');
+                             // update attributes
+-                            if (row.dataset.rejected !== (isRejected ? 'true' : 'false')) {
+-                                row.dataset.rejected = isRejected ? 'true' : 'false';
+-                            }
+-                            if (row.dataset.entry !== String(setup.entryPrice)) row.dataset.entry = setup.entryPrice || '';
+-                            if (row.dataset.qty !== String(setup.quantity || 0)) row.dataset.qty = String(setup.quantity || 0);
++                            if (row.dataset.rejected !== (isRejected ? 'true' : 'false')) {
++                                row.dataset.rejected = isRejected ? 'true' : 'false';
++                            }
++                            // mark inactive if EXITED_SUCCESS
++                            if (row.dataset.inactive !== (isExitedSuccess ? 'true' : 'false')) {
++                                row.dataset.inactive = isExitedSuccess ? 'true' : 'false';
++                            }
++                            if (row.dataset.entry !== String(setup.entryPrice)) row.dataset.entry = setup.entryPrice || '';
++                            if (row.dataset.qty !== String(setup.quantity || 0)) row.dataset.qty = String(setup.quantity || 0);
 
-                            // update attributes
-                            if (row.dataset.rejected !== (isRejected ? 'true' : 'false')) {
-                                row.dataset.rejected = isRejected ? 'true' : 'false';
-                            }
-                            if (row.dataset.entry !== String(setup.entryPrice)) row.dataset.entry = setup.entryPrice || '';
-                            if (row.dataset.qty !== String(setup.quantity || 0)) row.dataset.qty = String(setup.quantity || 0);
+                             // update action cell and ltp/pnl if rejection state changed
+-                            if (isRejected) {
+-                                // ensure action cell empty and ltp/pnl show '-'
+-                                const actionTd = tds[12];
+-                                if (actionTd) actionTd.innerHTML = '';
+-                                const ltpTd = tds[13];
+-                                const pnlTd = tds[14];
+-                                if (ltpTd) ltpTd.innerText = '-';
+-                                if (pnlTd) pnlTd.innerText = '-';
+-                            } else {
+-                                // if previously rejected we should re-insert buttons and data-scrip attributes
+-                                const actionTd = tds[12];
+-                                if (actionTd && actionTd.innerHTML.trim() === '') {
+-                                    actionTd.innerHTML = ` <button onclick="squareOffTrade(${setup.id})">Close</button> <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button> <button onclick="editExecution(${setup.id})">Edit</button>`;
+-                                }
+-                                const ltpTd = tds[13];
+-                                const pnlTd = tds[14];
+-                                if (ltpTd) {
+-                                    ltpTd.dataset.scrip = setup.scripCode || '';
+-                                    if ((ltpTd.innerText || '') !== (lastKnownLTP[setup.scripCode] != null ? String(lastKnownLTP[setup.scripCode]) : '-')) {
+-                                        ltpTd.innerText = lastKnownLTP[setup.scripCode] != null ? (lastKnownLTP[setup.scripCode]).toString() : '-';
+-                                    }
+-                                }
+-                                if (pnlTd) {
+-                                    pnlTd.dataset.pnl = setup.scripCode || '';
+-                                    if ((pnlTd.innerText || '') !== (lastKnownPNL[setup.scripCode] != null ? String(lastKnownPNL[setup.scripCode]) : '-')) {
+-                                        pnlTd.innerText = lastKnownPNL[setup.scripCode] != null ? (lastKnownPNL[setup.scripCode]).toString() : '-';
+-                                    }
+-                                }
+-                            }
++                            if (isInactive) {
++                                // ensure action cell empty and ltp/pnl show '-'
++                                const actionTd = tds[12];
++                                if (actionTd) actionTd.innerHTML = '';
++                                const ltpTd = tds[13];
++                                const pnlTd = tds[14];
++                                if (ltpTd) ltpTd.innerText = '-';
++                                if (pnlTd) pnlTd.innerText = '-';
++                            } else {
++                                // if previously inactive we should re-insert buttons and data-scrip attributes
++                                const actionTd = tds[12];
++                                if (actionTd && actionTd.innerHTML.trim() === '') {
++                                    actionTd.innerHTML = ` <button onclick="squareOffTrade(${setup.id})">Close</button> <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button> <button onclick="editExecution(${setup.id})">Edit</button>`;
++                                }
++                                const ltpTd = tds[13];
++                                const pnlTd = tds[14];
++                                if (ltpTd) {
++                                    ltpTd.dataset.scrip = setup.scripCode || '';
++                                    if ((ltpTd.innerText || '') !== (lastKnownLTP[setup.scripCode] != null ? String(lastKnownLTP[setup.scripCode]) : '-')) {
++                                        ltpTd.innerText = lastKnownLTP[setup.scripCode] != null ? (lastKnownLTP[setup.scripCode]).toString() : '-';
++                                    }
++                                }
++                                if (pnlTd) {
++                                    pnlTd.dataset.pnl = setup.scripCode || '';
++                                    if ((pnlTd.innerText || '') !== (lastKnownPNL[setup.scripCode] != null ? String(lastKnownPNL[setup.scripCode]) : '-')) {
++                                        pnlTd.innerText = lastKnownPNL[setup.scripCode] != null ? (lastKnownPNL[setup.scripCode]).toString() : '-';
++                                    }
++                                }
++                            }
+                         }
+                     });
 
-                            // update action cell and ltp/pnl if rejection state changed
-                            if (isRejected) {
-                                // ensure action cell empty and ltp/pnl show '-'
-                                const actionTd = tds[12];
-                                if (actionTd) actionTd.innerHTML = '';
-                                const ltpTd = tds[13];
-                                const pnlTd = tds[14];
-                                if (ltpTd) ltpTd.innerText = '-';
-                                if (pnlTd) pnlTd.innerText = '-';
-                            } else {
-                                // if previously rejected we should re-insert buttons and data-scrip attributes
-                                const actionTd = tds[12];
-                                if (actionTd && actionTd.innerHTML.trim() === '') {
-                                    actionTd.innerHTML = ` <button onclick="squareOffTrade(${setup.id})">Close</button> <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button> <button onclick="editExecution(${setup.id})">Edit</button>`;
-                                }
-                                const ltpTd = tds[13];
-                                const pnlTd = tds[14];
-                                if (ltpTd) {
-                                    ltpTd.dataset.scrip = setup.scripCode || '';
-                                    if ((ltpTd.innerText || '') !== (lastKnownLTP[setup.scripCode] != null ? String(lastKnownLTP[setup.scripCode]) : '-')) {
-                                        ltpTd.innerText = lastKnownLTP[setup.scripCode] != null ? (lastKnownLTP[setup.scripCode]).toString() : '-';
-                                    }
-                                }
-                                if (pnlTd) {
-                                    pnlTd.dataset.pnl = setup.scripCode || '';
-                                    if ((pnlTd.innerText || '') !== (lastKnownPNL[setup.scripCode] != null ? String(lastKnownPNL[setup.scripCode]) : '-')) {
-                                        pnlTd.innerText = lastKnownPNL[setup.scripCode] != null ? (lastKnownPNL[setup.scripCode]).toString() : '-';
-                                    }
-                                }
-                            }
-                        }
-                    });
-
-                    // Remove rows that are no longer present
-                    Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
-                        if (!incomingIds.has(r.dataset.id)) r.remove();
-                    });
-                })
+                     // Remove rows that are no longer present
+                     Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
+                         if (!incomingIds.has(r.dataset.id)) r.remove();
+                     });
+                 })
                 .catch(err => {
                     console.error('Failed to load trade setups', err);
                     const r = document.getElementById('result'); if (r) r.innerText = 'Failed to load trade setups: ' + err.message;
