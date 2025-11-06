@@ -7,6 +7,10 @@ import com.sharekhan.SharekhanConnect;
 import org.jboss.aerogear.security.otp.Totp;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
+import lombok.RequiredArgsConstructor;
+
+import org.com.sharekhan.util.CryptoService;
+import org.com.sharekhan.repository.BrokerCredentialsRepository;
 
 import java.net.URI;
 import java.net.URLDecoder;
@@ -19,6 +23,7 @@ import java.util.Map;
 import static com.microsoft.playwright.BrowserType.*;
 
 @Service
+@RequiredArgsConstructor
 public class TokenLoginAutomationService implements BrokerAuthProvider {
 
     public static final String clientCode = "SGUPTA78";
@@ -28,43 +33,50 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
     private static final String secretKey = "iOpn2GrHHzmjdWu795RRw79d0OPZn7jh";
     public static final String apiKey = "M57X7RqA9C43IOq8iJSySWv8LAD2DzkM";
 
-    // keep the old TokenResult for backward compatibility if some code relied on it
-    public record TokenResult(String token, long expiresIn) {}
+    private final CryptoService cryptoService;
+    private final BrokerCredentialsRepository brokerCredentialsRepository;
 
     @Override
     public AuthTokenResult loginAndFetchToken() {
-        // delegate to credential-based method with null to preserve old behavior
-        return loginAndFetchToken((org.com.sharekhan.entity.BrokerCredentialsEntity) null);
+        // Try to load credentials for the configured default customer if present
+        try {
+            var opt = brokerCredentialsRepository.findTopByBrokerNameAndCustomerIdAndActiveTrue("SHAREKHAN", customerId);
+            if (opt.isEmpty()) {
+                opt = brokerCredentialsRepository.findTopByBrokerNameAndCustomerId("SHAREKHAN", customerId);
+            }
+            if (opt.isPresent()) {
+                return loginAndFetchToken(opt.get());
+            }
+        } catch (Exception e) {
+            // ignore db errors and fallback to defaults
+        }
+        // fallback to existing behavior
+        return loginAndFetchToken(null);
     }
 
     @Override
     public AuthTokenResult loginAndFetchToken(org.com.sharekhan.entity.BrokerCredentialsEntity creds) {
         // If creds provided, prefer values from creds; otherwise fall back to static defaults
-        final String apiKeyToUse = (creds != null && creds.getApiKey() != null && !creds.getApiKey().isBlank()) ? creds.getApiKey() : apiKey;
-        final String pwdToUse = (creds != null && creds.getBrokerPassword() != null && !creds.getBrokerPassword().isBlank()) ? creds.getBrokerPassword() : password;
-        final String totpToUse = (creds != null && creds.getTotpSecret() != null && !creds.getTotpSecret().isBlank()) ? creds.getTotpSecret() : totpSecret;
-        final String secretToUse = (creds != null && creds.getSecretKey() != null && !creds.getSecretKey().isBlank()) ? creds.getSecretKey() : secretKey;
-        final String clientToUse = (creds != null && creds.getClientCode() != null && !creds.getClientCode().isBlank()) ? creds.getClientCode() : clientCode;
+        final String apiKeyToUse = (creds != null && creds.getApiKey() != null && !creds.getApiKey().isBlank()) ? maybeDecrypt(creds.getApiKey()) : apiKey;
+        final String pwdToUse = (creds != null && creds.getBrokerPassword() != null && !creds.getBrokerPassword().isBlank()) ? maybeDecrypt(creds.getBrokerPassword()) : password;
+        final String totpToUse = (creds != null && creds.getTotpSecret() != null && !creds.getTotpSecret().isBlank()) ? maybeDecrypt(creds.getTotpSecret()) : totpSecret;
+        final String secretToUse = (creds != null && creds.getSecretKey() != null && !creds.getSecretKey().isBlank()) ? maybeDecrypt(creds.getSecretKey()) : secretKey;
 
         SharekhanConnect sharekhanConnect = new SharekhanConnect();
         String loginUrl = sharekhanConnect.getLoginURL(apiKeyToUse, null, "1234", 1234L);
-        Browser browser;
-        try (Playwright playwright = Playwright.create()) {
-            LaunchOptions options = new LaunchOptions()
-                    .setHeadless(true)
-                    .setArgs(Arrays.asList("--disable-gpu",
-                            "--no-sandbox",
-                            "--disable-dev-shm-usage",
-                            "--disable-software-rasterizer",
-                            "--disable-extensions",
-                            "--disable-background-networking",
-                            "--disable-default-apps",
-                            "--disable-popup-blocking",
-                            "--mute-audio",
-                            "--single-process"));
-
-            browser = playwright.chromium().
-                    launch(options);
+        try (Playwright playwright = Playwright.create();
+             Browser browser = playwright.chromium().launch(new LaunchOptions()
+                     .setHeadless(true)
+                     .setArgs(Arrays.asList("--disable-gpu",
+                             "--no-sandbox",
+                             "--disable-dev-shm-usage",
+                             "--disable-software-rasterizer",
+                             "--disable-extensions",
+                             "--disable-background-networking",
+                             "--disable-default-apps",
+                             "--disable-popup-blocking",
+                             "--mute-audio",
+                             "--single-process")))) {
             Page page = browser.newPage();
             page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(1200000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
@@ -129,5 +141,15 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
             throw new RuntimeException("Failed to parse token from URL: " + e.getMessage(), e);
         }
         return result;
+    }
+
+    // Attempt to decrypt, but fall back to raw value on any error so existing plaintext values still work
+    private String maybeDecrypt(String value) {
+        if (value == null) return null;
+        try {
+            return cryptoService.decrypt(value);
+        } catch (Exception e) {
+            return value;
+        }
     }
 }

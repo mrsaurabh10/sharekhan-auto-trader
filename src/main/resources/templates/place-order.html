@@ -42,7 +42,7 @@
 </head>
 <body>
 
-<h2>Place Order</h2>
+<h2 style="display:flex;justify-content:space-between;align-items:center">Place Order <a href="/admin/dashboard" style="font-size:0.8rem;">Admin</a></h2>
 
 <form id="placeOrderForm" method="POST">
     <label for="exchange">Exchange</label>
@@ -107,6 +107,10 @@
 </form>
 
 <div id="result"></div>
+<div style="margin-top:0.5rem;">
+    <span id="handlerStatus" style="font-size:0.9rem;color:#666">Handler: initializing...</span>
+    <button id="debugSubmitBtn" style="margin-left:8px;">Debug Submit</button>
+</div>
 <div id="last-refresh" style="margin-top:0.5rem;color:#666;font-size:0.9rem"></div>
 
 <h3>Trading Requests</h3>
@@ -458,7 +462,7 @@
 
         return fetchWithTimeout(`/api/scripts/option?${params.toString()}`)
             .then(res => { if (!res.ok) return null; return res.json(); })
-             .then(json => {
+             .then json => {
                  // expected { tradingSymbol: '...', scripCode: 12345 }
                  return json;
              })
@@ -724,709 +728,134 @@
 
     document.getElementById('optionType').addEventListener('change', function () { fetchOptionLtpAndPopulateEntry(); });
 
-    // Submit form via REST
-    document.getElementById('placeOrderForm').addEventListener('submit', function (e) {
-         e.preventDefault();
+    // Submit form via REST - attach after DOM ready
+    function attachFormHandlers() {
+         const form = document.getElementById('placeOrderForm');
++        // If page opened with ?userId=... (e.g. inside admin iframe), pre-fill userId input and disable it
++        try {
++            const params = new URLSearchParams(window.location.search || '');
++            const uid = params.get('userId');
++            if (uid) {
++                try {
++                    const userInput = document.getElementById('userId');
++                    if (userInput) {
++                        userInput.value = uid;
++                        // mark readonly so admin cannot accidentally change user mapping inside iframe
++                        userInput.disabled = true;
++                        userInput.setAttribute('data-prefilled-from-query', 'true');
++                    }
++                } catch (e) { console.debug('prefill userId from query failed', e); }
++            }
++        } catch (e) { console.debug('parse querystring failed', e); }
 
-         const form = e.target;
-        const exch = (form.exchange && form.exchange.value) ? form.exchange.value.toUpperCase() : '';
-        const noStrikeExchanges = new Set(['NC','BC']);
-        const isNoStrike = noStrikeExchanges.has(exch);
-         const data = {
-             exchange: form.exchange.value,
-             instrument: form.instrument.value,
-            // If NC/BC (no-strike exchanges) send strikePrice as null and expiry as null
-            strikePrice: isNoStrike ? null : (form.strikePrice.value ? parseFloat(form.strikePrice.value) : null),
-            expiry: isNoStrike ? null : (form.expiry.value || null),
-             entryPrice: parseFloat(form.entryPrice.value),
-             stopLoss: parseFloat(form.stopLoss.value),
-             target1: parseFloat(form.target1.value) || 0,
-             target2: parseFloat(form.target2.value) || 0,
-             target3: parseFloat(form.target3.value) || 0,
-             // Per request, optionType should be empty for equities
-            optionType: isNoStrike ? '' : (form.optionType.value || null),
-              quantity: parseInt(form.quantity.value),
-              intraday: form.intraday.checked
-+            ,
-+            // include optional user id
-+            userId: form.userId && form.userId.value ? parseInt(form.userId.value) : null
-          };
-
-        fetch('/api/trades/trigger-on-price', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(data)
-        }).then(res => {
-            if (!res.ok) throw new Error("Failed to trigger order");
-            return res.text();
-        }).then(msg => {
-            document.getElementById('result').innerText = "✅ Order Triggered";
-            form.reset();
-            loadRequestedOrders()
-        }).catch(err => {
-            document.getElementById('result').innerText = "❌ Failed to trigger order.";
-            console.error(err);
-        });
-    });
-
-    function autoSelectOptionTypeIfValid() {
-        const instrument = document.getElementById('instrument').value;
-        const strike = document.getElementById('strikePrice').value;
-
-        if (instrument && strike) {
-            document.getElementById('optionType').value = 'CE'; // Auto-select Call
+        function buildPayload(formEl) {
+            const exch = (formEl.exchange && formEl.exchange.value) ? formEl.exchange.value.toUpperCase() : '';
+            const noStrikeExchanges = new Set(['NC','BC']);
+            const isNoStrike = noStrikeExchanges.has(exch);
+            return {
+                exchange: formEl.exchange.value,
+                instrument: formEl.instrument.value,
+                strikePrice: isNoStrike ? null : (formEl.strikePrice.value ? parseFloat(formEl.strikePrice.value) : null),
+                expiry: isNoStrike ? null : (formEl.expiry.value || null),
+                entryPrice: parseFloat(formEl.entryPrice.value),
+                stopLoss: parseFloat(formEl.stopLoss.value),
+                target1: parseFloat(formEl.target1.value) || 0,
+                target2: parseFloat(formEl.target2.value) || 0,
+                target3: parseFloat(formEl.target3.value) || 0,
+                optionType: isNoStrike ? '' : (formEl.optionType.value || null),
+                quantity: parseInt(formEl.quantity.value),
+                intraday: formEl.intraday.checked,
+                userId: formEl.userId && formEl.userId.value ? parseInt(formEl.userId.value) : null
+            };
         }
-    }
 
-    function cancelTradeRequest(id) {
-        if (!confirm("Are you sure you want to cancel this trade request?")) return;
+        async function submitPlaceOrder(evt) {
+            try {
+                if (evt && evt.preventDefault) evt.preventDefault();
+                const payload = buildPayload(form);
+                console.log('submitPlaceOrder invoked', payload);
 
-        fetch(`/api/trades/cancel-request/${id}`, {
-            method: 'POST'
-        }).then(res => {
-            if (!res.ok) throw new Error("Cancel failed");
-            return res.text();
-        }).then(() => {
-            alert("✅ Trade request cancelled");
-            loadRequestedOrders();
-        }).catch(err => {
-            console.error("❌ Cancel failed", err);
-            alert("❌ Failed to cancel request");
-        });
-    }
+                // prepare headers
+                const headers = { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' };
+                try {
+                    const csrfMeta = document.querySelector('meta[name="_csrf"]');
+                    const csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
+                    if (csrfMeta && csrfHeaderMeta) {
+                        headers[csrfHeaderMeta.getAttribute('content') || csrfHeaderMeta.content] = csrfMeta.getAttribute('content') || csrfMeta.content;
+                    } else {
+                        function getCookie(name) { const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)'); return v ? v.pop() : null; }
+                        const token = getCookie('XSRF-TOKEN') || getCookie('X-CSRF-TOKEN');
+                        if (token) headers['X-CSRF-TOKEN'] = token;
+                    }
+                } catch (e) { console.debug('CSRF attach failed', e); }
 
-    function squareOffTrade(id) {
-        if (!confirm("Are you sure you want to square off this trade?")) return;
+                window.lastPlaceOrderPayload = payload; // expose for debugging
 
-        fetch(`/api/trades/square-off/${id}`, {
-            method: 'POST'
-        }).then(res => {
-            if (!res.ok) throw new Error("Square off failed");
-            return res.text();
-        }).then(() => {
-            alert("✅ Trade squared off");
-            loadTradeSetups();
-        }).catch(err => {
-            console.error("❌ Square off failed", err);
-            alert("❌ Failed to square off trade");
-        });
-    }
+                const resp = await fetch('/api/trades/trigger-on-price', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers,
+                    body: JSON.stringify(payload)
+                });
+                const txt = await resp.text().catch(() => '');
+                console.log('trigger-on-price returned', resp.status, txt);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status} ${txt}`);
 
-    function moveSLtoCost(id) {
-        if (!confirm("Are you sure you want to move the sl to cost?")) return;
+                const rEl = document.getElementById('result'); if (rEl) rEl.innerText = '✅ Order Triggered';
+                // notify parent
+                try {
+                    const sentUserId = payload.userId || null;
+                    if (window.parent && window.parent !== window && typeof window.parent.postMessage === 'function') {
+                        window.parent.postMessage({ type: 'orderTriggered', userId: sentUserId }, window.location.origin);
+                    }
+                } catch (pe) { console.debug('postMessage failed', pe); }
 
-
-        fetch(`/api/trades/move-sl-to-cost/${id}`, {
-            method: 'POST'
-        }).then(res => {
-            if (!res.ok) throw new Error("MoveSltoCost failed");
-            return res.text();
-        }).then(() => {
-            alert("✅ Sl Moved to Cost");
-            loadTradeSetups();
-        }).catch(err => {
-            console.error("❌ Sl Cost failed", err);
-            alert("❌ Failed to move sl to cost");
-        });
-    }
-
-    // Inline edit helpers for Requests & Executions
-    function createEditRow(columnsCount, id) {
-        const tr = document.createElement('tr');
-        tr.className = 'edit-row';
-        tr.dataset.editingFor = id;
-        // create TDs equal to columnsCount
-        for (let i = 0; i < columnsCount; i++) {
-            const td = document.createElement('td');
-            tr.appendChild(td);
+                form.reset();
+                loadRequestedOrders();
+            } catch (err) {
+                console.error('submitPlaceOrder error', err);
+                const rEl = document.getElementById('result'); if (rEl) r.innerText = '❌ Failed to trigger order: ' + (err.message || err);
+            }
         }
-        return tr;
-    }
 
-    function editRequest(id) {
-        const order = requestMap[id];
-        if (!order) {
-            alert('Trade request data not available locally. Refreshing requests.');
-            loadRequestedOrders();
-            return;
-        }
-        // remove any existing edit row
-        cancelEditRow();
-
-        const tbody = document.querySelector('#trading-requests-table tbody');
-        // find row by data-id attribute (more robust than matching innerText)
-        const row = tbody.querySelector(`tr[data-id="${id}"]`);
-        const headerRow = document.querySelector('#trading-requests-table thead tr');
-        const columnsCount = headerRow ? headerRow.children.length : 14; // fallback to 14 columns if header not found
-        const editRow = createEditRow(columnsCount, 'req_' + id);
-
-        // build inputs for SL, target1, target2, target3 and intraday and save/cancel buttons
-        editRow.children[0].innerText = '';
-        editRow.children[1].innerText = order.symbol || '';
-        editRow.children[2].innerText = order.exchange || '';
-        editRow.children[3].innerText = order.strikePrice || '';
-        editRow.children[4].innerText = order.expiry || '';
-
-        // Entry
-        const entryInput = document.createElement('input');
-        entryInput.type = 'number'; entryInput.step = '0.01'; entryInput.value = order.entryPrice || '';
-        entryInput.className = 'edit-input';
-        editRow.children[5].appendChild(entryInput);
-
-        // SL
-        const slInput = document.createElement('input');
-        slInput.type = 'number'; slInput.step = '0.01'; slInput.value = order.stopLoss || '';
-        slInput.className = 'edit-input';
-        editRow.children[6].appendChild(slInput);
-
-        // Target1
-        const t1Input = document.createElement('input');
-        t1Input.type = 'number'; t1Input.step = '0.01'; t1Input.value = order.target1 || '';
-        t1Input.className = 'edit-input';
-        editRow.children[7].appendChild(t1Input);
-
-        // Target2
-        const t2Input = document.createElement('input');
-        t2Input.type = 'number'; t2Input.step = '0.01'; t2Input.value = order.target2 || '';
-        t2Input.className = 'edit-input';
-        // small spacing
-        const t2Label = document.createElement('div'); t2Label.style.display='inline-block'; t2Label.style.marginLeft='6px';
-        t2Label.appendChild(t2Input);
-        editRow.children[7].appendChild(t2Label);
-
-        // Target3
-        const t3Input = document.createElement('input');
-        t3Input.type = 'number'; t3Input.step = '0.01'; t3Input.value = order.target3 || '';
-        t3Input.className = 'edit-input';
-        const t3Label = document.createElement('div'); t3Label.style.display='inline-block'; t3Label.style.marginLeft='6px';
-        t3Label.appendChild(t3Input);
-        editRow.children[7].appendChild(t3Label);
-
-        // Qty
-        const qtyInput = document.createElement('input');
-        qtyInput.type = 'number'; qtyInput.step = '1'; qtyInput.value = order.quantity || '';
-        qtyInput.className = 'edit-input';
-        editRow.children[8].appendChild(qtyInput);
-
-        // OptionType
-         editRow.children[9].innerText = order.optionType || '';
-
-        // Intraday checkbox
-        const intradayBox = document.createElement('input');
-        intradayBox.type = 'checkbox';
-        intradayBox.checked = !!order.intraday;
-        editRow.children[10].appendChild(intradayBox);
-
-        // Status
-        editRow.children[11].innerText = order.status || '';
-
-        // Actions: Save/Cancel
-        const saveBtn = document.createElement('button');
-        saveBtn.className = 'small-btn';
-        saveBtn.innerText = 'Save';
-        saveBtn.onclick = function () {
-            saveRequestEdit(id, {
-                stopLoss: slInput.value,
-                target1: t1Input.value,
-                quantity: qtyInput.value,
-                target2: t2Input.value,
-                target3: t3Input.value,
-                intraday: intradayBox.checked
-            });
-            return false;
-        };
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.className = 'small-btn';
-        cancelBtn.innerText = 'Cancel';
-        cancelBtn.onclick = function () { cancelEditRow(); return false; };
-
-        editRow.children[12].appendChild(saveBtn);
-        editRow.children[12].appendChild(cancelBtn);
-
-        // LTP cell left blank (last cell)
-        editRow.children[13].innerText = '--';
-
-        // insert after the target row
-        if (row) row.parentNode.insertBefore(editRow, row.nextSibling);
-        else tbody.appendChild(editRow);
-    }
-
-    function saveRequestEdit(id, payload) {
-        // build object with only non-empty values
-        const body = {};
-        if (payload.stopLoss !== null && payload.stopLoss !== '') body.stopLoss = parseFloat(payload.stopLoss);
-        if (payload.target1 !== null && payload.target1 !== '') body.target1 = parseFloat(payload.target1);
-        if (payload.target2 !== null && payload.target2 !== '') body.target2 = parseFloat(payload.target2);
-        if (payload.target3 !== null && payload.target3 !== '') body.target3 = parseFloat(payload.target3);
-        if (payload.quantity !== null && payload.quantity !== '' && !isNaN(payload.quantity)) body.quantity = parseInt(payload.quantity);
-         if (typeof payload.intraday === 'boolean') body.intraday = payload.intraday;
-
-         if (Object.keys(body).length === 0) { alert('No changes to save'); return; }
-
-         fetch(`/api/trades/request/${id}`, {
-             method: 'PUT',
-             headers: {'Content-Type': 'application/json'},
-             body: JSON.stringify(body)
-         }).then(res => {
-             if (!res.ok) throw new Error('Update failed');
-             return res.json();
-         }).then(updated => {
-             alert('✅ Updated request');
-             cancelEditRow();
-             loadRequestedOrders();
-         }).catch(err => {
-             console.error('Failed to update request', err);
-             alert('❌ Failed to update request');
-         });
-     }
-
-    function editExecution(id) {
-         const setup = executionMap[id];
-         if (!setup) {
-            alert('Executed trade data not available locally. Refreshing executions.');
-            loadTradeSetups();
-            return;
-        }
-        // Do not allow editing rejected trades
-        if (setup.status === 'REJECTED') {
-            alert('Cannot edit a rejected execution');
-            return;
-        }
-         cancelEditRow();
-
-         const tbody = document.querySelector('#trades-executed-table tbody');
-         // find row by data-id attribute (more robust than matching innerText)
-         const row = tbody.querySelector(`tr[data-id="${id}"]`);
-        const headerRow = document.querySelector('#trades-executed-table thead tr');
-        const columnsCount = headerRow ? headerRow.children.length : 15; // fallback to 15 columns if header not found
-        const editRow = createEditRow(columnsCount, 'exec_' + id);
-
-        editRow.children[0].innerText = '';
-        editRow.children[1].innerText = setup.symbol || '';
-        editRow.children[2].innerText = setup.exchange || '';
-        editRow.children[3].innerText = setup.strikePrice || '';
-        editRow.children[4].innerText = setup.expiry || '';
-
-        // Entry
-        const entryInput = document.createElement('input');
-        entryInput.type = 'number'; entryInput.step = '0.01'; entryInput.value = setup.entryPrice || '';
-        entryInput.className = 'edit-input';
-        editRow.children[5].appendChild(entryInput);
-
-        // SL
-        const slInput = document.createElement('input');
-        slInput.type = 'number'; slInput.step = '0.01'; slInput.value = setup.stopLoss || '';
-        slInput.className = 'edit-input';
-        editRow.children[6].appendChild(slInput);
-
-        // Target1
-        const t1Input = document.createElement('input');
-        t1Input.type = 'number'; t1Input.step = '0.01'; t1Input.value = setup.target1 || '';
-        t1Input.className = 'edit-input';
-        editRow.children[7].appendChild(t1Input);
-
-        // Target2
-        const t2Input = document.createElement('input');
-        t2Input.type = 'number'; t2Input.step = '0.01'; t2Input.value = setup.target2 || '';
-        t2Input.className = 'edit-input';
-        const t2Label = document.createElement('div'); t2Label.style.display='inline-block'; t2Label.style.marginLeft='6px';
-        t2Label.appendChild(t2Input);
-        editRow.children[7].appendChild(t2Label);
-
-        // Target3
-        const t3Input = document.createElement('input');
-        t3Input.type = 'number'; t3Input.step = '0.01'; t3Input.value = setup.target3 || '';
-        t3Input.className = 'edit-input';
-        const t3Label = document.createElement('div'); t3Label.style.display='inline-block'; t3Label.style.marginLeft='6px';
-        t3Label.appendChild(t3Input);
-        editRow.children[7].appendChild(t3Label);
-
-        // Qty
-        editRow.children[8].innerText = setup.quantity || '';
-
-        // OptionType
-        editRow.children[9].innerText = setup.optionType || '';
-
-        // Intraday checkbox
-        const intradayBox = document.createElement('input');
-        intradayBox.type = 'checkbox';
-        intradayBox.checked = !!setup.intraday;
-        editRow.children[10].appendChild(intradayBox);
-
-        // Status
-        editRow.children[11].innerText = setup.status || '';
-
-        // Actions: Save/Cancel
-        const saveBtn = document.createElement('button');
-        saveBtn.className = 'small-btn';
-        saveBtn.innerText = 'Save';
-        saveBtn.onclick = function () {
-            saveExecutionEdit(id, {
-                stopLoss: slInput.value,
-                target1: t1Input.value,
-                target2: t2Input.value,
-                target3: t3Input.value,
-                intraday: intradayBox.checked
-            });
-            return false;
-        };
-
-        const cancelBtn = document.createElement('button');
-        cancelBtn.className = 'small-btn';
-        cancelBtn.innerText = 'Cancel';
-        cancelBtn.onclick = function () { cancelEditRow(); return false; };
-
-        editRow.children[12].appendChild(saveBtn);
-        editRow.children[12].appendChild(cancelBtn);
-
-        // LTP and PnL cells
-        editRow.children[13].innerText = lastKnownLTP[setup.scripCode] ?? '-';
-        editRow.children[14].innerText = lastKnownPNL[setup.scripCode] ?? '-';
-
-        if (row) row.parentNode.insertBefore(editRow, row.nextSibling);
-        else tbody.appendChild(editRow);
-    }
-
-    function saveExecutionEdit(id, payload) {
-        const body = {};
-        if (payload.stopLoss !== null && payload.stopLoss !== '') body.stopLoss = parseFloat(payload.stopLoss);
-        if (payload.target1 !== null && payload.target1 !== '') body.target1 = parseFloat(payload.target1);
-        if (payload.target2 !== null && payload.target2 !== '') body.target2 = parseFloat(payload.target2);
-        if (payload.target3 !== null && payload.target3 !== '') body.target3 = parseFloat(payload.target3);
-        if (typeof payload.intraday === 'boolean') body.intraday = payload.intraday;
-
-        if (Object.keys(body).length === 0) { alert('No changes to save'); return; }
-
-        fetch(`/api/trades/execution/${id}`, {
-            method: 'PUT',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(body)
-        }).then(res => {
-            if (!res.ok) throw new Error('Update failed');
-            return res.json();
-        }).then(updated => {
-            alert('✅ Updated execution');
-            cancelEditRow();
-            loadTradeSetups();
-        }).catch(err => {
-            console.error('Failed to update execution', err);
-            alert('❌ Failed to update execution');
-        });
-    }
-
-    function cancelEditRow() {
-        document.querySelectorAll('.edit-row').forEach(r => r.remove());
-    }
-
-    // Update loadRequestedOrders to add Edit button and data for editing
-    function loadRequestedOrders() {
+        // attach handlers and expose globally for debugging
         try {
-            // If user is editing a request inline, skip the automatic refresh to avoid wiping the editor
-            if (document.querySelector('.edit-row[data-editing-for^="req_"]')) {
-                console.debug('Skipping loadRequestedOrders() because a request is being edited');
+            if (!form) {
+                console.warn('placeOrderForm not found in DOM; handlers not attached yet');
+                const hs = document.getElementById('handlerStatus'); if (hs) hs.innerText = 'Handler: no form present';
+                window.placeOrderHandlerAttached = false;
                 return;
             }
-
-            console.debug('loadRequestedOrders() starting');
-            fetchWithTimeout('/api/orders/requests')
-                 .then(res => res.json())
-                 .then(data => {
-                    updateLastRefresh();
-                    const tbody = document.querySelector('#trading-requests-table tbody');
-                    // build set of current ids present in new data
-                    const incomingIds = new Set();
-
-                    data.forEach(order => {
-                        requestMap[order.id] = order; // cache
-                        const id = String(order.id);
-                        incomingIds.add(id);
-
-                        let row = tbody.querySelector(`tr[data-id="${id}"]`);
-                        if (!row) {
-                            // create new row (same structure as before)
-                            row = document.createElement('tr');
-                            row.dataset.id = id;
-                            row.innerHTML = `
-                                <td>${order.id}</td>
-                                <td>${order.symbol}</td>
-                                <td>${order.exchange}</td>
-                                <td>${order.strikePrice}</td>
-                                <td>${order.expiry}</td>
-                                <td>${order.entryPrice}</td>
-                                <td>${order.stopLoss}</td>
-                                <td>${order.target1}</td>
-                                <td>${order.quantity || ''}</td>
-                                <td>${order.optionType || ''}</td>
-                                <td>${order.intraday || ''}</td>
-                                <td>${order.status || ''}</td>
-                                <td>
-                                    <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
-                                    <button onclick="editRequest(${order.id})">Edit</button>
-                                </td>
-                                <td data-scrip="${order.scripCode || ''}">--</td>`;
-                            tbody.appendChild(row);
-                        } else {
-                            // update only changed cells to avoid flicker
-                            const tds = row.children;
-                            function updateCell(idx, value) {
-                                value = value == null ? '' : String(value);
-                                if ((tds[idx].innerText || '') !== value) tds[idx].innerText = value;
-                            }
-
-                            updateCell(1, order.symbol);
-                            updateCell(2, order.exchange);
-                            updateCell(3, order.strikePrice);
-                            updateCell(4, order.expiry);
-                            updateCell(5, order.entryPrice);
-                            updateCell(6, order.stopLoss);
-                            updateCell(7, order.target1);
-                            updateCell(8, order.quantity || '');
-                            updateCell(9, order.optionType || '');
-                            updateCell(10, order.intraday || '');
-                            updateCell(11, order.status || '');
-
-                            // update scrip cell attribute if changed
-                            const scripCell = row.querySelector('td[data-scrip]');
-                            if (scripCell && (scripCell.dataset.scrip !== String(order.scripCode))) {
-                                scripCell.dataset.scrip = order.scripCode || '';
-                                scripCell.innerText = '--';
-                            }
-                        }
-                    });
-
-                    // Remove rows that are no longer present
-                    Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
-                        if (!incomingIds.has(r.dataset.id)) r.remove();
-                    });
-                })
-                .catch(err => {
-                    console.error('Failed to load requested orders', err);
-                    const r = document.getElementById('result'); if (r) r.innerText = 'Failed to load requested orders: ' + err.message;
-                });
-        } catch (e) {
-            console.error('loadRequestedOrders() error', e);
-            const r = document.getElementById('result'); if (r) r.innerText = 'loadRequestedOrders error: ' + e.message;
-        }
-     }
-
-     // Update loadTradeSetups to add Edit button for executed trades
-     function loadTradeSetups() {
-        try {
-            // If user is editing an execution inline, skip the automatic refresh to avoid wiping the editor
-            if (document.querySelector('.edit-row[data-editing-for^="exec_"]')) {
-                console.debug('Skipping loadTradeSetups() because an execution is being edited');
-                return;
-            }
-
-            console.debug('loadTradeSetups() starting');
-            fetchWithTimeout('/api/orders/executed')
-                .then(res => res.json())
-                .then(data => {
-                    updateLastRefresh();
-                    const tbody = document.querySelector('#trades-executed-table tbody');
-                    const incomingIds = new Set();
-
-                    data.forEach(setup => {
-                        executionMap[setup.id] = setup;
-                        const id = String(setup.id);
-                        incomingIds.add(id);
-                        const isRejected = setup.status === 'REJECTED';
-
-                        let row = tbody.querySelector(`tr[data-id="${id}"]`);
-                        if (!row) {
-                            // build row
-                            const actionCellHtml = isRejected ? '<td></td>' : `
-                                <td>
-                                    <button onclick="squareOffTrade(${setup.id})">Close</button>
-                                    <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
-                                    <button onclick="editExecution(${setup.id})">Edit</button>
-                                </td>`;
-
-                            const ltpHtml = isRejected ? '<td class="ltp">-</td><td class="pnl">-</td>' :
-                                `<td class="ltp" data-scrip="${setup.scripCode}">${lastKnownLTP[setup.scripCode] ?? '-'}</td>
-                                 <td class="pnl" data-pnl="${setup.scripCode}">${lastKnownPNL[setup.scripCode] ?? '-'}</td>`;
-
-                            row = document.createElement('tr');
-                            row.dataset.id = id;
-                            row.dataset.scrip = setup.scripCode || '';
-                            row.dataset.entry = setup.entryPrice || '';
-                            row.dataset.qty = setup.quantity || 0;
-                            row.dataset.rejected = isRejected ? 'true' : 'false';
-
-                            row.innerHTML = `
-                                <td>${setup.id}</td>
-                                <td>${setup.symbol}</td>
-                                <td>${setup.exchange || ''}</td>
-                                <td>${setup.strikePrice || ''}</td>
-                                <td>${setup.expiry || ''}</td>
-                                <td>${setup.entryPrice || ''}</td>
-                                <td>${setup.stopLoss || ''}</td>
-                                <td>${setup.target1 || ''}</td>
-                                <td>${setup.quantity || ''}</td>
-                                <td>${setup.optionType || ''}</td>
-                                <td>${setup.intraday || ''}</td>
-                                <td>${setup.status || ''}</td>
-                                ${actionCellHtml}
-                                ${ltpHtml}`;
-                            tbody.appendChild(row);
-                        } else {
-                            // update only changed cells
-                            const tds = row.children;
-                            function updateCell(idx, value) {
-                                value = value == null ? '' : String(value);
-                                if ((tds[idx].innerText || '') !== value) tds[idx].innerText = value;
-                            }
-
-                            updateCell(1, setup.symbol);
-                            updateCell(2, setup.exchange || '');
-                            updateCell(3, setup.strikePrice || '');
-                            updateCell(4, setup.expiry || '');
-                            updateCell(5, setup.entryPrice || '');
-                            updateCell(6, setup.stopLoss || '');
-                            updateCell(7, setup.target1 || '');
-                            updateCell(8, setup.quantity || '');
-                            updateCell(9, setup.optionType || '');
-                            updateCell(10, setup.intraday || '');
-                            updateCell(11, setup.status || '');
-
-                            // update attributes
-                            if (row.dataset.rejected !== (isRejected ? 'true' : 'false')) {
-                                row.dataset.rejected = isRejected ? 'true' : 'false';
-                            }
-                            if (row.dataset.entry !== String(setup.entryPrice)) row.dataset.entry = setup.entryPrice || '';
-                            if (row.dataset.qty !== String(setup.quantity || 0)) row.dataset.qty = String(setup.quantity || 0);
-
-                            // update action cell and ltp/pnl if rejection state changed
-                            if (isRejected) {
-                                // ensure action cell empty and ltp/pnl show '-'
-                                const actionTd = tds[12];
-                                if (actionTd) actionTd.innerHTML = '';
-                                const ltpTd = tds[13];
-                                const pnlTd = tds[14];
-                                if (ltpTd) ltpTd.innerText = '-';
-                                if (pnlTd) pnlTd.innerText = '-';
-                            } else {
-                                // if previously rejected we should re-insert buttons and data-scrip attributes
-                                const actionTd = tds[12];
-                                if (actionTd && actionTd.innerHTML.trim() === '') {
-                                    actionTd.innerHTML = ` <button onclick="squareOffTrade(${setup.id})">Close</button> <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button> <button onclick="editExecution(${setup.id})">Edit</button>`;
-                                }
-                                const ltpTd = tds[13];
-                                const pnlTd = tds[14];
-                                if (ltpTd) {
-                                    ltpTd.dataset.scrip = setup.scripCode || '';
-                                    if ((ltpTd.innerText || '') !== (lastKnownLTP[setup.scripCode] != null ? String(lastKnownLTP[setup.scripCode]) : '-')) {
-                                        ltpTd.innerText = lastKnownLTP[setup.scripCode] != null ? (lastKnownLTP[setup.scripCode]).toString() : '-';
-                                    }
-                                }
-                                if (pnlTd) {
-                                    pnlTd.dataset.pnl = setup.scripCode || '';
-                                    if ((pnlTd.innerText || '') !== (lastKnownPNL[setup.scripCode] != null ? String(lastKnownPNL[setup.scripCode]) : '-')) {
-                                        pnlTd.innerText = lastKnownPNL[setup.scripCode] != null ? (lastKnownPNL[setup.scripCode]).toString() : '-';
-                                    }
-                                }
-                            }
-                        }
-                    });
-
-                    // Remove rows that are no longer present
-                    Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
-                        if (!incomingIds.has(r.dataset.id)) r.remove();
-                    });
-                })
-                .catch(err => {
-                    console.error('Failed to load trade setups', err);
-                    const r = document.getElementById('result'); if (r) r.innerText = 'Failed to load trade setups: ' + err.message;
-                });
-        } catch (e) {
-            console.error('loadTradeSetups() error', e);
-            const r = document.getElementById('result'); if (r) r.innerText = 'loadTradeSetups error: ' + e.message;
-        }
-     }
-
-
-
-
-
-    // Initialization: attach listeners and run initial loads when DOM is ready
-    function initPlaceOrderPage() {
-        // Attach event listeners that reference DOM elements (already done earlier in this script)
-        // Run initial data fetches
-        preloadInstruments();
-        loadRequestedOrders();
-        loadTradeSetups();
-
-        // periodic refresh
-        setInterval(() => {
-            loadRequestedOrders(); // To reflect deletions if trade is executed
-            loadTradeSetups();      // To reflect new setups
-        }, 5000); // every 5 sec
-    }
-
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', initPlaceOrderPage);
-    } else {
-        // DOM already available
-        initPlaceOrderPage();
-    }
-
-    function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
-        // Map UI exchange to MStock underlying exchange codes
-        const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
-        const fnIndices = ['NIFTY', 'BANKNIFTY', 'FINNIFTY', 'MIDCPNIFTY'];
-        const bfoIndices = ['SENSEX', 'BANKEX'];
-        let qualified = '';
-
-        const now = new Date();
-        const yy = String(now.getFullYear()).slice(-2);
-        const monthNames = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
-        const mon = monthNames[now.getMonth()];
-
-        if (fnIndices.includes(instrument)) {
-            // NSE Index Futures: NFO:{symbol}{yy}{MON}FUT
-            qualified = `NFO:${instrument}${yy}${mon}FUT`;
-        } else if (bfoIndices.includes(instrument)) {
-            // BSE Index Futures: BFO:{symbol}{yy}{MON}FUT
-            qualified = `BFO:${instrument}${yy}${mon}FUT`;
-        } else {
-            // Regular NSE/BSE equity
-            let mappedExchange = underlyingExchangeMap[exchange] || exchange;
-            qualified = `${mappedExchange}:${instrument}`;
-        }
-
-        // build qualified key like 'NSE:ACC' or 'BSE:ACC'
-        fetchMStockLtpForKey(qualified)
-            .then(ltp => {
-                if (ltp == null) return;
-
-                // find nearest numeric strike from the provided strikes list
-                const numericStrikes = strikes.map(s => Number(s)).filter(n => !isNaN(n));
-                if (numericStrikes.length === 0) return;
-
-                let nearest = numericStrikes[0];
-                let bestDiff = Math.abs(nearest - ltp);
-                numericStrikes.forEach(s => {
-                    const diff = Math.abs(s - ltp);
-                    if (diff < bestDiff) {
-                        bestDiff = diff;
-                        nearest = s;
+            form.addEventListener('submit', submitPlaceOrder);
+            const submitBtn = form.querySelector('button[type="submit"]');
+            if (submitBtn) submitBtn.addEventListener('click', submitPlaceOrder);
+            window.submitPlaceOrder = submitPlaceOrder;
+            window.placeOrderHandlerAttached = true;
+            console.log('Place order handlers attached');
+            // Update handler status UI
+            const hs = document.getElementById('handlerStatus'); if (hs) hs.innerText = 'Handler: attached';
+            // Debug button
+            try {
+                const dbg = document.getElementById('debugSubmitBtn');
+                if (dbg) dbg.addEventListener('click', function () {
+                    if (typeof window.submitPlaceOrder === 'function') {
+                        console.log('Debug Submit invoked');
+                        window.submitPlaceOrder();
+                    } else {
+                        alert('submitPlaceOrder() not available - check console for errors');
                     }
                 });
-                const nearestStr = String(nearest);
-                const strikeValue = nearestStr.includes('.') ? nearestStr : `${nearestStr}.0`;
-
-                const strikeSelect = document.getElementById('strikePrice');
-                strikeSelect.value = strikeValue;
-                // trigger change so expiries are loaded and option LTP fetched
-                strikeSelect.dispatchEvent(new Event('change'));
-            })
-            .catch(err => {
-                console.warn('Could not fetch underlying LTP to choose nearest strike', err);
-            });
+            } catch (e) { console.debug('failed to attach debug button', e); }
+        } catch (e) {
+            console.error('Failed to attach place order handlers', e);
+            try { const hs = document.getElementById('handlerStatus'); if (hs) hs.innerText = 'Handler: failed'; } catch (ee) {}
+        }
     }
 
-</script>
-
-</body>
-</html>
+    // Attach when DOM ready
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', attachFormHandlers);
+    } else {
+        attachFormHandlers();
+    }
+***

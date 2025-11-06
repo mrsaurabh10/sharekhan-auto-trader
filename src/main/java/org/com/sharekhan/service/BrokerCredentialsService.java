@@ -16,7 +16,10 @@ public class BrokerCredentialsService {
     private final CryptoService cryptoService;
 
     public Optional<BrokerCredentialsEntity> findForBrokerAndCustomer(String brokerName, Long customerId) {
-        Optional<BrokerCredentialsEntity> opt = repository.findTopByBrokerNameAndCustomerId(brokerName, customerId);
+        Optional<BrokerCredentialsEntity> opt = repository.findTopByBrokerNameAndCustomerIdAndActiveTrue(brokerName, customerId);
+        if (opt.isEmpty()) {
+            opt = repository.findTopByBrokerNameAndCustomerId(brokerName, customerId);
+        }
         opt.ifPresent(this::decryptFields);
         return opt;
     }
@@ -46,5 +49,12 @@ public class BrokerCredentialsService {
         if (entity.getBrokerPassword() != null) {
             try { entity.setBrokerPassword(cryptoService.decrypt(entity.getBrokerPassword())); } catch (Exception ignored) {}
         }
+    }
+
+    public java.util.List<BrokerCredentialsEntity> findAllForBroker(String brokerName) {
+        java.util.List<BrokerCredentialsEntity> list = repository.findAllByBrokerName(brokerName);
+        if (list == null) return java.util.Collections.emptyList();
+        for (BrokerCredentialsEntity e : list) decryptFields(e);
+        return list;
     }
 }

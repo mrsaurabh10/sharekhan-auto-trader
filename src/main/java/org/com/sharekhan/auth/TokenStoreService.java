@@ -1,6 +1,11 @@
 package org.com.sharekhan.auth;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.entity.AccessTokenEntity;
@@ -35,6 +40,16 @@ public class TokenStoreService {
     private String defaultBrokerName;
 
     private Broker defaultBroker = Broker.SHAREKHAN;
+
+    // Executor for async per-customer token loading (daemon threads so it won't block shutdown)
+    private final ExecutorService customerTokenLoader = Executors.newFixedThreadPool(4, new ThreadFactory() {
+        private final AtomicInteger idx = new AtomicInteger(1);
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "token-loader-" + idx.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        }
+    });
 
     @PostConstruct
     public void loadFromDb() {
@@ -94,6 +109,61 @@ public class TokenStoreService {
                         log.debug("No auth provider registered for {} — skipping startup fetch.", broker);
                     }
                 }
+
+                // --- New: asynchronously preload per-customer tokens for any configured broker credentials ---
+                try {
+                    var credsList = brokerCredentialsService.findAllForBroker(broker.getDisplayName());
+                    if (credsList != null && !credsList.isEmpty()) {
+                        BrokerAuthProvider provider = providerRegistry.getProvider(broker);
+                        for (var creds : credsList) {
+                            // schedule each credential as a separate background task so startup isn't blocked
+                            customerTokenLoader.submit(() -> {
+                                try {
+                                    Long custId = creds.getCustomerId();
+                                    if (custId == null) return;
+                                    String key = broker.getDisplayName() + ":" + custId;
+
+                                    // 1) try to load persisted token for this customer
+                                    try {
+                                        var opt = persistenceService.findLatestByBrokerAndCustomer(broker.getDisplayName(), custId);
+                                        if (opt.isPresent()) {
+                                            var ent = opt.get();
+                                            if (ent.getExpiry() != null && Instant.now().isBefore(ent.getExpiry())) {
+                                                tokenByCustomer.put(key, ent.getToken());
+                                                expiryByCustomer.put(key, ent.getExpiry());
+                                                log.info("🔐 (async) Loaded access token for {} customer {} from DB. Expiry: {}", broker, custId, ent.getExpiry());
+                                                return;
+                                            }
+                                        }
+                                    } catch (Exception ignore) {}
+
+                                    // 2) if no valid persisted token, attempt provider login using stored credentials
+                                    if (provider != null) {
+                                        try {
+                                            var res = provider.loginAndFetchToken(creds);
+                                            if (res != null && res.token() != null) {
+                                                updateTokenForCustomer(broker, custId, res.token(), res.expiresIn());
+                                                log.info("✅ (async) Fetched and stored token for {} customer {}.", broker, custId);
+                                            } else {
+                                                log.debug("(async) Provider returned no token for {} customer {}.", broker, custId);
+                                            }
+                                        } catch (Exception ex) {
+                                            log.error("❌ (async) Failed to fetch token for {} customer {} via provider: {}", broker, custId, ex.getMessage());
+                                        }
+                                    } else {
+                                        log.debug("No auth provider available for {} — cannot fetch token for customer {}.", broker, custId);
+                                    }
+                                } catch (Exception inner) {
+                                    log.error("❌ (async) Error initializing token for broker {} creds: {}", broker, inner.getMessage(), inner);
+                                }
+                            });
+                            log.debug("Scheduled async token preload for broker {} customer {}", broker, creds.getCustomerId());
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("No configured credentials found for broker {} or failed to schedule per-customer token preloads: {}", broker, e.getMessage());
+                }
+
             } catch (Exception e) {
                 log.error("❌ Error while initializing token for {}: {}", broker, e.getMessage(), e);
             }
@@ -250,5 +320,14 @@ public class TokenStoreService {
         expiryByCustomer.remove(key);
         persistenceService.deleteByBroker(broker.getDisplayName());
         log.info("🔐 Access token cleared for {} customer {}.", broker, customerId);
+    }
+
+    @PreDestroy
+    public void shutdownTokenLoader() {
+        try {
+            customerTokenLoader.shutdownNow();
+        } catch (Exception e) {
+            log.debug("Failed to shutdown token loader executor: {}", e.getMessage());
+        }
     }
 }

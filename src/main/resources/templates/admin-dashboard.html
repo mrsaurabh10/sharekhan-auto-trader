@@ -1,313 +1,641 @@
 <!DOCTYPE html>
-<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<html xmlns:th="http://www.thymeleaf.org">
 <head>
-    <meta charset="UTF-8" />
+    <meta charset="utf-8" />
+    <!-- CSRF tokens injected by controller model (_csrf) -->
+    <meta name="_csrf" th:content="${_csrf.token}" />
+    <meta name="_csrf_header" th:content="${_csrf.headerName}" />
+    <meta name="_csrf_parameter" th:content="${_csrf.parameterName}" />
     <title>Admin Dashboard</title>
     <style>
-        body{font-family:Arial,Helvetica,sans-serif;background:#f6f8fb;margin:0;padding:1rem}
-        .top{display:flex;justify-content:space-between;align-items:center}
-        .card{background:#fff;padding:1rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.06);margin-top:1rem}
-        table{width:100%;border-collapse:collapse}
-        th,td{padding:0.5rem;border-bottom:1px solid #eee;text-align:left}
-        .btn{padding:0.35rem 0.5rem;border-radius:6px;border:0;cursor:pointer}
-        .btn-primary{background:#2563eb;color:#fff}
-        .btn-danger{background:#ef4444;color:#fff}
+        body { font-family: Arial, sans-serif; margin: 1.5rem; }
+        .users-list { float: left; width: 220px; border-right: 1px solid #ddd; padding-right: 1rem; }
+        .users-list ul { list-style: none; padding: 0; }
+        .users-list li { padding: 0.4rem; cursor: pointer; border-radius: 4px; }
+        .users-list li:hover { background: #f0f0f0; }
+        .users-list li.active { background: #e6f0ff; font-weight: bold; }
+        .content { margin-left: 240px; }
+        table { border-collapse: collapse; width: 100%; }
+        table, th, td { border: 1px solid #ccc; }
+        th, td { padding: 0.5rem; text-align: left; }
+        .small { width: 120px; }
+        .form-row { margin-bottom: 0.5rem; }
+        .inline { display: inline-block; margin-right: 0.5rem; }
+        .btn { padding: 0.4rem 0.6rem; cursor: pointer; }
+        .btn.primary { background: #2b7cff; color: white; border: none; }
+        .btn.danger { background: #ff5c5c; color: white; border: none; }
+        .muted { color: #666; font-size: 0.9rem; }
     </style>
 </head>
 <body>
-<div class="top">
-    <h1>Admin Dashboard</h1>
-    <div>
-        <label>User ID: <input id="filterUser" type="number" /></label>
-        <button class="btn btn-primary" onclick="loadData()">Load</button>
-        <button class="btn" style="margin-left:1rem;" onclick="doLogout()">Logout</button>
+<h2>Admin Dashboard</h2>
+<div style="display:flex">
+    <div class="users-list">
+        <h4>Users</h4>
+        <div style="margin-bottom:0.6rem;">
+            <input id="newUserName" placeholder="username" style="width:100%; margin-bottom:0.25rem;" />
+            <input id="newUserCustomerId" placeholder="customerId (numeric)" style="width:100%; margin-bottom:0.25rem;" />
+            <button class="btn primary" id="createUserBtn" style="width:100%;">Add User</button>
+        </div>
+        <div id="usersContainer">Loading users...</div>
+        <div style="margin-top:0.5rem">
+            <button class="btn" id="runUsersDiagBtn" style="width:100%">Run users diagnostics</button>
+            <div id="usersDiagOutput" style="margin-top:0.5rem;font-size:0.9rem;color:#333"></div>
+        </div>
+    </div>
+    <div class="content">
+        <h3 id="selectedUserTitle">Select a user</h3>
+
+        <!-- User tabs -->
+        <div id="userTabs" style="margin-bottom:0.75rem;display:flex;gap:6px;flex-wrap:wrap"></div>
+
+        <!-- Per-user area: embed full Place Order page in an iframe so admin can use full feature-rich UI -->
+        <div id="userContent" style="display:none">
+            <div id="placeOrderPanel" style="border:1px solid #eee;padding:0.2rem;margin-bottom:0.8rem;background:#fbfbff;">
+                <h4>Place Order (full UI)</h4>
+                <iframe id="placeOrderIframe" src="about:blank" style="width:100%;height:640px;border:1px solid #ddd;" title="Place Order"></iframe>
+            </div>
+
+            <div style="display:flex;gap:16px;">
+                <div style="flex:1">
+                    <h4>Trading Requests</h4>
+                    <table id="user-requests-table" style="width:100%;border-collapse:collapse" border="1">
+                        <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div style="flex:1">
+                    <h4>Trades Executed</h4>
+                    <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
+                        <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th></tr></thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <section id="brokersSection" style="display:none">
+            <h4>Brokers for user <span id="selectedUserId"></span></h4>
+            <div style="margin-bottom:0.5rem">
+                <button class="btn primary" id="refreshBrokersBtn">Refresh</button>
+                <button class="btn" id="showAddBrokerBtn">Add Broker</button>
+            </div>
+
+            <div id="addBrokerForm" style="display:none; border:1px solid #eee; padding:0.6rem; margin-bottom:0.6rem; background:#fafafa;">
+                <div class="form-row"><label class="inline small">Broker Name</label><input id="b_brokerName" /></div>
+                <div class="form-row"><label class="inline small">API Key</label><input id="b_apiKey" /></div>
+                <div class="form-row"><label class="inline small">Broker Username</label><input id="b_brokerUser" /></div>
+                <div class="form-row"><label class="inline small">Broker Password</label><input id="b_brokerPw" type="password"/></div>
+                <div class="form-row"><label class="inline small">Client Code</label><input id="b_clientCode" /></div>
+                <div class="form-row"><label class="inline small">TOTP Secret</label><input id="b_totp" /></div>
+                <div class="form-row"><label class="inline small">Secret Key</label><input id="b_secret" /></div>
+                <div class="form-row"><label class="inline small">Active</label><input id="b_active" type="checkbox" checked /></div>
+                <div>
+                    <button class="btn primary" id="addBrokerSubmit">Save</button>
+                    <button class="btn" id="addBrokerCancel">Cancel</button>
+                </div>
+            </div>
+
+            <table id="brokersTable">
+                <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Broker</th>
+                    <th>Client Code</th>
+                    <th>Has API Key</th>
+                    <th>Active</th>
+                    <th>Actions</th>
+                </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+
+            <div id="brokerEditor" style="display:none; margin-top:0.8rem; border:1px solid #eee; padding:0.6rem; background:#fff6e6;">
+                <h4>Edit Broker <span id="editBrokerIdLbl"></span></h4>
+                <div class="form-row"><label class="inline small">Broker Name</label><input id="e_brokerName" /></div>
+                <div class="form-row"><label class="inline small">API Key</label><input id="e_apiKey" /></div>
+                <div class="form-row"><label class="inline small">Broker Username</label><input id="e_brokerUser" /></div>
+                <div class="form-row"><label class="inline small">Broker Password</label><input id="e_brokerPw" type="password"/></div>
+                <div class="form-row"><label class="inline small">Client Code</label><input id="e_clientCode" /></div>
+                <div class="form-row"><label class="inline small">TOTP Secret</label><input id="e_totp" /></div>
+                <div class="form-row"><label class="inline small">Secret Key</label><input id="e_secret" /></div>
+                <div class="form-row"><label class="inline small">Active</label><input id="e_active" type="checkbox"/></div>
+                <div>
+                    <button class="btn primary" id="saveBrokerBtn">Save</button>
+                    <button class="btn" id="cancelEditBrokerBtn">Cancel</button>
+                </div>
+            </div>
+
+        </section>
+
     </div>
 </div>
 
-<div class="card">
-    <h3>Users</h3>
-    <div id="userTabs" style="display:flex;gap:0.5rem;flex-wrap:wrap"></div>
-    <div id="userContents" style="margin-top:1rem"></div>
-</div>
+<script>
+    let selectedUserId = null;
+    let selectedCustomerId = null;
 
-<div class="card">
-    <h3>Admin Users</h3>
-    <div id="adminUsersList" style="margin-bottom:0.5rem"></div>
-    <div style="display:flex;gap:0.5rem;align-items:center;">
-        <input id="newAdminUser" placeholder="username" />
-        <input id="newAdminPass" placeholder="password" type="password" />
-        <button class="btn btn-primary" onclick="createAdminUser()">Create</button>
-    </div>
-    <small style="display:block;margin-top:0.5rem;color:#666">You cannot delete the currently logged-in admin.</small>
-</div>
+    // Named global functions for legacy inline handlers: delegate to window shims if present
+    function selectUser(appUserId, elem) {
+        try {
+            if (typeof window.selectUser === 'function' && window.selectUser !== selectUser) return window.selectUser(appUserId, elem);
+        } catch (e) { console.debug('global selectUser wrapper failed', e); }
+        // fallback: simple selection
+        try {
+            const customerId = elem && elem.dataset ? elem.dataset.customerId : null;
+            window.selectedUserId = appUserId;
+            window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId;
+            const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
+            const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + (elem ? elem.innerText : appUserId);
+            // Show user content and load place-order iframe for this user
+            try {
+                const userContent = document.getElementById('userContent'); if (userContent) userContent.style.display = 'block';
+                const brokersSection = document.getElementById('brokersSection'); if (brokersSection) brokersSection.style.display = 'block';
+                const iframe = document.getElementById('placeOrderIframe');
+                if (iframe) {
+                    const uid = (window.selectedCustomerId != null) ? window.selectedCustomerId : window.selectedUserId;
+                    iframe.src = '/place-order' + (uid ? ('?userId=' + encodeURIComponent(uid)) : '');
+                }
+            } catch (e) { console.debug('selectUser fallback iframe load failed', e); }
+            // trigger other user-specific loads if available
+            try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedCustomerId); } catch (e) { console.debug('loadRequestedOrdersForUser missing', e); }
+            try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedCustomerId); } catch (e) { console.debug('loadExecutedForUser missing', e); }
+            try { if (window.loadBrokers) loadBrokers(window.selectedUserId); } catch (e) { console.debug('loadBrokers missing', e); }
+        } catch (e) { console.debug('selectUser fallback failed', e); }
+    }
 
-<div class="card">
-    <h3>Regular Users</h3>
-    <div id="appUsersList" style="margin-bottom:0.5rem"></div>
-    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.5rem;">
-        <input id="newAppUsername" placeholder="username" />
-        <input id="newAppCustomerId" placeholder="customerId" type="number" style="width:140px" />
-        <input id="newAppBrokerApiKey" placeholder="brokerApiKey" />
-        <input id="newAppBrokerUser" placeholder="brokerUsername" />
-        <input id="newAppBrokerPw" placeholder="brokerPassword" />
-        <input id="newAppNotes" placeholder="notes" />
-        <button class="btn btn-primary" onclick="createAppUser()">Create User</button>
-    </div>
-    <small style="display:block;margin-top:0.5rem;color:#666">Broker credentials are stored encrypted.</small>
-</div>
+    function selectUserWithCustomer(appUserId, customerId, btnElem) {
+        try {
+            if (typeof window.selectUserWithCustomer === 'function' && window.selectUserWithCustomer !== selectUserWithCustomer) return window.selectUserWithCustomer(appUserId, customerId, btnElem);
+        } catch (e) { console.debug('global selectUserWithCustomer wrapper failed', e); }
+        // fallback behavior
+        try {
+            window.selectedUserId = appUserId;
+            window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId;
+            const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
+            const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + (btnElem ? btnElem.innerText : appUserId);
+        } catch (e) { console.debug('selectUserWithCustomer fallback failed', e); }
+    }
 
-<div class="card">
-    <h3>Pending Requests</h3>
-    <table id="requestsTbl">
-        <thead><tr><th>ID</th><th>User</th><th>Symbol</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Actions</th></tr></thead>
-        <tbody></tbody>
-    </table>
-</div>
+    // Ensure CSRF meta tags exist; if not, fetch from server endpoint and populate them.
+    async function ensureCsrf() {
+        try {
+            const meta = document.querySelector('meta[name="_csrf"]');
+            if (meta && meta.getAttribute('content')) return; // already present
+            // fetch from backend endpoint
+            const res = await fetch('/admin/csrf-token', { credentials: 'include' });
+            if (!res.ok) return;
+            const body = await res.json();
+            if (!body || !body.token) return;
+            // create/update meta tags
+            function setMeta(name, value) {
+                let m = document.querySelector('meta[name="' + name + '"]');
+                if (!m) {
+                    m = document.createElement('meta');
+                    m.setAttribute('name', name);
+                    document.head.appendChild(m);
+                }
+                m.setAttribute('content', value);
+            }
+            setMeta('_csrf', body.token);
+            setMeta('_csrf_header', body.header || 'X-CSRF-TOKEN');
+            setMeta('_csrf_parameter', body.parameter || '_csrf');
+        } catch (e) {
+            console.debug('Could not ensure CSRF token from server', e);
+        }
+    }
 
-<div class="card">
-    <h3>Triggered / Executed Trades</h3>
-    <table id="execTbl">
-        <thead><tr><th>ID</th><th>User</th><th>Symbol</th><th>Entry</th><th>Exit</th><th>PNL</th><th>Status</th><th>Actions</th></tr></thead>
-        <tbody></tbody>
-    </table>
-</div>
+    async function fetchJson(url, opts) {
+        opts = opts || {};
+        // ensure cookies/session are sent
+        if (!opts.credentials) opts.credentials = 'include';
+        // attach CSRF header automatically when available
+        try {
+            const csrfTokenMeta = document.querySelector('meta[name="_csrf"]');
+            const csrfHeaderMeta = document.querySelector('meta[name="_csrf_header"]');
+            if (!opts.headers) opts.headers = {};
+            if (csrfTokenMeta && csrfHeaderMeta) {
+                opts.headers[csrfHeaderMeta.getAttribute('content') || csrfHeaderMeta.content] = csrfTokenMeta.getAttribute('content') || csrfTokenMeta.content;
+            }
+            // common AJAX header
+            opts.headers['X-Requested-With'] = 'XMLHttpRequest';
+            // Fallbacks: if no meta-based CSRF present, try common header names using cookie-based token
+            if ((!csrfTokenMeta || !csrfHeaderMeta) && !opts.headers['X-CSRF-TOKEN']) {
+                // Try cookie named 'XSRF-TOKEN' or 'X-CSRF-TOKEN'
+                function getCookie(name) {
+                    const v = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
+                    return v ? v.pop() : null;
+                }
+                const tokenFromCookie = getCookie('XSRF-TOKEN') || getCookie('X-CSRF-TOKEN') || (csrfTokenMeta ? csrfTokenMeta.getAttribute('content') : null);
+                if (tokenFromCookie) {
+                    opts.headers['X-CSRF-TOKEN'] = tokenFromCookie;
+                    opts.headers['X-XSRF-TOKEN'] = tokenFromCookie;
+                }
+            }
+        } catch (e) {
+            console.debug('Failed to attach CSRF header', e);
+        }
 
-<script th:inline="javascript">
-    /*<![CDATA[*/
-    // CSRF settings from server-rendered model
-    const csrfToken = /*[[${_csrf.token}]]*/ '';
-    const csrfHeader = /*[[${_csrf.headerName}]]*/ '';
-    const csrfParam = /*[[${_csrf.parameterName}]]*/ '_csrf';
-    /*]]>*/
+        const res = await fetch(url, opts);
+        if (!res.ok) {
+            const txt = await res.text().catch(() => '');
+            if (res.status === 403) {
+                throw new Error('Forbidden (403). You may not be logged in or lack permissions. ' + txt);
+            }
+            throw new Error('HTTP ' + res.status + ' ' + txt);
+        }
+        return res.json();
+    }
 
-    // load users and render tabs
-    async function loadUsers(){
-        const res = await fetch('/admin/users');
-        const users = await res.json();
-        const tabs = document.getElementById('userTabs');
-        const contents = document.getElementById('userContents');
-        tabs.innerHTML=''; contents.innerHTML='';
-        if(!users || users.length===0){
-            tabs.innerHTML = '<div style="color:#666">No configured users</div>';
+    async function loadUsers() {
+        const container = document.getElementById('usersContainer');
+        try {
+            console.log('loadUsers() start');
+            container.innerHTML = 'Loading users... (' + new Date().toLocaleTimeString() + ')';
+            const diagOut = document.getElementById('usersDiagOutput'); if (diagOut) diagOut.innerText = '';
+
+        const endpoints = ['/admin/app-users', '/admin/users'];
+        let users = null;
+        let lastErrMsg = null;
+
+        // small helper to fetch text with a timeout
+        async function fetchTextWithTimeout(url, timeoutMs = 7000) {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                const res = await fetch(url, { credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' }, signal: controller.signal });
+                const txt = await res.text();
+                clearTimeout(id);
+                return { res, txt };
+            } catch (e) {
+                clearTimeout(id);
+                throw e;
+            }
+        }
+
+        // Try endpoints and show diagnostics in UI so failures are visible
+        const diagnostics = [];
+        for (const ep of endpoints) {
+            try {
+                container.innerHTML = 'Trying ' + ep + ' ...';
+                const { res, txt } = await fetchTextWithTimeout(ep, 8000);
+                diagnostics.push({ endpoint: ep, status: res.status, snippet: (txt || '').slice(0, 800) });
+                if (!res.ok) {
+                    lastErrMsg = `HTTP ${res.status} when fetching ${ep}`;
+                    console.error(lastErrMsg, txt.slice(0, 300));
+                    continue;
+                }
+                const trimmed = (txt || '').trim();
+                if (trimmed.startsWith('<') && trimmed.toLowerCase().includes('<html')) {
+                    lastErrMsg = 'Received HTML (likely login page) from ' + ep + '. Redirecting to admin login.';
+                    console.error(lastErrMsg);
+                    // show diagnostics to user briefly then redirect
+                    container.innerHTML = '<div class="muted">' + lastErrMsg + '</div>';
+                    try { window.location.href = '/admin/login'; } catch (e) { console.error('Redirect failed', e); }
+                    return;
+                }
+                // parse JSON
+                try {
+                    const parsed = JSON.parse(txt);
+                    if (!Array.isArray(parsed)) {
+                        lastErrMsg = 'Invalid JSON shape from ' + ep;
+                        console.error(lastErrMsg, parsed);
+                        continue;
+                    }
+                    users = parsed;
+                    break;
+                } catch (pe) {
+                    lastErrMsg = 'Invalid JSON from ' + ep + ': ' + pe.message;
+                    console.error(lastErrMsg, txt.slice(0, 500));
+                    continue;
+                }
+            } catch (err) {
+                lastErrMsg = err.name === 'AbortError' ? 'Request timed out' : (err.message || String(err));
+                diagnostics.push({ endpoint: ep, error: lastErrMsg });
+                console.error('Failed to fetch ' + ep + ':', lastErrMsg);
+            }
+        }
+
+        if (!Array.isArray(users) || users.length === 0) {
+            const msg = lastErrMsg ? ('Failed to load users: ' + lastErrMsg) : 'No configured users';
+            console.error('loadUsers final failure:', msg, diagnostics);
+            // show first diagnostic if present
+            let diagHtml = '';
+            if (diagnostics.length) {
+                diagHtml = '<div style="font-size:0.9rem;color:#444;margin-top:6px">Diagnostics:<ul>' + diagnostics.map(d => '<li><b>' + (d.endpoint||'') + '</b>: ' + (d.status ? 'status=' + d.status : '') + ' ' + (d.error ? d.error : '') + '<pre style="white-space:pre-wrap;max-height:120px;overflow:auto;background:#f3f3f3;padding:6px;border-radius:4px">' + (d.snippet ? d.snippet.replace(/</g,'&lt;') : '') + '</pre></li>').join('') + '</ul></div>';
+            }
+            container.innerHTML = '<div class="muted">' + msg + ' <a href="/admin/login">Login</a></div>' + diagHtml;
+            if (diagOut) diagOut.innerHTML = diagHtml;
             return;
         }
-        users.forEach((u, idx) => {
-            const btn = document.createElement('button');
-            btn.className='btn';
-            btn.textContent = 'User '+u;
-            btn.onclick = () => selectUserTab(u);
-            tabs.appendChild(btn);
-            if(idx===0) selectUserTab(u);
-        })
-    }
 
-    async function selectUserTab(userId){
-        document.getElementById('filterUser').value = userId;
-        // render place-order form for this user
-        const contents = document.getElementById('userContents');
-        contents.innerHTML = `
-            <div class="card">
-                <h4>Place Order for User ${userId}</h4>
-                <label>Instrument <input id="po-instrument-${userId}"/></label>
-                <label>Exchange <input id="po-exchange-${userId}"/></label>
-                <label>Entry Price <input id="po-entry-${userId}" type="number" step="0.01"/></label>
-                <label>SL <input id="po-sl-${userId}" type="number" step="0.01"/></label>
-                <label>Target1 <input id="po-t1-${userId}" type="number" step="0.01"/></label>
-                <label>Quantity <input id="po-qty-${userId}" type="number"/></label>
-                <div style="margin-top:0.5rem"><button class='btn btn-primary' onclick="placeOrderForUser(${userId})">Place Order</button></div>
-            </div>
-        `;
-        // load requests+exec for this user into main tables
-        loadData();
-    }
-
-    async function placeOrderForUser(userId){
-        const instrument = document.getElementById('po-instrument-'+userId).value;
-        const exchange = document.getElementById('po-exchange-'+userId).value;
-        const entry = parseFloat(document.getElementById('po-entry-'+userId).value);
-        const sl = parseFloat(document.getElementById('po-sl-'+userId).value);
-        const t1 = parseFloat(document.getElementById('po-t1-'+userId).value);
-        const qty = parseInt(document.getElementById('po-qty-'+userId).value);
-        const body = { instrument: instrument, exchange: exchange, entryPrice: entry, stopLoss: sl, target1: t1, quantity: qty, userId: userId };
-        const res = await fetch('/api/trades/trigger-on-price', { method:'POST', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify(body) });
-        if(res.ok){ alert('Order placed'); loadData(); } else { alert('Failed to place'); }
-    }
-
-    async function loadData(){
-        const userId = document.getElementById('filterUser').value || '';
-        const reqRes = await fetch('/api/orders/requests' + (userId ? '?userId='+userId : ''));
-        const reqJson = await reqRes.json();
-        renderRequests(reqJson);
-
-        const execRes = await fetch('/api/orders/executed' + (userId ? '?userId='+userId : ''));
-        const execJson = await execRes.json();
-        renderExec(execJson);
-    }
-
-    function renderRequests(list){
-        const tbody = document.querySelector('#requestsTbl tbody'); tbody.innerHTML='';
-        list.forEach(r=>{
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${r.id}</td><td>${r.customerId||''}</td><td>${r.symbol}</td><td>${r.entryPrice}</td><td>${r.stopLoss}</td><td>${r.target1||''}</td><td>${r.quantity}</td><td><button class='btn btn-primary' onclick='trigger(${r.id})'>Trigger</button> <button class='btn btn-primary' onclick='editRequest(${r.id})'>Edit</button> <button class='btn btn-danger' onclick='cancel(${r.id})'>Cancel</button></td>`;
-            tbody.appendChild(tr);
-        })
-    }
-
-    function renderExec(list){
-        const tbody = document.querySelector('#execTbl tbody'); tbody.innerHTML='';
-        list.forEach(t=>{
-            const tr = document.createElement('tr');
-            tr.innerHTML = `<td>${t.id}</td><td>${t.customerId||''}</td><td>${t.symbol}</td><td>${t.entryPrice}</td><td>${t.exitPrice||''}</td><td>${t.pnl||''}</td><td>${t.status}</td><td><button class='btn btn-primary' onclick='squareOff(${t.id})'>SquareOff</button> <button class='btn btn-primary' onclick='editExecution(${t.id})'>Edit</button></td>`;
-            tbody.appendChild(tr);
-        })
-    }
-
-    async function trigger(id){
-        const res = await fetch('/admin/trigger/' + id, { method:'POST', headers: { [csrfHeader]: csrfToken } });
-        if(res.ok) loadData(); else alert('Failed to trigger');
-    }
-    async function cancel(id){
-        const res = await fetch('/api/trades/cancel-request/' + id + '?userId=', { method:'POST', headers: { [csrfHeader]: csrfToken } });
-        if(res.ok) loadData(); else alert('Failed to cancel');
-    }
-    async function squareOff(id){
-        const res = await fetch('/api/trades/square-off/' + id, { method:'POST', headers: { [csrfHeader]: csrfToken } });
-        if(res.ok) loadData(); else alert('Failed to square off');
-    }
-
-    async function editRequest(id){
-        const sl = prompt('New Stop Loss (leave blank to skip)');
-        const t1 = prompt('New Target1 (leave blank to skip)');
-        const qty = prompt('New Quantity (leave blank to skip)');
-        const body = {};
-        if (sl) body.stopLoss = parseFloat(sl);
-        if (t1) body.target1 = parseFloat(t1);
-        if (qty) body.quantity = parseInt(qty);
-        const res = await fetch('/admin/update-request/' + id, { method:'POST', headers:{'Content-Type':'application/json', [csrfHeader]: csrfToken}, body: JSON.stringify(body) });
-        if (res.ok) loadData(); else alert('Failed');
-    }
-
-    async function editExecution(id){
-        const sl = prompt('New Stop Loss (leave blank to skip)');
-        const t1 = prompt('New Target1 (leave blank to skip)');
-        const body = {};
-        if (sl) body.stopLoss = parseFloat(sl);
-        if (t1) body.target1 = parseFloat(t1);
-        const res = await fetch('/admin/update-execution/' + id, { method:'POST', headers:{'Content-Type':'application/json', [csrfHeader]: csrfToken}, body: JSON.stringify(body) });
-        if (res.ok) loadData(); else alert('Failed');
-    }
-
-    async function doLogout(){
-        try{
-            // Try header first
-            let res = await fetch('/admin/logout', { method: 'POST', credentials: 'same-origin', headers: { [csrfHeader]: csrfToken } });
-            if (!res.ok) {
-                // fallback: send as form-encoded body with parameter name
-                const body = encodeURIComponent(csrfParam) + '=' + encodeURIComponent(csrfToken);
-                res = await fetch('/admin/logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+        const ul = document.createElement('ul');
+        users.forEach(u => {
+            // u is { id, username, customerId }
+            const li = document.createElement('li');
+            const display = (u.username ? u.username : ('user-'+u.id)) + (u.customerId ? (' ['+u.customerId+']') : '');
+            li.innerText = display;
+            li.dataset.appUserId = u.id; // store app_user.id for broker API calls
+            li.dataset.customerId = u.customerId;
+            // Defensive click handler: try available implementations in order
+            li.addEventListener('click', function () {
+                try {
+                    if (typeof selectUser === 'function') return selectUser(u.id, li);
+                    if (typeof window.selectUser === 'function') return window.selectUser(u.id, li);
+                    if (typeof window.selectUserWithCustomer === 'function') return window.selectUserWithCustomer(u.id, u.customerId, li);
+                    // last-resort local update
+                    window.selectedUserId = u.id;
+                    window.selectedCustomerId = (u.customerId == null || u.customerId === 'null' || u.customerId === '') ? u.id : u.customerId;
+                    const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
+                    const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + display;
+                } catch (e) { console.debug('user-list click failed', e); }
+            });
+            ul.appendChild(li);
+        });
+        // attach list
+        container.innerHTML = '';
+        container.appendChild(ul);
+        // Auto-select first user after a short defer so any shims can be defined by other scripts
+        if (!selectedUserId && users.length > 0) {
+            const firstLi = container.querySelector('li');
+            if (firstLi) {
+                setTimeout(() => { try { firstLi.click(); } catch (e) { console.debug('deferred firstLi click failed', e); } }, 50);
             }
-        }catch(e){
-            console.warn('Logout request failed', e);
         }
-        // redirect to login (logout handler will invalidate session)
-        window.location = '/admin/login?logout';
+        // render tabs in content area - defensive: if renderUserTabs not yet defined, create minimal tabs
+        try {
+            if (typeof renderUserTabs === 'function') {
+                renderUserTabs(users);
+            } else {
+                // minimal inline rendering to avoid ReferenceError
+                const tabs = document.getElementById('userTabs');
+                if (tabs) {
+                    tabs.innerHTML = '';
+                    (users || []).forEach(u => {
+                        const btn = document.createElement('button');
+                        btn.className = 'btn';
+                        btn.style.padding = '6px 10px';
+                        btn.innerText = (u.username ? u.username : ('user-' + u.id)) + (u.customerId ? (' [' + u.customerId + ']') : '');
+                        btn.onclick = () => { try { if (window.selectUserWithCustomer) window.selectUserWithCustomer(u.id, u.customerId, btn); else if (window.selectUser) window.selectUser(u.id, btn); } catch (e) { console.debug('inline tab click failed', e); } };
+                        tabs.appendChild(btn);
+                    });
+                }
+            }
+        } catch (e) { console.debug('renderUserTabs safe call failed', e); }
+    } catch (outerErr) {
+        console.error('loadUsers outer exception', outerErr);
+        container.innerHTML = '<div class="muted">Error loading users: ' + (outerErr && outerErr.message ? outerErr.message : outerErr) + '</div>';
+        const diagOut = document.getElementById('usersDiagOutput'); if (diagOut) diagOut.innerText = 'Exception: ' + (outerErr && outerErr.stack ? outerErr.stack : outerErr);
     }
+}
 
-    // Admin user mgmt
-    async function loadAdminUsers(){
-        const res = await fetch('/admin/admin-users');
-        const list = await res.json();
-        const el = document.getElementById('adminUsersList');
-        el.innerHTML = '';
-        list.forEach(u=>{
-            const div = document.createElement('div');
-            div.style.marginBottom='0.25rem';
-            div.innerHTML = `${u.username} <button class='btn' onclick='promptChange(${u.id})'>Change PW</button> <button class='btn btn-danger' onclick='deleteAdmin(${u.id})'>Delete</button>`;
-            el.appendChild(div);
-        })
-    }
+// Non-executing reference so editors/indexers detect `loadUsers` usage (no runtime effect)
+if (false) { loadUsers(); }
 
-    async function createAdminUser(){
-        const username = document.getElementById('newAdminUser').value;
-        const password = document.getElementById('newAdminPass').value;
-        const res = await fetch('/admin/admin-users', { method:'POST', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify({ username, password }) });
-        if(res.ok){ alert('Created'); document.getElementById('newAdminUser').value=''; document.getElementById('newAdminPass').value=''; loadAdminUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
-    }
+// --- Safety shims ---
+if (typeof renderUserTabs !== 'function') {
+    window.renderUserTabs = function (users) {
+        try {
+            const tabs = document.getElementById('userTabs');
+            if (!tabs) return;
+            tabs.innerHTML = '';
+            (users || []).forEach(u => {
+                const btn = document.createElement('button');
+                btn.className = 'btn';
+                btn.style.padding = '6px 10px';
+                btn.innerText = (u.username ? u.username : ('user-' + u.id)) + (u.customerId ? (' [' + u.customerId + ']') : '');
+                btn.onclick = () => { if (window.selectUserWithCustomer) window.selectUserWithCustomer(u.id, u.customerId, btn); else if (window.selectUser) window.selectUser(u.id, btn); };
+                tabs.appendChild(btn);
+            });
+        } catch (e) { console.debug('renderUserTabs shim failed', e); }
+    };
+}
 
-    async function deleteAdmin(id){
-        if(!confirm('Delete admin?')) return;
-        const res = await fetch('/admin/admin-users/'+id, { method:'DELETE', headers: { [csrfHeader]: csrfToken } });
-        if(res.ok) { alert('Deleted'); loadAdminUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
-    }
+if (typeof window.selectUserWithCustomer !== 'function') {
+    window.selectUserWithCustomer = function (appUserId, customerId, btnElem) {
+        try {
+            document.querySelectorAll('#userTabs .btn').forEach(b => b.style.background = '');
+            if (btnElem) btnElem.style.background = '#e6f0ff';
+            window.selectedUserId = appUserId;
+            window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId;
+            const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
+            const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + (btnElem ? btnElem.innerText : appUserId);
+            const userContent = document.getElementById('userContent'); if (userContent) userContent.style.display = 'block';
+            const brokersSection = document.getElementById('brokersSection'); if (brokersSection) brokersSection.style.display = 'block';
+            // Load Place Order iframe for this user (use customerId if present else appUserId)
+            try {
+                const iframe = document.getElementById('placeOrderIframe');
+                if (iframe) {
+                    const uid = (window.selectedCustomerId != null) ? window.selectedCustomerId : window.selectedUserId;
+                    iframe.src = '/place-order' + (uid ? ('?userId=' + encodeURIComponent(uid)) : '');
+                }
+            } catch (e) { console.debug('setting placeOrderIframe src failed', e); }
+            try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedCustomerId); } catch (e) {}
+            try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedCustomerId); } catch (e) {}
+            try { if (window.loadBrokers) loadBrokers(window.selectedUserId); } catch (e) {}
+        } catch (e) { console.debug('selectUserWithCustomer shim failed', e); }
+    };
+}
 
-    function promptChange(id){
-        const pw = prompt('New password');
-        if(!pw) return;
-        changeAdminPassword(id, pw);
-    }
-
-    async function changeAdminPassword(id, password){
-        const res = await fetch('/admin/admin-users/'+id+'/password', { method:'POST', headers:{ 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify({ password }) });
-        if(res.ok){ alert('Updated'); loadAdminUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
-    }
-
-    // App user mgmt
-    async function loadAppUsers(){
-        const res = await fetch('/admin/app-users');
-        const list = await res.json();
-        const el = document.getElementById('appUsersList');
-        el.innerHTML = '';
-        list.forEach(u=>{
-            const div = document.createElement('div');
-            div.style.marginBottom='0.25rem';
-            div.innerHTML = `${u.username} (id:${u.customerId||''}) <button class='btn' onclick='editAppUser(${u.id})'>Edit</button> <button class='btn btn-danger' onclick='deleteAppUser(${u.id})'>Delete</button>`;
-            el.appendChild(div);
-        })
-    }
-
-    async function createAppUser(){
-        const username = document.getElementById('newAppUsername').value;
-        const customerId = document.getElementById('newAppCustomerId').value || null;
-        const brokerApiKey = document.getElementById('newAppBrokerApiKey').value || null;
-        const brokerUser = document.getElementById('newAppBrokerUser').value || null;
-        const brokerPw = document.getElementById('newAppBrokerPw').value || null;
-        const notes = document.getElementById('newAppNotes').value || null;
-        const payload = { username, customerId: customerId ? Number(customerId) : null, brokerApiKey, brokerUsername: brokerUser, brokerPassword: brokerPw, notes };
-        const res = await fetch('/admin/app-users', { method:'POST', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify(payload) });
-        if(res.ok){ alert('User created'); document.getElementById('newAppUsername').value=''; document.getElementById('newAppCustomerId').value=''; document.getElementById('newAppBrokerApiKey').value=''; document.getElementById('newAppBrokerUser').value=''; document.getElementById('newAppBrokerPw').value=''; document.getElementById('newAppNotes').value=''; loadAppUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
-    }
-
-    function editAppUser(id){
-        // simple prompt-based edit: load current values then prompt for new ones
-        const api = '/admin/app-users/'+id;
-        fetch(api).then(r=>r.json()).then(u=>{
-            const newCustomer = prompt('customerId', u.customerId || '');
-            const newApiKey = prompt('brokerApiKey (leave blank to keep)', '');
-            const newBrokerUser = prompt('brokerUsername (leave blank to keep)', '');
-            const newBrokerPw = prompt('brokerPassword (leave blank to keep)', '');
-            const newNotes = prompt('notes', u.notes || '');
-            const body = {};
-            if (newCustomer !== null) body.customerId = newCustomer === '' ? null : Number(newCustomer);
-            if (newApiKey !== null && newApiKey !== '') body.brokerApiKey = newApiKey;
-            if (newBrokerUser !== null && newBrokerUser !== '') body.brokerUsername = newBrokerUser;
-            if (newBrokerPw !== null && newBrokerPw !== '') body.brokerPassword = newBrokerPw;
-            if (newNotes !== null) body.notes = newNotes;
-            fetch(api, { method: 'PUT', headers: { 'Content-Type':'application/json', [csrfHeader]: csrfToken }, body: JSON.stringify(body) })
-                .then(r=>{ if(r.ok) { alert('Updated'); loadAppUsers(); } else r.text().then(t=>alert('Failed: '+t)); });
+// --- Admin UI interactions ---
+// Create App User handler
+try {
+    const createBtn = document.getElementById('createUserBtn');
+    if (createBtn) {
+        createBtn.addEventListener('click', async function () {
+            try {
+                const nameEl = document.getElementById('newUserName');
+                const custEl = document.getElementById('newUserCustomerId');
+                if (!nameEl || !nameEl.value.trim()) { alert('username required'); return; }
+                const payload = { username: nameEl.value.trim() };
+                if (custEl && custEl.value.trim()) payload.customerId = Number(custEl.value.trim());
+                // Ensure CSRF meta is present (fetch if needed) then POST using fetchJson which will attach CSRF
+                await ensureCsrf();
+                const created = await fetchJson('/admin/app-users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                console.log('created app user', created);
+                // clear inputs
+                nameEl.value = '';
+                if (custEl) custEl.value = '';
+                // Try to append the created user to the existing list so admin sees it immediately.
+                try {
+                    const container = document.getElementById('usersContainer');
+                    const ul = container ? container.querySelector('ul') : null;
+                    const display = (created.username ? created.username : ('user-' + created.id)) + (created.customerId ? (' [' + created.customerId + ']') : '');
+                    if (ul) {
+                        const newLi = document.createElement('li');
+                        newLi.innerText = display;
+                        newLi.dataset.appUserId = created.id;
+                        newLi.dataset.customerId = created.customerId;
+                        newLi.addEventListener('click', function () { try { if (window.selectUser) window.selectUser(created.id, newLi); else if (window.selectUserWithCustomer) window.selectUserWithCustomer(created.id, created.customerId, newLi); } catch (e) { console.debug('newLi click failed', e); } });
+                        ul.appendChild(newLi);
+                        // select it
+                        setTimeout(() => { try { newLi.click(); } catch (e) { console.debug('click newLi failed', e); } }, 50);
+                    } else {
+                        // fallback to reloading the list and selecting
+                        await loadUsers();
+                        if (created && created.id) {
+                            setTimeout(() => {
+                                try {
+                                    const li = document.querySelector('#usersContainer ul li[data-app-user-id="' + created.id + '"]');
+                                    if (li) li.click();
+                                } catch (e) { console.debug('auto-select created user failed after reload', e); }
+                            }, 200);
+                        }
+                    }
+                } catch (e) {
+                    console.debug('append-created-user failed, reloading users', e);
+                    await loadUsers();
+                }
+            } catch (err) {
+                console.error('create user failed', err);
+                alert('Failed to create user: ' + (err && err.message ? err.message : err));
+            }
         });
     }
+} catch (e) { console.debug('attach createUserBtn failed', e); }
 
-    async function deleteAppUser(id){
-        if(!confirm('Delete user?')) return;
-        const res = await fetch('/admin/app-users/'+id, { method:'DELETE', headers: { [csrfHeader]: csrfToken } });
-        if(res.ok) { alert('Deleted'); loadAppUsers(); } else { res.text().then(t=>alert('Failed: '+t)); }
+// New: load Trading Requests for a user and render into table
+async function loadRequestedOrdersForUser(userId) {
+    const uid = userId == null ? window.selectedCustomerId : userId;
+    const tbody = document.querySelector('#user-requests-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!uid) {
+        tbody.innerHTML = '<tr><td colspan="9" class="muted">No user selected</td></tr>';
+        return;
     }
+    try {
+        const data = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid));
+        if (!Array.isArray(data) || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="muted">No requests</td></tr>';
+            return;
+        }
+        for (const r of data) {
+            const tr = document.createElement('tr');
+            // safe field access
+            const id = r.id || '';
+            const symbol = r.instrument || r.symbol || r.tradingSymbol || '-';
+            const exchange = r.exchange || '-';
+            const entry = r.entryPrice != null ? r.entryPrice : (r.entry || '-');
+            const sl = r.stopLoss != null ? r.stopLoss : (r.stop_loss || '-');
+            const t1 = r.target1 != null ? r.target1 : (r.t1 || '-');
+            const qty = r.quantity != null ? r.quantity : (r.qty || '-');
+            const status = r.status || r.requestStatus || '-';
+            const actionCell = document.createElement('td');
+            // only show Trigger button if status is not already triggered/executed
+            if (String(status).toUpperCase() !== 'TRIGGERED' && String(status).toUpperCase() !== 'EXECUTED') {
+                const btn = document.createElement('button');
+                btn.className = 'btn small';
+                btn.innerText = 'Trigger';
+                btn.addEventListener('click', async function () {
+                    try {
+                        btn.disabled = true;
+                        await ensureCsrf();
+                        await fetchJson('/admin/trigger/' + id, { method: 'POST' });
+                        // refresh lists
+                        await loadRequestedOrdersForUser(uid);
+                        try { if (window.loadExecutedForUser) loadExecutedForUser(uid); } catch (e) {}
+                    } catch (e) {
+                        console.error('trigger request failed', e);
+                        alert('Trigger failed: ' + (e && e.message ? e.message : e));
+                    } finally {
+                        try { btn.disabled = false; } catch (e) {}
+                    }
+                });
+                actionCell.appendChild(btn);
+            } else {
+                actionCell.innerText = '-';
+            }
 
-    // Auto-load
-    loadUsers();
-    loadData();
-    loadAdminUsers();
-    loadAppUsers();
- </script>
+            tr.innerHTML = `<td>${id}</td><td>${escapeHtml(String(symbol))}</td><td>${escapeHtml(String(exchange))}</td><td>${escapeHtml(String(entry))}</td><td>${escapeHtml(String(sl))}</td><td>${escapeHtml(String(t1))}</td><td>${escapeHtml(String(qty))}</td><td>${escapeHtml(String(status))}</td>`;
+            tr.appendChild(actionCell);
+            tbody.appendChild(tr);
+        }
+    } catch (e) {
+        console.error('Failed to load requested orders for user', uid, e);
+        tbody.innerHTML = '<tr><td colspan="9" class="muted">Error loading requests</td></tr>';
+    }
+}
+
+// New: load recently executed trades for a user and render into table
+async function loadExecutedForUser(userId) {
+    const uid = userId == null ? window.selectedCustomerId : userId;
+    const tbody = document.querySelector('#user-executed-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    if (!uid) {
+        tbody.innerHTML = '<tr><td colspan="9" class="muted">No user selected</td></tr>';
+        return;
+    }
+    try {
+        const data = await fetchJson('/api/orders/executed?userId=' + encodeURIComponent(uid));
+        if (!Array.isArray(data) || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="9" class="muted">No executed trades</td></tr>';
+            return;
+        }
+        for (const t of data) {
+            const tr = document.createElement('tr');
+            const id = t.id || '';
+            const symbol = t.instrument || t.symbol || t.tradingSymbol || '-';
+            const exchange = t.exchange || '-';
+            const entry = t.entryPrice != null ? t.entryPrice : (t.entry || '-');
+            const sl = t.stopLoss != null ? t.stopLoss : (t.stop_loss || '-');
+            const t1 = t.target1 != null ? t.target1 : (t.t1 || '-');
+            const qty = t.quantity != null ? t.quantity : (t.qty || '-');
+            const status = t.status || '-';
+            const actionCell = document.createElement('td');
+            const forbiddenStatuses = new Set(['REJECTED','EXITED_SUCCESS','EXITED_FAILURE','EXITED']);
+            if (!forbiddenStatuses.has(String(status).toUpperCase())) {
+                const btn = document.createElement('button');
+                btn.className = 'btn small';
+                btn.innerText = 'View';
+                btn.addEventListener('click', function () {
+                    alert('Open details for executed trade id=' + id);
+                });
+                actionCell.appendChild(btn);
+            } else {
+                actionCell.innerText = '-';
+            }
+            tr.innerHTML = `<td>${id}</td><td>${escapeHtml(String(symbol))}</td><td>${escapeHtml(String(exchange))}</td><td>${escapeHtml(String(entry))}</td><td>${escapeHtml(String(sl))}</td><td>${escapeHtml(String(t1))}</td><td>${escapeHtml(String(qty))}</td><td>${escapeHtml(String(status))}</td>`;
+            tr.appendChild(actionCell);
+            tbody.appendChild(tr);
+        }
+    } catch (e) {
+        console.error('Failed to load executed trades for user', uid, e);
+        tbody.innerHTML = '<tr><td colspan="9" class="muted">Error loading executed trades</td></tr>';
+    }
+}
+
+// Small helper to safely escape HTML inserted into cells
+function escapeHtml(str) {
+    return (str || '').toString().replace(/[&<>"'`]/g, function (s) { return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;","`":"&#96;"})[s]; });
+}
+
+// Diagnostics button: re-run loadUsers and show raw endpoints status
+try {
+    const diagBtn = document.getElementById('runUsersDiagBtn');
+    if (diagBtn) diagBtn.addEventListener('click', async () => { try { await loadUsers(); alert('Users refreshed (check list)'); } catch (e) { alert('Failed to refresh users: ' + e); } });
+} catch (e) { console.debug('attach diag btn failed', e); }
+
+// Initial load
+ensureCsrf();
+loadUsers();
+
+// Listen for messages from child iframe (place-order) to refresh lists when an order is triggered
+try {
+    window.addEventListener('message', function (ev) {
+        try {
+            if (!ev || !ev.data) return;
+            var msg = ev.data;
+            if (msg.type === 'orderTriggered') {
+                console.log('Received orderTriggered from iframe for userId=', msg.userId);
+                // refresh lists for currently selected user
+                try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedCustomerId); } catch (e) { console.debug('loadRequestedOrdersForUser missing', e); }
+                try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedCustomerId); } catch (e) { console.debug('loadExecutedForUser missing', e); }
+            }
+        } catch (e) { console.debug('message handler failed', e); }
+    }, false);
+} catch (e) { console.debug('attach message listener failed', e); }
+</script>
 </body>
 </html>

@@ -40,4 +40,7 @@ public class BrokerCredentialsEntity {
     @Column(name = "secret_key", length = 1024)
     private String secretKey;
 
+    @Column(name = "active", nullable = false)
+    private Boolean active = true;
+
 }
