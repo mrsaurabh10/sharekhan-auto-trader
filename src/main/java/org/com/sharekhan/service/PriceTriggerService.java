@@ -57,13 +57,19 @@ public class PriceTriggerService {
             if(trades.isPresent())
             {
                 TriggeredTradeSetupEntity trade = trades.get();
-                boolean slHit = ltp <= trade.getStopLoss();
+                // Defensive: do not treat null or non-positive stopLoss as a valid SL
+                Double slVal = trade.getStopLoss();
+                boolean hasValidSl = (slVal != null && slVal > 0d);
+                boolean slHit = hasValidSl && (ltp <= slVal);
+
+                // Targets: consider only non-null and >0 targets
                 boolean targetHit = Stream.of(trade.getTarget1(), trade.getTarget2(), trade.getTarget3())
                         .filter(Objects::nonNull)
+                        .filter(t -> t > 0d)
                         .anyMatch(target -> ltp >= target);
 
                 if (slHit) {
-                    log.warn("📉 SL hit for trade {} at LTP: {}", trade.getId(), ltp);
+                    log.warn("📉 SL hit for trade {} (SL={}) at LTP: {}", trade.getId(), slVal, ltp);
                     tradeExecutionService.squareOff(trade, ltp, "STOP_LOSS_HIT");
                     // ensure pnl/exit saved if squareOff didn't persist them
                     persistPnlIfMissing(trade, ltp);
@@ -72,6 +78,9 @@ public class PriceTriggerService {
                     tradeExecutionService.squareOff(trade, ltp, "TARGET_HIT");
                     // ensure pnl/exit saved if squareOff didn't persist them
                     persistPnlIfMissing(trade, ltp);
+                } else {
+                    log.debug("No SL/Target hit for trade {} at LTP: {} (SL: {}, Targets: [{}, {}, {}])",
+                            trade.getId(), ltp, slVal, trade.getTarget1(), trade.getTarget2(), trade.getTarget3());
                 }
             }
         } catch (Exception e) {
