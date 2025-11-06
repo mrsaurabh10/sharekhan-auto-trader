@@ -260,7 +260,24 @@ public class TradeExecutionService {
 
             var response = sharekhanConnect.placeOrder(order);
 
-            log.info("Response received " + response);
+            // Compactly log the important bits of the response instead of the full JSON
+            try {
+                if (response != null && response.has("data")) {
+                    JSONObject d = response.getJSONObject("data");
+                    String respOrderId = d.optString("orderId", d.optString("orsOrderId", ""));
+                    String respStatus = d.optString("orderStatus", "");
+                    String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
+                    String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
+                    log.info("Sharekhan placeOrder response summary: orderId={} status={} avg/price={} execQty={}", respOrderId, respStatus, respAvg, respExecQty);
+                } else if (response != null) {
+                    log.info("Sharekhan placeOrder response received but missing data: status={}", response.optInt("status", -1));
+                } else {
+                    log.info("Sharekhan placeOrder response is null");
+                }
+            } catch (Exception ignore) {
+                log.debug("Failed to compactly log placeOrder response: {}", ignore.getMessage());
+            }
+
             if (response == null ) {
                 log.error("❌ Sharekhan order failed or returned null for trigger {}", trigger.getId());
             }else if (!response.has("data")){
@@ -268,7 +285,7 @@ public class TradeExecutionService {
             }else if (response.getJSONObject("data").has("orderId")){
                 String orderId = response.getJSONObject("data").getString("orderId");
                 //order placed  successfully
-                log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
+                log.info("✅ Sharekhan order placed successfully: orderId={}", orderId);
 
                 // check the status with a delay of .5 second
                 //Thread.sleep(500);

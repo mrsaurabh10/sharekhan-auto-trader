@@ -53,9 +53,30 @@ public class OrderStatusPollingService {
                 String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
-                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(),
-                        orderIdToMonitor);
-                TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
+                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(), orderIdToMonitor);
+
+                // Evaluate final status and log a very compact summary (avoid dumping full JSON)
+                TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade, response);
+                try {
+                    int records = 0;
+                    String lastRecStatus = "";
+                    String lastRecAvg = "";
+                    String lastRecExecQty = "";
+                    if (response != null && response.has("data") && response.get("data") instanceof JSONArray) {
+                        JSONArray arr = response.getJSONArray("data");
+                        records = arr.length();
+                        if (records > 0) {
+                            JSONObject last = arr.getJSONObject(records - 1);
+                            lastRecStatus = last.optString("orderStatus", "");
+                            lastRecAvg = last.optString("avgPrice", last.optString("orderPrice", ""));
+                            lastRecExecQty = last.has("execQty") ? String.valueOf(last.optInt("execQty")) : last.optString("execQty", "");
+                        }
+                    }
+                    log.info("OrderHistory: orderId={} computedStatus={} records={} lastStatus={} avg={} execQty={}",
+                            orderIdToMonitor, tradeStatus, records, lastRecStatus, lastRecAvg, lastRecExecQty);
+                } catch (Exception e) {
+                    log.warn("Failed to build order history compact log: {}", e.getMessage());
+                }
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                     // Determine if this was an exit order or entry order
                     if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
@@ -505,3 +526,4 @@ public class OrderStatusPollingService {
 
      */
 }
+
