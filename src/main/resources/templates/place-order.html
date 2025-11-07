@@ -1,163 +1,225 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
     <title>Place Order</title>
     <meta charset="UTF-8">
+    <!-- Bootstrap 5 (no SRI attributes to avoid CDN integrity mismatch in some environments) -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" defer></script>
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css">
+    <!-- Tom Select for searchable instrument dropdown -->
+    <link href="https://cdn.jsdelivr.net/npm/tom-select/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/tom-select/dist/js/tom-select.complete.min.js" defer></script>
+
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 2rem;
+        body { font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; background:#f5f7fb; }
+        .edit-row td { background: #f8f9fa; }
+        .edit-input { width: 110px; }
+        .small-btn { padding: 0.25rem 0.5rem; margin-left: 0.25rem; }
+        /* Ensure icon and text buttons align vertically and have consistent sizing */
+        .btn, .small-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: .35rem;
+            line-height: 1;
         }
-        form {
-            max-width: 600px;
+        /* Align bootstrap-icons inside buttons */
+        .btn i, .small-btn i, .bi {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            line-height: 1;
         }
-        label {
-            display: block;
-            margin-top: 1rem;
+        /* Make action cell buttons a bit more compact and consistent */
+        .table td .btn {
+            padding: .25rem .45rem;
+            height: auto;
         }
-        select, input {
-            width: 100%;
-            padding: 0.5rem;
+        /* compact table cells */
+        .table-sm td, .table-sm th { padding: .45rem .6rem; }
+        /* sticky table headers for better UX */
+        .table-responsive thead th {
+            position: sticky;
+            top: 0;
+            z-index: 3;
+            background: linear-gradient(180deg,#ffffff,#f8f9fa);
         }
-        button {
-            margin-top: 1rem;
-            padding: 0.5rem 1rem;
-        }
-        #result {
-            margin-top: 1rem;
-            font-weight: bold;
-        }
-        /* Inline edit row styling */
-        .edit-row td {
-            background: #f7f7f9;
-        }
-        .edit-input {
-            width: 90px;
-        }
-        .small-btn {
-            padding: 0.25rem 0.5rem;
-            margin-left: 0.25rem;
-        }
+        .form-card { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 4px rgba(16,24,40,.04); }
+        .muted-small { font-size: .85rem; color: #6c757d; }
+        .status-badge { text-transform: uppercase; font-size: .7rem; }
+        .status-PENDING { background:#f0ad4e; color:#fff; }
+        .status-EXECUTED { background:#198754; color:#fff; }
+        .status-EXIT_ORDER_PLACED { background:#0d6efd; color:#fff; }
+        .status-PLACED_PENDING_CONFIRMATION { background:#6f42c1; color:#fff; }
+        .status-REJECTED { background:#dc3545; color:#fff; }
+        .status-EXITED_SUCCESS { background:#6c757d; color:#fff; }
     </style>
 </head>
 <body>
 
-<h2>Place Order</h2>
+<div class="container my-4">
+    <div class="d-flex align-items-center justify-content-between mb-3">
+        <div>
+            <h2 class="h4 mb-0">Place Order</h2>
+            <div class="muted-small">Quickly create a trigger and monitor requests / executed trades</div>
+        </div>
+        <div id="last-refresh" class="text-muted small"></div>
+    </div>
 
-<form id="placeOrderForm" method="POST">
-    <label for="exchange">Exchange</label>
-    <select id="exchange" name="exchange" required>
-        <option value="">Select Exchange</option>
-        <option value="NF">NF</option>
-        <option value="BF">BF</option>
-        <option value="MX">MX</option>
-        <option value="NC">NC</option>
-        <option value="BC">BC</option>
-    </select>
+    <div id="result" class="mb-2"></div>
 
-    <label for="instrument">Instrument</label>
-    <select id="instrument" name="instrument" required>
-        <option value="">Select Instrument</option>
-    </select>
+    <form id="placeOrderForm" method="POST" class="row g-3 form-card">
+        <div class="col-md-3">
+            <label for="exchange" class="form-label">Exchange</label>
+            <select id="exchange" name="exchange" class="form-select" required>
+                <option value="">Select Exchange</option>
+                <option value="NF">NF</option>
+                <option value="BF">BF</option>
+                <option value="MX">MX</option>
+                <option value="NC">NC</option>
+                <option value="BC">BC</option>
+            </select>
+        </div>
 
-    <label for="strikePrice">Strike Price</label>
-    <select id="strikePrice" name="strikePrice">
-        <option value="">Select Strike</option>
-    </select>
+        <div class="col-md-3">
+            <label for="instrument" class="form-label">Instrument</label>
+            <select id="instrument" name="instrument" class="form-select" required>
+                <option value="">Select Instrument</option>
+            </select>
+        </div>
 
-    <label for="expiry">Expiry</label>
-    <select id="expiry" name="expiry">
-        <option value="">Select Expiry</option>
-    </select>
+        <div class="col-md-2">
+            <label for="strikePrice" class="form-label">Strike</label>
+            <select id="strikePrice" name="strikePrice" class="form-select">
+                <option value="">Select</option>
+            </select>
+        </div>
 
-    <label for="entryPrice">Entry Price</label>
-    <input type="number" step="0.01" id="entryPrice" name="entryPrice" required>
+        <div class="col-md-2">
+            <label for="expiry" class="form-label">Expiry</label>
+            <select id="expiry" name="expiry" class="form-select">
+                <option value="">Select</option>
+            </select>
+        </div>
 
-    <label for="stopLoss">Stop Loss</label>
-    <input type="number" step="0.01" id="stopLoss" name="stopLoss" required>
+        <div class="col-md-2">
+            <label for="optionType" class="form-label">Option Type</label>
+            <select id="optionType" name="optionType" class="form-select">
+                <option value="">--</option>
+                <option value="CE">Call</option>
+                <option value="PE">Put</option>
+            </select>
+        </div>
 
-    <label for="target1">Target 1</label>
-    <input type="number" step="0.01" id="target1" name="target1">
+        <div class="col-md-2">
+            <label for="entryPrice" class="form-label">Entry Price</label>
+            <input type="number" step="0.01" id="entryPrice" name="entryPrice" class="form-control" required>
+        </div>
 
-    <label for="target2">Target 2</label>
-    <input type="number" step="0.01" id="target2" name="target2">
+        <div class="col-md-2">
+            <label for="stopLoss" class="form-label">Stop Loss</label>
+            <input type="number" step="0.01" id="stopLoss" name="stopLoss" class="form-control" required>
+        </div>
 
-    <label for="target3">Target 3</label>
-    <input type="number" step="0.01" id="target3" name="target3">
+        <div class="col-md-2">
+            <label for="target1" class="form-label">Target 1</label>
+            <input type="number" step="0.01" id="target1" name="target1" class="form-control">
+        </div>
 
-    <label for="optionType">Option Type</label>
-    <select id="optionType" name="optionType">
-        <option value="">--</option>
-        <option value="CE">Call</option>
-        <option value="PE">Put</option>
-    </select>
+        <div class="col-md-2">
+            <label for="target2" class="form-label">Target 2</label>
+            <input type="number" step="0.01" id="target2" name="target2" class="form-control">
+        </div>
 
-    <label for="quantity">Quantity (Lots)</label>
-    <input type="number" id="quantity" name="quantity" required th:default="1">
+        <div class="col-md-2">
+            <label for="target3" class="form-label">Target 3</label>
+            <input type="number" step="0.01" id="target3" name="target3" class="form-control">
+        </div>
 
-    <label>
-        <input type="checkbox" id="intraday" name="intraday">
-        Intraday
-    </label>
+        <div class="col-md-2">
+            <label for="quantity" class="form-label">Quantity (Lots)</label>
+            <input type="number" id="quantity" name="quantity" class="form-control" required th:default="1">
+        </div>
 
-    <button type="submit">Place Order</button>
-</form>
+        <div class="col-md-2 d-flex align-items-center">
+            <div class="form-check mt-3">
+                <input class="form-check-input" type="checkbox" id="intraday" name="intraday">
+                <label class="form-check-label" for="intraday">Intraday</label>
+            </div>
+        </div>
 
-<div id="result"></div>
-<div id="last-refresh" style="margin-top:0.5rem;color:#666;font-size:0.9rem"></div>
+        <div class="col-12 text-end">
+            <button id="placeOrderBtn" type="submit" class="btn btn-primary"><i class="bi bi-send-fill me-1"></i> Place Order</button>
+            <button type="button" class="btn btn-outline-secondary ms-2" onclick="document.getElementById('placeOrderForm').reset();"><i class="bi bi-x-circle me-1"></i> Reset</button>
+        </div>
+    </form>
 
-<h3>Trading Requests</h3>
-<table id="trading-requests-table" border="1" style="margin-bottom: 2rem; width: 100%;">
-    <thead>
-    <tr data-scrip="${order.scripCode}">
-        <th>ID</th>
-        <th>Symbol</th>
-        <th>Exchange</th>
-        <th>Strike</th>
-        <th>Expiry</th>
-        <th>Entry Price</th>
-        <th>SL</th>
-        <th>Target 1</th>
-        <th>Qty</th>
-        <th>OptionType</th>
-        <th>Intraday</th>
-        <th>Status</th>
-        <th>Action</th>
-        <th>LTP</th>
-    </tr>
-    </thead>
-    <tbody></tbody>
-</table>
+    <div class="row mt-4">
+        <div class="col-12">
+            <h5 class="mb-2">Trading Requests</h5>
+            <div class="table-responsive">
+                <table id="trading-requests-table" class="table table-sm table-striped table-hover align-middle" style="width:100%;">
+                    <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Symbol</th>
+                        <th>Exchange</th>
+                        <th>Strike</th>
+                        <th>Expiry</th>
+                        <th>Entry Price</th>
+                        <th>SL</th>
+                        <th>Target 1</th>
+                        <th>Qty</th>
+                        <th>OptionType</th>
+                        <th>Intraday</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                        <th>LTP</th>
+                    </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
 
-<h3>Trades Executed</h3>
-<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
-    <label style="display:inline-flex;align-items:center;gap:6px;">
-        <input type="checkbox" id="showExitedSuccessToggle" checked />
-        <span>Show EXITED_SUCCESS</span>
-    </label>
+        <div class="col-12 mt-4">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+                <h5 class="mb-0">Trades Executed</h5>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="showExitedSuccessToggle" checked>
+                    <label class="form-check-label small" for="showExitedSuccessToggle">Show EXITED_SUCCESS</label>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table id="trades-executed-table" class="table table-sm table-striped table-hover align-middle" style="width:100%;">
+                    <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Symbol</th>
+                        <th>Exchange</th>
+                        <th>Strike</th>
+                        <th>Expiry</th>
+                        <th>Entry Price</th>
+                        <th>SL</th>
+                        <th>Target 1</th>
+                        <th>Qty</th>
+                        <th>OptionType</th>
+                        <th>Intraday</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                        <th>LTP</th>
+                        <th>PnL</th>
+                    </tr>
+                    </thead>
+                    <tbody></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
 </div>
-<table id="trades-executed-table" border="1" style="width: 100%;">
-    <thead>
-    <tr data-scrip="${setup.scripCode}" data-entry="${setup.entryPrice}" data-qty="${setup.quantity}">
-        <th>ID</th>
-        <th>Symbol</th>
-        <th>Exchange</th>
-        <th>Strike</th>
-        <th>Expiry</th>
-        <th>Entry Price</th>
-        <th>SL</th>
-        <th>Target 1</th>
-        <th>Qty</th>
-        <th>OptionType</th>
-        <th>Intraday</th>
-        <th>Status</th>
-        <th>Action</th>
-        <th>LTP</th> <!-- New -->
-        <th>PnL</th> <!-- New -->
-    </tr>
-    </thead>
-    <tbody></tbody>
-</table>
 
 <script>
 
@@ -174,6 +236,7 @@
     });
 
     const instrumentCache = {}; // { exchange: [symbols] }
+    let instrumentTS = null; // Tom Select instance
     const strikeCache = {};     // { exchange_instrument: [strikes] }
     const ltpSocket = new WebSocket(`ws://${window.location.host}/ws/ltp`);
     const scripLtpMap = {}; // scripCode -> LTP
@@ -183,6 +246,20 @@
 
     const lastKnownLTP = {};
     const lastKnownPNL = {};
+
+    function statusBadgeClass(status) {
+        if (!status) return 'bg-secondary';
+        const s = String(status).toUpperCase();
+        switch (s) {
+            case 'PENDING': return 'status-PENDING';
+            case 'EXECUTED': return 'status-EXECUTED';
+            case 'EXIT_ORDER_PLACED': return 'status-EXIT_ORDER_PLACED';
+            case 'PLACED_PENDING_CONFIRMATION': return 'status-PLACED_PENDING_CONFIRMATION';
+            case 'REJECTED': return 'status-REJECTED';
+            case 'EXITED_SUCCESS': return 'status-EXITED_SUCCESS';
+            default: return 'bg-secondary';
+        }
+    }
 
     function updateLastRefresh() {
         const el = document.getElementById('last-refresh');
@@ -255,7 +332,7 @@
              lastKnownPNL[scripKey] = pnl;
 
              const ltpStr = (ltp != null && !isNaN(ltp)) ? ltp.toFixed(2) : '-';
-             const pnlStr = isFinite(pnl) ? pnl.toFixed(0) : '-';
+             const pnlStr = isFinite(pnl) ? (pnl >= 0 ? '+' : '') + pnl.toFixed(0) : '-';
 
              if ((cell.textContent || '') !== ltpStr) cell.textContent = ltpStr;
              if ((pnlCell.textContent || '') !== pnlStr) {
@@ -271,25 +348,29 @@
 
 
     // Fetch all symbols for NF, BF, NC and BC on page load
-    function preloadInstruments() {
-        ['NF', 'BF', 'NC', 'BC'].forEach(exchange => {
-             const url = `/api/scripts/instruments/${encodeURIComponent(exchange)}`;
-             console.debug('Preloading instruments from', url);
-             fetchWithTimeout(url)
-                 .then(res => {
-                     if (!res.ok) throw new Error('HTTP ' + res.status + ' when fetching instruments for ' + exchange);
-                     return res.json();
-                 })
-                 .then(data => {
-                     instrumentCache[exchange] = Array.isArray(data?.instruments) ? data.instruments : [];
-                     console.debug('Instruments cached for', exchange, instrumentCache[exchange].length);
-                 })
-                 .catch(err => {
-                     console.error(`Failed to preload instruments for ${exchange}:`, err);
-                     const r = document.getElementById('result');
-                     if (r) r.innerText = `Failed to preload instruments for ${exchange}: ${err.message}`;
-                 });
-         });
+     function preloadInstruments() {
+         ['NF', 'BF', 'NC', 'BC'].forEach(exchange => {
+              const url = `/api/scripts/instruments/${encodeURIComponent(exchange)}`;
+              console.debug('Preloading instruments from', url);
+              fetchWithTimeout(url)
+                  .then(res => {
+                      if (!res.ok) throw new Error('HTTP ' + res.status + ' when fetching instruments for ' + exchange);
+                      return res.json();
+                  })
+                  .then(data => {
+                      instrumentCache[exchange] = Array.isArray(data?.instruments) ? data.instruments : [];
+                      console.debug('Instruments cached for', exchange, instrumentCache[exchange].length);
+                      // If Tom Select already initialized and current exchange matches, preload options
+                      if (instrumentTS && document.getElementById('exchange').value === exchange) {
+                          populateInstruments(instrumentCache[exchange]);
+                      }
+                  })
+                  .catch(err => {
+                      console.error(`Failed to preload instruments for ${exchange}:`, err);
+                      const r = document.getElementById('result');
+                      if (r) r.innerText = `Failed to preload instruments for ${exchange}: ${err.message}`;
+                  });
+          });
      }
 
     // Load instruments when exchange is selected
@@ -318,9 +399,12 @@
                 if (optionTypeSelect) optionTypeSelect.disabled = false;
             }
 
-            // If we have cached instruments (non-empty) populate immediately so the UI is responsive.
-            if (Array.isArray(instrumentCache[exchange]) && instrumentCache[exchange].length > 0) {
-                console.debug('Using cached instruments for', exchange, '(populating immediately)');
+            // Ensure Tom Select is initialized
+            initInstrumentTomSelect();
+
+            // If we have cached instruments (non-empty) populate Tom Select immediately so the UI is responsive.
+            if (instrumentTS && Array.isArray(instrumentCache[exchange]) && instrumentCache[exchange].length > 0) {
+                console.debug('Using cached instruments for', exchange, '(populating Tom Select immediately)');
                 populateInstruments(instrumentCache[exchange]);
             }
 
@@ -346,9 +430,13 @@
                         document.getElementById('entryPrice').value = '';
                         return;
                     }
-                    // ensure instrument select is enabled before populating
-                    instrumentSelect.disabled = false;
-                    populateInstruments(instruments);
+                    // ensure instrument select is enabled before populating (Tom Select handles UI)
+                    if (instrumentTS) {
+                        populateInstruments(instruments);
+                    } else {
+                        instrumentSelect.disabled = false;
+                        populateInstruments(instruments);
+                    }
                     // If this is a no-strike exchange, also ensure optionType is disabled (in case fetch changed state)
                     const optionTypeSelect2 = document.getElementById('optionType');
                     if (optionTypeSelect2) {
@@ -377,47 +465,51 @@
         const parent = instrumentSelect.parentNode;
         const existingSearch = document.getElementById('instrument-search');
 
-        // Configuration: thresholds
+        // Legacy (non-TomSelect) rendering helpers
         const RENDER_THRESHOLD = 500; // if more than this, show search box and render limited results
         const RENDER_LIMIT = 300;     // max number of options to render at a time
-
-        // Helper to populate select quickly using innerHTML once
         function renderOptions(list) {
             instrumentSelect.disabled = false;
             let html = '<option value="">Select Instrument</option>';
-            if (list && list.length) {
-                // join string to avoid many DOM updates
-                html += list.map(s => `<option value="${s}">${s}</option>`).join('');
-            }
+            if (list && list.length) html += list.map(s => `<option value="${s}">${s}</option>`).join('');
             instrumentSelect.innerHTML = html;
         }
-
-        // Filter function used by search input
         function filterAndRender(q) {
             const term = (q || '').trim().toUpperCase();
             let matched = instruments;
             if (term) matched = instruments.filter(s => s.toUpperCase().includes(term));
             if (matched.length > RENDER_LIMIT) {
-                // show only first RENDER_LIMIT matches
                 renderOptions(matched.slice(0, RENDER_LIMIT));
-                const r = document.getElementById('result');
-                if (r) r.innerText = `${matched.length} matches — showing first ${RENDER_LIMIT}. Keep typing to narrow.`;
+                const r = document.getElementById('result'); if (r) r.innerText = `${matched.length} matches — showing first ${RENDER_LIMIT}. Keep typing to narrow.`;
             } else {
                 renderOptions(matched);
                 const r = document.getElementById('result'); if (r) r.innerText = '';
             }
         }
 
-        // If the list is small, just render all options (fast path)
+        // If Tom Select is present, use its async loading / option management to avoid adding thousands of <option>
+        if (instrumentTS) {
+            instrumentTS.clearOptions();
+            if (!Array.isArray(instruments) || instruments.length === 0) {
+                // no options
+                return;
+            }
+
+            // Add up to RENDER_LIMIT options initially; Tom Select search handles filtering
+            const initial = instruments.slice(0, RENDER_LIMIT).map(s => ({value: s, text: s}));
+            instrumentTS.addOption(initial);
+            instrumentTS.refreshOptions(false);
+            return;
+        }
+
+        // If Tom Select not in use, fall back to legacy rendering
         if (!Array.isArray(instruments) || instruments.length === 0) {
-            // empty
             if (existingSearch) existingSearch.remove();
             renderOptions([]);
             return;
         }
 
         if (instruments.length <= RENDER_THRESHOLD) {
-            // remove any existing search UI
             if (existingSearch) existingSearch.remove();
             renderOptions(instruments);
             const r = document.getElementById('result'); if (r) r.innerText = '';
@@ -431,8 +523,7 @@
             searchEl.id = 'instrument-search';
             searchEl.type = 'search';
             searchEl.placeholder = `Type to filter ${instruments.length} instruments...`;
-            searchEl.style.width = '100%';
-            searchEl.style.marginBottom = '0.5rem';
+            searchEl.className = 'form-control mb-2';
             parent.insertBefore(searchEl, instrumentSelect);
             // listen for input and debounce
             let debounceTimer = null;
@@ -448,7 +539,50 @@
 
         // initial render: first N instruments (no filter)
         filterAndRender('');
-     }
+    }
+
+    // Initialize Tom Select for the #instrument select once
+    function initInstrumentTomSelect() {
+        if (instrumentTS) return;
+        try {
+            instrumentTS = new TomSelect('#instrument', {
+                valueField: 'value',
+                labelField: 'text',
+                searchField: 'text',
+                create: false,
+                maxOptions: 100,
+                preload: false,
+                render: {
+                    option: function(item, escape) { return `<div>${escape(item.text)}</div>`; }
+                },
+                load: function(query, callback) {
+                    const exchange = document.getElementById('exchange').value;
+                    if (!exchange) { callback(); return; }
+                    const list = instrumentCache[exchange];
+                    if (!list) {
+                        // fetch fresh instruments then filter
+                        fetchWithTimeout(`/api/scripts/instruments/${encodeURIComponent(exchange)}`)
+                            .then(res => res.json())
+                            .then(json => {
+                                instrumentCache[exchange] = Array.isArray(json?.instruments) ? json.instruments : [];
+                                filterAndReturn(instrumentCache[exchange], query, callback);
+                            }).catch(() => callback());
+                    } else {
+                        filterAndReturn(list, query, callback);
+                    }
+
+                    function filterAndReturn(list, q, cb) {
+                        if (!Array.isArray(list) || list.length === 0) { cb([]); return; }
+                        if (!q) cb(list.slice(0,300).map(s=>({value:s,text:s})));
+                        else cb(list.filter(s => s.toUpperCase().includes(q.toUpperCase())).slice(0,300).map(s=>({value:s,text:s})));
+                    }
+                }
+            });
+        } catch (e) {
+            console.warn('Tom Select init failed', e);
+            instrumentTS = null;
+        }
+    }
 
     // Resolve option trading symbol (and scripCode) for the given selection using backend lookup
     function resolveOptionTradingSymbol(exchange, instrument, strikePrice, optionType, expiry) {
@@ -727,11 +861,16 @@
 
     document.getElementById('optionType').addEventListener('change', function () { fetchOptionLtpAndPopulateEntry(); });
 
-    // Submit form via REST
+    // Submit form via REST - add spinner/disable behavior
     document.getElementById('placeOrderForm').addEventListener('submit', function (e) {
          e.preventDefault();
 
          const form = e.target;
+         const submitBtn = document.getElementById('placeOrderBtn');
+         const originalHtml = submitBtn.innerHTML;
+         submitBtn.disabled = true;
+         submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span> Placing...';
+
         const exch = (form.exchange && form.exchange.value) ? form.exchange.value.toUpperCase() : '';
         const noStrikeExchanges = new Set(['NC','BC']);
         const isNoStrike = noStrikeExchanges.has(exch);
@@ -760,12 +899,15 @@
             if (!res.ok) throw new Error("Failed to trigger order");
             return res.text();
         }).then(msg => {
-            document.getElementById('result').innerText = "✅ Order Triggered";
+            document.getElementById('result').innerHTML = '<span class="text-success">✅ Order Triggered</span>';
             form.reset();
-            loadRequestedOrders()
+            loadRequestedOrders();
         }).catch(err => {
-            document.getElementById('result').innerText = "❌ Failed to trigger order.";
+            document.getElementById('result').innerHTML = `<span class="text-danger">❌ Failed to trigger order: ${err.message}</span>`;
             console.error(err);
+        }).finally(() => {
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalHtml;
         });
     });
 
@@ -1144,7 +1286,8 @@
 
                         let row = tbody.querySelector(`tr[data-id="${id}"]`);
                         if (!row) {
-                            // create new row (same structure as before)
+                            // create new row (with status badge and tooltip-enabled action buttons)
+                            const badgeClass = statusBadgeClass(order.status);
                             row = document.createElement('tr');
                             row.dataset.id = id;
                             row.innerHTML = `
@@ -1159,10 +1302,10 @@
                                 <td>${order.quantity || ''}</td>
                                 <td>${order.optionType || ''}</td>
                                 <td>${order.intraday || ''}</td>
-                                <td>${order.status || ''}</td>
+                                <td><span class="badge status-badge ${badgeClass}">${order.status || ''}</span></td>
                                 <td>
-                                    <button onclick="cancelTradeRequest(${order.id})">Cancel</button>
-                                    <button onclick="editRequest(${order.id})">Edit</button>
+                                    <button onclick="cancelTradeRequest(${order.id})" class="btn btn-sm btn-danger" data-bs-toggle="tooltip" title="Cancel this request"><i class="bi bi-x-lg"></i></button>
+                                    <button onclick="editRequest(${order.id})" class="btn btn-sm btn-secondary ms-1" data-bs-toggle="tooltip" title="Edit this request"><i class="bi bi-pencil"></i></button>
                                 </td>
                                 <td data-scrip="${order.scripCode || ''}">--</td>`;
                             tbody.appendChild(row);
@@ -1184,7 +1327,11 @@
                             updateCell(8, order.quantity || '');
                             updateCell(9, order.optionType || '');
                             updateCell(10, order.intraday || '');
-                            updateCell(11, order.status || '');
+                            // status cell: update badge
+                            const statusTd = tds[11];
+                            const newBadgeClass = statusBadgeClass(order.status);
+                            const newStatusHtml = `<span class="badge status-badge ${newBadgeClass}">${order.status || ''}</span>`;
+                            if ((statusTd.innerHTML || '').trim() !== newStatusHtml.trim()) statusTd.innerHTML = newStatusHtml;
 
                             // update scrip cell attribute if changed
                             const scripCell = row.querySelector('td[data-scrip]');
@@ -1199,6 +1346,9 @@
                     Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
                         if (!incomingIds.has(r.dataset.id)) r.remove();
                     });
+
+                    // re-init tooltips on newly created buttons
+                    initTooltips();
                 })
                 .catch(err => {
                     console.error('Failed to load requested orders', err);
@@ -1282,11 +1432,12 @@
                         let row = tbody.querySelector(`tr[data-id="${id}"]`);
                         if (!row) {
                             // build row
+                            const badgeClass = statusBadgeClass(setup.status);
                             const actionCellHtml = isInactive ? '<td></td>' : `
                                 <td>
-                                    <button onclick="squareOffTrade(${setup.id})">Close</button>
-                                    <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button>
-                                    <button onclick="editExecution(${setup.id})">Edit</button>
+                                    <button onclick="squareOffTrade(${setup.id})" class="btn btn-sm btn-danger" data-bs-toggle="tooltip" title="Close this trade"><i class="bi bi-x-circle"></i></button>
+                                    <button onclick="moveSLtoCost(${setup.id})" class="btn btn-sm btn-warning ms-1" data-bs-toggle="tooltip" title="Move SL to cost"><i class="bi bi-arrow-up-right-circle"></i></button>
+                                    <button onclick="editExecution(${setup.id})" class="btn btn-sm btn-secondary ms-1" data-bs-toggle="tooltip" title="Edit this execution"><i class="bi bi-pencil"></i></button>
                                 </td>`;
 
                             const ltpHtml = isInactive ? '<td class="ltp">-</td><td class="pnl">-</td>' :
@@ -1313,7 +1464,7 @@
                                 <td>${setup.quantity || ''}</td>
                                 <td>${setup.optionType || ''}</td>
                                 <td>${setup.intraday || ''}</td>
-                                <td>${setup.status || ''}</td>
+                                <td><span class="badge status-badge ${badgeClass}">${setup.status || ''}</span></td>
                                 ${actionCellHtml}
                                 ${ltpHtml}`;
                             tbody.appendChild(row);
@@ -1335,7 +1486,11 @@
                             updateCell(8, setup.quantity || '');
                             updateCell(9, setup.optionType || '');
                             updateCell(10, setup.intraday || '');
-                            updateCell(11, setup.status || '');
+                            // status badge
+                            const statusTd = tds[11];
+                            const newBadgeClass = statusBadgeClass(setup.status);
+                            const newStatusHtml = `<span class="badge status-badge ${newBadgeClass}">${setup.status || ''}</span>`;
+                            if ((statusTd.innerHTML || '').trim() !== newStatusHtml.trim()) statusTd.innerHTML = newStatusHtml;
 
                             // update attributes
                             if (row.dataset.rejected !== (isRejected ? 'true' : 'false')) {
@@ -1361,7 +1516,7 @@
                                 // if previously inactive we should re-insert buttons and data-scrip attributes
                                 const actionTd = tds[12];
                                 if (actionTd && actionTd.innerHTML.trim() === '') {
-                                    actionTd.innerHTML = ` <button onclick="squareOffTrade(${setup.id})">Close</button> <button onclick="moveSLtoCost(${setup.id})">MoveSLtoCost</button> <button onclick="editExecution(${setup.id})">Edit</button>`;
+                                    actionTd.innerHTML = ` <button onclick="squareOffTrade(${setup.id})" class="btn btn-sm btn-danger" data-bs-toggle="tooltip" title="Close this trade"><i class="bi bi-x-circle"></i></button> <button onclick="moveSLtoCost(${setup.id})" class="btn btn-sm btn-warning ms-1" data-bs-toggle="tooltip" title="Move SL to cost"><i class="bi bi-arrow-up-right-circle"></i></button> <button onclick="editExecution(${setup.id})" class="btn btn-sm btn-secondary ms-1" data-bs-toggle="tooltip" title="Edit this execution"><i class="bi bi-pencil"></i></button>`;
                                 }
                                 const ltpTd = tds[13];
                                 const pnlTd = tds[14];
@@ -1385,6 +1540,9 @@
                      Array.from(tbody.querySelectorAll('tr[data-id]')).forEach(r => {
                          if (!incomingIds.has(r.dataset.id)) r.remove();
                      });
+
+                     // re-init tooltips
+                     initTooltips();
                  })
                 .catch(err => {
                     console.error('Failed to load trade setups', err);
@@ -1404,22 +1562,39 @@
     function initPlaceOrderPage() {
         // Attach event listeners that reference DOM elements (already done earlier in this script)
         // Run initial data fetches
+        initInstrumentTomSelect();
         preloadInstruments();
-        loadRequestedOrders();
-        loadTradeSetups();
+         loadRequestedOrders();
+         loadTradeSetups();
 
-        // periodic refresh
-        setInterval(() => {
-            loadRequestedOrders(); // To reflect deletions if trade is executed
-            loadTradeSetups();      // To reflect new setups
-        }, 5000); // every 5 sec
-    }
+         // Initialize bootstrap tooltips
+         initTooltips();
+
+         // periodic refresh
+         setInterval(() => {
+             loadRequestedOrders(); // To reflect deletions if trade is executed
+             loadTradeSetups();      // To reflect new setups
+         }, 5000); // every 5 sec
+     }
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initPlaceOrderPage);
     } else {
         // DOM already available
         initPlaceOrderPage();
+    }
+
+    function initTooltips() {
+        try {
+            const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.forEach(function (el) {
+                // eslint-disable-next-line no-undef
+                if (typeof bootstrap !== 'undefined' && bootstrap.Tooltip) new bootstrap.Tooltip(el);
+            });
+        } catch (e) {
+            // ignore if bootstrap not available yet
+            console.debug('Tooltips init failed:', e.message);
+        }
     }
 
     function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
