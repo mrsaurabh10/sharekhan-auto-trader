@@ -1230,7 +1230,8 @@
                     // Filter data to only include the required statuses and respect user toggle for EXITED_SUCCESS
                     try {
                         const showExited = !!(document.getElementById('showExitedSuccessToggle') && document.getElementById('showExitedSuccessToggle').checked);
-                        const allowed = new Set(['EXECUTED', 'EXIT_ORDER_PLACED']);
+                        // Include PLACED_PENDING_CONFIRMATION so pending/placed trades show in the Executed/Monitoring table
+                        const allowed = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'PLACED_PENDING_CONFIRMATION']);
                         if (showExited) allowed.add('EXITED_SUCCESS');
 
                         // Keep only entries with allowed status
