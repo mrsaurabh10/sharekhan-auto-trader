@@ -29,7 +29,12 @@ public class ShareKhanOrderUtil {
         orderParams.orderType ="NORMAL";
         orderParams.tradingSymbol = tradeSetupEntity.getSymbol();
         orderParams.productType = "INV"; //(INVESTMENT or (INV), BIGTRADE or (BT), BIGTRADEPLUS or (BT+))
-        orderParams.transactionType = "B"; //( B, S, BM, SM, SAM)
+        // Transaction type should match the intent: entry orders are Buys (B), exit modifications must be Sell (S)
+        if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
+            orderParams.transactionType = "S";
+        } else {
+            orderParams.transactionType = "B";
+        }
         orderParams.price = String.valueOf(orderPrice);
         orderParams.triggerPrice = "0";
         orderParams.rmsCode= "ANY";
