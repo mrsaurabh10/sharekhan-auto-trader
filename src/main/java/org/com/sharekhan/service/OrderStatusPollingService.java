@@ -152,7 +152,7 @@ public class OrderStatusPollingService {
                             try {
                                 if (response != null && response.has("data") && response.get("data") instanceof JSONArray) {
                                     JSONArray arr = response.getJSONArray("data");
-                                    if (arr.length() > 0) {
+                                    if (!arr.isEmpty()) {
                                         JSONObject last = arr.getJSONObject(arr.length() - 1);
                                         String avg = last.optString("avgPrice", "").trim();
                                         String ordp = last.optString("orderPrice", "").trim();
