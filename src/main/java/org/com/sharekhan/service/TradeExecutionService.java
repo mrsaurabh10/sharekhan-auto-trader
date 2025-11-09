@@ -683,6 +683,11 @@ public class TradeExecutionService {
         return triggeredTradeRepo.findTop10ByOrderByIdDesc();
     }
 
+    // New helper to return pending trigger requests for UI/SPA
+    public List<org.com.sharekhan.entity.TriggerTradeRequestEntity> getPendingRequests() {
+        return triggerTradeRequestRepository.findByStatus(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+    }
+
     public void subscribeForOpenTrades(){
         log.info("🚀 Starting to monitor trades...");
         // 1. Subscribe to LTP for all pending trade requests

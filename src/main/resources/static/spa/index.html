@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sharekhan — Minimal SPA</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 0; padding: 0; background: #f5f7fb; color:#222 }
+    header { background: #17325c; color: #fff; padding: 12px 20px }
+    .container { max-width: 980px; margin: 20px auto; padding: 16px; background: #fff; border-radius: 8px; box-shadow: 0 6px 18px rgba(17,24,39,0.06) }
+    label { display:block; margin:8px 0 4px; font-weight:600 }
+    input, select { width:100%; padding:8px 10px; border:1px solid #d1d5db; border-radius:6px }
+    .row { display:flex; gap:12px }
+    .col { flex:1 }
+    .actions { margin-top:12px }
+    button { background:#0b63d6; color:#fff; padding:8px 14px; border:0; border-radius:6px; cursor:pointer }
+    pre { background:#0f172a; color:#e6eef8; padding:12px; border-radius:6px; overflow:auto }
+    .muted { color:#6b7280 }
+    .small { font-size:0.9rem }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1 style="margin:0;font-size:18px">Sharekhan Mini SPA (parallel)</h1>
+    </div>
+  </header>
+
+  <main class="container">
+    <section>
+      <h2 style="margin-top:0">Place Trigger (form will POST to /api/trades/trigger-on-price)</h2>
+      <div id="formRoot">
+        <label>Instrument</label>
+        <input id="instrument" placeholder="e.g. NIFTY" />
+
+        <div class="row">
+          <div class="col">
+            <label>Exchange</label>
+            <select id="exchange">
+              <option value="">Select</option>
+              <option value="NC">NC</option>
+              <option value="BC">BC</option>
+              <option value="NF">NF</option>
+              <option value="NF">NF</option>
+            </select>
+          </div>
+          <div class="col">
+            <label>Quantity (lots for FNO or shares for NC)</label>
+            <input id="quantity" placeholder="e.g. 1" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col">
+            <label>Entry Price</label>
+            <input id="entryPrice" placeholder="e.g. 240.5" />
+          </div>
+          <div class="col">
+            <label>Stop Loss</label>
+            <input id="stopLoss" placeholder="e.g. 235.0" />
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="col">
+            <label>Target1</label>
+            <input id="target1" placeholder="optional" />
+          </div>
+          <div class="col">
+            <label>Target2</label>
+            <input id="target2" placeholder="optional" />
+          </div>
+          <div class="col">
+            <label>Target3</label>
+            <input id="target3" placeholder="optional" />
+          </div>
+        </div>
+
+        <div class="row" style="margin-top:8px">
+          <div class="col">
+            <label>Strike Price</label>
+            <input id="strikePrice" placeholder="numeric or leave blank for NC/BC" />
+          </div>
+          <div class="col">
+            <label>Option Type</label>
+            <select id="optionType">
+              <option value="">(none)</option>
+              <option value="CE">CE</option>
+              <option value="PE">PE</option>
+            </select>
+          </div>
+          <div class="col">
+            <label>Expiry (dd/MM/yyyy)</label>
+            <input id="expiry" placeholder="31/07/2025" />
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="submitBtn">Place Trigger</button>
+          <span class="muted small" style="margin-left:12px">Responses and errors appear below</span>
+        </div>
+      </div>
+
+      <h3 style="margin-top:18px">Response</h3>
+      <pre id="responseArea">(no response yet)</pre>
+    </section>
+
+    <section style="margin-top:18px">
+      <h2>Quick API Check</h2>
+      <p class="muted small">Use these buttons to call existing endpoints for quick smoke tests.</p>
+      <div class="row">
+        <button id="listRecent">List Recent Executed (GET /api/trades/recent-executions)</button>
+        <button id="listRequests">List Pending Requests (GET /api/trades/pending)</button>
+      </div>
+      <pre id="apiResult">(no data)</pre>
+    </section>
+
+  </main>
+
+  <script src="/spa/app.js"></script>
+</body>
+</html>
