@@ -198,7 +198,6 @@ public class TradeExecutionService {
         }
 
         if (requireQuantity && request.getQuantity() == null) {
-            // send telegram alert and throw 400 mapped exception
             try {
                 String title = "Invalid Trade Request: Missing Quantity";
                 StringBuilder body = new StringBuilder();
@@ -214,8 +213,6 @@ public class TradeExecutionService {
             }
             throw new InvalidTradeRequestException("Quantity is required and cannot be null");
         }
-
-
         int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
         long finalQuantity;
         if (isNoStrikeExchange) {
@@ -288,88 +285,112 @@ public class TradeExecutionService {
             order.disclosedQty = 0L;
             order.channelUser = TokenLoginAutomationService.clientCode;
 
-            var response = sharekhanConnect.placeOrder(order);
+            // Retry logic: attempt up to 3 times when broker response doesn't return an orderId.
+            JSONObject response = null;
+            String orderId = null;
+            final int maxAttempts = 3;
+            long[] backoffMs = new long[]{300L, 700L, 1500L};
 
-            // Compactly log the important bits of the response instead of the full JSON
-            try {
-                if (response != null && response.has("data")) {
-                    JSONObject d = response.getJSONObject("data");
-                    String respOrderId = d.optString("orderId", d.optString("orsOrderId", ""));
-                    String respStatus = d.optString("orderStatus", "");
-                    String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
-                    String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
-                    log.info("Sharekhan placeOrder response summary: orderId={} status={} avg/price={} execQty={}", respOrderId, respStatus, respAvg, respExecQty);
-                } else if (response != null) {
-                    log.info("Sharekhan placeOrder response received but missing data: status={}", response.optInt("status", -1));
-                } else {
-                    log.info("Sharekhan placeOrder response is null");
+            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                try {
+                    response = sharekhanConnect.placeOrder(order);
+                } catch (Exception e) {
+                    log.warn("Attempt {}: placeOrder threw exception for trigger {}: {}", attempt, trigger.getId(), e.getMessage());
                 }
-            } catch (Exception ignore) {
-                log.debug("Failed to compactly log placeOrder response: {}", ignore.getMessage());
+
+                // Compact logging per attempt
+                try {
+                    if (response != null && response.has("data")) {
+                        JSONObject d = response.getJSONObject("data");
+                        String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
+                        String respStatus = d.optString("orderStatus", "");
+                        String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
+                        String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
+                        log.info("Sharekhan placeOrder attempt {} summary: orderId={} status={} avg/price={} execQty={}", attempt, respOrderId, respStatus, respAvg, respExecQty);
+                        if (respOrderId != null && !respOrderId.isBlank()) {
+                            orderId = respOrderId;
+                        }
+                    } else if (response != null) {
+                        log.info("Sharekhan placeOrder attempt {} received response but missing data object: status={}", attempt, response.optInt("status", -1));
+                    } else {
+                        log.info("Sharekhan placeOrder attempt {} returned null response", attempt);
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to compactly log placeOrder attempt {} response: {}", attempt, e.getMessage());
+                }
+
+                if (orderId != null) break; // success
+
+                // If not last attempt, wait before retrying
+                if (attempt < maxAttempts) {
+                    long sleepMs = backoffMs[Math.min(attempt-1, backoffMs.length-1)];
+                    try {
+                        Thread.sleep(sleepMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
 
-            if (response == null ) {
-                log.error("❌ Sharekhan order failed or returned null for trigger {}", trigger.getId());
-            }else if (!response.has("data")){
-                log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trigger.getId());
-            }else if (response.getJSONObject("data").has("orderId")){
-                String orderId = response.getJSONObject("data").getString("orderId");
-                //order placed  successfully
-                log.info("✅ Sharekhan order placed successfully: orderId={}", orderId);
+            if (orderId == null) {
+                // After retries, still no orderId — mark trigger as rejected and notify
+                log.error("❌ Place order failed after {} attempts for trigger {}. Response: {}", maxAttempts, trigger.getId(), response);
+                try {
+                    trigger.setStatus(TriggeredTradeStatus.REJECTED);
+                    triggerTradeRequestRepository.save(trigger);
+                    webSocketSubscriptionService.unsubscribeFromScrip(trigger.getExchange() + trigger.getScripCode());
+                } catch (Exception e) {
+                    log.warn("Failed to persist trigger as REJECTED after placeOrder failures: {}", e.getMessage());
+                }
 
-                // check the status with a delay of .5 second
-                //Thread.sleep(500);
+                try {
+                    String title = "Order Placement Failed after retries ❌";
+                    StringBuilder body = new StringBuilder();
+                    body.append("Instrument: ").append(trigger.getSymbol()).append("\n");
+                    body.append("Exchange: ").append(trigger.getExchange()).append("\n");
+                    body.append("Attempted Qty: ").append(trigger.getQuantity()).append("\n");
+                    body.append("Attempted Price(LTP): ").append(ltp).append("\n");
+                    body.append("TriggerId: ").append(trigger.getId()).append("\n");
+                    body.append("Note: PlaceOrder did not return orderId after " ).append(maxAttempts).append(" attempts.");
+                    telegramNotificationService.sendTradeMessage(title, body.toString());
+                } catch (Exception e) {
+                    log.warn("Failed sending telegram notification for placeOrder failure: {}", e.getMessage());
+                }
 
-                //JSONObject orderHistory =  sharekhanConnect.getTrades(trigger.getExchange(), TokenLoginAutomationService.customerId,orderId);
-
-
-                //TradeStatus tradeStatus = evaluateOrderFinalStatus(triggeredTradeSetupEntity,orderHistory);
-
-
-
-                //trigger.setStatus(TriggeredTradeStatus.TRIGGERED);
-
-                //since the order is triggered then place the entity in the setup
-
-                TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
-                triggeredTradeSetupEntity.setOrderId(orderId);
-
-                //if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
-                triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
-                //} else{
-                  //  triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.EXECUTED);
-                //}
-
-                triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
-                triggeredTradeSetupEntity.setExchange(trigger.getExchange());
-                triggeredTradeSetupEntity.setCustomerId(TokenLoginAutomationService.customerId);
-                triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
-                triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
-                triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());
-                triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
-                triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
-                triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
-                triggeredTradeSetupEntity.setQuantity(trigger.getQuantity().intValue());
-                triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
-                triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
-                triggeredTradeSetupEntity.setEntryPrice(ltp);
-                triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
-                triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
-                triggeredTradeRepo.save(triggeredTradeSetupEntity);
-
-                eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
-
-                //dont need the unsubscribe code here as we will not unsubscribe
-                // reason being need to take care of pending order
-               // String feedKey = trigger.getExchange() + trigger.getScripCode();
-                //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
-
-
-                log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
+                return; // abort
             }
-            // no change in the status
-            // need to handle failure cases
 
+            // order placed successfully
+            log.info("✅ Sharekhan order placed successfully: orderId={}", orderId);
+
+            //since the order is triggered then place the entity in the setup
+
+            TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
+            triggeredTradeSetupEntity.setOrderId(orderId);
+
+            triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+
+            triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
+            triggeredTradeSetupEntity.setExchange(trigger.getExchange());
+            triggeredTradeSetupEntity.setCustomerId(TokenLoginAutomationService.customerId);
+            triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
+            triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
+            triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());
+            triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
+            triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
+            triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
+            triggeredTradeSetupEntity.setQuantity(trigger.getQuantity().intValue());
+            triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
+            triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
+            triggeredTradeSetupEntity.setEntryPrice(ltp);
+            triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
+            triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
+            triggeredTradeRepo.save(triggeredTradeSetupEntity);
+
+            eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+
+            log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
         } catch (Exception e) {
             log.error("❌ Error executing trade for trigger {}: {}", trigger.getId(), e.getMessage(), e);
         }
@@ -494,43 +515,91 @@ public class TradeExecutionService {
         String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
         SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
-        JSONObject response = sharekhanConnect.placeOrder(exitOrder);
+        // Retry logic for exit order placement
+        JSONObject response = null;
+        String exitOrderId = null;
+        final int maxAttempts = 3;
+        long[] backoffMs = new long[]{300L, 700L, 1500L};
 
-        if (response == null) {
-            log.error("❌ Sharekhan exit order failed or returned null for trade {}", persisted.getId());
-            persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
-            triggeredTradeRepo.save(persisted);
-            return;
-        } else if (!response.has("data")) {
-            log.error("❌ Sharekhan exit order failed or returned invalid response for trade {}: {}", persisted.getId(), response);
-            persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
-            triggeredTradeRepo.save(persisted);
-            return;
-        } else {
-            String exitOrderId = response.getJSONObject("data").optString("orderId", null);
-            if (exitOrderId == null || exitOrderId.isBlank()) {
-                log.error("❌ Sharekhan exit order response missing orderId for trade {}: {}", persisted.getId(), response);
-                persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
-                triggeredTradeRepo.save(persisted);
-                return;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                response = sharekhanConnect.placeOrder(exitOrder);
+            } catch (Exception e) {
+                log.warn("Exit attempt {}: placeOrder threw exception for trade {}: {}", attempt, persisted.getId(), e.getMessage());
             }
 
-            // Order placed successfully - update persisted entity with exitOrderId (status already set to EXIT_ORDER_PLACED)
-            persisted.setExitOrderId(exitOrderId);
-            persisted.setExitReason(exitReason);
-            triggeredTradeRepo.save(persisted);
+            try {
+                if (response != null && response.has("data")) {
+                    JSONObject d = response.getJSONObject("data");
+                    String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
+                    String respStatus = d.optString("orderStatus", "");
+                    String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
+                    String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
+                    log.info("Sharekhan exit placeOrder attempt {} summary: orderId={} status={} avg/price={} execQty={}", attempt, respOrderId, respStatus, respAvg, respExecQty);
+                    if (respOrderId != null && !respOrderId.isBlank()) {
+                        exitOrderId = respOrderId;
+                    }
+                } else if (response != null) {
+                    log.info("Sharekhan exit placeOrder attempt {} received response but missing data object: status={}", attempt, response.optInt("status", -1));
+                } else {
+                    log.info("Sharekhan exit placeOrder attempt {} returned null response for trade {}", attempt, persisted.getId());
+                }
+            } catch (Exception e) {
+                log.debug("Failed to compactly log exit placeOrder attempt {} response: {}", attempt, e.getMessage());
+            }
 
-            // Subscribe to ACK and publish event to start polling
-            webSocketSubscriptionService.subscribeToAck(String.valueOf(persisted.getCustomerId()));
-            eventPublisher.publishEvent(new OrderPlacedEvent(persisted));
+            if (exitOrderId != null) break;
 
-            log.info("✅ Exit order placed for trade {}: exitOrderId={}", persisted.getId(), exitOrderId);
+            if (attempt < maxAttempts) {
+                long sleepMs = backoffMs[Math.min(attempt - 1, backoffMs.length - 1)];
+                try {
+                    Thread.sleep(sleepMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
 
+        if (exitOrderId == null) {
+            log.error("❌ Exit place order failed after {} attempts for trade {}. Response: {}", maxAttempts, persisted.getId(), response);
+            try {
+                persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
+                triggeredTradeRepo.save(persisted);
+                webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode());
+            } catch (Exception e) {
+                log.warn("Failed to persist EXIT_FAILED state after exit placeOrder failures: {}", e.getMessage());
+            }
 
+            try {
+                String title = "Exit Order Placement Failed after retries ❌";
+                StringBuilder body = new StringBuilder();
+                body.append("Instrument: ").append(persisted.getSymbol()).append("\n");
+                body.append("Exchange: ").append(persisted.getExchange()).append("\n");
+                body.append("Attempted Qty: ").append(persisted.getQuantity()).append("\n");
+                body.append("Attempted Price: ").append(exitPrice).append("\n");
+                body.append("TradeId: ").append(persisted.getId()).append("\n");
+                body.append("Note: Exit placeOrder did not return orderId after ").append(maxAttempts).append(" attempts.");
+                telegramNotificationService.sendTradeMessage(title, body.toString());
+            } catch (Exception e) {
+                log.warn("Failed sending telegram notification for exit placeOrder failure: {}", e.getMessage());
+            }
 
-        log.info("✅ Trade exited [{}]: PnL = {}", exitReason, trade.getPnl());
+            return;
+        }
+
+        // Order placed successfully - update persisted entity with exitOrderId (status already set to EXIT_ORDER_PLACED)
+        persisted.setExitOrderId(exitOrderId);
+        persisted.setExitReason(exitReason);
+        triggeredTradeRepo.save(persisted);
+
+        // Subscribe to ACK and publish event to start polling
+        webSocketSubscriptionService.subscribeToAck(String.valueOf(persisted.getCustomerId()));
+        eventPublisher.publishEvent(new OrderPlacedEvent(persisted));
+
+        log.info("✅ Exit order placed for trade {}: exitOrderId={}", persisted.getId(), exitOrderId);
     }
+
 
     public void squareOffTrade(Long id) {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(id)
