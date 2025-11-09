@@ -42,12 +42,11 @@ public class TelegramNotificationService {
             String text = title + "\n" + body;
             String encoded = URLEncoder.encode(text, StandardCharsets.UTF_8);
             String uri = "https://api.telegram.org/bot" + botToken + "/sendMessage?chat_id=" + chatId + "&text=" + encoded;
-            ResponseEntity<String> resp = restTemplate.getForEntity(uri, String.class);
-            // ignore response; best-effort
+            // fire-and-forget; don't keep the response in a local var to avoid unused warnings
+            restTemplate.getForEntity(uri, String.class);
         } catch (Exception e) {
             // Log but do not fail trading flow
             System.err.println("Failed to send Telegram message: " + e.getMessage());
         }
     }
 }
-

@@ -70,7 +70,8 @@ public class TradingMessageService {
         Map<String, Object> parsed = parserChain.parse(message);
         if (parsed != null) {
             System.out.println("✅ Parsed message: " + parsed + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
-            tradingExecutorService.executeTrade(mapToTriggerRequest(parsed));
+            TriggerRequest req = mapToTriggerRequest(parsed);
+            tradingExecutorService.executeTrade(req);
             // trigger trading logic
         } else {
             System.out.println("⚠️ No parser matched message" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
@@ -90,6 +91,15 @@ public class TradingMessageService {
         request.setExpiry((String) parsed.get("expiry"));
         request.setExchange((String) parsed.get("exchange"));
         request.setIntraday(true);
+        // Quantity may be present in parsed map as 'quantity' or 'qty'
+        Integer q = null;
+        try {
+            Object qv = parsed.get("quantity");
+            if (qv == null) qv = parsed.get("qty");
+            if (qv instanceof Number) q = ((Number) qv).intValue();
+            else if (qv != null) q = Integer.parseInt(qv.toString());
+        } catch (Exception ignored){}
+        request.setQuantity(q);
         return request;
     }
 

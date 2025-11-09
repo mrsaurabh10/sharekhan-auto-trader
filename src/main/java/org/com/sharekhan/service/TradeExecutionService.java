@@ -14,6 +14,7 @@ import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.exception.InvalidTradeRequestException;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
@@ -60,7 +61,14 @@ public class TradeExecutionService {
     private TelegramNotificationService telegramNotificationService;
 
 
+    // Backwards compatible public API - by default allow service to compute quantity if missing
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request) {
+        return executeTrade(request, false);
+    }
+
+    // New overload: if requireQuantity==true, throw an exception and send telegram when quantity is null
+    public TriggerTradeRequestEntity executeTrade(TriggerRequest request, boolean requireQuantity) {
+
 
         // Initialize formatter for expiry date parsing
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
@@ -188,6 +196,25 @@ public class TradeExecutionService {
                 }
             }
         }
+
+        if (requireQuantity && request.getQuantity() == null) {
+            // send telegram alert and throw 400 mapped exception
+            try {
+                String title = "Invalid Trade Request: Missing Quantity";
+                StringBuilder body = new StringBuilder();
+                body.append("Instrument: ").append(request.getInstrument()).append("\n");
+                body.append("Exchange: ").append(request.getExchange()).append("\n");
+                body.append("EntryPrice: ").append(request.getEntryPrice()).append("\n");
+                body.append("StopLoss: ").append(request.getStopLoss()).append("\n");
+                body.append("Targets: ").append(request.getTarget1()).append(",").append(request.getTarget2()).append(",").append(request.getTarget3()).append("\n");
+                body.append("Note: quantity was null and request rejected by server (requireQuantity=true)");
+                telegramNotificationService.sendTradeMessage(title, body.toString());
+            } catch (Exception e) {
+                log.warn("Failed to send telegram alert for missing quantity: {}", e.getMessage());
+            }
+            throw new InvalidTradeRequestException("Quantity is required and cannot be null");
+        }
+
 
         int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
         long finalQuantity;
