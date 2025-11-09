@@ -44,6 +44,9 @@ public class OrderStatusPollingService {
     @Autowired
     private LtpCacheService ltpCacheService;
 
+    @Autowired
+    private TelegramNotificationService telegramNotificationService;
+
     public void monitorOrderStatus(TriggeredTradeSetupEntity trade) {
         Runnable pollTask = () -> {
             String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
@@ -78,7 +81,8 @@ public class OrderStatusPollingService {
                 }
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                     // Determine if this was an exit order or entry order
-                    if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
+                    boolean wasExitOrder = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus());
+                    if(wasExitOrder) {
                         trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
                         webSocketSubscriptionHelper.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
                     } else if(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(trade.getStatus())) {
@@ -111,6 +115,23 @@ public class OrderStatusPollingService {
 
                     tradeRepo.save(trade);
 
+                    // Send telegram notification for executed/exit
+                    try {
+                        String title = wasExitOrder ? "Trade Exited ✅" : "Order Executed ✅";
+                        StringBuilder body = new StringBuilder();
+                        body.append("Instrument: ").append(trade.getSymbol());
+                        if (trade.getStrikePrice() != null) body.append(" ").append(trade.getStrikePrice());
+                        if (trade.getOptionType() != null) body.append(" ").append(trade.getOptionType());
+                        body.append("\nOrderId: ").append(orderIdToMonitor);
+                        body.append("\nStatus: ").append(trade.getStatus());
+                        if (trade.getEntryPrice() != null) body.append("\nEntry: ").append(trade.getEntryPrice());
+                        if (trade.getExitPrice() != null) body.append("\nExit: ").append(trade.getExitPrice());
+                        if (trade.getPnl() != null) body.append("\nPnL: ").append(trade.getPnl());
+                        telegramNotificationService.sendTradeMessage(title, body.toString());
+                    } catch (Exception e) {
+                        log.warn("Failed sending telegram notification for execution: {}", e.getMessage());
+                    }
+
                     ScheduledFuture<?> future = activePolls.remove(orderIdToMonitor);
                     // cleanup last modify price cache
                     lastModifyPrice.remove(orderIdToMonitor);
@@ -129,6 +150,22 @@ public class OrderStatusPollingService {
 
 
                     tradeRepo.save(trade);
+
+                    // Send telegram for rejection
+                    try {
+                        String title = "Order Rejected ❌";
+                        StringBuilder body = new StringBuilder();
+                        body.append("Instrument: ").append(trade.getSymbol());
+                        if (trade.getStrikePrice() != null) body.append(" ").append(trade.getStrikePrice());
+                        if (trade.getOptionType() != null) body.append(" ").append(trade.getOptionType());
+                        body.append("\nOrderId: ").append(orderIdToMonitor);
+                        body.append("\nStatus: ").append(trade.getStatus());
+                        if (trade.getExitReason() != null) body.append("\nReason: ").append(trade.getExitReason());
+                        telegramNotificationService.sendTradeMessage(title, body.toString());
+                    } catch (Exception e) {
+                        log.warn("Failed sending telegram notification for rejection: {}", e.getMessage());
+                    }
+
                     ScheduledFuture<?> future = activePolls.remove(orderIdToMonitor);
                     lastModifyPrice.remove(orderIdToMonitor);
                     if (future != null) {

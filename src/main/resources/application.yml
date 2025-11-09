@@ -48,3 +48,6 @@ app:
     client-code: "SGUPTA78"
     password: "Anvi@2023"
     totp-secret: "3VNUAS5GNB5UXCXR"
+  telegram:
+    bot-token: "8330200742:AAEinZnYlgatRTRcLrPH7r_MWIvJ0MBX_wY" # set to your bot token, e.g. 12345:ABCdef...
+    chat-id: "mrsaurabh10"   # set to target chat id (group or user)

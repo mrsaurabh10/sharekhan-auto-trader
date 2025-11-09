@@ -56,6 +56,9 @@ public class TradeExecutionService {
     @Autowired
     private UserConfigService userConfigService;
 
+    @Autowired
+    private TelegramNotificationService telegramNotificationService;
+
 
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request) {
 
@@ -384,6 +387,20 @@ public class TradeExecutionService {
         webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
 
         log.warn("❌ Order rejected for orderId {}", orderId);
+
+        try {
+            String title = "Order Rejected ❌";
+            StringBuilder body = new StringBuilder();
+            body.append("Instrument: ").append(trade.getSymbol());
+            if (trade.getStrikePrice() != null) body.append(" ").append(trade.getStrikePrice());
+            if (trade.getOptionType() != null) body.append(" ").append(trade.getOptionType());
+            body.append("\nOrderId: ").append(orderId);
+            body.append("\nStatus: ").append(trade.getStatus());
+            if (trade.getExitReason() != null) body.append("\nReason: ").append(trade.getExitReason());
+            telegramNotificationService.sendTradeMessage(title, body.toString());
+        } catch (Exception e) {
+            log.warn("Failed sending telegram notification for rejection in execute(): {}", e.getMessage());
+        }
     }
 
     public boolean forceCloseByScripCode(int scripCode) {
