@@ -29,7 +29,8 @@ public class TriggeredTradeSetupEntity {
     private String optionType;
     private String expiry;
 
-    private Integer quantity;
+    // Store final executed quantity as Long (number of shares) to avoid unit confusion with lots
+    private Long quantity;
 
     private Double entryPrice;
     private Double stopLoss;

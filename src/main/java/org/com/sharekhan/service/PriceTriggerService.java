@@ -102,7 +102,7 @@ public class PriceTriggerService {
             if (saved.getPnl() != null) return;
 
             Double entryPrice = saved.getEntryPrice();
-            Integer quantity = saved.getQuantity();
+            Long quantity = saved.getQuantity();
 
             if (entryPrice == null || quantity == null || quantity <= 0) {
                 log.debug("Cannot compute PnL for trade {} - missing entryPrice/quantity", saved.getId());
@@ -112,19 +112,26 @@ public class PriceTriggerService {
             // Prefer the actual exitPrice saved by squareOff; otherwise fall back to the incoming ltp
             Double exitPrice = saved.getExitPrice();
             if (exitPrice == null) exitPrice = ltp;
-            double rawPnl = (exitPrice - entryPrice) * quantity;
-            BigDecimal bd = BigDecimal.valueOf(rawPnl).setScale(2, RoundingMode.HALF_UP);
 
-            saved.setPnl(bd.doubleValue());
+            try {
+                java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(exitPrice);
+                java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(entryPrice);
+                java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(quantity);
+                java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd).setScale(2, java.math.RoundingMode.HALF_UP);
+                saved.setPnl(rawPnlBd.doubleValue());
+            } catch (Exception e) {
+                log.warn("Failed computing PnL in persistPnlIfMissing for trade {}: {}", saved.getId(), e.getMessage());
+                return;
+            }
             // Persist exitPrice only if it wasn't already set by squareOff
             if (saved.getExitPrice() == null) saved.setExitPrice(exitPrice);
-            // If status wasn't updated by squareOff, mark exited success
-            if (saved.getStatus() == TriggeredTradeStatus.EXECUTED) {
-                saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-            }
+             // If status wasn't updated by squareOff, mark exited success
+             if (saved.getStatus() == TriggeredTradeStatus.EXECUTED) {
+                 saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+             }
 
-            triggeredRepo.save(saved);
-            log.info("💾 Persisted PnL {} for trade {}", bd, saved.getId());
+             triggeredRepo.save(saved);
+             log.info("💾 Persisted PnL {} for trade {}", saved.getPnl(), saved.getId());
         } catch (Exception e) {
             log.error("❌ Error saving PnL for trade {}: {}", originalTrade == null ? "null" : originalTrade.getId(), e.getMessage(), e);
         }

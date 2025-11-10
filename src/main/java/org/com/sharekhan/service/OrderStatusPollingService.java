@@ -104,9 +104,18 @@ public class OrderStatusPollingService {
                                 // fallback to entryPrice (zero pnl) to avoid NPE
                                 effExit = trade.getEntryPrice();
                             }
-                            double rawPnl = effExit - trade.getEntryPrice();
-                            rawPnl = rawPnl * trade.getQuantity();
-                            trade.setPnl(Math.round(rawPnl * 100.0) / 100.0);
+                            try {
+                                java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(effExit);
+                                java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(trade.getEntryPrice());
+                                long qty = trade.getQuantity() == null ? 0L : trade.getQuantity();
+                                java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(qty);
+                                java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd);
+                                double rawPnl = rawPnlBd.setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
+                                log.debug("Computed PnL for trade {}: entry={} exit={} qty={} rawPnl={}", trade.getId(), trade.getEntryPrice(), effExit, qty, rawPnl);
+                                trade.setPnl(rawPnl);
+                            } catch (Exception ex) {
+                                log.warn("Failed computing PnL precisely for trade {}: {}", trade.getId(), ex.getMessage());
+                            }
                         }
                         trade.setExitedAt(java.time.LocalDateTime.now());
                     } catch (Exception e) {

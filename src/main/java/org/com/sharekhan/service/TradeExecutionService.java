@@ -380,7 +380,8 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
             triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
             triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
-            triggeredTradeSetupEntity.setQuantity(trigger.getQuantity().intValue());
+            // trigger.getQuantity() already stores the final quantity (shares) as Long
+            triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
             triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
             triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
             triggeredTradeSetupEntity.setEntryPrice(ltp);
