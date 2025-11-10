@@ -89,6 +89,16 @@ public class OrderStatusPollingService {
                         trade.setStatus(TriggeredTradeStatus.EXECUTED);
                     }
 
+                    // If this was an entry order execution, record the entry execution time (entryAt) if not already set
+                    try {
+                        if (!wasExitOrder) {
+                            if (trade.getEntryPrice() != null && trade.getEntryAt() == null) {
+                                trade.setEntryAt(java.time.LocalDateTime.now());
+                            }
+                        }
+                    } catch (Exception ex) {
+                        log.debug("Failed to set entryAt for trade {}: {}", trade.getId(), ex.getMessage());
+                    }
                     // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
                     try {
                         Double exitPrice = trade.getExitPrice();

@@ -257,7 +257,13 @@ public class TradeExecutionService {
         return true;
     }
 
+    // Backwards-compatible execute: record triggeredAt as now
     public void execute(TriggerTradeRequestEntity trigger, double ltp) {
+        execute(trigger, ltp, java.time.LocalDateTime.now());
+    }
+
+    // New overload: allow caller to pass exact triggeredAt (time when entry condition met)
+    public void execute(TriggerTradeRequestEntity trigger, double ltp, java.time.LocalDateTime triggeredAt) {
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
 
@@ -370,6 +376,8 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setOrderId(orderId);
 
             triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            // mark the time when this trigger was converted into a live trade (trigger fired -> order placed)
+            triggeredTradeSetupEntity.setTriggeredAt(triggeredAt != null ? triggeredAt : java.time.LocalDateTime.now());
 
             triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
             triggeredTradeSetupEntity.setExchange(trigger.getExchange());
@@ -390,6 +398,12 @@ public class TradeExecutionService {
             triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
             eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+
+            //dont need the unsubscribe code here as we will not unsubscribe
+            // reason being need to take care of pending order
+           // String feedKey = trigger.getExchange() + trigger.getScripCode();
+            //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
+
 
             log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
         } catch (Exception e) {
