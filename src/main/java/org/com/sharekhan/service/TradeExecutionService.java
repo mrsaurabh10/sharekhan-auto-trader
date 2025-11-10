@@ -197,7 +197,7 @@ public class TradeExecutionService {
             }
         }
 
-        if (requireQuantity && request.getQuantity() == null) {
+        if (requireQuantity &&  (request.getQuantity() == null || request.getQuantity() <= 0)) {
             try {
                 String title = "Invalid Trade Request: Missing Quantity";
                 StringBuilder body = new StringBuilder();
