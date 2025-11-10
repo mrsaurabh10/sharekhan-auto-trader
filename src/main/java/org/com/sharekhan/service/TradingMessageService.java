@@ -71,7 +71,7 @@ public class TradingMessageService {
         if (parsed != null) {
             System.out.println("✅ Parsed message: " + parsed + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
             TriggerRequest req = mapToTriggerRequest(parsed);
-            tradingExecutorService.executeTrade(req);
+            tradingExecutorService.executeTrade(req, true);
             // trigger trading logic
         } else {
             System.out.println("⚠️ No parser matched message" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
