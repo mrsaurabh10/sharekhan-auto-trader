@@ -29,7 +29,15 @@ public class TriggerTradeRequestEntity {
     private String expiry;
 
     private Long quantity; // Final quantity = lots × lotSize
+
+    // broker-specific customer id (e.g. sharekhan customer id)
     private Long customerId;
+
+    // Reference to broker_credentials.id for the broker credentials used
+    private Long brokerCredentialsId;
+
+    // Application user id (AppUser.id) to map this request to an app user
+    private Long appUserId;
 
     private Double entryPrice;
     private Double stopLoss;

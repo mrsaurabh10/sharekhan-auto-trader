@@ -22,6 +22,9 @@ public class BrokerCredentialsEntity {
     @Column(name = "customer_id", nullable = true)
     private Long customerId;
 
+    @Column(name = "app_user_id", nullable = true)
+    private Long appUserId;
+
     @Column(name = "api_key", length = 1024)
     private String apiKey;
 

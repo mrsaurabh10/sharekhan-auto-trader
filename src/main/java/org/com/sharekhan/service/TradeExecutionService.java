@@ -215,6 +215,8 @@ public class TradeExecutionService {
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
+                .brokerCredentialsId(request.getBrokerCredentialsId())
+                .appUserId(request.getUserId())
                 .build();
 
         // attach customer id
@@ -303,6 +305,9 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setExchange(trigger.getExchange());
                 // attach customer id from the trigger (fallback to default token-based customer id)
                 triggeredTradeSetupEntity.setCustomerId(trigger.getCustomerId() != null ? trigger.getCustomerId() : TokenLoginAutomationService.customerId);
+                // attach broker credentials id and app user id from the trigger for traceability
+                triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+                triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
                 triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
                 triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
                 triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());

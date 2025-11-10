@@ -23,6 +23,12 @@ public class TriggeredTradeSetupEntity {
     private Integer scripCode;
     private Long customerId;
 
+    // reference to broker_credentials id
+    private Long brokerCredentialsId;
+
+    // application user id
+    private Long appUserId;
+
     private String exchange;
     private String instrumentType;
     private Double strikePrice;

@@ -20,4 +20,6 @@ public class TriggerRequest {
     private Boolean intraday;
     // optional user id (customer id) - if absent backend will fallback to default TokenLoginAutomationService.customerId
     private Long userId;
+    // optional broker credentials id to use for this request (broker_credentials.id)
+    private Long brokerCredentialsId;
 }

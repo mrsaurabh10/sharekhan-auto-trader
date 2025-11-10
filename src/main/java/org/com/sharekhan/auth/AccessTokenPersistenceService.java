@@ -48,17 +48,26 @@ public class AccessTokenPersistenceService {
                 .build());
     }
 
+    // existing API kept for compatibility
     @Transactional
     public void replaceTokenForCustomer(String brokerDisplayName, Long customerId, String token, Instant expiry) {
+        replaceTokenForCustomer(brokerDisplayName, customerId, null, token, expiry);
+    }
+
+    // New overload: allow persisting userId (app_user.id) alongside the broker-specific customerId
+    @Transactional
+    public void replaceTokenForCustomer(String brokerDisplayName, Long customerId, Long userId, String token, Instant expiry) {
         java.util.List<AccessTokenEntity> existing = repository.findAllByBrokerNameAndCustomerId(brokerDisplayName, customerId);
         if (existing != null && !existing.isEmpty()) repository.deleteAll(existing);
         String encrypted = token != null ? cryptoService.encrypt(token) : null;
-        repository.save(AccessTokenEntity.builder()
+        AccessTokenEntity ent = AccessTokenEntity.builder()
                 .token(encrypted)
                 .expiry(expiry)
                 .brokerName(brokerDisplayName)
                 .customerId(customerId)
-                .build());
+                .userId(userId)
+                .build();
+        repository.save(ent);
     }
 
     @Transactional

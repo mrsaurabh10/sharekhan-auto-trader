@@ -18,6 +18,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Optional;
 
+import org.com.sharekhan.repository.AppUserRepository;
+import org.com.sharekhan.repository.BrokerCredentialsRepository;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -27,6 +30,8 @@ public class TokenStoreService {
     private final AccessTokenPersistenceService persistenceService;
     private final BrokerAuthProviderRegistry providerRegistry;
     private final org.com.sharekhan.service.BrokerCredentialsService brokerCredentialsService;
+    private final AppUserRepository appUserRepository; // new: to enumerate users
+    private final BrokerCredentialsRepository brokerCredentialsRepository; // new: to find creds by customer
 
     // token storage per broker (global default)
     private final Map<Broker, String> tokenMap = new ConcurrentHashMap<>();
@@ -168,6 +173,86 @@ public class TokenStoreService {
                 log.error("❌ Error while initializing token for {}: {}", broker, e.getMessage(), e);
             }
         }
+
+        // --- New: ensure we also inspect all AppUser entries and pre-load tokens for any configured broker credentials ---
+        try {
+            var users = appUserRepository.findAll();
+            for (var user : users) {
+                try {
+                    Long custId = user.getCustomerId();
+                    if (custId == null) continue;
+
+                    // find all broker credentials rows for this customer across brokers
+                    var credsForUser = brokerCredentialsRepository.findByCustomerId(custId);
+                    if (credsForUser == null || credsForUser.isEmpty()) continue;
+
+                    for (var creds : credsForUser) {
+                        customerTokenLoader.submit(() -> {
+                            try {
+                                String brokerName = creds.getBrokerName();
+                                Broker brokerEnum;
+                                try {
+                                    brokerEnum = Broker.fromDisplayName(brokerName);
+                                } catch (Exception ex) {
+                                    // try valueOf
+                                    try { brokerEnum = Broker.valueOf(brokerName.trim().toUpperCase()); } catch (Exception ex2) { brokerEnum = null; }
+                                }
+                                if (brokerEnum == null) {
+                                    log.debug("Unknown broker '{}' for user {} - skipping token preload", creds.getBrokerName(), custId);
+                                    return;
+                                }
+
+                                String key = brokerEnum.getDisplayName() + ":" + custId;
+
+                                // skip if already loaded and valid
+                                if (tokenByCustomer.containsKey(key) && expiryByCustomer.containsKey(key) && Instant.now().isBefore(expiryByCustomer.get(key))) {
+                                    return;
+                                }
+
+                                // attempt persisted load
+                                try {
+                                    var opt = persistenceService.findLatestByBrokerAndCustomer(brokerEnum.getDisplayName(), custId);
+                                    if (opt.isPresent()) {
+                                        var ent = opt.get();
+                                        if (ent.getExpiry() != null && Instant.now().isBefore(ent.getExpiry())) {
+                                            tokenByCustomer.put(key, ent.getToken());
+                                            expiryByCustomer.put(key, ent.getExpiry());
+                                            log.info("🔐 (user-scan) Loaded access token for {} customer {} from DB. Expiry: {}", brokerEnum, custId, ent.getExpiry());
+                                            return;
+                                        }
+                                    }
+                                } catch (Exception ignore) {}
+
+                                // else attempt provider auto-login using stored creds
+                                var provider = providerRegistry.getProvider(brokerEnum);
+                                if (provider != null) {
+                                    try {
+                                        var res = provider.loginAndFetchToken(creds);
+                                        if (res != null && res.token() != null) {
+                                            // associate persisted token with AppUser.id when available
+                                            updateTokenForCustomer(brokerEnum, custId, user.getId(), res.token(), res.expiresIn());
+                                            log.info("✅ (user-scan) Fetched and stored token for {} customer {}.", brokerEnum, custId);
+                                            return;
+                                        }
+                                    } catch (Exception ex) {
+                                        log.error("❌ (user-scan) Failed to fetch token for {} customer {} via provider: {}", brokerEnum, custId, ex.getMessage());
+                                    }
+                                } else {
+                                    log.debug("No auth provider available for {} — cannot fetch token for customer {}.", brokerEnum, custId);
+                                }
+
+                            } catch (Exception e) {
+                                log.error("❌ Error preloading token for user {} creds: {}", user.getId(), e.getMessage(), e);
+                            }
+                        });
+                    }
+                } catch (Exception ue) {
+                    log.debug("Failed scanning user {} for broker creds: {}", user.getId(), ue.getMessage());
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to scan AppUser table for broker credentials on startup: {}", e.getMessage());
+        }
     }
 
     public void loadFromDb(Broker broker) {
@@ -211,13 +296,18 @@ public class TokenStoreService {
 
     // Per-customer update
     public void updateTokenForCustomer(Broker broker, Long customerId, String token, long expiresInSeconds) {
+        updateTokenForCustomer(broker, customerId, null, token, expiresInSeconds);
+    }
+
+    // New overload: keep userId associated with the token when available
+    public void updateTokenForCustomer(Broker broker, Long customerId, Long userId, String token, long expiresInSeconds) {
         if (customerId == null) return;
         Instant expiry = Instant.now().plusSeconds(expiresInSeconds - 60);
         String key = broker.getDisplayName() + ":" + customerId;
         tokenByCustomer.put(key, token);
         expiryByCustomer.put(key, expiry);
-        log.info("🔐 Access token updated for {} customer {}. New expiry: {}", broker, customerId, expiry);
-        persistenceService.replaceTokenForCustomer(broker.getDisplayName(), customerId, token, expiry);
+        log.info("🔐 Access token updated for {} customer {}. New expiry: {} (userId={})", broker, customerId, expiry, userId);
+        persistenceService.replaceTokenForCustomer(broker.getDisplayName(), customerId, userId, token, expiry);
     }
 
     public boolean isExpired() {

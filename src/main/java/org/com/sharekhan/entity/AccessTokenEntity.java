@@ -30,4 +30,7 @@ public class AccessTokenEntity {
     @Column(name = "customer_id", nullable = true)
     private Long customerId;
 
+    @Column(name = "user_id", nullable = true)
+    private Long userId;
+
 }

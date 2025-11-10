@@ -266,6 +266,7 @@ public class AdminController {
                         "id", b.getId(),
                         "brokerName", b.getBrokerName(),
                         "customerId", b.getCustomerId(),
+                        "appUserId", b.getAppUserId(),
                         "clientCode", b.getClientCode(),
                         "hasApiKey", b.getApiKey() != null && !b.getApiKey().isBlank(),
                         "active", b.getActive() != null ? b.getActive() : Boolean.FALSE
@@ -299,6 +300,7 @@ public class AdminController {
         b.setTotpSecret(totp != null ? cryptoService.encrypt(totp) : null);
         b.setSecretKey(secret != null ? cryptoService.encrypt(secret) : null);
         b.setActive(active != null ? active : Boolean.TRUE);
+        if (app != null) b.setAppUserId(app.getId());
         // if this new broker is marked active, deactivate other brokers for same user+brokerName
         if (b.getActive()) {
             var others = brokerCredentialsRepository.findByCustomerId(custId);
@@ -310,7 +312,7 @@ public class AdminController {
             }
         }
         brokerCredentialsRepository.save(b);
-        return ResponseEntity.ok(java.util.Map.of("id", b.getId(), "brokerName", b.getBrokerName()));
+        return ResponseEntity.ok(java.util.Map.of("id", b.getId(), "brokerName", b.getBrokerName(), "appUserId", b.getAppUserId()));
     }
 
     @PutMapping("/admin/brokers/{id}")
@@ -343,6 +345,7 @@ public class AdminController {
             }
             b.setActive(newActive);
         }
+        if (body.containsKey("appUserId")) b.setAppUserId(body.get("appUserId") == null ? null : Long.valueOf(String.valueOf(body.get("appUserId"))));
         brokerCredentialsRepository.save(b);
         return ResponseEntity.ok("updated");
     }
