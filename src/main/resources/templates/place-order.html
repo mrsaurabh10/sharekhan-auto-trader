@@ -238,7 +238,9 @@
     const instrumentCache = {}; // { exchange: [symbols] }
     let instrumentTS = null; // Tom Select instance
     const strikeCache = {};     // { exchange_instrument: [strikes] }
-    const ltpSocket = new WebSocket(`ws://${window.location.host}/ws/ltp`);
+    // Use secure WebSocket when page served over HTTPS
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const ltpSocket = new WebSocket(`${wsProtocol}://${window.location.host}/ws/ltp`);
     const scripLtpMap = {}; // scripCode -> LTP
     const executedTrades = {}; // orderId -> { entryPrice, quantity }
     const requestMap = {};
@@ -276,14 +278,22 @@
     }
 
     ltpSocket.onmessage = function (event) {
-        const payload = JSON.parse(event.data);
-        const scripCode = payload.scripCode;
-        const ltp = payload.ltp;
-        scripLtpMap[scripCode] = ltp;
+        let payload;
+        try { payload = JSON.parse(event.data); } catch (e) { console.debug('Non-JSON LTP message', e, event.data); return; }
 
-        // 🔄 Update LTP and PnL in the UI
-        updateTradingRequestLTP(scripCode, ltp);
-        updateExecutedTradeLTP(scripCode, ltp);
+        // Support multiple possible payload shapes from different sources/providers
+        const dataObj = payload.data || payload;
+        const scripCode = dataObj?.scripCode || dataObj?.scrip_code || dataObj?.scrip || dataObj?.scripCodeStr || dataObj?.scripCodeId || dataObj?.scripId;
+        const ltp = dataObj?.ltp || dataObj?.lastPrice || dataObj?.last_price || dataObj?.price || dataObj?.last || dataObj?.last_traded_price;
+        if (scripCode == null) return; // nothing to update
+
+        // normalize to string key
+        const sKey = String(scripCode);
+        scripLtpMap[sKey] = Number(ltp);
+
+        // Update UI cells by data attributes directly (faster and avoids row re-creation issues)
+        updateTradingRequestLTP(sKey, Number(ltp));
+        updateExecutedTradeLTP(sKey, Number(ltp));
     };
 
     // Helper to call backend MStock LTP endpoint for a qualified key like "NFO:CDSL25JAN2220CE"
@@ -306,44 +316,56 @@
     }
 
     function updateTradingRequestLTP(scripCode, ltp) {
-        const formatted = (ltp != null && !isNaN(ltp)) ? ltp.toFixed(2) : '-';
-        document.querySelectorAll(`#trading-requests-table tbody tr`).forEach(row => {
-            const cell = row.querySelector(`[data-scrip="${scripCode}"]`);
-            if (!cell) return;
-            if ((cell.innerText || '') !== formatted) cell.innerText = formatted;
-        });
+        const formatted = (ltp != null && !isNaN(ltp)) ? Number(ltp).toFixed(2) : '-';
+        // update any data-scrip cells across the page (covers requests and executed tables)
+        try {
+            const cells = document.querySelectorAll(`[data-scrip="${scripCode}"]`);
+            cells.forEach(cell => {
+                if (!cell) return;
+                if ((cell.textContent || '') !== formatted) cell.textContent = formatted;
+            });
+        } catch (e) {
+            console.debug('updateTradingRequestLTP failed for', scripCode, e);
+        }
     }
 
     function updateExecutedTradeLTP(scripCode, ltp) {
-         const scripKey = String(scripCode);
-         lastKnownLTP[scripKey] = ltp;
+        const scripKey = String(scripCode);
+        lastKnownLTP[scripKey] = ltp;
+        try {
+            // Update any LTP display cells for this scripCode
+            const ltpCells = document.querySelectorAll(`#trades-executed-table [data-scrip="${scripKey}"]`);
+            ltpCells.forEach(cell => {
+                if (!cell) return;
+                const row = cell.closest('tr');
+                if (!row) return;
+                // skip rows marked inactive or rejected
+                if (row.dataset.inactive === 'true' || row.dataset.rejected === 'true') return;
 
-         document.querySelectorAll('#trades-executed-table tbody tr').forEach(row => {
-            // skip rejected or inactive (EXITED_SUCCESS) rows
-            if (row.dataset.inactive === 'true' || row.dataset.rejected === 'true') return;
-             const cell = row.querySelector(`[data-scrip="${scripKey}"]`);
-             const pnlCell = row.querySelector(`[data-pnl="${scripKey}"]`);
+                const entry = parseFloat(row.dataset.entry) || 0;
+                const qty = parseInt(row.dataset.qty) || 1;
+                const pnl = (ltp - entry) * qty;
+                lastKnownPNL[scripKey] = pnl;
 
-             if (!cell || !pnlCell) return;
+                const ltpStr = (ltp != null && !isNaN(ltp)) ? Number(ltp).toFixed(2) : '-';
+                const pnlStr = isFinite(pnl) ? (pnl >= 0 ? '+' : '') + pnl.toFixed(0) : '-';
 
-             const entry = parseFloat(row.dataset.entry) || 0;
-             const qty = parseInt(row.dataset.qty) || 1;
-             const pnl = (ltp - entry) * qty;
-             lastKnownPNL[scripKey] = pnl;
+                if ((cell.textContent || '') !== ltpStr) cell.textContent = ltpStr;
 
-             const ltpStr = (ltp != null && !isNaN(ltp)) ? ltp.toFixed(2) : '-';
-             const pnlStr = isFinite(pnl) ? (pnl >= 0 ? '+' : '') + pnl.toFixed(0) : '-';
-
-             if ((cell.textContent || '') !== ltpStr) cell.textContent = ltpStr;
-             if ((pnlCell.textContent || '') !== pnlStr) {
-                 pnlCell.textContent = pnlStr;
-                 pnlCell.style.color = (Number(pnl) >= 0) ? 'green' : 'red';
-             } else {
-                 // Still ensure color is correct if value unchanged but sign might have changed (rare)
-                 pnlCell.style.color = (Number(pnl) >= 0) ? 'green' : 'red';
-             }
-         });
-     }
+                // update pnl cell(s) for this row
+                const pnlCells = row.querySelectorAll(`[data-pnl="${scripKey}"]`);
+                pnlCells.forEach(pnlCell => {
+                    if (!pnlCell) return;
+                    if ((pnlCell.textContent || '') !== pnlStr) {
+                        pnlCell.textContent = pnlStr;
+                    }
+                    pnlCell.style.color = (Number(pnl) >= 0) ? 'green' : 'red';
+                });
+            });
+        } catch (e) {
+            console.debug('updateExecutedTradeLTP failed for', scripKey, e);
+        }
+    }
 
 
 
@@ -1222,9 +1244,11 @@
         editRow.children[12].appendChild(saveBtn);
         editRow.children[12].appendChild(cancelBtn);
 
-        // LTP and PnL cells
-        editRow.children[13].innerText = lastKnownLTP[setup.scripCode] ?? '-';
-        editRow.children[14].innerText = lastKnownPNL[setup.scripCode] ?? '-';
+        // LTP and PnL cells (defensive: set text only if cells exist)
+        try {
+            if (editRow.children[13]) editRow.children[13].innerText = lastKnownLTP[setup.scripCode] ?? '-';
+            if (editRow.children[14]) editRow.children[14].innerText = lastKnownPNL[setup.scripCode] ?? '-';
+        } catch (e) { console.debug('Failed setting LTP/PnL in editExecution row', e); }
 
         if (row) row.parentNode.insertBefore(editRow, row.nextSibling);
         else tbody.appendChild(editRow);
