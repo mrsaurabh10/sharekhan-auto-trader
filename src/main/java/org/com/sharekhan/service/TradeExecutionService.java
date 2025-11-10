@@ -281,9 +281,13 @@ public class TradeExecutionService {
             order.orderType = "NORMAL";
             order.productType = "INVESTMENT";
             order.instrumentType = trigger.getInstrumentType(); //FUTCUR, FS, FI, OI, OS, FUTCURR, OPTCURR
-            order.strikePrice =  String.valueOf(trigger.getStrikePrice());
-            order.optionType = trigger.getOptionType();
-            order.expiry = trigger.getExpiry();
+            if (trigger.getStrikePrice() != null) {
+                order.strikePrice = String.valueOf(trigger.getStrikePrice());
+            } else {
+                order.strikePrice = null;
+            }
+            order.optionType = (trigger.getOptionType() != null && !trigger.getOptionType().isBlank()) ? trigger.getOptionType() : null;
+            order.expiry = (trigger.getExpiry() != null && !trigger.getExpiry().isBlank()) ? trigger.getExpiry() : null;
             order.requestType = "NEW";
             order.afterHour =  "N";
             order.validity = "GFD";
@@ -510,16 +514,22 @@ public class TradeExecutionService {
         exitOrder.customerId = persisted.getCustomerId();
         exitOrder.exchange = persisted.getExchange();
         exitOrder.scripCode = persisted.getScripCode();
-        exitOrder.strikePrice = String.valueOf(persisted.getStrikePrice());
-        exitOrder.optionType = persisted.getOptionType();
+        // For equities (NC/BC) strikePrice/optionType/expiry may be null — send null instead of "null"
+        if (persisted.getStrikePrice() != null) {
+            exitOrder.strikePrice = String.valueOf(persisted.getStrikePrice());
+        } else {
+            exitOrder.strikePrice = null;
+        }
+        exitOrder.optionType = (persisted.getOptionType() != null && !persisted.getOptionType().isBlank()) ? persisted.getOptionType() : null;
         exitOrder.tradingSymbol = persisted.getSymbol();
+        exitOrder.expiry = (persisted.getExpiry() != null && !persisted.getExpiry().isBlank()) ? persisted.getExpiry() : null;
         exitOrder.quantity = persisted.getQuantity().longValue();
         exitOrder.instrumentType = persisted.getInstrumentType();
         exitOrder.productType = "INVESTMENT";
         exitOrder.price = String.valueOf(exitPrice);
         exitOrder.transactionType = "S";
         exitOrder.orderType = "NORMAL";
-        exitOrder.expiry = persisted.getExpiry();
+        // expiry already set above conditionally
         exitOrder.requestType = "NEW";
         exitOrder.afterHour = "N";
         exitOrder.validity = "GFD";

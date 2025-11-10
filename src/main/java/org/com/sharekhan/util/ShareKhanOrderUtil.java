@@ -23,7 +23,7 @@ public class ShareKhanOrderUtil {
         orderParams.scripCode = tradeSetupEntity.getScripCode();
         orderParams.disclosedQty = (long) 0;
         orderParams.validity = "GFD";
-        orderParams.quantity = tradeSetupEntity.getQuantity().longValue();
+        orderParams.quantity = tradeSetupEntity.getQuantity() != null ? tradeSetupEntity.getQuantity().longValue() : 0L;
         orderParams.symbolToken = "1660";
         orderParams.exchange = tradeSetupEntity.getExchange();
         orderParams.orderType ="NORMAL";
@@ -42,9 +42,14 @@ public class ShareKhanOrderUtil {
         orderParams.channelUser=TokenLoginAutomationService.clientCode; //enter the clientCode
         orderParams.requestType="MODIFY"; //
         orderParams.instrumentType=tradeSetupEntity.getInstrumentType(); //(Future Stocks(FS)/ Future Index(FI)/ Option Index(OI)/ Option Stocks(OS)/ Future Currency(FUTCUR)/ Option Currency(OPTCUR))
-        orderParams.strikePrice= String.valueOf(tradeSetupEntity.getStrikePrice());
-        orderParams.optionType=tradeSetupEntity.getOptionType();// (XX/PE/CE)
-        orderParams.expiry= tradeSetupEntity.getExpiry();
+        // For NC/BC (equities) these may be null — set only when present to avoid sending the literal "null"
+        if (tradeSetupEntity.getStrikePrice() != null) {
+            orderParams.strikePrice = String.valueOf(tradeSetupEntity.getStrikePrice());
+        } else {
+            orderParams.strikePrice = null;
+        }
+        orderParams.optionType = (tradeSetupEntity.getOptionType() != null && !tradeSetupEntity.getOptionType().isBlank()) ? tradeSetupEntity.getOptionType() : null;
+        orderParams.expiry = (tradeSetupEntity.getExpiry() != null && !tradeSetupEntity.getExpiry().isBlank()) ? tradeSetupEntity.getExpiry() : null;
         JSONObject order = sharekhanConnect.modifyorder(orderParams);
         return order;
 
