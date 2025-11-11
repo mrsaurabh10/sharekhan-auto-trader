@@ -99,45 +99,20 @@ public class OrderStatusPollingService {
                         currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
                     }
 
-                    // If this was an entry order execution, record the entry execution time (entryAt) if not already set
-                    try {
-                        if (!wasExitOrder) {
-                            if (currentTrade.getEntryPrice() != null && currentTrade.getEntryAt() == null) {
-                                currentTrade.setEntryAt(java.time.LocalDateTime.now());
-                            }
-                        }
-                    } catch (Exception ex) {
-                        log.debug("Failed to set entryAt for trade {}: {}", currentTrade.getId(), ex.getMessage());
-                    }
                     // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
                     try {
                         Double exitPrice = currentTrade.getExitPrice();
-                        if (exitPrice == null) {
-                            // fallback to LTP cache
-                            exitPrice = ltpCacheService.getLtp(currentTrade.getScripCode());
-                            if (exitPrice != null) currentTrade.setExitPrice(exitPrice);
+                        Double entryPrice = currentTrade.getEntryPrice();
+                        if(exitPrice != null && entryPrice != null) {
+                            java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(exitPrice);
+                            java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(entryPrice);
+                            long qty = currentTrade.getQuantity() == null ? 0L : currentTrade.getQuantity();
+                            java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(qty);
+                            java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd);
+                            double rawPnl = rawPnlBd.setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
+                            currentTrade.setPnl(rawPnl);
+                            log.debug("Computed PnL for trade {}: entry={} exit={} qty={} rawPnl={}", currentTrade.getId(), currentTrade.getEntryPrice(), exitPrice, qty, rawPnl);
                         }
-                        if (currentTrade.getPnl() == null && currentTrade.getEntryPrice() != null && currentTrade.getQuantity() != null && currentTrade.getQuantity() > 0) {
-                            // Determine effective exit price safely
-                            Double effExit = currentTrade.getExitPrice() != null ? currentTrade.getExitPrice() : exitPrice;
-                            if (effExit == null) {
-                                // fallback to entryPrice (zero pnl) to avoid NPE
-                                effExit = currentTrade.getEntryPrice();
-                            }
-                            try {
-                                java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(effExit);
-                                java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(currentTrade.getEntryPrice());
-                                long qty = currentTrade.getQuantity() == null ? 0L : currentTrade.getQuantity();
-                                java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(qty);
-                                java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd);
-                                double rawPnl = rawPnlBd.setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
-                                log.debug("Computed PnL for trade {}: entry={} exit={} qty={} rawPnl={}", currentTrade.getId(), currentTrade.getEntryPrice(), effExit, qty, rawPnl);
-                                currentTrade.setPnl(rawPnl);
-                            } catch (Exception ex) {
-                                log.warn("Failed computing PnL precisely for trade {}: {}", currentTrade.getId(), ex.getMessage());
-                            }
-                        }
-                        currentTrade.setExitedAt(java.time.LocalDateTime.now());
                     } catch (Exception e) {
                         log.warn("⚠️ Failed computing PnL/exit price for trade {}: {}", currentTrade.getId(), e.getMessage());
                     }
@@ -182,10 +157,7 @@ public class OrderStatusPollingService {
                     } else {
                         currentTrade.setStatus(TriggeredTradeStatus.REJECTED);
                     }
-
-
                     tradeRepo.save(currentTrade);
-
                     // Send telegram for rejection
                     try {
                         String title = "Order Rejected ❌";

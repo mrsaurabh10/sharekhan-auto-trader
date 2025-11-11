@@ -686,8 +686,10 @@ public class TradeExecutionService {
                 if (price != null) {
                     if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus())) {
                         tradeSetupEntity.setEntryPrice(price);
+                        tradeSetupEntity.setEntryAt(LocalDateTime.now());
                     } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
                         tradeSetupEntity.setExitPrice(price);
+                        tradeSetupEntity.setExitedAt(LocalDateTime.now());
                     }
                 }
             }
