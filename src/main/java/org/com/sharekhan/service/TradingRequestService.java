@@ -18,6 +18,6 @@ public class TradingRequestService {
 
     public List<TriggerTradeRequestEntity> getRecentRequestsForUser(Long userId) {
         if (userId == null) return getRecentRequests();
-        return repo.findTop10ByCustomerIdOrderByIdDesc(userId);
+        return repo.findTop10ByAppUserIdOrderByIdDesc(userId);
     }
 }

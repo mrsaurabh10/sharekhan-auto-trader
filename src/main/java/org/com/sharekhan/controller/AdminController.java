@@ -59,8 +59,8 @@ public class AdminController {
 
     @GetMapping("/dashboard")
     public String dashboard(@RequestParam(name = "userId", required = false) Long userId, Model model, HttpServletRequest request) {
-        List<TriggerTradeRequestEntity> requests = userId == null ? requestRepository.findTop10ByOrderByIdDesc() : requestRepository.findTop10ByCustomerIdOrderByIdDesc(userId);
-        List<TriggeredTradeSetupEntity> setups = userId == null ? setupRepository.findTop10ByOrderByIdDesc() : setupRepository.findTop10ByCustomerIdOrderByIdDesc(userId);
+        List<TriggerTradeRequestEntity> requests = userId == null ? requestRepository.findTop10ByOrderByIdDesc() : requestRepository.findTop10ByAppUserIdOrderByIdDesc(userId);
+        List<TriggeredTradeSetupEntity> setups = userId == null ? setupRepository.findTop10ByOrderByIdDesc() : setupRepository.findTop10ByAppUserIdOrderByIdDesc(userId);
         model.addAttribute("requests", requests);
         model.addAttribute("setups", setups);
         model.addAttribute("userId", userId);
@@ -121,12 +121,13 @@ public class AdminController {
     @ResponseBody
     public Object getConfiguredUsers() {
         @SuppressWarnings("unchecked")
-        var rows = entityManager.createQuery("SELECT a.id, a.username, a.customerId FROM AppUser a").getResultList();
+        // AppUser no longer stores broker customerId; return null in that column for compatibility with the UI
+        var rows = entityManager.createQuery("SELECT a.id, a.username, null FROM AppUser a").getResultList();
         var list = rows.stream().map(r -> {
             Object[] cols = (Object[]) r;
             Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
             String username = cols[1] == null ? null : cols[1].toString();
-            Long customerId = cols[2] == null ? null : ((Number) cols[2]).longValue();
+            Long customerId = null;
             return java.util.Map.of("id", id, "username", username, "customerId", customerId);
         }).collect(Collectors.toList());
         return list;
@@ -193,7 +194,7 @@ public class AdminController {
     public Object listAppUsers() {
         // select scalar fields to avoid needing Lombok-generated getters in static analysis
         @SuppressWarnings("unchecked")
-        var rows = entityManager.createQuery("SELECT a.id, a.username, a.customerId, a.notes FROM AppUser a").getResultList();
+        var rows = entityManager.createQuery("SELECT a.id, a.username, a.id, a.notes FROM AppUser a").getResultList();
         return rows.stream().map(r -> {
             Object[] cols = (Object[]) r;
             Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
@@ -220,13 +221,9 @@ public class AdminController {
         if (exists != null && exists > 0) return ResponseEntity.status(409).body("user exists");
         AppUser u = new AppUser();
         u.setUsername(username);
-        u.setCustomerId(customerId);
-        u.setBrokerApiKey(apiKey != null ? cryptoService.encrypt(apiKey) : null);
-        u.setBrokerUsername(brokerUser != null ? cryptoService.encrypt(brokerUser) : null);
-        u.setBrokerPassword(brokerPw != null ? cryptoService.encrypt(brokerPw) : null);
         u.setNotes(notes);
         entityManager.persist(u);
-        return ResponseEntity.ok(java.util.Map.of("id", u.getId(), "username", u.getUsername(), "customerId", u.getCustomerId()));
+        return ResponseEntity.ok(java.util.Map.of("id", u.getId(), "username", u.getUsername(), "Id", u.getId()));
     }
 
     @PutMapping("/app-users/{id}")
@@ -235,10 +232,6 @@ public class AdminController {
     public ResponseEntity<?> updateAppUser(@PathVariable Long id, @RequestBody java.util.Map<String,Object> body) {
         AppUser u = entityManager.find(AppUser.class, id);
         if (u == null) return ResponseEntity.notFound().build();
-        if (body.containsKey("customerId")) u.setCustomerId(body.get("customerId") == null ? null : Long.valueOf(body.get("customerId").toString()));
-        if (body.containsKey("brokerApiKey")) u.setBrokerApiKey(body.get("brokerApiKey") == null ? null : cryptoService.encrypt((String)body.get("brokerApiKey")));
-        if (body.containsKey("brokerUsername")) u.setBrokerUsername(body.get("brokerUsername") == null ? null : cryptoService.encrypt((String)body.get("brokerUsername")));
-        if (body.containsKey("brokerPassword")) u.setBrokerPassword(body.get("brokerPassword") == null ? null : cryptoService.encrypt((String)body.get("brokerPassword")));
         if (body.containsKey("notes")) u.setNotes((String)body.get("notes"));
         entityManager.merge(u);
         return ResponseEntity.ok("updated");
@@ -260,8 +253,7 @@ public class AdminController {
     public ResponseEntity<?> listBrokers(@PathVariable Long userId) {
         // resolve AppUser -> customerId (UI passes AppUser.id)
         AppUser app = entityManager.find(AppUser.class, userId);
-        Long custId = app != null ? app.getCustomerId() : userId;
-        var list = brokerCredentialsRepository.findByCustomerId(custId).stream()
+        var list = brokerCredentialsRepository.findByAppUserId(userId).stream()
                 .map(b -> java.util.Map.of(
                         "id", b.getId(),
                         "brokerName", b.getBrokerName(),
@@ -289,10 +281,9 @@ public class AdminController {
         if (brokerName == null || brokerName.isBlank()) return ResponseEntity.badRequest().body("brokerName required");
         // resolve AppUser id to customerId
         AppUser app = entityManager.find(AppUser.class, userId);
-        Long custId = app != null ? app.getCustomerId() : userId;
         BrokerCredentialsEntity b = new BrokerCredentialsEntity();
         b.setBrokerName(brokerName);
-        b.setCustomerId(custId);
+        b.setAppUserId(userId);
         b.setApiKey(apiKey != null ? cryptoService.encrypt(apiKey) : null);
         b.setBrokerUsername(brokerUser != null ? cryptoService.encrypt(brokerUser) : null);
         b.setBrokerPassword(brokerPw != null ? cryptoService.encrypt(brokerPw) : null);
@@ -303,7 +294,7 @@ public class AdminController {
         if (app != null) b.setAppUserId(app.getId());
         // if this new broker is marked active, deactivate other brokers for same user+brokerName
         if (b.getActive()) {
-            var others = brokerCredentialsRepository.findByCustomerId(custId);
+            var others = brokerCredentialsRepository.findByAppUserId(userId);
             for (var o : others) {
                 if (o.getBrokerName() != null && o.getBrokerName().equalsIgnoreCase(brokerName) && !o.getId().equals(b.getId())) {
                     o.setActive(false);
@@ -333,7 +324,7 @@ public class AdminController {
             Boolean newActive = body.get("active") == null ? null : Boolean.valueOf(String.valueOf(body.get("active")));
             if (newActive != null && newActive) {
                 // deactivate other brokers for same user and brokerName
-                var others = brokerCredentialsRepository.findByCustomerId(b.getCustomerId());
+                var others = brokerCredentialsRepository.findByAppUserId(b.getAppUserId());
                 for (var o : others) {
                     if (o.getBrokerName() != null && o.getBrokerName().equalsIgnoreCase(b.getBrokerName()) && !o.getId().equals(b.getId())) {
                         if (o.getActive() != null && o.getActive()) {

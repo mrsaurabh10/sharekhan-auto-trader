@@ -40,9 +40,9 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
     public AuthTokenResult loginAndFetchToken() {
         // Try to load credentials for the configured default customer if present
         try {
-            var opt = brokerCredentialsRepository.findTopByBrokerNameAndCustomerIdAndActiveTrue("SHAREKHAN", customerId);
+            var opt = brokerCredentialsRepository.findTopByBrokerNameAndAppUserIdAndActiveTrue("SHAREKHAN", customerId);
             if (opt.isEmpty()) {
-                opt = brokerCredentialsRepository.findTopByBrokerNameAndCustomerId("SHAREKHAN", customerId);
+                opt = brokerCredentialsRepository.findTopByBrokerNameAndAppUserId("SHAREKHAN", customerId);
             }
             if (opt.isPresent()) {
                 return loginAndFetchToken(opt.get());

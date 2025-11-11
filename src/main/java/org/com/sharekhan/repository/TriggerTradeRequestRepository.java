@@ -17,9 +17,9 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
 
     List<TriggerTradeRequestEntity>  findTop10ByOrderByIdDesc();
 
-    // customer-scoped recent requests
-    List<TriggerTradeRequestEntity> findTop10ByCustomerIdOrderByIdDesc(Long customerId);
+    // app-user-scoped recent requests
+    List<TriggerTradeRequestEntity> findTop10ByAppUserIdOrderByIdDesc(Long appUserId);
 
-    @Query("select distinct t.customerId from TriggerTradeRequestEntity t where t.customerId is not null")
-    List<Long> findDistinctCustomerIds();
+    @Query("select distinct t.appUserId from TriggerTradeRequestEntity t where t.appUserId is not null")
+    List<Long> findDistinctAppUserIds();
 }

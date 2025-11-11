@@ -76,7 +76,7 @@ public class TradeExecutionController {
                     if (changed) {
                         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                         boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-                        if (!isAdmin && update.getUserId() != null && trade.getCustomerId() != null && !trade.getCustomerId().equals(update.getUserId())) {
+                        if (!isAdmin && update.getUserId() != null && trade.getAppUserId() != null && !trade.getAppUserId().equals(update.getUserId())) {
                             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: cannot update another user's execution");
                         }
                         TriggeredTradeSetupEntity saved = triggeredTradeSetupRepository.save(trade);

@@ -17,6 +17,8 @@ import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.repository.BrokerCredentialsRepository;
+import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
@@ -51,6 +53,7 @@ public class TradeExecutionService {
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
     private final ScriptMasterRepository scriptMasterRepository;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
+    private final BrokerCredentialsRepository brokerCredentialsRepository;
 
     @Autowired
     private UserConfigService userConfigService;
@@ -194,9 +197,6 @@ public class TradeExecutionService {
             finalQuantity = (long) request.getQuantity() * lotSize;
         }
 
-        // determine customer id (userId) - prefer request.userId, fallback to token-based default
-        Long customerIdToUse = request.getUserId() != null ? request.getUserId() : TokenLoginAutomationService.customerId;
-
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
                 .symbol(request.getInstrument())
                 .scripCode(script.getScripCode())
@@ -219,8 +219,7 @@ public class TradeExecutionService {
                 .appUserId(request.getUserId())
                 .build();
 
-        // attach customer id
-        entity.setCustomerId(customerIdToUse);
+        // Persist request entity (no more storing legacy customerId on the request)
         TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
         String key = entity.getExchange() + entity.getScripCode();
         webSocketSubscriptionService.subscribeToScrip(key);
@@ -236,22 +235,27 @@ public class TradeExecutionService {
         return true;
     }
 
-    public void execute(TriggerTradeRequestEntity trigger, double ltp) {
+    public void execute(TriggeredTradeSetupEntity trigger, double ltp) {
         try {
             // Prefer a customer specific token when placing the order
-            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, trigger.getCustomerId());
+            Long custId = null;
+            if (trigger.getBrokerCredentialsId() != null) {
+                custId = brokerCredentialsRepository.findById(trigger.getBrokerCredentialsId())
+                        .map(BrokerCredentialsEntity::getCustomerId).orElse(null);
+            }
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, custId);
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
             SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
             // 🧾 Build order request
             OrderParams order = new OrderParams();
-            // Use the customerId stored on the trigger (set when the trigger was created); fallback to default if missing
-            order.customerId = trigger.getCustomerId() != null ? trigger.getCustomerId() : TokenLoginAutomationService.customerId;
+            // Use the customerId from broker credentials when available; otherwise fall back to default
+            order.customerId = custId != null ? custId : TokenLoginAutomationService.customerId;
             order.scripCode =  trigger.getScripCode();
             order.tradingSymbol = trigger.getSymbol();
             order.exchange = trigger.getExchange();
             order.transactionType = "B";
-            order.quantity = trigger.getQuantity();
+            order.quantity = Long.valueOf(trigger.getQuantity());
             order.price =  String.valueOf(ltp); //choosing ltp as higher chances of execution
             order.orderType = "NORMAL";
             order.productType = "INVESTMENT";
@@ -269,7 +273,7 @@ public class TradeExecutionService {
             var response = sharekhanConnect.placeOrder(order);
 
             log.info("Response received " + response);
-            if (response == null ) {
+            if (response == null) {
                 log.error("❌ Sharekhan order failed or returned null for trigger {}", trigger.getId());
             }else if (!response.has("data")){
                 log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trigger.getId());
@@ -281,30 +285,13 @@ public class TradeExecutionService {
                 // check the status with a delay of .5 second
                 //Thread.sleep(500);
 
-                //JSONObject orderHistory =  sharekhanConnect.getTrades(trigger.getExchange(), TokenLoginAutomationService.customerId,orderId);
-
-
-                //TradeStatus tradeStatus = evaluateOrderFinalStatus(triggeredTradeSetupEntity,orderHistory);
-
-
-
-                //trigger.setStatus(TriggeredTradeStatus.TRIGGERED);
-
-                //since the order is triggered then place the entity in the setup
-
                 TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
                 triggeredTradeSetupEntity.setOrderId(orderId);
 
-                //if(!tradeStatus.equals(TradeStatus.FULLY_EXECUTED)){
                 triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
-                //} else{
-                  //  triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.EXECUTED);
-                //}
 
                 triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
                 triggeredTradeSetupEntity.setExchange(trigger.getExchange());
-                // attach customer id from the trigger (fallback to default token-based customer id)
-                triggeredTradeSetupEntity.setCustomerId(trigger.getCustomerId() != null ? trigger.getCustomerId() : TokenLoginAutomationService.customerId);
                 // attach broker credentials id and app user id from the trigger for traceability
                 triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
                 triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
@@ -314,7 +301,7 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
                 triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
                 triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
-                triggeredTradeSetupEntity.setQuantity(trigger.getQuantity().intValue());
+                triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
                 triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
                 triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
                 triggeredTradeSetupEntity.setEntryPrice(ltp);
@@ -324,16 +311,8 @@ public class TradeExecutionService {
 
                 eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
 
-                //dont need the unsubscribe code here as we will not unsubscribe
-                // reason being need to take care of pending order
-               // String feedKey = trigger.getExchange() + trigger.getScripCode();
-                //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
-
-
                 log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
             }
-            // no change in the status
-            // need to handle failure cases
 
         } catch (Exception e) {
             log.error("❌ Error executing trade for trigger {}: {}", trigger.getId(), e.getMessage(), e);
@@ -353,22 +332,6 @@ public class TradeExecutionService {
 ////
 ////        log.info("✅ Order executed, monitoring LTP for SL/target: {}", feedKey);
 ////    }
-//
-//    public void markOrderExited(String orderId) {
-//        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByExitOrderId(orderId)
-//                .orElseThrow(() -> new RuntimeException("Trade not found"));
-//
-//        trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-//        //trade.setExitPrice(Double.parseDouble(data.get("TradePrice").asText()));
-//        trade.setPnl((trade.getExitPrice() - trade.getEntryPrice()) * trade.getQuantity());
-//        triggeredTradeRepo.save(trade);
-//
-//        // ✅ Start LTP monitoring
-//        webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
-//
-//        log.info("✅ Order executed, monitoring LTP for SL/target: {}", trade.getExchange() + trade.getScripCode());
-//
-//    }
 
     public void markOrderRejected(String orderId) {
         TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByOrderId(orderId)
@@ -449,19 +412,6 @@ public class TradeExecutionService {
                 }
             }
             orderStatusSet.add(status);
-//
-//            switch (status) {
-//                case "Rejected":
-//                    String reason = trade.optString("clientGroup", "Unknown");
-//                    log.warn("❌ Order Rejected - Reason: {}", reason);
-//                    return TradeStatus.REJECTED;
-//
-//                case "Fully Executed":
-//                    log.info("✅ Order Fully Executed - Order ID: {}", trade.optString("orderId"));
-//                    String orderPrice = trade.optString("orderPrice", "").trim();
-//                    tradeSetupEntity.setEntryPrice(Double.parseDouble(orderPrice));
-//                    return TradeStatus.FULLY_EXECUTED;
-//            }
         }
 
         if(orderStatusSet.contains("Fully Executed")){
@@ -487,7 +437,7 @@ public class TradeExecutionService {
 
     public List<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId) {
         if (userId == null) return getRecentExecutions();
-        return triggeredTradeRepo.findTop10ByCustomerIdOrderByIdDesc(userId);
+        return triggeredTradeRepo.findTop10ByAppUserIdOrderByIdDesc(userId);
     }
 
     public void subscribeForOpenTrades(){
@@ -524,7 +474,12 @@ public class TradeExecutionService {
                 }
             }
             // subscribe to ACK for this customer's feed
-            webSocketSubscriptionService.subscribeToAck(String.valueOf(executedTrades.get(0).getCustomerId()));
+            Long custId = null;
+            if (executedTrades.get(0).getBrokerCredentialsId() != null) {
+                custId = brokerCredentialsRepository.findById(executedTrades.get(0).getBrokerCredentialsId())
+                        .map(BrokerCredentialsEntity::getCustomerId).orElse(null);
+            }
+            webSocketSubscriptionService.subscribeToAck(String.valueOf(custId != null ? custId : TokenLoginAutomationService.customerId));
         }
 
         log.info("✅ Monitoring setup complete.");
@@ -543,7 +498,38 @@ public class TradeExecutionService {
             // if LTP not available, fall back to entry price
             ltp = requestEntity.getEntryPrice();
         }
-        // run execution asynchronously or synchronously — here synchronous call
-        execute(requestEntity, ltp);
+
+        // build a temporary TriggeredTradeSetupEntity from the saved request so we can reuse the execute(...) method
+        TriggeredTradeSetupEntity temp = new TriggeredTradeSetupEntity();
+        temp.setScripCode(requestEntity.getScripCode());
+        temp.setBrokerCredentialsId(requestEntity.getBrokerCredentialsId());
+        temp.setAppUserId(requestEntity.getAppUserId());
+        temp.setExchange(requestEntity.getExchange());
+        temp.setSymbol(requestEntity.getSymbol());
+        // TriggerTradeRequestEntity.quantity is final quantity (long) — TriggeredTradeSetupEntity.quantity is Integer
+        if (requestEntity.getQuantity() != null) {
+            long q = requestEntity.getQuantity();
+            if (q > Integer.MAX_VALUE) {
+                temp.setQuantity(Integer.MAX_VALUE);
+            } else if (q < Integer.MIN_VALUE) {
+                temp.setQuantity(Integer.MIN_VALUE);
+            } else {
+                temp.setQuantity((int) q);
+            }
+        }
+        temp.setInstrumentType(requestEntity.getInstrumentType());
+        temp.setStrikePrice(requestEntity.getStrikePrice());
+        temp.setOptionType(requestEntity.getOptionType());
+        temp.setExpiry(requestEntity.getExpiry());
+        temp.setIntraday(requestEntity.getIntraday());
+        temp.setEntryPrice(requestEntity.getEntryPrice());
+        temp.setStopLoss(requestEntity.getStopLoss());
+        temp.setTarget1(requestEntity.getTarget1());
+        temp.setTarget2(requestEntity.getTarget2());
+        temp.setTarget3(requestEntity.getTarget3());
+        temp.setTrailingSl(requestEntity.getTrailingSl());
+
+        // run execution using the converted entity
+        execute(temp, ltp);
     }
 }

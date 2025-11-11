@@ -2,7 +2,6 @@ package org.com.sharekhan.service;
 
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
-import com.sharekhan.model.OrderParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenLoginAutomationService;
@@ -12,14 +11,12 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.repository.BrokerCredentialsRepository;
+import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
-import org.com.sharekhan.ws.WebSocketClientService;
-import org.com.sharekhan.ws.WebSocketConnector;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
-import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.Map;
@@ -35,13 +32,10 @@ public class OrderStatusPollingService {
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
     private final TriggeredTradeSetupRepository tradeRepo;
     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
-    @Lazy
-    @Autowired
-    private final WebSocketClientService webSocketClientService;
     private final TradeExecutionService tradeExecutionService;
-    private final WebSocketConnector webSocketConnector;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
     private final TokenStoreService   tokenStoreService;
+    private final BrokerCredentialsRepository brokerCredentialsRepository;
     @Autowired
     private LtpCacheService ltpCacheService;
 
@@ -51,13 +45,17 @@ public class OrderStatusPollingService {
             try {
 
                 // Prefer a customer-specific token if available
-                String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, trade.getCustomerId()); // ✅ fetch fresh token per-customer
+                Long custId = null;
+                if (trade.getBrokerCredentialsId() != null) {
+                    custId = brokerCredentialsRepository.findById(trade.getBrokerCredentialsId()).map(BrokerCredentialsEntity::getCustomerId).orElse(null);
+                }
+                String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, custId); // ✅ fetch fresh token per-customer
                 if (accessToken == null) {
                     accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
                 }
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
-                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(),
+                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), custId,
                         orderIdToMonitor);
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
@@ -261,8 +259,8 @@ public class OrderStatusPollingService {
             "instrumentType": "OI",
             "fnoSquareoff": "N",
             "dpId": 1,
-            "updateUser": "BOG",
-            "exchAckDateTime": "",
+            "updateUser": "FO_AH_NOR",
+            "exchAckDateTime": "2025-10-28 12:44:41.0",
             "segmentCode": "",
             "userId": "SKNSEFO4",
             "productCode": "0",
@@ -484,7 +482,6 @@ public class OrderStatusPollingService {
     "status": 200,
     "timestamp": "2025-10-28T14:52:32+05:30"
 }
-
 
 
      */

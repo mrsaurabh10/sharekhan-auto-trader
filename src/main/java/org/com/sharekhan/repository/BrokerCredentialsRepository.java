@@ -9,8 +9,14 @@ import java.util.Optional;
 
 @Repository
 public interface BrokerCredentialsRepository extends JpaRepository<BrokerCredentialsEntity, Long> {
-    Optional<BrokerCredentialsEntity> findTopByBrokerNameAndCustomerIdAndActiveTrue(String brokerName, Long customerId);
-    Optional<BrokerCredentialsEntity> findTopByBrokerNameAndCustomerId(String brokerName, Long customerId);
-    List<BrokerCredentialsEntity> findByCustomerId(Long customerId);
+    Optional<BrokerCredentialsEntity> findTopByBrokerNameAndAppUserIdAndActiveTrue(String brokerName, Long appUserId);
+    Optional<BrokerCredentialsEntity> findTopByBrokerNameAndAppUserId(String brokerName, Long appUserId);
+    List<BrokerCredentialsEntity> findByAppUserId(Long appUserId);
     List<BrokerCredentialsEntity> findAllByBrokerName(String brokerName);
+
+    // find the active credentials for a given broker customer id (customerId is the broker's customer identifier)
+    Optional<BrokerCredentialsEntity> findTopByBrokerNameAndCustomerIdAndActiveTrue(String brokerName, Long customerId);
+    List<BrokerCredentialsEntity> findAllByBrokerNameAndCustomerId(String brokerName, Long customerId);
+
+    // legacy/misc helpers removed
 }

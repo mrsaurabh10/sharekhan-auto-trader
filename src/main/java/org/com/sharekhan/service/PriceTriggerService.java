@@ -35,7 +35,8 @@ public class PriceTriggerService {
                 if (ltp >= trigger.getEntryPrice()) {
                     log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
 
-                    tradeExecutionService.execute(trigger, ltp); // Places order + persists in live trades
+                    // convert request -> executed entity and run execution flow
+                    tradeExecutionService.executeTradeFromEntity(trigger);
                     triggerRepo.deleteById(trigger.getId());
 
                     log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());

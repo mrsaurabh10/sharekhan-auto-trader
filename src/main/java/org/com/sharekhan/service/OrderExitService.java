@@ -11,6 +11,8 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.repository.BrokerCredentialsRepository;
+import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
@@ -23,12 +25,19 @@ public class OrderExitService {
     private final TokenStoreService tokenStoreService;
     private final TriggeredTradeSetupRepository triggeredTradeRepo;
     private final WebSocketSubscriptionService webSocketSubscriptionService;
+    private final BrokerCredentialsRepository brokerCredentialsRepository;
 
     @Transactional
     public void performSquareOff(TriggeredTradeSetupEntity trade, double exitPrice, String exitReason) {
         // Place opposite order (SELL for buy-side trades)
         OrderParams exitOrder = new OrderParams();
-        exitOrder.customerId =     trade.getCustomerId();
+
+        Long custId = null;
+        if (trade.getBrokerCredentialsId() != null) {
+            custId = brokerCredentialsRepository.findById(trade.getBrokerCredentialsId()).map(BrokerCredentialsEntity::getCustomerId).orElse(null);
+        }
+        exitOrder.customerId = custId != null ? custId : TokenLoginAutomationService.customerId;
+
         exitOrder.exchange = trade.getExchange();
         exitOrder.scripCode = trade.getScripCode();
         exitOrder.strikePrice = String.valueOf(trade.getStrikePrice());
@@ -49,7 +58,7 @@ public class OrderExitService {
         exitOrder.channelUser = TokenLoginAutomationService.clientCode;
 
         // Prefer a per-customer token when placing the exit order
-        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, trade.getCustomerId());
+        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, custId);
         if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
         SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
@@ -75,13 +84,13 @@ public class OrderExitService {
             triggeredTradeRepo.save(trade);
             //subscribe to ack feed
             try {
-                if (trade.getCustomerId() != null) {
-                    webSocketSubscriptionService.subscribeToAck(String.valueOf(trade.getCustomerId()));
+                if (custId != null) {
+                    webSocketSubscriptionService.subscribeToAck(String.valueOf(custId));
                 } else {
                     webSocketSubscriptionService.subscribeToAck(String.valueOf(TokenLoginAutomationService.customerId));
                 }
             } catch (Exception e) {
-                log.warn("Failed to subscribe ACK for customer {}: {}", trade.getCustomerId(), e.getMessage());
+                log.warn("Failed to subscribe ACK for customer {}: {}", custId, e.getMessage());
             }
 
             //monitor trade - publish event not available here; the caller can handle if needed
@@ -92,4 +101,3 @@ public class OrderExitService {
         log.info("✅ Trade exited [{}]: PnL = {}", exitReason, trade.getPnl());
     }
 }
-

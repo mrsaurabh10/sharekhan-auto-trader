@@ -23,7 +23,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findTop10ByOrderByIdDesc();
 
-    // customer-scoped recent executions
-    List<TriggeredTradeSetupEntity> findTop10ByCustomerIdOrderByIdDesc(Long customerId);
+    // app-user-scoped recent executions
+    List<TriggeredTradeSetupEntity> findTop10ByAppUserIdOrderByIdDesc(Long appUserId);
 
 }

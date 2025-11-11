@@ -4,6 +4,8 @@ import org.com.sharekhan.entity.AccessTokenEntity;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 @Repository
 public interface AccessTokenRepository extends JpaRepository<AccessTokenEntity, Long> {
 
@@ -16,13 +18,19 @@ public interface AccessTokenRepository extends JpaRepository<AccessTokenEntity, 
     // delete tokens for a specific broker
     void deleteAllByBrokerName(String brokerName);
 
-    // customer-scoped methods
-    AccessTokenEntity findTopByBrokerNameAndCustomerIdOrderByExpiryDesc(String brokerName, Long customerId);
+    // broker-customer-scoped methods (mapped to AccessTokenEntity.brokerCredentialsId)
+    AccessTokenEntity findTopByBrokerNameAndBrokerCredentialsIdOrderByExpiryDesc(String brokerName, Long brokerCredentialsId);
 
-    void deleteAllByBrokerNameAndCustomerId(String brokerName, Long customerId);
+    void deleteAllByBrokerNameAndBrokerCredentialsId(String brokerName, Long brokerCredentialsId);
+
+    // user-scoped methods (mapped to AccessTokenEntity.userId)
+    AccessTokenEntity findTopByBrokerNameAndUserIdOrderByExpiryDesc(String brokerName, Long userId);
+
+    void deleteAllByBrokerNameAndUserId(String brokerName, Long userId);
 
     // Additional helpers
-    java.util.List<AccessTokenEntity> findAllByBrokerName(String brokerName);
-    java.util.List<AccessTokenEntity> findAllByBrokerNameAndCustomerId(String brokerName, Long customerId);
+    List<AccessTokenEntity> findAllByBrokerName(String brokerName);
+    List<AccessTokenEntity> findAllByBrokerNameAndBrokerCredentialsId(String brokerName, Long brokerCredentialsId);
+    List<AccessTokenEntity> findAllByBrokerNameAndUserId(String brokerName, Long userId);
 
 }

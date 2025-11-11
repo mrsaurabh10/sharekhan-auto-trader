@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.service.BrokerCredentialsService;
 import org.com.sharekhan.auth.AccessTokenPersistenceService;
-import org.com.sharekhan.util.CryptoService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,7 +17,6 @@ public class AuthController {
 
     private final BrokerCredentialsService brokerCredentialsService;
     private final AccessTokenPersistenceService accessTokenPersistenceService;
-    private final CryptoService cryptoService;
 
     @Value("${app.admin.token:}")
     private String adminToken;
@@ -42,12 +40,12 @@ public class AuthController {
                                        @RequestParam String broker, @RequestParam(required = false) Long customerId,
                                        @RequestParam String token, @RequestParam long expiresInSeconds) {
         if (!authorized(h)) return ResponseEntity.status(403).body("forbidden");
-        String brokerName = broker;
         Instant expiry = Instant.now().plusSeconds(expiresInSeconds - 60);
         if (customerId == null) {
-            accessTokenPersistenceService.replaceToken(brokerName, token, expiry);
+            accessTokenPersistenceService.replaceToken(broker, token, expiry);
         } else {
-            accessTokenPersistenceService.replaceTokenForCustomer(brokerName, customerId, token, expiry);
+            // new signature expects (brokerDisplayName, customerId, userId, token, expiry)
+            accessTokenPersistenceService.replaceTokenForCustomer(broker, customerId, null, token, expiry);
         }
         return ResponseEntity.ok().body("token saved");
     }

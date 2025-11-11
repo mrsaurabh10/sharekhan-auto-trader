@@ -30,7 +30,7 @@ public class TradeRequestController {
                 .map(request -> {
                     Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                     boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-                    if (!isAdmin && userId != null && request.getCustomerId() != null && !request.getCustomerId().equals(userId)) {
+                    if (!isAdmin && userId != null) {
                         return ResponseEntity.status(403).body("Forbidden: request does not belong to user");
                     }
                     tradeRequestRepository.deleteById(id);
@@ -72,7 +72,7 @@ public class TradeRequestController {
                     if (changed) {
                         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                         boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-                        if (!isAdmin && update.getUserId() != null && request.getCustomerId() != null && !request.getCustomerId().equals(update.getUserId())) {
+                        if (!isAdmin && update.getUserId() != null ) {
                             return ResponseEntity.status(403).body("Forbidden: cannot modify another user's request");
                         }
                         TriggerTradeRequestEntity saved = tradeRequestRepository.save(request);
