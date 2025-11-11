@@ -48,17 +48,27 @@ public class OrderStatusPollingService {
     private TelegramNotificationService telegramNotificationService;
 
     public void monitorOrderStatus(TriggeredTradeSetupEntity trade) {
+        // Use DB id as key so we don't schedule multiple polls for same trade
+        final String tradeKey = String.valueOf(trade.getId());
+        ScheduledFuture<?> existing = activePolls.get(tradeKey);
+        if (existing != null && !existing.isDone() && !existing.isCancelled()) {
+            log.debug("Poll already active for trade {} - skipping duplicate schedule", tradeKey);
+            return;
+        }
+
         Runnable pollTask = () -> {
-            String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
+            // Always fetch the latest trade record from DB at each poll iteration to get current status and order ids
+            TriggeredTradeSetupEntity currentTrade = tradeRepo.findById(trade.getId()).orElse(trade);
+            String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus()) ? currentTrade.getExitOrderId() : currentTrade.getOrderId();
             try {
 
                 String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
-                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), trade.getCustomerId(), orderIdToMonitor);
+                JSONObject response = sharekhanConnect.orderHistory(currentTrade.getExchange(), currentTrade.getCustomerId(), orderIdToMonitor);
 
                 // Evaluate final status and log a very compact summary (avoid dumping full JSON)
-                TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade, response);
+                TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
                 try {
                     int records = 0;
                     String lastRecStatus = "";
@@ -81,119 +91,131 @@ public class OrderStatusPollingService {
                 }
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                     // Determine if this was an exit order or entry order
-                    boolean wasExitOrder = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus());
-                    if(wasExitOrder) {
-                        trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-                        webSocketSubscriptionHelper.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
-                    } else if(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(trade.getStatus())) {
-                        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+                    boolean wasExitOrder = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus());
+                    if (wasExitOrder) {
+                        currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+                        webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
+                    } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
+                        currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
                     }
 
                     // If this was an entry order execution, record the entry execution time (entryAt) if not already set
                     try {
                         if (!wasExitOrder) {
-                            if (trade.getEntryPrice() != null && trade.getEntryAt() == null) {
-                                trade.setEntryAt(java.time.LocalDateTime.now());
+                            if (currentTrade.getEntryPrice() != null && currentTrade.getEntryAt() == null) {
+                                currentTrade.setEntryAt(java.time.LocalDateTime.now());
                             }
                         }
                     } catch (Exception ex) {
-                        log.debug("Failed to set entryAt for trade {}: {}", trade.getId(), ex.getMessage());
+                        log.debug("Failed to set entryAt for trade {}: {}", currentTrade.getId(), ex.getMessage());
                     }
                     // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
                     try {
-                        Double exitPrice = trade.getExitPrice();
+                        Double exitPrice = currentTrade.getExitPrice();
                         if (exitPrice == null) {
                             // fallback to LTP cache
-                            exitPrice = ltpCacheService.getLtp(trade.getScripCode());
-                            if (exitPrice != null) trade.setExitPrice(exitPrice);
+                            exitPrice = ltpCacheService.getLtp(currentTrade.getScripCode());
+                            if (exitPrice != null) currentTrade.setExitPrice(exitPrice);
                         }
-                        if (trade.getPnl() == null && trade.getEntryPrice() != null && trade.getQuantity() != null && trade.getQuantity() > 0) {
+                        if (currentTrade.getPnl() == null && currentTrade.getEntryPrice() != null && currentTrade.getQuantity() != null && currentTrade.getQuantity() > 0) {
                             // Determine effective exit price safely
-                            Double effExit = trade.getExitPrice() != null ? trade.getExitPrice() : exitPrice;
+                            Double effExit = currentTrade.getExitPrice() != null ? currentTrade.getExitPrice() : exitPrice;
                             if (effExit == null) {
                                 // fallback to entryPrice (zero pnl) to avoid NPE
-                                effExit = trade.getEntryPrice();
+                                effExit = currentTrade.getEntryPrice();
                             }
                             try {
                                 java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(effExit);
-                                java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(trade.getEntryPrice());
-                                long qty = trade.getQuantity() == null ? 0L : trade.getQuantity();
+                                java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(currentTrade.getEntryPrice());
+                                long qty = currentTrade.getQuantity() == null ? 0L : currentTrade.getQuantity();
                                 java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(qty);
                                 java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd);
                                 double rawPnl = rawPnlBd.setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
-                                log.debug("Computed PnL for trade {}: entry={} exit={} qty={} rawPnl={}", trade.getId(), trade.getEntryPrice(), effExit, qty, rawPnl);
-                                trade.setPnl(rawPnl);
+                                log.debug("Computed PnL for trade {}: entry={} exit={} qty={} rawPnl={}", currentTrade.getId(), currentTrade.getEntryPrice(), effExit, qty, rawPnl);
+                                currentTrade.setPnl(rawPnl);
                             } catch (Exception ex) {
-                                log.warn("Failed computing PnL precisely for trade {}: {}", trade.getId(), ex.getMessage());
+                                log.warn("Failed computing PnL precisely for trade {}: {}", currentTrade.getId(), ex.getMessage());
                             }
                         }
-                        trade.setExitedAt(java.time.LocalDateTime.now());
+                        currentTrade.setExitedAt(java.time.LocalDateTime.now());
                     } catch (Exception e) {
-                        log.warn("⚠️ Failed computing PnL/exit price for trade {}: {}", trade.getId(), e.getMessage());
+                        log.warn("⚠️ Failed computing PnL/exit price for trade {}: {}", currentTrade.getId(), e.getMessage());
                     }
 
-                    tradeRepo.save(trade);
+                    tradeRepo.save(currentTrade);
 
                     // Send telegram notification for executed/exit
                     try {
                         String title = wasExitOrder ? "Trade Exited ✅" : "Order Executed ✅";
                         StringBuilder body = new StringBuilder();
-                        body.append("Instrument: ").append(trade.getSymbol());
-                        if (trade.getStrikePrice() != null) body.append(" ").append(trade.getStrikePrice());
-                        if (trade.getOptionType() != null) body.append(" ").append(trade.getOptionType());
+                        body.append("Instrument: ").append(currentTrade.getSymbol());
+                        if (currentTrade.getStrikePrice() != null) body.append(" ").append(currentTrade.getStrikePrice());
+                        if (currentTrade.getOptionType() != null) body.append(" ").append(currentTrade.getOptionType());
                         body.append("\nOrderId: ").append(orderIdToMonitor);
-                        body.append("\nStatus: ").append(trade.getStatus());
-                        if (trade.getEntryPrice() != null) body.append("\nEntry: ").append(trade.getEntryPrice());
-                        if (trade.getExitPrice() != null) body.append("\nExit: ").append(trade.getExitPrice());
-                        if (trade.getPnl() != null) body.append("\nPnL: ").append(trade.getPnl());
+                        body.append("\nStatus: ").append(currentTrade.getStatus());
+                        if (currentTrade.getEntryPrice() != null) body.append("\nEntry: ").append(currentTrade.getEntryPrice());
+                        if (currentTrade.getExitPrice() != null) body.append("\nExit: ").append(currentTrade.getExitPrice());
+                        if (currentTrade.getPnl() != null) body.append("\nPnL: ").append(currentTrade.getPnl());
                         telegramNotificationService.sendTradeMessage(title, body.toString());
                     } catch (Exception e) {
                         log.warn("Failed sending telegram notification for execution: {}", e.getMessage());
                     }
 
-                    ScheduledFuture<?> future = activePolls.remove(orderIdToMonitor);
-                    // cleanup last modify price cache
-                    lastModifyPrice.remove(orderIdToMonitor);
+                    String tradeKeyLocal = String.valueOf(currentTrade.getId());
+                    ScheduledFuture<?> future = activePolls.remove(tradeKeyLocal);
+                    // cleanup last modify price cache for all relevant keys (orderId, exitOrderId, and tradeKey)
+                    try {
+                        if (orderIdToMonitor != null) lastModifyPrice.remove(orderIdToMonitor);
+                        if (currentTrade.getOrderId() != null) lastModifyPrice.remove(currentTrade.getOrderId());
+                        if (currentTrade.getExitOrderId() != null) lastModifyPrice.remove(currentTrade.getExitOrderId());
+                        lastModifyPrice.remove(tradeKeyLocal);
+                    } catch (Exception ignore) {}
                     if (future != null) {
                         future.cancel(true);
-                        log.info("🛑 Polling stopped for order {}", orderIdToMonitor);
+                        log.info("🛑 Polling stopped for trade {} (orderId={})", tradeKeyLocal, orderIdToMonitor);
                     }
                     return;
                 } else if (TradeStatus.REJECTED.equals(tradeStatus)) {
 
-                    if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())) {
-                        trade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
-                    }else{
-                        trade.setStatus(TriggeredTradeStatus.REJECTED);
+                    if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus())) {
+                        currentTrade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
+                    } else {
+                        currentTrade.setStatus(TriggeredTradeStatus.REJECTED);
                     }
 
 
-                    tradeRepo.save(trade);
+                    tradeRepo.save(currentTrade);
 
                     // Send telegram for rejection
                     try {
                         String title = "Order Rejected ❌";
                         StringBuilder body = new StringBuilder();
-                        body.append("Instrument: ").append(trade.getSymbol());
-                        if (trade.getStrikePrice() != null) body.append(" ").append(trade.getStrikePrice());
-                        if (trade.getOptionType() != null) body.append(" ").append(trade.getOptionType());
+                        body.append("Instrument: ").append(currentTrade.getSymbol());
+                        if (currentTrade.getStrikePrice() != null) body.append(" ").append(currentTrade.getStrikePrice());
+                        if (currentTrade.getOptionType() != null) body.append(" ").append(currentTrade.getOptionType());
                         body.append("\nOrderId: ").append(orderIdToMonitor);
-                        body.append("\nStatus: ").append(trade.getStatus());
-                        if (trade.getExitReason() != null) body.append("\nReason: ").append(trade.getExitReason());
+                        body.append("\nStatus: ").append(currentTrade.getStatus());
+                        if (currentTrade.getExitReason() != null) body.append("\nReason: ").append(currentTrade.getExitReason());
                         telegramNotificationService.sendTradeMessage(title, body.toString());
                     } catch (Exception e) {
                         log.warn("Failed sending telegram notification for rejection: {}", e.getMessage());
                     }
 
-                    ScheduledFuture<?> future = activePolls.remove(orderIdToMonitor);
-                    lastModifyPrice.remove(orderIdToMonitor);
+                    String tradeKeyLocal2 = String.valueOf(currentTrade.getId());
+                    ScheduledFuture<?> future = activePolls.remove(tradeKeyLocal2);
+                    try {
+                        if (orderIdToMonitor != null) lastModifyPrice.remove(orderIdToMonitor);
+                        if (currentTrade.getOrderId() != null) lastModifyPrice.remove(currentTrade.getOrderId());
+                        if (currentTrade.getExitOrderId() != null) lastModifyPrice.remove(currentTrade.getExitOrderId());
+                        lastModifyPrice.remove(tradeKeyLocal2);
+                    } catch (Exception ignore) {}
                     if (future != null) {
                         future.cancel(true);
-                        log.info("🛑 Polling stopped for order {}",orderIdToMonitor);
+                        log.info("🛑 Polling stopped for trade {} (orderId={})", tradeKeyLocal2, orderIdToMonitor);
                     }
-                    String feedKey = trade.getExchange() + trade.getScripCode();
-                    webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
-                    return;
+                     String feedKey = trade.getExchange() + trade.getScripCode();
+                     webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
+                     return;
                 } else if (TradeStatus.PENDING.equals(tradeStatus)) {
                     // Try to improve chances of execution by modifying the pending order to current LTP
                     try {
@@ -286,9 +308,11 @@ public class OrderStatusPollingService {
             }
         };
         // Poll every 0.5 seconds, up to 2 minutes
-        String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
+        // Use the DB trade id as the key for active polls so we can always cancel the poll
+        // even if the broker orderId/exitOrderId changes during the lifecycle.
+        String tradeKey1 = String.valueOf(trade.getId());
         ScheduledFuture<?> future = executor.scheduleAtFixedRate(pollTask, 0, 500, TimeUnit.MILLISECONDS);
-        activePolls.put(orderIdToMonitor, future);
+        activePolls.put(tradeKey1, future);
 
         // Optional: Cancel polling after 2 minutes
 //        executor.schedule(() -> {
