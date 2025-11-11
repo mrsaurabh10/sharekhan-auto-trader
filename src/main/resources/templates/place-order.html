@@ -292,6 +292,7 @@
         scripLtpMap[sKey] = Number(ltp);
 
         // Update UI cells by data attributes directly (faster and avoids row re-creation issues)
+        // NOTE: restrict selectors to TD elements only to avoid accidentally replacing whole TR text when TR.dataset.scrip exists
         updateTradingRequestLTP(sKey, Number(ltp));
         updateExecutedTradeLTP(sKey, Number(ltp));
     };
@@ -319,7 +320,8 @@
         const formatted = (ltp != null && !isNaN(ltp)) ? Number(ltp).toFixed(2) : '-';
         // update any data-scrip cells across the page (covers requests and executed tables)
         try {
-            const cells = document.querySelectorAll(`[data-scrip="${scripCode}"]`);
+            // Only update TDs that explicitly carry the data-scrip attribute (avoid TR[data-scrip] matches)
+            const cells = document.querySelectorAll(`td[data-scrip="${scripCode}"]`);
             cells.forEach(cell => {
                 if (!cell) return;
                 if ((cell.textContent || '') !== formatted) cell.textContent = formatted;
@@ -334,7 +336,8 @@
         lastKnownLTP[scripKey] = ltp;
         try {
             // Update any LTP display cells for this scripCode
-            const ltpCells = document.querySelectorAll(`#trades-executed-table [data-scrip="${scripKey}"]`);
+            // Target only TDs in the executed table to avoid touching TR elements
+            const ltpCells = document.querySelectorAll(`#trades-executed-table td[data-scrip="${scripKey}"]`);
             ltpCells.forEach(cell => {
                 if (!cell) return;
                 const row = cell.closest('tr');
@@ -353,7 +356,7 @@
                 if ((cell.textContent || '') !== ltpStr) cell.textContent = ltpStr;
 
                 // update pnl cell(s) for this row
-                const pnlCells = row.querySelectorAll(`[data-pnl="${scripKey}"]`);
+                const pnlCells = row.querySelectorAll(`td[data-pnl="${scripKey}"]`);
                 pnlCells.forEach(pnlCell => {
                     if (!pnlCell) return;
                     if ((pnlCell.textContent || '') !== pnlStr) {
@@ -1408,14 +1411,17 @@
                         const allowed = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'PLACED_PENDING_CONFIRMATION']);
                         if (showExited) allowed.add('EXITED_SUCCESS');
 
-                        // Keep only entries with allowed status
-                        const filtered = (data || []).filter(d => allowed.has(String(d.status)));
+                        // Keep only entries with allowed status (normalize status to upper-case trimmed string)
+                        const filtered = (data || []).filter(d => {
+                            const st = String(d.status || '').toUpperCase().trim();
+                            return allowed.has(st);
+                        });
 
                         if (showExited) {
                             // For EXITED_SUCCESS keep only the latest per symbol+qty+entry (assume higher id is latest)
                             const latestExitByKey = new Map();
                             filtered.forEach(d => {
-                                if (String(d.status) === 'EXITED_SUCCESS') {
+                                if (String(d.status || '').toUpperCase().trim() === 'EXITED_SUCCESS') {
                                     const key = `${d.symbol || d.tradingSymbol || d.scripCode || ''}|${d.quantity || ''}|${d.entryPrice || ''}`;
                                     const existing = latestExitByKey.get(key);
                                     if (!existing || (Number(d.id || 0) > Number(existing.id || 0))) {
@@ -1427,7 +1433,7 @@
                             // Build finalData: include EXECUTED and EXIT_ORDER_PLACED as-is, and only the latest EXITED_SUCCESS entries from map
                             const finalData = [];
                             filtered.forEach(d => {
-                                if (String(d.status) === 'EXITED_SUCCESS') {
+                                if (String(d.status || '').toUpperCase().trim() === 'EXITED_SUCCESS') {
                                     const key = `${d.symbol || d.tradingSymbol || d.scripCode || ''}|${d.quantity || ''}|${d.entryPrice || ''}`;
                                     const chosen = latestExitByKey.get(key);
                                     if (chosen && String(chosen.id) === String(d.id)) finalData.push(d);
