@@ -30,9 +30,6 @@ public class TriggerTradeRequestEntity {
 
     private Long quantity; // Final quantity = lots × lotSize
 
-    // broker-specific customer id (e.g. sharekhan customer id)
-    private Long customerId;
-
     // Reference to broker_credentials.id for the broker credentials used
     private Long brokerCredentialsId;
 
@@ -50,8 +47,6 @@ public class TriggerTradeRequestEntity {
 
     @Column(name = "intraday")
     private Boolean intraday;  // default false
-
-
 
 
     @Enumerated(EnumType.STRING)

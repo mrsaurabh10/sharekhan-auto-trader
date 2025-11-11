@@ -27,10 +27,10 @@ public class AccessTokenEntity {
     @Column(name = "brokerName", nullable = true)
     private String brokerName;
 
-    @Column(name = "customer_id", nullable = true)
-    private Long customerId;
-
     @Column(name = "user_id", nullable = true)
     private Long userId;
+
+    @Column(name = "broker_credentials_id", nullable = true)
+    private Long brokerCredentialsId;
 
 }

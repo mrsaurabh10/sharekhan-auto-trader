@@ -21,7 +21,6 @@ public class TriggeredTradeSetupEntity {
 
     private String symbol;
     private Integer scripCode;
-    private Long customerId;
 
     // reference to broker_credentials id
     private Long brokerCredentialsId;
