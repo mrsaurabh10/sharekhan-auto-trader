@@ -495,19 +495,24 @@ public class TradeExecutionService {
         TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + trade.getId()));
 
-        // If already in exit flow or already exited, do not place duplicate exit orders
-        if (persisted.getStatus() == TriggeredTradeStatus.EXIT_ORDER_PLACED
-                || persisted.getStatus() == TriggeredTradeStatus.EXITED_SUCCESS
-                || persisted.getStatus() == TriggeredTradeStatus.EXIT_FAILED) {
-            log.info("⚠️ Square-off skipped: trade {} already in exit state {}", persisted.getId(), persisted.getStatus());
+        // Use atomic claim via repository to ensure only one process/thread can start exit placement
+        int claimed = 0;
+        try {
+            claimed = triggeredTradeRepo.claimExitIfNotAlready(persisted.getId(), TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), exitReason,
+                    TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), TriggeredTradeStatus.EXITED_SUCCESS.name(), TriggeredTradeStatus.EXIT_FAILED.name());
+        } catch (Exception e) {
+            log.warn("Failed to claim exit for trade {}: {}", persisted.getId(), e.getMessage());
+        }
+
+        if (claimed == 0) {
+            // someone else already claimed or trade in terminal state
+            log.info("⚠️ Square-off skipped: trade {} could not be claimed for exit (already claimed/terminal)", persisted.getId());
             return;
         }
 
-        // Claim the trade: mark as EXIT_ORDER_PLACED before placing the broker exit order so other threads will skip
-        persisted.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
-        persisted.setExitReason(exitReason);
-        // do not set exitOrderId yet; save claim
-        triggeredTradeRepo.save(persisted);
+        // reload the persisted state after claim to ensure we have latest values
+        persisted = triggeredTradeRepo.findById(trade.getId())
+                .orElseThrow(() -> new RuntimeException("Trade not found after claim: " + trade.getId()));
 
         // Build exit order params using persisted (fresh) values
         OrderParams exitOrder = new OrderParams();
@@ -614,9 +619,15 @@ public class TradeExecutionService {
         }
 
         // Order placed successfully - update persisted entity with exitOrderId (status already set to EXIT_ORDER_PLACED)
-        persisted.setExitOrderId(exitOrderId);
-        persisted.setExitReason(exitReason);
-        triggeredTradeRepo.save(persisted);
+        triggeredTradeRepo.setExitOrderId(persisted.getId(), exitOrderId);
+
+        // Ensure exitReason is set (in case claim didn't persist it due to DB differences)
+        try {
+            persisted.setExitReason(exitReason);
+            triggeredTradeRepo.save(persisted);
+        } catch (Exception e) {
+            log.debug("Failed to persist exitReason after setting exitOrderId for trade {}: {}", persisted.getId(), e.getMessage());
+        }
 
         // Subscribe to ACK and publish event to start polling
         webSocketSubscriptionService.subscribeToAck(String.valueOf(persisted.getCustomerId()));
