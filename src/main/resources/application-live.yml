@@ -31,3 +31,4 @@ logging:
       springframework:
         orm:
           jpa: ERROR
+    "org.com.sharekhan": DEBUG

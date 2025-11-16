@@ -1,5 +1,8 @@
 package org.com.sharekhan.service;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
@@ -8,12 +11,10 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.List;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -24,6 +25,9 @@ public class PriceTriggerService {
     private final TriggerTradeRequestRepository triggerRepo;
     private final TriggeredTradeSetupRepository triggeredRepo;
     private final TradeExecutionService tradeExecutionService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         try {
@@ -49,42 +53,69 @@ public class PriceTriggerService {
     public void monitorOpenTrades(Integer scripCode, double ltp) {
         try {
             log.debug("Invoked monitorOpenTrades for scripCode={} with ltp={}", scripCode, ltp);
-            Optional<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatus(
+            List<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatus(
                     scripCode, TriggeredTradeStatus.EXECUTED
             );
 
-            //for (TriggeredTradeSetupEntity trade : trades)
-            if(trades.isPresent())
-            {
-                TriggeredTradeSetupEntity trade = trades.get();
-                // Defensive: do not treat null or non-positive stopLoss as a valid SL
-                Double slVal = trade.getStopLoss();
-                boolean hasValidSl = (slVal != null && slVal > 0d);
-                boolean slHit = hasValidSl && (ltp <= slVal);
-
-                // Targets: consider only non-null and >0 targets
-                boolean targetHit = Stream.of(trade.getTarget1(), trade.getTarget2(), trade.getTarget3())
-                        .filter(Objects::nonNull)
-                        .filter(t -> t > 0d)
-                        .anyMatch(target -> ltp >= target);
-
-                if (slHit) {
-                    log.warn("📉 SL hit for trade {} (SL={}) at LTP: {}", trade.getId(), slVal, ltp);
-                    tradeExecutionService.squareOff(trade, ltp, "STOP_LOSS_HIT");
-                    // ensure pnl/exit saved if squareOff didn't persist them
-                    persistPnlIfMissing(trade, ltp);
-                } else if (targetHit) {
-                    log.info("🎯 Target hit for trade {} at LTP: {}", trade.getId(), ltp);
-                    tradeExecutionService.squareOff(trade, ltp, "TARGET_HIT");
-                    // ensure pnl/exit saved if squareOff didn't persist them
-                    persistPnlIfMissing(trade, ltp);
-                } else {
-                    log.debug("No SL/Target hit for trade {} at LTP: {} (SL: {}, Targets: [{}, {}, {}])",
-                            trade.getId(), ltp, slVal, trade.getTarget1(), trade.getTarget2(), trade.getTarget3());
+            for (TriggeredTradeSetupEntity trade : trades) {
+                // process each trade under a DB lock to avoid races across threads/processes
+                try {
+                    handleTradeWithLock(trade.getId(), ltp);
+                } catch (Exception e) {
+                    log.error("❌ Error handling trade {} in monitor: {}", trade.getId(), e.getMessage(), e);
                 }
             }
         } catch (Exception e) {
             log.error("❌ Error monitoring open trades for scripCode {}: {}", scripCode, e.getMessage(), e);
+        }
+    }
+
+    @Transactional
+    protected void handleTradeWithLock(Long tradeId, double ltp) {
+        // Acquire a pessimistic write lock on the row to prevent concurrent processors from seeing the same state.
+        TriggeredTradeSetupEntity persisted = entityManager.find(TriggeredTradeSetupEntity.class, tradeId, LockModeType.PESSIMISTIC_WRITE);
+        if (persisted == null) return;
+
+        // Only act if trade is still in EXECUTED state
+        if (persisted.getStatus() != TriggeredTradeStatus.EXECUTED) {
+            log.debug("Trade {} status changed to {} - skipping monitor", tradeId, persisted.getStatus());
+            return;
+        }
+
+        Double slVal = persisted.getStopLoss();
+        boolean hasValidSl = (slVal != null && slVal > 0d);
+        boolean slHit = hasValidSl && (ltp <= slVal);
+
+        boolean targetHit = Stream.of(persisted.getTarget1(), persisted.getTarget2(), persisted.getTarget3())
+                .filter(Objects::nonNull)
+                .filter(t -> t > 0d)
+                .anyMatch(target -> ltp >= target);
+
+        if (slHit) {
+            // Transition EXECUTED -> EXIT_TRIGGERED under the same transaction/lock
+            int claimed = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "SL_OR_TARGET_HIT");
+            if (claimed == 1) {
+                log.warn("📉 SL hit for trade {} (SL={}) at LTP: {} - claim succeeded, initiating exit", tradeId, slVal, ltp);
+                // Refresh entity state
+                persisted = entityManager.find(TriggeredTradeSetupEntity.class, tradeId);
+                tradeExecutionService.squareOff(persisted, ltp, "STOP_LOSS_HIT");
+                persistPnlIfMissing(persisted, ltp);
+            } else {
+                log.info("📉 SL condition observed for trade {} at LTP: {} but another process claimed exit (claim={}) - skipping", tradeId, ltp, claimed);
+            }
+        } else if (targetHit) {
+            int claimed = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "SL_OR_TARGET_HIT");
+            if (claimed == 1) {
+                log.info("🎯 Target hit for trade {} at LTP: {} - claim succeeded, initiating exit", tradeId, ltp);
+                persisted = entityManager.find(TriggeredTradeSetupEntity.class, tradeId);
+                tradeExecutionService.squareOff(persisted, ltp, "TARGET_HIT");
+                persistPnlIfMissing(persisted, ltp);
+            } else {
+                log.info("🎯 Target condition observed for trade {} at LTP: {} but another process claimed exit (claim={}) - skipping", tradeId, ltp, claimed);
+            }
+        } else {
+            log.debug("No SL/Target hit for trade {} at LTP: {} (SL: {}, Targets: [{}, {}, {}])",
+                    tradeId, ltp, persisted.getStopLoss(), persisted.getTarget1(), persisted.getTarget2(), persisted.getTarget3());
         }
     }
 
@@ -93,7 +124,7 @@ public class PriceTriggerService {
         try {
             if (originalTrade == null || originalTrade.getId() == null) return;
 
-            Optional<TriggeredTradeSetupEntity> opt = triggeredRepo.findById(originalTrade.getId());
+            var opt = triggeredRepo.findById(originalTrade.getId());
             if (!opt.isPresent()) return;
 
             TriggeredTradeSetupEntity saved = opt.get();
@@ -109,7 +140,6 @@ public class PriceTriggerService {
                 return;
             }
 
-            // Prefer the actual exitPrice saved by squareOff; otherwise fall back to the incoming ltp
             Double exitPrice = saved.getExitPrice();
             if (exitPrice == null) exitPrice = ltp;
 

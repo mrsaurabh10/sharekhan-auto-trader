@@ -17,7 +17,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findByStatus(TriggeredTradeStatus status);
 
-    Optional<TriggeredTradeSetupEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
+    List<TriggeredTradeSetupEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
 
     Optional<TriggeredTradeSetupEntity> findByOrderId(String orderId);
 
@@ -38,6 +38,15 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                                @Param("forbid1") String forbid1,
                                @Param("forbid2") String forbid2,
                                @Param("forbid3") String forbid3);
+
+    // Stricter claim: only update status when current status equals expectedStatus. Returns 1 when transition succeeded.
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE triggered_trade_setups SET status = :newStatus, exit_reason = :exitReason WHERE id = :id AND status = :expectedStatus", nativeQuery = true)
+    int claimIfStatusEquals(@Param("id") Long id,
+                            @Param("expectedStatus") String expectedStatus,
+                            @Param("newStatus") String newStatus,
+                            @Param("exitReason") String exitReason);
 
     @Modifying
     @Transactional

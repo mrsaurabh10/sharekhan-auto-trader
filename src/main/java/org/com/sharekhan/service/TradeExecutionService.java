@@ -471,11 +471,10 @@ public class TradeExecutionService {
     }
 
     public boolean forceCloseByScripCode(int scripCode) {
-        Optional<TriggeredTradeSetupEntity> tradeOpt = triggeredTradeRepo
-                .findByScripCodeAndStatus(scripCode, TriggeredTradeStatus.EXECUTED);
+        java.util.List<TriggeredTradeSetupEntity> trades = triggeredTradeRepo.findByScripCodeAndStatus(scripCode, TriggeredTradeStatus.EXECUTED);
 
-        if (tradeOpt.isPresent()) {
-            TriggeredTradeSetupEntity trade = tradeOpt.get();
+        if (trades != null && !trades.isEmpty()) {
+            TriggeredTradeSetupEntity trade = trades.get(0);
 
             Double ltp = ltpCacheService.getLtp(scripCode);
             double exitPrice = (ltp != null) ? ltp : trade.getEntryPrice(); // fallback to entry
@@ -495,11 +494,16 @@ public class TradeExecutionService {
         TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + trade.getId()));
 
-        // Use atomic claim via repository to ensure only one process/thread can start exit placement
+        // Prefer stricter claim: if current status is EXIT_TRIGGERED then move to EXIT_ORDER_PLACED.
+        // Otherwise (e.g., forceClose) allow transition from EXECUTED -> EXIT_ORDER_PLACED.
         int claimed = 0;
         try {
-            claimed = triggeredTradeRepo.claimExitIfNotAlready(persisted.getId(), TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), exitReason,
-                    TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), TriggeredTradeStatus.EXITED_SUCCESS.name(), TriggeredTradeStatus.EXIT_FAILED.name());
+            // Try the normal flow: EXIT_TRIGGERED -> EXIT_ORDER_PLACED
+            claimed = triggeredTradeRepo.claimIfStatusEquals(persisted.getId(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), exitReason);
+            if (claimed == 0) {
+                // fallback: try EXECUTED -> EXIT_ORDER_PLACED (handles force-close and edge cases)
+                claimed = triggeredTradeRepo.claimIfStatusEquals(persisted.getId(), TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), exitReason);
+            }
         } catch (Exception e) {
             log.warn("Failed to claim exit for trade {}: {}", persisted.getId(), e.getMessage());
         }

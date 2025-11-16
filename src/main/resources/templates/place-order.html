@@ -55,6 +55,7 @@
         .status-PLACED_PENDING_CONFIRMATION { background:#6f42c1; color:#fff; }
         .status-REJECTED { background:#dc3545; color:#fff; }
         .status-EXITED_SUCCESS { background:#6c757d; color:#fff; }
+        .status-EXIT_TRIGGERED { background:#fd7e14; color:#fff; }
     </style>
 </head>
 <body>
@@ -256,6 +257,7 @@
             case 'PENDING': return 'status-PENDING';
             case 'EXECUTED': return 'status-EXECUTED';
             case 'EXIT_ORDER_PLACED': return 'status-EXIT_ORDER_PLACED';
+            case 'EXIT_TRIGGERED': return 'status-EXIT_TRIGGERED';
             case 'PLACED_PENDING_CONFIRMATION': return 'status-PLACED_PENDING_CONFIRMATION';
             case 'REJECTED': return 'status-REJECTED';
             case 'EXITED_SUCCESS': return 'status-EXITED_SUCCESS';
@@ -1409,6 +1411,8 @@
                         const showExited = !!(document.getElementById('showExitedSuccessToggle') && document.getElementById('showExitedSuccessToggle').checked);
                         // Include PLACED_PENDING_CONFIRMATION so pending/placed trades show in the Executed/Monitoring table
                         const allowed = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'PLACED_PENDING_CONFIRMATION']);
+                        // Also include EXIT_TRIGGERED so trades where exit flow has been triggered will appear in the table
+                        allowed.add('EXIT_TRIGGERED');
                         if (showExited) allowed.add('EXITED_SUCCESS');
 
                         // Keep only entries with allowed status (normalize status to upper-case trimmed string)
