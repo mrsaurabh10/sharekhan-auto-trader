@@ -11,7 +11,8 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Objects;
@@ -25,6 +26,7 @@ public class PriceTriggerService {
     private final TriggerTradeRequestRepository triggerRepo;
     private final TriggeredTradeSetupRepository triggeredRepo;
     private final TradeExecutionService tradeExecutionService;
+    private final PlatformTransactionManager transactionManager;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -50,6 +52,7 @@ public class PriceTriggerService {
         }
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public void monitorOpenTrades(Integer scripCode, double ltp) {
         try {
             log.debug("Invoked monitorOpenTrades for scripCode={} with ltp={}", scripCode, ltp);
@@ -58,7 +61,7 @@ public class PriceTriggerService {
             );
 
             for (TriggeredTradeSetupEntity trade : trades) {
-                // process each trade under a DB lock to avoid races across threads/processes
+                // process each trade but perform claim inside a short transaction to avoid long locks
                 try {
                     handleTradeWithLock(trade.getId(), ltp);
                 } catch (Exception e) {
@@ -70,52 +73,60 @@ public class PriceTriggerService {
         }
     }
 
-    @Transactional
+    // NOTE: this method no longer uses @Transactional; it uses a TransactionTemplate to perform a short atomic claim
     protected void handleTradeWithLock(Long tradeId, double ltp) {
-        // Acquire a pessimistic write lock on the row to prevent concurrent processors from seeing the same state.
-        TriggeredTradeSetupEntity persisted = entityManager.find(TriggeredTradeSetupEntity.class, tradeId, LockModeType.PESSIMISTIC_WRITE);
-        if (persisted == null) return;
+        try {
+            final TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
 
-        // Only act if trade is still in EXECUTED state
-        if (persisted.getStatus() != TriggeredTradeStatus.EXECUTED) {
-            log.debug("Trade {} status changed to {} - skipping monitor", tradeId, persisted.getStatus());
-            return;
-        }
+            // Execute quick transaction: read the current trade and attempt atomic claim if condition met
+            Integer claimed = txTemplate.execute(status -> {
+                var opt = triggeredRepo.findById(tradeId);
+                if (opt.isEmpty()) return 0;
+                TriggeredTradeSetupEntity persisted = opt.get();
 
-        Double slVal = persisted.getStopLoss();
-        boolean hasValidSl = (slVal != null && slVal > 0d);
-        boolean slHit = hasValidSl && (ltp <= slVal);
+                // Only act if still in EXECUTED
+                if (persisted.getStatus() != TriggeredTradeStatus.EXECUTED) return 0;
 
-        boolean targetHit = Stream.of(persisted.getTarget1(), persisted.getTarget2(), persisted.getTarget3())
-                .filter(Objects::nonNull)
-                .filter(t -> t > 0d)
-                .anyMatch(target -> ltp >= target);
+                Double slVal = persisted.getStopLoss();
+                boolean hasValidSl = (slVal != null && slVal > 0d);
+                boolean slHit = hasValidSl && (ltp <= slVal);
 
-        if (slHit) {
-            // Transition EXECUTED -> EXIT_TRIGGERED under the same transaction/lock
-            int claimed = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "SL_OR_TARGET_HIT");
-            if (claimed == 1) {
-                log.warn("📉 SL hit for trade {} (SL={}) at LTP: {} - claim succeeded, initiating exit", tradeId, slVal, ltp);
-                // Refresh entity state
-                persisted = entityManager.find(TriggeredTradeSetupEntity.class, tradeId);
-                tradeExecutionService.squareOff(persisted, ltp, "STOP_LOSS_HIT");
-                persistPnlIfMissing(persisted, ltp);
+                boolean targetHit = Stream.of(persisted.getTarget1(), persisted.getTarget2(), persisted.getTarget3())
+                        .filter(Objects::nonNull)
+                        .filter(t -> t > 0d)
+                        .anyMatch(target -> ltp >= target);
+
+                if (!slHit && !targetHit) return 0; // nothing to do
+
+                // Attempt atomic transition EXECUTED -> EXIT_TRIGGERED
+                int res = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "SL_OR_TARGET_HIT");
+                return res;
+            });
+
+            if (claimed != null && claimed == 1) {
+                // Claim succeeded — now re-load the entity (outside the short transaction) and proceed to squareOff
+                TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
+
+                // Determine whether it was SL or target by comparing ltp with reloaded values (best-effort)
+                Double slVal = reloaded.getStopLoss();
+                boolean hasValidSl = (slVal != null && slVal > 0d);
+                boolean slHit = hasValidSl && (ltp <= slVal);
+
+                if (slHit) {
+                    log.warn("📉 SL hit for trade {} at LTP: {} - proceeding to squareOff", tradeId, ltp);
+                    tradeExecutionService.squareOff(reloaded, ltp, "STOP_LOSS_HIT");
+                } else {
+                    log.info("🎯 Target hit for trade {} at LTP: {} - proceeding to squareOff", tradeId, ltp);
+                    tradeExecutionService.squareOff(reloaded, ltp, "TARGET_HIT");
+                }
+
+                // ensure pnl persisted if needed
+                persistPnlIfMissing(reloaded, ltp);
             } else {
-                log.info("📉 SL condition observed for trade {} at LTP: {} but another process claimed exit (claim={}) - skipping", tradeId, ltp, claimed);
+                log.debug("No claim performed for trade {} (claimed={})", tradeId, claimed);
             }
-        } else if (targetHit) {
-            int claimed = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "SL_OR_TARGET_HIT");
-            if (claimed == 1) {
-                log.info("🎯 Target hit for trade {} at LTP: {} - claim succeeded, initiating exit", tradeId, ltp);
-                persisted = entityManager.find(TriggeredTradeSetupEntity.class, tradeId);
-                tradeExecutionService.squareOff(persisted, ltp, "TARGET_HIT");
-                persistPnlIfMissing(persisted, ltp);
-            } else {
-                log.info("🎯 Target condition observed for trade {} at LTP: {} but another process claimed exit (claim={}) - skipping", tradeId, ltp, claimed);
-            }
-        } else {
-            log.debug("No SL/Target hit for trade {} at LTP: {} (SL: {}, Targets: [{}, {}, {}])",
-                    tradeId, ltp, persisted.getStopLoss(), persisted.getTarget1(), persisted.getTarget2(), persisted.getTarget3());
+        } catch (Exception e) {
+            log.error("❌ Error in handleTradeWithLock for trade {}: {}", tradeId, e.getMessage(), e);
         }
     }
 
@@ -125,7 +136,7 @@ public class PriceTriggerService {
             if (originalTrade == null || originalTrade.getId() == null) return;
 
             var opt = triggeredRepo.findById(originalTrade.getId());
-            if (!opt.isPresent()) return;
+            if (opt.isEmpty()) return;
 
             TriggeredTradeSetupEntity saved = opt.get();
 
@@ -153,15 +164,13 @@ public class PriceTriggerService {
                 log.warn("Failed computing PnL in persistPnlIfMissing for trade {}: {}", saved.getId(), e.getMessage());
                 return;
             }
-            // Persist exitPrice only if it wasn't already set by squareOff
             if (saved.getExitPrice() == null) saved.setExitPrice(exitPrice);
-             // If status wasn't updated by squareOff, mark exited success
-             if (saved.getStatus() == TriggeredTradeStatus.EXECUTED) {
-                 saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-             }
+            if (saved.getStatus() == TriggeredTradeStatus.EXECUTED) {
+                saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+            }
 
-             triggeredRepo.save(saved);
-             log.info("💾 Persisted PnL {} for trade {}", saved.getPnl(), saved.getId());
+            triggeredRepo.save(saved);
+            log.info("💾 Persisted PnL {} for trade {}", saved.getPnl(), saved.getId());
         } catch (Exception e) {
             log.error("❌ Error saving PnL for trade {}: {}", originalTrade == null ? "null" : originalTrade.getId(), e.getMessage(), e);
         }
