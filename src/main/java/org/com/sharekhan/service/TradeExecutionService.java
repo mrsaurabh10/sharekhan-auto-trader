@@ -34,6 +34,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import jakarta.persistence.PersistenceContext;
+import jakarta.persistence.EntityManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 
 @Service
@@ -59,6 +63,9 @@ public class TradeExecutionService {
 
     @Autowired
     private TelegramNotificationService telegramNotificationService;
+
+    @PersistenceContext
+    private EntityManager entityManager;
 
 
     // Backwards compatible public API - by default allow service to compute quantity if missing
@@ -401,7 +408,17 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
             triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
-            eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+            // Publish event AFTER transaction commit so pollers/readers see the committed DB state
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+                    }
+                });
+            } else {
+                eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+            }
 
             //dont need the unsubscribe code here as we will not unsubscribe
             // reason being need to take care of pending order
@@ -633,9 +650,18 @@ public class TradeExecutionService {
 
         // Order placed successfully - update persisted entity with exitOrderId (status already set to EXIT_ORDER_PLACED)
         triggeredTradeRepo.setExitOrderId(persisted.getId(), exitOrderId);
+        // Evict JPA 2nd-level cache and clear persistence context so subsequent finds see the native update.
+        try {
+            if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
+                entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
+                // Clear first-level (persistence context) to avoid returning a stale managed entity instance
+                entityManager.clear();
+            }
+        } catch (Exception ignore) {
+            log.debug("Failed to evict/clear JPA caches for trade {}: {}", persisted.getId(), ignore.getMessage());
+        }
 
-        // Make sure the in-memory entity reflects the exitOrderId so subsequent save() doesn't overwrite it (native update above
-        // modified the DB but the persisted instance may still have null). Also persist exitReason.
+        // Make sure the in-memory entity reflects the exitOrderId so subsequent save() doesn't overwrite it.
         try {
             persisted.setExitOrderId(exitOrderId);
             persisted.setExitReason(exitReason);
@@ -666,6 +692,15 @@ public class TradeExecutionService {
                         int updated = triggeredTradeRepo.markExited(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
                         if (updated == 1) {
                             log.info("✅ placeOrder response indicated fully executed - markExited updated trade {} to EXITED_SUCCESS", persisted.getId());
+                            // evict 2nd-level cache and clear persistence context so other threads see the terminal state
+                            try {
+                                if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
+                                    entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
+                                    entityManager.clear();
+                                }
+                            } catch (Exception ignore) {
+                                log.debug("Failed to evict/clear JPA cache after markExited for {}: {}", persisted.getId(), ignore.getMessage());
+                            }
                             // ensure we unsubscribe and don't leave poller active
                             try { webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode()); } catch (Exception ignored) {}
                         }
