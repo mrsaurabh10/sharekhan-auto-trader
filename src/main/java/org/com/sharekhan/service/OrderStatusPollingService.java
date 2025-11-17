@@ -20,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -59,13 +60,37 @@ public class OrderStatusPollingService {
         Runnable pollTask = () -> {
             // Always fetch the latest trade record from DB at each poll iteration to get current status and order ids
             TriggeredTradeSetupEntity currentTrade = tradeRepo.findById(trade.getId()).orElse(trade);
-            String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus()) ? currentTrade.getExitOrderId() : currentTrade.getOrderId();
+            // Prefer monitoring the exitOrderId if present — sometimes status may not have been updated yet
+            String orderIdToMonitor;
+            boolean usingExitOrder = false;
+            if (currentTrade.getExitOrderId() != null && !currentTrade.getExitOrderId().isBlank()) {
+                orderIdToMonitor = currentTrade.getExitOrderId();
+                usingExitOrder = true;
+            } else {
+                orderIdToMonitor = currentTrade.getOrderId();
+            }
             try {
 
                 String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN); // ✅ fetch fresh token
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
-                JSONObject response = sharekhanConnect.orderHistory(currentTrade.getExchange(), currentTrade.getCustomerId(), orderIdToMonitor);
+                JSONObject response = null;
+                try {
+                    response = sharekhanConnect.orderHistory(currentTrade.getExchange(), currentTrade.getCustomerId(), orderIdToMonitor);
+                } catch (Exception e) {
+                    log.error("❌ Failed calling orderHistory for orderId={} tradeId={} : {}", orderIdToMonitor, currentTrade.getId(), e.getMessage(), e);
+                    throw e;
+                }
+
+                // Diagnostic: log which orderId we're monitoring and whether it's the explicit exit order
+                log.debug("Polling orderHistory for tradeId={} orderIdToMonitor={} usingExitOrder={}", currentTrade.getId(), orderIdToMonitor, usingExitOrder);
+
+                // If we are explicitly monitoring the exit order, mark the in-memory trade as EXIT_ORDER_PLACED
+                // so evaluateOrderFinalStatus will populate exitPrice/ExitedAt correctly. This is an in-memory
+                // temporary status and will only be persisted when we decide to save final state below.
+                if (usingExitOrder) {
+                    currentTrade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+                }
 
                 // Evaluate final status and log a very compact summary (avoid dumping full JSON)
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
@@ -86,38 +111,79 @@ public class OrderStatusPollingService {
                     }
                     log.info("OrderHistory: orderId={} computedStatus={} records={} lastStatus={} avg={} execQty={}",
                             orderIdToMonitor, tradeStatus, records, lastRecStatus, lastRecAvg, lastRecExecQty);
+                    log.debug("orderHistory response (truncated): {}", response == null ? "null" : (response.toString().length() > 1000 ? response.toString().substring(0,1000) + "..." : response.toString()));
                 } catch (Exception e) {
                     log.warn("Failed to build order history compact log: {}", e.getMessage());
                 }
+                log.debug("Computed tradeStatus={} for tradeId={} (wasExitOrder={})", tradeStatus, currentTrade.getId(), usingExitOrder);
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
-                    // Determine if this was an exit order or entry order
-                    boolean wasExitOrder = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus());
-                    if (wasExitOrder) {
-                        currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-                        webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
-                    } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
-                        currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
-                    }
+                     // Determine if this was an exit order or entry order based on which orderId we monitored
+                     boolean wasExitOrder = usingExitOrder || TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus());
+                     if (wasExitOrder) {
+                         currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+                         webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
+                     } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
+                         currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
+                     }
 
-                    // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
+                     // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
+                     // If we are monitoring an exit order but evaluateOrderFinalStatus didn't populate exitPrice,
+                     // try to extract it from the last record in the response as a fallback.
+                     if (wasExitOrder && currentTrade.getExitPrice() == null && response != null && response.has("data") && response.get("data") instanceof JSONArray) {
+                         try {
+                             JSONArray arr = response.getJSONArray("data");
+                             if (arr.length() > 0) {
+                                 JSONObject last = arr.getJSONObject(arr.length() - 1);
+                                 String avg = last.optString("avgPrice", "").trim();
+                                 String ordp = last.optString("orderPrice", "").trim();
+                                 String val = !avg.isBlank() ? avg : (!ordp.isBlank() ? ordp : null);
+                                 if (val != null) {
+                                     try {
+                                         double parsed = Double.parseDouble(val);
+                                         currentTrade.setExitPrice(parsed);
+                                         currentTrade.setExitedAt(LocalDateTime.now());
+                                         log.debug("Fallback extracted exitPrice={} for trade {} from orderHistory last record", parsed, currentTrade.getId());
+                                     } catch (Exception ignore) {
+                                         log.debug("Failed parsing fallback exit price '{}' for trade {}", val, currentTrade.getId());
+                                     }
+                                 }
+                             }
+                         } catch (Exception ex) {
+                             log.debug("Failed to extract fallback exitPrice from response for trade {}: {}", currentTrade.getId(), ex.getMessage());
+                         }
+                     }
+
+                    // Diagnostic: log currentTrade fields before save
+                    log.info("Saving tradeId={} before save: status={} orderId={} exitOrderId={} entryPrice={} exitPrice={} pnl={}",
+                            currentTrade.getId(), currentTrade.getStatus(), currentTrade.getOrderId(), currentTrade.getExitOrderId(), currentTrade.getEntryPrice(), currentTrade.getExitPrice(), currentTrade.getPnl());
+
                     try {
-                        Double exitPrice = currentTrade.getExitPrice();
-                        Double entryPrice = currentTrade.getEntryPrice();
-                        if(exitPrice != null && entryPrice != null) {
-                            java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(exitPrice);
-                            java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(entryPrice);
-                            long qty = currentTrade.getQuantity() == null ? 0L : currentTrade.getQuantity();
-                            java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(qty);
-                            java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd);
-                            double rawPnl = rawPnlBd.setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
-                            currentTrade.setPnl(rawPnl);
-                            log.debug("Computed PnL for trade {}: entry={} exit={} qty={} rawPnl={}", currentTrade.getId(), currentTrade.getEntryPrice(), exitPrice, qty, rawPnl);
+                        // If this was an exit order, prefer an atomic repository update to avoid lost-update concurrency
+                        if (wasExitOrder && currentTrade.getExitPrice() != null) {
+                            double pnlVal = currentTrade.getPnl() == null ? 0.0d : currentTrade.getPnl();
+                            int updated = tradeRepo.markExited(currentTrade.getId(), TriggeredTradeStatus.EXITED_SUCCESS, currentTrade.getExitPrice(), currentTrade.getExitedAt(), pnlVal);
+                            if (updated == 1) {
+                                log.info("✅ markExited updated trade {} to EXITED_SUCCESS", currentTrade.getId());
+                            } else {
+                                log.warn("⚠️ markExited returned {} for trade {} - falling back to save", updated, currentTrade.getId());
+                                tradeRepo.save(currentTrade);
+                            }
+                        } else {
+                            tradeRepo.save(currentTrade);
+                        }
+                        // Read back from DB to confirm persistence
+                        var reloaded = tradeRepo.findById(currentTrade.getId()).orElse(null);
+                        if (reloaded == null) {
+                            log.error("❌ Trade {} not found after save!", currentTrade.getId());
+                        } else {
+                            log.info("Reloaded tradeId={} after save: status={} orderId={} exitOrderId={} entryPrice={} exitPrice={} pnl={}",
+                                    reloaded.getId(), reloaded.getStatus(), reloaded.getOrderId(), reloaded.getExitOrderId(), reloaded.getEntryPrice(), reloaded.getExitPrice(), reloaded.getPnl());
                         }
                     } catch (Exception e) {
-                        log.warn("⚠️ Failed computing PnL/exit price for trade {}: {}", currentTrade.getId(), e.getMessage());
+                        log.error("❌ Failed saving trade {} after marking final status {}: {}", currentTrade.getId(), currentTrade.getStatus(), e.getMessage(), e);
+                        // rethrow to bubble up so scheduled task doesn't silently ignore the failure
+                        throw e;
                     }
-
-                    tradeRepo.save(currentTrade);
 
                     // Send telegram notification for executed/exit
                     try {

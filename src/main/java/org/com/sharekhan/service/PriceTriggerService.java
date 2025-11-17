@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
@@ -140,6 +141,13 @@ public class PriceTriggerService {
 
             TriggeredTradeSetupEntity saved = opt.get();
 
+            // If an exit order was placed (we have an exitOrderId) then the final status/exitPrice
+            // must be determined by order status polling. Do not attempt to compute/mark EXITED here.
+            if (saved.getExitOrderId() != null && !saved.getExitOrderId().isBlank()) {
+                log.debug("Skipping persistPnlIfMissing for trade {} because exitOrderId={} is present; order polling will update status.", saved.getId(), saved.getExitOrderId());
+                return;
+            }
+
             // If PnL already present, assume squareOff handled persistence.
             if (saved.getPnl() != null) return;
 
@@ -164,13 +172,13 @@ public class PriceTriggerService {
                 log.warn("Failed computing PnL in persistPnlIfMissing for trade {}: {}", saved.getId(), e.getMessage());
                 return;
             }
+            // Persist exitPrice and mark as exited success to stop further monitoring
             if (saved.getExitPrice() == null) saved.setExitPrice(exitPrice);
-            if (saved.getStatus() == TriggeredTradeStatus.EXECUTED) {
-                saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-            }
+            saved.setExitedAt(LocalDateTime.now());
+            saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
 
             triggeredRepo.save(saved);
-            log.info("💾 Persisted PnL {} for trade {}", saved.getPnl(), saved.getId());
+            log.info("💾 Persisted PnL {} and marked EXITED_SUCCESS for trade {}", saved.getPnl(), saved.getId());
         } catch (Exception e) {
             log.error("❌ Error saving PnL for trade {}: {}", originalTrade == null ? "null" : originalTrade.getId(), e.getMessage(), e);
         }

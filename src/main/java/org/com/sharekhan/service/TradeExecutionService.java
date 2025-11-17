@@ -514,6 +514,15 @@ public class TradeExecutionService {
             return;
         }
 
+        // Persist status change to EXIT_ORDER_PLACED and set exitReason so other components (poller) see it immediately
+        try {
+            persisted.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+            persisted.setExitReason(exitReason);
+            triggeredTradeRepo.save(persisted);
+        } catch (Exception e) {
+            log.debug("Failed to persist EXIT_ORDER_PLACED status for trade {}: {}", persisted.getId(), e.getMessage());
+        }
+
         // reload the persisted state after claim to ensure we have latest values
         persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found after claim: " + trade.getId()));
@@ -625,19 +634,49 @@ public class TradeExecutionService {
         // Order placed successfully - update persisted entity with exitOrderId (status already set to EXIT_ORDER_PLACED)
         triggeredTradeRepo.setExitOrderId(persisted.getId(), exitOrderId);
 
-        // Ensure exitReason is set (in case claim didn't persist it due to DB differences)
+        // Make sure the in-memory entity reflects the exitOrderId so subsequent save() doesn't overwrite it (native update above
+        // modified the DB but the persisted instance may still have null). Also persist exitReason.
         try {
+            persisted.setExitOrderId(exitOrderId);
             persisted.setExitReason(exitReason);
             triggeredTradeRepo.save(persisted);
         } catch (Exception e) {
-            log.debug("Failed to persist exitReason after setting exitOrderId for trade {}: {}", persisted.getId(), e.getMessage());
+            log.debug("Failed to persist exitOrderId/exitReason after setting exitOrderId for trade {}: {}", persisted.getId(), e.getMessage());
         }
 
-        // Subscribe to ACK and publish event to start polling
-        webSocketSubscriptionService.subscribeToAck(String.valueOf(persisted.getCustomerId()));
-        eventPublisher.publishEvent(new OrderPlacedEvent(persisted));
-
-        log.info("✅ Exit order placed for trade {}: exitOrderId={}", persisted.getId(), exitOrderId);
+        // If the broker response already indicates the exit order was fully executed and provides a price,
+        // we can mark the trade EXITED_SUCCESS immediately to avoid waiting on the poller.
+        try {
+            if (response != null && response.has("data")) {
+                JSONObject d = response.getJSONObject("data");
+                String respStatus = d.optString("orderStatus", "").toLowerCase();
+                String avgPrice = d.optString("avgPrice", "").trim();
+                String orderPrice = d.optString("orderPrice", "").trim();
+                String candidate = !avgPrice.isBlank() ? avgPrice : (!orderPrice.isBlank() ? orderPrice : null);
+                boolean fullyExecuted = respStatus.contains("fully") || respStatus.contains("executed");
+                   if (fullyExecuted && candidate != null) {
+                    try {
+                        double exitPriceVal = Double.parseDouble(candidate);
+                        double pnlVal = 0.0d;
+                        if (persisted.getEntryPrice() != null && persisted.getQuantity() != null) {
+                            pnlVal = java.math.BigDecimal.valueOf(exitPriceVal).subtract(java.math.BigDecimal.valueOf(persisted.getEntryPrice()))
+                                    .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
+                                    .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
+                        }
+                        int updated = triggeredTradeRepo.markExited(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
+                        if (updated == 1) {
+                            log.info("✅ placeOrder response indicated fully executed - markExited updated trade {} to EXITED_SUCCESS", persisted.getId());
+                            // ensure we unsubscribe and don't leave poller active
+                            try { webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode()); } catch (Exception ignored) {}
+                        }
+                    } catch (Exception ex) {
+                        log.debug("Failed to parse candidate exit price from placeOrder response for trade {}: {}", persisted.getId(), ex.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Error while inspecting placeOrder response for immediate exit persist: {}", e.getMessage());
+       }
     }
 
 
