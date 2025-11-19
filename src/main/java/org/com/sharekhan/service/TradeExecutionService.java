@@ -284,7 +284,14 @@ public class TradeExecutionService {
             order.exchange = trigger.getExchange();
             order.transactionType = "B";
             order.quantity = trigger.getQuantity();
-            order.price =  String.valueOf(ltp); //choosing ltp as higher chances of execution
+            // For some broad-market indices/equity feeds we send price=0.0 to indicate a market order
+            String sym = trigger.getSymbol() != null ? trigger.getSymbol().toUpperCase() : "";
+            final Set<String> MARKET_SYMBOLS = Set.of("SENSEX", "NIFTY", "BANKNIFTY", "BANKEX", "FINNIFTY");
+            if (MARKET_SYMBOLS.contains(sym)) {
+                order.price = "0.0";
+            } else {
+                order.price = String.valueOf(ltp); //choosing ltp as higher chances of execution
+            }
             order.orderType = "NORMAL";
             order.productType = "INVESTMENT";
             order.instrumentType = trigger.getInstrumentType(); //FUTCUR, FS, FI, OI, OS, FUTCURR, OPTCURR
@@ -561,7 +568,14 @@ public class TradeExecutionService {
         exitOrder.quantity = persisted.getQuantity().longValue();
         exitOrder.instrumentType = persisted.getInstrumentType();
         exitOrder.productType = "INVESTMENT";
-        exitOrder.price = String.valueOf(exitPrice);
+        // For some broad-market indices/equity feeds we send price=0.0 to indicate a market order
+        String persistedSym = persisted.getSymbol() != null ? persisted.getSymbol().toUpperCase() : "";
+        final Set<String> EXIT_MARKET_SYMBOLS = Set.of("SENSEX", "NIFTY", "BANKNIFTY", "BANKEX", "FINNIFTY");
+        if (EXIT_MARKET_SYMBOLS.contains(persistedSym)) {
+            exitOrder.price = "0.0";
+        } else {
+            exitOrder.price = String.valueOf(exitPrice);
+        }
         exitOrder.transactionType = "S";
         exitOrder.orderType = "NORMAL";
         // expiry already set above conditionally
