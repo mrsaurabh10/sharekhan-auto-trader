@@ -538,13 +538,12 @@ public class TradeExecutionService {
             return;
         }
 
-        // Persist status change to EXIT_ORDER_PLACED and set exitReason so other components (poller) see it immediately
+        // Persist exitReason so we record why we initiated a square-off. Do NOT mark EXIT_ORDER_PLACED until we have an exitOrderId.
         try {
-            persisted.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
             persisted.setExitReason(exitReason);
             triggeredTradeRepo.save(persisted);
         } catch (Exception e) {
-            log.debug("Failed to persist EXIT_ORDER_PLACED status for trade {}: {}", persisted.getId(), e.getMessage());
+            log.debug("Failed to persist exitReason for trade {}: {}", persisted.getId(), e.getMessage());
         }
 
         // reload the persisted state after claim to ensure we have latest values
@@ -662,27 +661,29 @@ public class TradeExecutionService {
             return;
         }
 
-        // Order placed successfully - update persisted entity with exitOrderId (status already set to EXIT_ORDER_PLACED)
+        // Order placed successfully - persist exitOrderId in DB (native update) first
         triggeredTradeRepo.setExitOrderId(persisted.getId(), exitOrderId);
-        // Evict JPA 2nd-level cache and clear persistence context so subsequent finds see the native update.
+
+        // Evict caches and clear persistence context so subsequent reads see the native update
         try {
             if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
                 entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
-                // Clear first-level (persistence context) to avoid returning a stale managed entity instance
                 entityManager.clear();
             }
-        } catch (Exception ignore) {
-            log.debug("Failed to evict/clear JPA caches for trade {}: {}", persisted.getId(), ignore.getMessage());
+        } catch (Exception ex) {
+            log.debug("Failed to evict/clear JPA caches for trade {}: {}", persisted.getId(), ex.getMessage());
         }
 
-        // Make sure the in-memory entity reflects the exitOrderId so subsequent save() doesn't overwrite it.
+        // Now update the in-memory entity and mark status EXIT_ORDER_PLACED (we have an exitOrderId now)
         try {
             persisted.setExitOrderId(exitOrderId);
+            persisted.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
             persisted.setExitReason(exitReason);
             triggeredTradeRepo.save(persisted);
         } catch (Exception e) {
-            log.debug("Failed to persist exitOrderId/exitReason after setting exitOrderId for trade {}: {}", persisted.getId(), e.getMessage());
+            log.debug("Failed to persist exitOrderId/EXIT_ORDER_PLACED for trade {}: {}", persisted.getId(), e.getMessage());
         }
+
 
         // If the broker response already indicates the exit order was fully executed and provides a price,
         // we can mark the trade EXITED_SUCCESS immediately to avoid waiting on the poller.
@@ -718,6 +719,7 @@ public class TradeExecutionService {
                             // ensure we unsubscribe and don't leave poller active
                             try { webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode()); } catch (Exception ignored) {}
                         }
+                        return;
                     } catch (Exception ex) {
                         log.debug("Failed to parse candidate exit price from placeOrder response for trade {}: {}", persisted.getId(), ex.getMessage());
                     }
@@ -726,6 +728,34 @@ public class TradeExecutionService {
         } catch (Exception e) {
             log.debug("Error while inspecting placeOrder response for immediate exit persist: {}", e.getMessage());
        }
+
+        // If we didn't mark the trade as EXITED_SUCCESS immediately (below), start the order-status poller to watch exitOrderId
+        try {
+            final Long persistedIdForPoll = persisted.getId();
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        try {
+                            TriggeredTradeSetupEntity toMonitor = triggeredTradeRepo.findById(persistedIdForPoll).orElse(null);
+                            if (toMonitor != null) {
+                                eventPublisher.publishEvent(new OrderPlacedEvent(toMonitor));
+                            } else {
+                                log.warn("AfterCommit: trade {} not found to start polling", persistedIdForPoll);
+                            }
+                        } catch (Exception e) {
+                            log.warn("Failed to start order status polling (afterCommit) for trade {}: {}", persistedIdForPoll, e.getMessage());
+                        }
+                    }
+                });
+            } else {
+                // No transaction active (unlikely) - call directly
+                eventPublisher.publishEvent(new OrderPlacedEvent(persisted) );
+            }
+        } catch (Exception e) {
+            log.warn("Failed to schedule order status polling for trade {}: {}", persisted.getId(), e.getMessage());
+        }
+
     }
 
 
