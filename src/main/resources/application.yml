@@ -47,7 +47,7 @@ app:
     totp-secret: "3TWOBV56LA63H7JLWEY57K6DFIXOR5ED"
   sharekhan:
     client-code: "SGUPTA78"
-    password: "Ishita@2012"
+    password: "Anvi@2023"
     totp-secret: "3VNUAS5GNB5UXCXR"
   telegram:
     TELEGRAM_BOT_TOKEN: "8330200742:AAEinZnYlgatRTRcLrPH7r_MWIvJ0MBX_wY" # set to your bot token, e.g. 12345:ABCdef...
