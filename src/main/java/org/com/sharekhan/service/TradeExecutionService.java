@@ -688,12 +688,13 @@ public class TradeExecutionService {
         // If the broker response already indicates the exit order was fully executed and provides a price,
         // we can mark the trade EXITED_SUCCESS immediately to avoid waiting on the poller.
         try {
-            if (response != null && response.has("data")) {
+            if (response.has("data")) {
                 JSONObject d = response.getJSONObject("data");
                 String respStatus = d.optString("orderStatus", "").toLowerCase();
                 String avgPrice = d.optString("avgPrice", "").trim();
+                String execPrice = d.optString("execPrice", "").trim();
                 String orderPrice = d.optString("orderPrice", "").trim();
-                String candidate = !avgPrice.isBlank() ? avgPrice : (!orderPrice.isBlank() ? orderPrice : null);
+                String candidate = !avgPrice.isBlank() ? avgPrice : (!execPrice.isBlank() ? execPrice : (!orderPrice.isBlank() ? orderPrice : null));
                 boolean fullyExecuted = respStatus.contains("fully") || respStatus.contains("executed");
                    if (fullyExecuted && candidate != null) {
                     try {

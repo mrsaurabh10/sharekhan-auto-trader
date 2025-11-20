@@ -136,7 +136,8 @@ public class OrderStatusPollingService {
                                  JSONObject last = arr.getJSONObject(arr.length() - 1);
                                  String avg = last.optString("avgPrice", "").trim();
                                  String ordp = last.optString("orderPrice", "").trim();
-                                 String val = !avg.isBlank() ? avg : (!ordp.isBlank() ? ordp : null);
+                                 String execPrice = last.optString("execPrice", "").trim();
+                                 String val = !avg.isBlank() ? avg : (!execPrice.isBlank() ? execPrice : (!ordp.isBlank() ? ordp : null));
                                  if (val != null) {
                                      try {
                                          double parsed = Double.parseDouble(val);
