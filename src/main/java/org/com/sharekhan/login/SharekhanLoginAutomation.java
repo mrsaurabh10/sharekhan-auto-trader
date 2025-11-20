@@ -19,7 +19,7 @@ import java.util.Map;
 public class SharekhanLoginAutomation {
 
     String clientCode = "SGUPTA78";
-    public static String password = "Anvi@2023";
+    public static String password = "Ishita@2012";
     public static String totpSecret = "3VNUAS5GNB5UXCXR"; // Base32 TOTP Secret
     public static String secretKey = "iOpn2GrHHzmjdWu795RRw79d0OPZn7jh";
     public static String apiKey = "M57X7RqA9C43IOq8iJSySWv8LAD2DzkM";
