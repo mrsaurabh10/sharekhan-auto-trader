@@ -804,19 +804,29 @@ public class TradeExecutionService {
                 status = "Pending";
             } else if (normalized.contains("partially")) {
                 status = "Pending"; // treat partially executed as pending for now
+            }else{
+                status = "Pending"; // treat unknown as pending for safety
             }
 
             // If fully executed, use avgPrice if available else try orderPrice
             if ("Fully Executed".equals(status)) {
                 String avgPrice = trade.optString("avgPrice", "").trim();
+                String execPrice = trade.optString("execPrice", "").trim();
                 String orderPrice = trade.optString("orderPrice", "").trim();
                 Double price = null;
+
+                if (!execPrice.isBlank()) {
+                    try { price = Double.parseDouble(orderPrice); } catch (Exception ignored) {}
+                }
+
                 if (!avgPrice.isBlank()) {
                     try { price = Double.parseDouble(avgPrice); } catch (Exception ignored) {}
                 }
+
                 if (price == null && !orderPrice.isBlank()) {
                     try { price = Double.parseDouble(orderPrice); } catch (Exception ignored) {}
                 }
+
                 if (price != null) {
                     if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus())) {
                         tradeSetupEntity.setEntryPrice(price);
@@ -832,8 +842,8 @@ public class TradeExecutionService {
         }
 
         if (orderStatusSet.contains("Fully Executed")) return TradeStatus.FULLY_EXECUTED;
-        if (orderStatusSet.contains("Pending")) return TradeStatus.PENDING;
         if (orderStatusSet.contains("Rejected")) return TradeStatus.REJECTED;
+        if (orderStatusSet.contains("Pending")) return TradeStatus.PENDING;
 
         // Still in progress or unknown status
         log.info("⏳ Order status set did not contain final state (seen={}): treating as NO_RECORDS/IN_PROGRESS", orderStatusSet);
