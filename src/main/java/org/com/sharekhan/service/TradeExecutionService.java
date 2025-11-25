@@ -705,7 +705,7 @@ public class TradeExecutionService {
                                     .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
                                     .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
                         }
-                        int updated = triggeredTradeRepo.markExited(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
+                        int updated = triggeredTradeRepo.markManualExited(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
                         if (updated == 1) {
                             log.info("✅ placeOrder response indicated fully executed - markExited updated trade {} to EXITED_SUCCESS", persisted.getId());
                             // evict 2nd-level cache and clear persistence context so other threads see the terminal state
@@ -815,12 +815,12 @@ public class TradeExecutionService {
                 String orderPrice = trade.optString("orderPrice", "").trim();
                 Double price = null;
 
-                if (!execPrice.isBlank()) {
-                    try { price = Double.parseDouble(orderPrice); } catch (Exception ignored) {}
-                }
-
                 if (!avgPrice.isBlank()) {
                     try { price = Double.parseDouble(avgPrice); } catch (Exception ignored) {}
+                }
+                
+                if (!execPrice.isBlank()) {
+                    try { price = Double.parseDouble(orderPrice); } catch (Exception ignored) {}
                 }
 
                 if (price == null && !orderPrice.isBlank()) {
@@ -834,10 +834,14 @@ public class TradeExecutionService {
                     } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
                         tradeSetupEntity.setExitPrice(price);
                         tradeSetupEntity.setExitedAt(LocalDateTime.now());
+                        double pnl = (price - tradeSetupEntity.getEntryPrice())
+                                * tradeSetupEntity.getQuantity();
+                        // just keep integer part, positive/negative safe
+                        pnl = pnl > 0 ? Math.floor(pnl) : Math.ceil(pnl);
+                        tradeSetupEntity.setPnl(pnl);
                     }
                 }
             }
-
             orderStatusSet.add(status);
         }
 

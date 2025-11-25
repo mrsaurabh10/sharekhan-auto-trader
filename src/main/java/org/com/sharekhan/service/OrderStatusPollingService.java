@@ -94,27 +94,27 @@ public class OrderStatusPollingService {
 
                 // Evaluate final status and log a very compact summary (avoid dumping full JSON)
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
-                try {
-                    int records = 0;
-                    String lastRecStatus = "";
-                    String lastRecAvg = "";
-                    String lastRecExecQty = "";
-                    if (response != null && response.has("data") && response.get("data") instanceof JSONArray) {
-                        JSONArray arr = response.getJSONArray("data");
-                        records = arr.length();
-                        if (records > 0) {
-                            JSONObject last = arr.getJSONObject(records - 1);
-                            lastRecStatus = last.optString("orderStatus", "");
-                            lastRecAvg = last.optString("avgPrice", last.optString("orderPrice", ""));
-                            lastRecExecQty = last.has("execQty") ? String.valueOf(last.optInt("execQty")) : last.optString("execQty", "");
-                        }
-                    }
-                    log.info("OrderHistory: orderId={} computedStatus={} records={} lastStatus={} avg={} execQty={}",
-                            orderIdToMonitor, tradeStatus, records, lastRecStatus, lastRecAvg, lastRecExecQty);
-                    log.debug("orderHistory response (truncated): {}", response == null ? "null" : (response.toString().length() > 1000 ? response.toString().substring(0,1000) + "..." : response.toString()));
-                } catch (Exception e) {
-                    log.warn("Failed to build order history compact log: {}", e.getMessage());
-                }
+//                try {
+//                    int records = 0;
+//                    String lastRecStatus = "";
+//                    String lastRecAvg = "";
+//                    String lastRecExecQty = "";
+//                    if (response != null && response.has("data") && response.get("data") instanceof JSONArray) {
+//                        JSONArray arr = response.getJSONArray("data");
+//                        records = arr.length();
+//                        if (records > 0) {
+//                            JSONObject last = arr.getJSONObject(records - 1);
+//                            lastRecStatus = last.optString("orderStatus", "");
+//                            lastRecAvg = last.optString("avgPrice", last.optString("orderPrice", ""));
+//                            lastRecExecQty = last.has("execQty") ? String.valueOf(last.optInt("execQty")) : last.optString("execQty", "");
+//                        }
+//                    }
+//                    log.info("OrderHistory: orderId={} computedStatus={} records={} lastStatus={} avg={} execQty={}",
+//                            orderIdToMonitor, tradeStatus, records, lastRecStatus, lastRecAvg, lastRecExecQty);
+//                    log.debug("orderHistory response (truncated): {}", response == null ? "null" : (response.toString().length() > 1000 ? response.toString().substring(0,1000) + "..." : response.toString()));
+//                } catch (Exception e) {
+//                    log.warn("Failed to build order history compact log: {}", e.getMessage());
+//                }
                 log.debug("Computed tradeStatus={} for tradeId={} (wasExitOrder={})", tradeStatus, currentTrade.getId(), usingExitOrder);
                 if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                      // Determine if this was an exit order or entry order based on which orderId we monitored
@@ -129,30 +129,30 @@ public class OrderStatusPollingService {
                      // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
                      // If we are monitoring an exit order but evaluateOrderFinalStatus didn't populate exitPrice,
                      // try to extract it from the last record in the response as a fallback.
-                     if (wasExitOrder && currentTrade.getExitPrice() == null && response != null && response.has("data") && response.get("data") instanceof JSONArray) {
-                         try {
-                             JSONArray arr = response.getJSONArray("data");
-                             if (arr.length() > 0) {
-                                 JSONObject last = arr.getJSONObject(arr.length() - 1);
-                                 String avg = last.optString("avgPrice", "").trim();
-                                 String ordp = last.optString("orderPrice", "").trim();
-                                 String execPrice = last.optString("execPrice", "").trim();
-                                 String val = !avg.isBlank() ? avg : (!execPrice.isBlank() ? execPrice : (!ordp.isBlank() ? ordp : null));
-                                 if (val != null) {
-                                     try {
-                                         double parsed = Double.parseDouble(val);
-                                         currentTrade.setExitPrice(parsed);
-                                         currentTrade.setExitedAt(LocalDateTime.now());
-                                         log.debug("Fallback extracted exitPrice={} for trade {} from orderHistory last record", parsed, currentTrade.getId());
-                                     } catch (Exception ignore) {
-                                         log.debug("Failed parsing fallback exit price '{}' for trade {}", val, currentTrade.getId());
-                                     }
-                                 }
-                             }
-                         } catch (Exception ex) {
-                             log.debug("Failed to extract fallback exitPrice from response for trade {}: {}", currentTrade.getId(), ex.getMessage());
-                         }
-                     }
+//                     if (wasExitOrder && currentTrade.getExitPrice() == null && response != null && response.has("data") && response.get("data") instanceof JSONArray) {
+//                         try {
+//                             JSONArray arr = response.getJSONArray("data");
+//                             if (arr.length() > 0) {
+//                                 JSONObject last = arr.getJSONObject(arr.length() - 1);
+//                                 String avg = last.optString("avgPrice", "").trim();
+//                                 String ordp = last.optString("orderPrice", "").trim();
+//                                 String execPrice = last.optString("execPrice", "").trim();
+//                                 String val = !avg.isBlank() ? avg : (!execPrice.isBlank() ? execPrice : (!ordp.isBlank() ? ordp : null));
+//                                 if (val != null) {
+//                                     try {
+//                                         double parsed = Double.parseDouble(val);
+//                                         currentTrade.setExitPrice(parsed);
+//                                         currentTrade.setExitedAt(LocalDateTime.now());
+//                                         log.debug("Fallback extracted exitPrice={} for trade {} from orderHistory last record", parsed, currentTrade.getId());
+//                                     } catch (Exception ignore) {
+//                                         log.debug("Failed parsing fallback exit price '{}' for trade {}", val, currentTrade.getId());
+//                                     }
+//                                 }
+//                             }
+//                         } catch (Exception ex) {
+//                             log.debug("Failed to extract fallback exitPrice from response for trade {}: {}", currentTrade.getId(), ex.getMessage());
+//                         }
+//                     }
 
                     // Diagnostic: log currentTrade fields before save
                     log.info("Saving tradeId={} before save: status={} orderId={} exitOrderId={} entryPrice={} exitPrice={} pnl={}",
@@ -161,8 +161,8 @@ public class OrderStatusPollingService {
                     try {
                         // If this was an exit order, prefer an atomic repository update to avoid lost-update concurrency
                         if (wasExitOrder && currentTrade.getExitPrice() != null) {
-                            double pnlVal = currentTrade.getPnl() == null ? 0.0d : currentTrade.getPnl();
-                            int updated = tradeRepo.markExited(currentTrade.getId(), TriggeredTradeStatus.EXITED_SUCCESS, currentTrade.getExitPrice(), currentTrade.getExitedAt(), pnlVal);
+                            //double pnlVal = currentTrade.getPnl() == null ? 0.0d : currentTrade.getPnl();
+                            int updated = tradeRepo.markExited(currentTrade.getId(), TriggeredTradeStatus.EXITED_SUCCESS, currentTrade.getExitPrice(), currentTrade.getExitedAt());
                             if (updated == 1) {
                                 log.info("✅ markExited updated trade {} to EXITED_SUCCESS", currentTrade.getId());
                             } else {
