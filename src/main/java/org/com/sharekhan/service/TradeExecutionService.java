@@ -705,7 +705,7 @@ public class TradeExecutionService {
                                     .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
                                     .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
                         }
-                        int updated = triggeredTradeRepo.markManualExited(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
+                        int updated = triggeredTradeRepo.markExitedWithPNL(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
                         if (updated == 1) {
                             log.info("✅ placeOrder response indicated fully executed - markExited updated trade {} to EXITED_SUCCESS", persisted.getId());
                             // evict 2nd-level cache and clear persistence context so other threads see the terminal state

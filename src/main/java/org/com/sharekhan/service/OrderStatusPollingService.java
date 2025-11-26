@@ -20,7 +20,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -126,34 +125,6 @@ public class OrderStatusPollingService {
                          currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
                      }
 
-                     // Ensure exitPrice/entryPrice set by evaluateOrderFinalStatus are persisted; compute PnL now if missing
-                     // If we are monitoring an exit order but evaluateOrderFinalStatus didn't populate exitPrice,
-                     // try to extract it from the last record in the response as a fallback.
-//                     if (wasExitOrder && currentTrade.getExitPrice() == null && response != null && response.has("data") && response.get("data") instanceof JSONArray) {
-//                         try {
-//                             JSONArray arr = response.getJSONArray("data");
-//                             if (arr.length() > 0) {
-//                                 JSONObject last = arr.getJSONObject(arr.length() - 1);
-//                                 String avg = last.optString("avgPrice", "").trim();
-//                                 String ordp = last.optString("orderPrice", "").trim();
-//                                 String execPrice = last.optString("execPrice", "").trim();
-//                                 String val = !avg.isBlank() ? avg : (!execPrice.isBlank() ? execPrice : (!ordp.isBlank() ? ordp : null));
-//                                 if (val != null) {
-//                                     try {
-//                                         double parsed = Double.parseDouble(val);
-//                                         currentTrade.setExitPrice(parsed);
-//                                         currentTrade.setExitedAt(LocalDateTime.now());
-//                                         log.debug("Fallback extracted exitPrice={} for trade {} from orderHistory last record", parsed, currentTrade.getId());
-//                                     } catch (Exception ignore) {
-//                                         log.debug("Failed parsing fallback exit price '{}' for trade {}", val, currentTrade.getId());
-//                                     }
-//                                 }
-//                             }
-//                         } catch (Exception ex) {
-//                             log.debug("Failed to extract fallback exitPrice from response for trade {}: {}", currentTrade.getId(), ex.getMessage());
-//                         }
-//                     }
-
                     // Diagnostic: log currentTrade fields before save
                     log.info("Saving tradeId={} before save: status={} orderId={} exitOrderId={} entryPrice={} exitPrice={} pnl={}",
                             currentTrade.getId(), currentTrade.getStatus(), currentTrade.getOrderId(), currentTrade.getExitOrderId(), currentTrade.getEntryPrice(), currentTrade.getExitPrice(), currentTrade.getPnl());
@@ -161,8 +132,7 @@ public class OrderStatusPollingService {
                     try {
                         // If this was an exit order, prefer an atomic repository update to avoid lost-update concurrency
                         if (wasExitOrder && currentTrade.getExitPrice() != null) {
-                            //double pnlVal = currentTrade.getPnl() == null ? 0.0d : currentTrade.getPnl();
-                            int updated = tradeRepo.markExited(currentTrade.getId(), TriggeredTradeStatus.EXITED_SUCCESS, currentTrade.getExitPrice(), currentTrade.getExitedAt());
+                            int updated = tradeRepo.markExitedWithPNL(currentTrade.getId(), TriggeredTradeStatus.EXITED_SUCCESS, currentTrade.getExitPrice(), currentTrade.getExitedAt(), currentTrade.getPnl());
                             if (updated == 1) {
                                 log.info("✅ markExited updated trade {} to EXITED_SUCCESS", currentTrade.getId());
                             } else {

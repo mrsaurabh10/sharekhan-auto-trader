@@ -66,10 +66,10 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     @Modifying
     @Transactional
     @Query("UPDATE TriggeredTradeSetupEntity t SET t.status = :status, t.exitPrice = :exitPrice, t.exitedAt = :exitedAt , t.pnl = :pnl WHERE t.id = :id")
-    int markManualExited(@Param("id") Long id,
-                   @Param("status") org.com.sharekhan.enums.TriggeredTradeStatus status,
-                   @Param("exitPrice") Double exitPrice,
-                   @Param("exitedAt") java.time.LocalDateTime exitedAt,
-                   @Param("pnl")  Double pnl    );
+    int markExitedWithPNL(@Param("id") Long id,
+                          @Param("status") org.com.sharekhan.enums.TriggeredTradeStatus status,
+                          @Param("exitPrice") Double exitPrice,
+                          @Param("exitedAt") java.time.LocalDateTime exitedAt,
+                          @Param("pnl")  Double pnl    );
 
 }
