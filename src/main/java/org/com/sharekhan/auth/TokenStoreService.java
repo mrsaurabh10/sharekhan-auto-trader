@@ -401,6 +401,40 @@ public class TokenStoreService {
         return getValidTokenOrNull(broker);
     }
 
+    // New helper: return the first non-expired token for a broker.
+    // Strategy: 1) check global token map; 2) check per-customer in-memory tokens; 3) check latest persisted token for broker.
+    public String getFirstNonExpiredTokenForBroker(Broker broker) {
+        if (broker == null) return null;
+        // 1) global token
+        try {
+            String global = getValidTokenOrNull(broker);
+            if (global != null) return global;
+        } catch (Exception ignored) {}
+
+        // 2) per-customer in-memory tokens
+        String prefix = broker.getDisplayName() + ":";
+        try {
+            for (Map.Entry<String, String> e : tokenByCustomer.entrySet()) {
+                String key = e.getKey();
+                if (key != null && key.startsWith(prefix)) {
+                    Instant exp = expiryByCustomer.get(key);
+                    String tok = e.getValue();
+                    if (tok != null && exp != null && Instant.now().isBefore(exp)) return tok;
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // 3) persisted latest token for this broker
+        try {
+            var latest = persistenceService.findLatestByBroker(broker.getDisplayName());
+            if (latest != null && latest.getExpiry() != null && Instant.now().isBefore(latest.getExpiry()) && latest.getToken() != null) {
+                return latest.getToken();
+            }
+        } catch (Exception ignored) {}
+
+        return null;
+    }
+
     public String getAccessToken() {
         return getValidTokenOrNull();
     }

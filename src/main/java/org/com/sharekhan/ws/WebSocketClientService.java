@@ -62,7 +62,15 @@ public class WebSocketClientService  {
 
     public void connect() {
         try {
-            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+            // Prefer the first non-expired token for SHAREKHAN: global, per-customer in-memory, then persisted latest
+            String accessToken = tokenStoreService.getFirstNonExpiredTokenForBroker(Broker.SHAREKHAN);
+            if (accessToken == null) {
+                accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+            }
+            if (accessToken == null || accessToken.isBlank()) {
+                log.warn("⚠️ No valid access token available for SHAREKHAN websocket connection. Skipping connect; will retry on scheduled reconnects.");
+                return;
+            }
             String wsUrl = String.format("wss://stream.sharekhan.com/skstream/api/stream?ACCESS_TOKEN=%s&API_KEY=%s", accessToken, API_KEY);
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
             container.connectToServer(this, new URI(wsUrl));
