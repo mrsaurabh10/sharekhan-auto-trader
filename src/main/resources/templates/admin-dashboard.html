@@ -44,7 +44,7 @@
         </div>
     </div>
     <div class="content">
-        <h3 id="selectedUserTitle">Select a user</h3>
+        <!-- selected user title removed to avoid duplicate label (place-order iframe shows its own header) -->
 
         <!-- User tabs -->
         <div id="userTabs" style="margin-bottom:0.75rem;display:flex;gap:6px;flex-wrap:wrap"></div>
@@ -138,46 +138,47 @@
     let selectedUserId = null;
     let selectedCustomerId = null;
 
-    // Named global functions for legacy inline handlers: delegate to window shims if present
-    function selectUser(appUserId, elem) {
+    // Centralized selection helper: updates UI state and loads per-user data exactly once
+    function showUserSelection(appUserId, customerId, displayText, clickedElem) {
         try {
-            if (typeof window.selectUser === 'function' && window.selectUser !== selectUser) return window.selectUser(appUserId, elem);
-        } catch (e) { console.debug('global selectUser wrapper failed', e); }
-        // fallback: simple selection
-        try {
-            const customerId = elem && elem.dataset ? elem.dataset.customerId : null;
+            // set globals
             window.selectedUserId = appUserId;
             window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId;
+            // update visible labels
             const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
-            const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + (elem ? elem.innerText : appUserId);
-            // Show user content and load place-order iframe for this user
+            const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = (displayText ? 'User: ' + displayText : 'User: ' + appUserId);
+
+            // show content sections
+            const userContent = document.getElementById('userContent'); if (userContent) userContent.style.display = 'block';
+            const brokersSection = document.getElementById('brokersSection'); if (brokersSection) brokersSection.style.display = 'block';
+
+            // mark active in user list
+            try { document.querySelectorAll('#usersContainer ul li').forEach(x => x.classList.remove('active')); } catch (e) {}
+            try { if (clickedElem) clickedElem.classList.add('active'); } catch (e) {}
+
+            // set iframe
             try {
-                const userContent = document.getElementById('userContent'); if (userContent) userContent.style.display = 'block';
-                const brokersSection = document.getElementById('brokersSection'); if (brokersSection) brokersSection.style.display = 'block';
                 const iframe = document.getElementById('placeOrderIframe');
                 if (iframe) {
                     const uid = (window.selectedCustomerId != null) ? window.selectedCustomerId : window.selectedUserId;
                     iframe.src = '/place-order' + (uid ? ('?userId=' + encodeURIComponent(uid)) : '');
                 }
-            } catch (e) { console.debug('selectUser fallback iframe load failed', e); }
-            // trigger other user-specific loads if available
-            try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedCustomerId); } catch (e) { console.debug('loadRequestedOrdersForUser missing', e); }
-            try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedCustomerId); } catch (e) { console.debug('loadExecutedForUser missing', e); }
-            try { if (window.loadBrokers) loadBrokers(window.selectedUserId); } catch (e) { console.debug('loadBrokers missing', e); }
-        } catch (e) { console.debug('selectUser fallback failed', e); }
+            } catch (e) { console.debug('setting placeOrderIframe src failed', e); }
+
+            // Load data once
+            try { if (window.loadRequestedOrdersForUser) window.loadRequestedOrdersForUser(appUserId); } catch (e) { console.debug('loadRequestedOrdersForUser failed', e); }
+            try { if (window.loadExecutedForUser) window.loadExecutedForUser(appUserId); } catch (e) { console.debug('loadExecutedForUser failed', e); }
+            try { if (window.loadBrokers) window.loadBrokers(appUserId); } catch (e) { console.debug('loadBrokers failed', e); }
+        } catch (e) { console.debug('showUserSelection failed', e); }
+    }
+
+    // Named global functions for legacy inline handlers: delegate to central helper
+    function selectUser(appUserId, elem) {
+        try { showUserSelection(appUserId, elem && elem.dataset ? elem.dataset.customerId : null, elem ? elem.innerText : null, elem); } catch (e) { console.debug('selectUser wrapper failed', e); }
     }
 
     function selectUserWithCustomer(appUserId, customerId, btnElem) {
-        try {
-            if (typeof window.selectUserWithCustomer === 'function' && window.selectUserWithCustomer !== selectUserWithCustomer) return window.selectUserWithCustomer(appUserId, customerId, btnElem);
-        } catch (e) { console.debug('global selectUserWithCustomer wrapper failed', e); }
-        // fallback behavior
-        try {
-            window.selectedUserId = appUserId;
-            window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId;
-            const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
-            const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + (btnElem ? btnElem.innerText : appUserId);
-        } catch (e) { console.debug('selectUserWithCustomer fallback failed', e); }
+        try { showUserSelection(appUserId, customerId, btnElem ? btnElem.innerText : null, btnElem); } catch (e) { console.debug('selectUserWithCustomer wrapper failed', e); }
     }
 
     // Ensure CSRF meta tags exist; if not, fetch from server endpoint and populate them.
@@ -340,17 +341,27 @@
             li.innerText = display;
             li.dataset.appUserId = u.id; // store app_user.id for broker API calls
             li.dataset.customerId = u.customerId;
-            // Defensive click handler: try available implementations in order
+            // Defensive click handler: try available implementations in order, then explicitly refresh lists
             li.addEventListener('click', function () {
-                try {
-                    if (typeof selectUser === 'function') return selectUser(u.id, li);
-                    if (typeof window.selectUser === 'function') return window.selectUser(u.id, li);
-                    if (typeof window.selectUserWithCustomer === 'function') return window.selectUserWithCustomer(u.id, u.customerId, li);
-                    // last-resort local update
-                    window.selectedUserId = u.id;
-                    window.selectedCustomerId = (u.customerId == null || u.customerId === 'null' || u.customerId === '') ? u.id : u.customerId;
-                    const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
-                    const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + display;
+                 try {
+                     console.debug('User list clicked:', u.id, u.username, u.customerId);
+                     // Mark clicked li as active and clear others for visual feedback
+                     try { document.querySelectorAll('#usersContainer ul li').forEach(x => x.classList.remove('active')); } catch (e) {}
+                     try { li.classList.add('active'); } catch (e) {}
+
+                     if (typeof selectUser === 'function') selectUser(u.id, li);
+                     else if (typeof window.selectUser === 'function') window.selectUser(u.id, li);
+                     else if (typeof window.selectUserWithCustomer === 'function') window.selectUserWithCustomer(u.id, u.customerId, li);
+                     else {
+                        // last-resort local update
+                        window.selectedUserId = u.id;
+                        window.selectedCustomerId = (u.customerId == null || u.customerId === 'null' || u.customerId === '') ? u.id : u.customerId;
+                        const selUserIdEl = document.getElementById('selectedUserId'); if (selUserIdEl) selUserIdEl.innerText = window.selectedUserId;
+                        const titleEl = document.getElementById('selectedUserTitle'); if (titleEl) titleEl.innerText = 'User: ' + display;
+                     }
+
+                    // Data loaders are handled by showUserSelection (called above) — avoid redundant calls
+
                 } catch (e) { console.debug('user-list click failed', e); }
             });
             ul.appendChild(li);
@@ -433,8 +444,8 @@ if (typeof window.selectUserWithCustomer !== 'function') {
                     iframe.src = '/place-order' + (uid ? ('?userId=' + encodeURIComponent(uid)) : '');
                 }
             } catch (e) { console.debug('setting placeOrderIframe src failed', e); }
-            try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedCustomerId); } catch (e) {}
-            try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedCustomerId); } catch (e) {}
+            try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedUserId); } catch (e) {}
+            try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedUserId); } catch (e) {}
             try { if (window.loadBrokers) loadBrokers(window.selectedUserId); } catch (e) {}
         } catch (e) { console.debug('selectUserWithCustomer shim failed', e); }
     };
@@ -499,33 +510,124 @@ try {
 
 // New: load Trading Requests for a user and render into table
 async function loadRequestedOrdersForUser(userId) {
-    const uid = userId == null ? window.selectedCustomerId : userId;
-    const tbody = document.querySelector('#user-requests-table tbody');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-    if (!uid) {
-        tbody.innerHTML = '<tr><td colspan="9" class="muted">No user selected</td></tr>';
-        return;
-    }
+    // Resolve user id robustly: explicit parameter > selectedUserId > selectedCustomerId
+    const uid = (typeof userId !== 'undefined' && userId !== null) ? userId : (window.selectedUserId || window.selectedCustomerId);
+     const tbody = document.querySelector('#user-requests-table tbody');
+     if (!tbody) return;
+     tbody.innerHTML = '';
+     if (!uid) {
+         tbody.innerHTML = '<tr><td colspan="9" class="muted">No user selected</td></tr>';
+         return;
+     }
     try {
         const data = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid));
         if (!Array.isArray(data) || data.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" class="muted">No requests</td></tr>';
             return;
         }
+        // dedupe by id to avoid duplicate rows when backend returns duplicates
+        const seen = new Set();
+        const uniq = [];
         for (const r of data) {
-            const tr = document.createElement('tr');
-            // safe field access
-            const id = r.id || '';
-            const symbol = r.instrument || r.symbol || r.tradingSymbol || '-';
-            const exchange = r.exchange || '-';
-            const entry = r.entryPrice != null ? r.entryPrice : (r.entry || '-');
-            const sl = r.stopLoss != null ? r.stopLoss : (r.stop_loss || '-');
-            const t1 = r.target1 != null ? r.target1 : (r.t1 || '-');
-            const qty = r.quantity != null ? r.quantity : (r.qty || '-');
-            const status = r.status || r.requestStatus || '-';
-            const actionCell = document.createElement('td');
-            // only show Trigger button if status is not already triggered/executed
+            const rid = r && (r.id || r.requestId || r.request_id);
+            if (!rid) { uniq.push(r); continue; }
+            if (seen.has(rid)) continue;
+            seen.add(rid);
+            uniq.push(r);
+        }
+        for (const r of uniq) {
+             const tr = document.createElement('tr');
+             // safe field access
+             const id = r.id || '';
+             const symbol = r.instrument || r.symbol || r.tradingSymbol || '-';
+             const exchange = r.exchange || '-';
+             const entry = r.entryPrice != null ? r.entryPrice : (r.entry || '-');
+             const sl = r.stopLoss != null ? r.stopLoss : (r.stop_loss || '-');
+             const t1 = r.target1 != null ? r.target1 : (r.t1 || '-');
+             const qty = r.quantity != null ? r.quantity : (r.qty || '-');
+             const status = r.status || r.requestStatus || '-';
+             const actionCell = document.createElement('td');
+            // Build action buttons: Edit, Move SL to Cost, Cancel, and Trigger (as before)
+
+            // Edit button
+            const editBtn = document.createElement('button');
+            editBtn.className = 'btn small';
+            editBtn.style.marginRight = '6px';
+            editBtn.innerText = 'Edit';
+            editBtn.addEventListener('click', async function () {
+                try {
+                    await ensureCsrf();
+                    // Prompt user for new values (leave blank to keep existing)
+                    const newSL = prompt('New Stop Loss (leave blank to keep):', r.stopLoss != null ? r.stopLoss : '');
+                    const newT1 = prompt('New Target1 (leave blank to keep):', r.target1 != null ? r.target1 : '');
+                    const newT2 = prompt('New Target2 (leave blank to keep):', r.target2 != null ? r.target2 : '');
+                    const newT3 = prompt('New Target3 (leave blank to keep):', r.target3 != null ? r.target3 : '');
+                    const newQty = prompt('New Quantity (leave blank to keep):', r.quantity != null ? r.quantity : '');
+                    const intradayChoice = confirm('Set Intraday = true? (Cancel = keep current)');
+
+                    const payload = {};
+                    if (newSL !== null && newSL !== '') payload.stopLoss = Number(newSL);
+                    if (newT1 !== null && newT1 !== '') payload.target1 = Number(newT1);
+                    if (newT2 !== null && newT2 !== '') payload.target2 = Number(newT2);
+                    if (newT3 !== null && newT3 !== '') payload.target3 = Number(newT3);
+                    if (newQty !== null && newQty !== '') payload.quantity = Number(newQty);
+                    // Only set intraday when user confirmed; otherwise do not change
+                    if (intradayChoice) payload.intraday = true;
+
+                    // If nothing changed, inform
+                    if (Object.keys(payload).length === 0) { alert('No changes provided'); return; }
+
+                    const res = await fetchJson('/api/trades/request/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    console.log('Edit request response', res);
+                    await loadRequestedOrdersForUser(uid);
+                } catch (e) {
+                    console.error('Failed to edit request', e);
+                    alert('Edit failed: ' + (e && e.message ? e.message : e));
+                }
+            });
+            actionCell.appendChild(editBtn);
+
+            // Move SL to cost button
+            const moveBtn = document.createElement('button');
+            moveBtn.className = 'btn small';
+            moveBtn.style.marginRight = '6px';
+            moveBtn.innerText = 'Move SL to Cost';
+            moveBtn.addEventListener('click', async function () {
+                try {
+                    await ensureCsrf();
+                    const entryPrice = r.entryPrice != null ? r.entryPrice : (r.entry || null);
+                    if (entryPrice == null) { alert('No entry price available to move SL to cost'); return; }
+                    const payload = { stopLoss: Number(entryPrice) };
+                    const res = await fetchJson('/api/trades/request/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                    console.log('Move SL to cost response', res);
+                    await loadRequestedOrdersForUser(uid);
+                } catch (e) {
+                    console.error('Failed to move SL to cost', e);
+                    alert('Move SL failed: ' + (e && e.message ? e.message : e));
+                }
+            });
+            actionCell.appendChild(moveBtn);
+
+            // Cancel button
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'btn small danger';
+            cancelBtn.style.marginRight = '6px';
+            cancelBtn.innerText = 'Cancel';
+            cancelBtn.addEventListener('click', async function () {
+                try {
+                    if (!confirm('Cancel request id ' + id + '?')) return;
+                    await ensureCsrf();
+                    await fetchJson('/api/trades/cancel-request/' + id + '?userId=' + encodeURIComponent(uid), { method: 'POST' });
+                    await loadRequestedOrdersForUser(uid);
+                    try { if (window.loadExecutedForUser) loadExecutedForUser(uid); } catch (e) {}
+                } catch (e) {
+                    console.error('Cancel request failed', e);
+                    alert('Cancel failed: ' + (e && e.message ? e.message : e));
+                }
+            });
+            actionCell.appendChild(cancelBtn);
+
+            // Trigger button (keep existing behavior) - only when not already triggered/executed
             if (String(status).toUpperCase() !== 'TRIGGERED' && String(status).toUpperCase() !== 'EXECUTED') {
                 const btn = document.createElement('button');
                 btn.className = 'btn small';
@@ -546,8 +648,6 @@ async function loadRequestedOrdersForUser(userId) {
                     }
                 });
                 actionCell.appendChild(btn);
-            } else {
-                actionCell.innerText = '-';
             }
 
             tr.innerHTML = `<td>${id}</td><td>${escapeHtml(String(symbol))}</td><td>${escapeHtml(String(exchange))}</td><td>${escapeHtml(String(entry))}</td><td>${escapeHtml(String(sl))}</td><td>${escapeHtml(String(t1))}</td><td>${escapeHtml(String(qty))}</td><td>${escapeHtml(String(status))}</td>`;
@@ -562,46 +662,119 @@ async function loadRequestedOrdersForUser(userId) {
 
 // New: load recently executed trades for a user and render into table
 async function loadExecutedForUser(userId) {
-    const uid = userId == null ? window.selectedCustomerId : userId;
-    const tbody = document.querySelector('#user-executed-table tbody');
-    if (!tbody) return;
-    tbody.innerHTML = '';
-    if (!uid) {
-        tbody.innerHTML = '<tr><td colspan="9" class="muted">No user selected</td></tr>';
-        return;
-    }
+    // Resolve user id robustly: explicit parameter > selectedUserId > selectedCustomerId
+    const uid = (typeof userId !== 'undefined' && userId !== null) ? userId : (window.selectedUserId || window.selectedCustomerId);
+     const tbody = document.querySelector('#user-executed-table tbody');
+     if (!tbody) return;
+     tbody.innerHTML = '';
+     if (!uid) {
+         tbody.innerHTML = '<tr><td colspan="9" class="muted">No user selected</td></tr>';
+         return;
+     }
     try {
         const data = await fetchJson('/api/orders/executed?userId=' + encodeURIComponent(uid));
         if (!Array.isArray(data) || data.length === 0) {
             tbody.innerHTML = '<tr><td colspan="9" class="muted">No executed trades</td></tr>';
             return;
         }
+        // dedupe executed trades by id
+        const seenExec = new Set();
+        const uniqExec = [];
         for (const t of data) {
-            const tr = document.createElement('tr');
-            const id = t.id || '';
-            const symbol = t.instrument || t.symbol || t.tradingSymbol || '-';
-            const exchange = t.exchange || '-';
-            const entry = t.entryPrice != null ? t.entryPrice : (t.entry || '-');
-            const sl = t.stopLoss != null ? t.stopLoss : (t.stop_loss || '-');
-            const t1 = t.target1 != null ? t.target1 : (t.t1 || '-');
-            const qty = t.quantity != null ? t.quantity : (t.qty || '-');
-            const status = t.status || '-';
-            const actionCell = document.createElement('td');
-            const forbiddenStatuses = new Set(['REJECTED','EXITED_SUCCESS','EXITED_FAILURE','EXITED']);
-            if (!forbiddenStatuses.has(String(status).toUpperCase())) {
-                const btn = document.createElement('button');
-                btn.className = 'btn small';
-                btn.innerText = 'View';
-                btn.addEventListener('click', function () {
-                    alert('Open details for executed trade id=' + id);
+            const tid = t && (t.id || t.tradeId || t.trade_id);
+            if (!tid) { uniqExec.push(t); continue; }
+            if (seenExec.has(tid)) continue;
+            seenExec.add(tid);
+            uniqExec.push(t);
+        }
+        for (const t of uniqExec) {
+             const tr = document.createElement('tr');
+             const id = t.id || '';
+             const symbol = t.instrument || t.symbol || t.tradingSymbol || '-';
+             const exchange = t.exchange || '-';
+             const entry = t.entryPrice != null ? t.entryPrice : (t.entry || '-');
+             const sl = t.stopLoss != null ? t.stopLoss : (t.stop_loss || '-');
+             const t1 = t.target1 != null ? t.target1 : (t.t1 || '-');
+             const qty = t.quantity != null ? t.quantity : (t.qty || '-');
+             const status = t.status || '-';
+             const actionCell = document.createElement('td');
+             const forbiddenStatuses = new Set(['REJECTED','EXITED_SUCCESS','EXITED_FAILURE','EXITED']);
+             if (!forbiddenStatuses.has(String(status).toUpperCase())) {
+                // Edit button - update stopLoss/targets/intraday
+                const editBtn = document.createElement('button');
+                editBtn.className = 'btn small';
+                editBtn.style.marginRight = '6px';
+                editBtn.innerText = 'Edit';
+                editBtn.addEventListener('click', async function () {
+                    try {
+                        await ensureCsrf();
+                        const newSL = prompt('New Stop Loss (leave blank to keep):', t.stopLoss != null ? t.stopLoss : '');
+                        const newT1 = prompt('New Target1 (leave blank to keep):', t.target1 != null ? t.target1 : '');
+                        const newT2 = prompt('New Target2 (leave blank to keep):', t.target2 != null ? t.target2 : '');
+                        const newT3 = prompt('New Target3 (leave blank to keep):', t.target3 != null ? t.target3 : '');
+                        const intradayChoice = confirm('Set Intraday = true? (Cancel = keep current)');
+                        const payload = {};
+                        if (newSL !== null && newSL !== '') payload.stopLoss = Number(newSL);
+                        if (newT1 !== null && newT1 !== '') payload.target1 = Number(newT1);
+                        if (newT2 !== null && newT2 !== '') payload.target2 = Number(newT2);
+                        if (newT3 !== null && newT3 !== '') payload.target3 = Number(newT3);
+                        // include userId when available so server can authorize non-admin updates
+                        if (window.selectedUserId) payload.userId = window.selectedUserId;
+                        if (Object.keys(payload).length === 0) { alert('No changes provided'); return; }
+                        const res = await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+                        console.log('Execution update response', res);
+                        await loadExecutedForUser(window.selectedUserId);
+                    } catch (e) {
+                        console.error('Failed to update execution', e);
+                        alert('Update failed: ' + (e && e.message ? e.message : e));
+                    }
                 });
-                actionCell.appendChild(btn);
-            } else {
+                actionCell.appendChild(editBtn);
+
+                // Move SL to cost button
+                const moveBtn = document.createElement('button');
+                moveBtn.className = 'btn small';
+                moveBtn.style.marginRight = '6px';
+                moveBtn.innerText = 'Move SL to Cost';
+                moveBtn.addEventListener('click', async function () {
+                    try {
+                        if (!confirm('Move Stop Loss to entry price for trade ' + id + '?')) return;
+                        await ensureCsrf();
+                        // endpoint expects tradeId path variable
+                        const res = await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' });
+                        console.log('Move SL response', res);
+                        await loadExecutedForUser(window.selectedUserId);
+                    } catch (e) {
+                        console.error('Move SL failed', e);
+                        alert('Move SL failed: ' + (e && e.message ? e.message : e));
+                    }
+                });
+                actionCell.appendChild(moveBtn);
+
+                // Close / Square-off button
+                const closeBtn = document.createElement('button');
+                closeBtn.className = 'btn small danger';
+                closeBtn.innerText = 'Close';
+                closeBtn.addEventListener('click', async function () {
+                    try {
+                        if (!confirm('Square off trade ' + id + ' now?')) return;
+                        await ensureCsrf();
+                        const res = await fetchJson('/api/trades/square-off/' + id, { method: 'POST' });
+                        console.log('Square off response', res);
+                        // small delay to allow backend to start square-off; then refresh executed list
+                        setTimeout(() => { try { loadExecutedForUser(window.selectedUserId); } catch (e) { console.debug('refresh after square-off failed', e); } }, 800);
+                    } catch (e) {
+                        console.error('Square off failed', e);
+                        alert('Square off failed: ' + (e && e.message ? e.message : e));
+                    }
+                });
+                actionCell.appendChild(closeBtn);
+             } else {
                 actionCell.innerText = '-';
-            }
-            tr.innerHTML = `<td>${id}</td><td>${escapeHtml(String(symbol))}</td><td>${escapeHtml(String(exchange))}</td><td>${escapeHtml(String(entry))}</td><td>${escapeHtml(String(sl))}</td><td>${escapeHtml(String(t1))}</td><td>${escapeHtml(String(qty))}</td><td>${escapeHtml(String(status))}</td>`;
-            tr.appendChild(actionCell);
-            tbody.appendChild(tr);
+             }
+             tr.innerHTML = `<td>${id}</td><td>${escapeHtml(String(symbol))}</td><td>${escapeHtml(String(exchange))}</td><td>${escapeHtml(String(entry))}</td><td>${escapeHtml(String(sl))}</td><td>${escapeHtml(String(t1))}</td><td>${escapeHtml(String(qty))}</td><td>${escapeHtml(String(status))}</td>`;
+             tr.appendChild(actionCell);
+             tbody.appendChild(tr);
         }
     } catch (e) {
         console.error('Failed to load executed trades for user', uid, e);
@@ -785,8 +958,8 @@ try {
             if (msg.type === 'orderTriggered') {
                 console.log('Received orderTriggered from iframe for userId=', msg.userId);
                 // refresh lists for currently selected user
-                try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedCustomerId); } catch (e) { console.debug('loadRequestedOrdersForUser missing', e); }
-                try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedCustomerId); } catch (e) { console.debug('loadExecutedForUser missing', e); }
+                try { if (window.loadRequestedOrdersForUser) loadRequestedOrdersForUser(window.selectedUserId); } catch (e) { console.debug('loadRequestedOrdersForUser missing', e); }
+                try { if (window.loadExecutedForUser) loadExecutedForUser(window.selectedUserId); } catch (e) { console.debug('loadExecutedForUser missing', e); }
             }
         } catch (e) { console.debug('message handler failed', e); }
     }, false);
