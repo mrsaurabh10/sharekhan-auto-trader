@@ -7,6 +7,7 @@ import org.com.sharekhan.util.TOTPGenerator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicReference;
 
 @Component
@@ -20,8 +21,22 @@ public class SharekhanTokenFetcher {
         AtomicReference<String> accessToken = new AtomicReference<>(null);
 
         try (Playwright playwright = Playwright.create()) {
-            Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
-            Page page = browser.newPage();
+
+            BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
+                    .setHeadless(false)  // Change to true for headless
+                    .setArgs(Arrays.asList(
+                            "--disable-blink-features=AutomationControlled",
+                            "--disable-popup-blocking",
+                            "--disable-extensions",
+                            "--no-sandbox",
+                            "--disable-dev-shm-usage"
+                    ));
+            Browser browser = playwright.chromium().launch(launchOptions);
+            Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
+                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+
+            BrowserContext context = browser.newContext(contextOptions);
+            Page page = context.newPage();
 
             page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(1200000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));

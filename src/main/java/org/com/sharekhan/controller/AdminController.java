@@ -278,12 +278,15 @@ public class AdminController {
         String totp = (String) body.get("totpSecret");
         String secret = (String) body.get("secretKey");
         Boolean active = body.containsKey("active") ? Boolean.valueOf(String.valueOf(body.get("active"))) : Boolean.TRUE;
+        Long customerId = body.containsKey("customerId") && body.get("customerId") != null ? Long.valueOf(String.valueOf(body.get("customerId"))) : null;
         if (brokerName == null || brokerName.isBlank()) return ResponseEntity.badRequest().body("brokerName required");
         // resolve AppUser id to customerId
         AppUser app = entityManager.find(AppUser.class, userId);
         BrokerCredentialsEntity b = new BrokerCredentialsEntity();
         b.setBrokerName(brokerName);
         b.setAppUserId(userId);
+        // set explicit customerId if provided in payload
+        if (customerId != null) b.setCustomerId(customerId);
         b.setApiKey(apiKey != null ? cryptoService.encrypt(apiKey) : null);
         b.setBrokerUsername(brokerUser != null ? cryptoService.encrypt(brokerUser) : null);
         b.setBrokerPassword(brokerPw != null ? cryptoService.encrypt(brokerPw) : null);
@@ -320,6 +323,7 @@ public class AdminController {
         if (body.containsKey("clientCode")) b.setClientCode(body.get("clientCode") == null ? null : cryptoService.encrypt((String)body.get("clientCode")));
         if (body.containsKey("totpSecret")) b.setTotpSecret(body.get("totpSecret") == null ? null : cryptoService.encrypt((String)body.get("totpSecret")));
         if (body.containsKey("secretKey")) b.setSecretKey(body.get("secretKey") == null ? null : cryptoService.encrypt((String)body.get("secretKey")));
+        if (body.containsKey("customerId")) { b.setCustomerId(body.get("customerId") == null ? null : Long.valueOf(String.valueOf(body.get("customerId")))); }
         if (body.containsKey("active")) {
             Boolean newActive = body.get("active") == null ? null : Boolean.valueOf(String.valueOf(body.get("active")));
             if (newActive != null && newActive) {

@@ -48,3 +48,6 @@ app:
     client-code: "SGUPTA78"
     password: "Anvi@2023"
     totp-secret: "3VNUAS5GNB5UXCXR"
+  # Crypto key (base64-encoded AES key). Replace with a secure key in production.
+  crypto:
+    key: "ZTuc7iRkkeGN+B9ayiZu5m6M56VWSNhktO6STOF8aXA="

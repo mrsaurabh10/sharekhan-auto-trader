@@ -83,6 +83,7 @@
 
             <div id="addBrokerForm" style="display:none; border:1px solid #eee; padding:0.6rem; margin-bottom:0.6rem; background:#fafafa;">
                 <div class="form-row"><label class="inline small">Broker Name</label><input id="b_brokerName" /></div>
+                <div class="form-row"><label class="inline small">Customer ID</label><input id="b_customerId" placeholder="numeric customerId" /></div>
                 <div class="form-row"><label class="inline small">API Key</label><input id="b_apiKey" /></div>
                 <div class="form-row"><label class="inline small">Broker Username</label><input id="b_brokerUser" /></div>
                 <div class="form-row"><label class="inline small">Broker Password</label><input id="b_brokerPw" type="password"/></div>
@@ -101,6 +102,7 @@
                 <tr>
                     <th>ID</th>
                     <th>Broker</th>
+                    <th>Customer ID</th>
                     <th>Client Code</th>
                     <th>Has API Key</th>
                     <th>Active</th>
@@ -113,6 +115,7 @@
             <div id="brokerEditor" style="display:none; margin-top:0.8rem; border:1px solid #eee; padding:0.6rem; background:#fff6e6;">
                 <h4>Edit Broker <span id="editBrokerIdLbl"></span></h4>
                 <div class="form-row"><label class="inline small">Broker Name</label><input id="e_brokerName" /></div>
+                <div class="form-row"><label class="inline small">Customer ID</label><input id="e_customerId" placeholder="numeric customerId" /></div>
                 <div class="form-row"><label class="inline small">API Key</label><input id="e_apiKey" /></div>
                 <div class="form-row"><label class="inline small">Broker Username</label><input id="e_brokerUser" /></div>
                 <div class="form-row"><label class="inline small">Broker Password</label><input id="e_brokerPw" type="password"/></div>
@@ -620,6 +623,158 @@ try {
 // Initial load
 ensureCsrf();
 loadUsers();
+
+// --- Broker management JS ---
+async function loadBrokers(userId) {
+    try {
+        const uid = userId == null ? window.selectedUserId : userId;
+        if (!uid) return;
+        const tbody = document.querySelector('#brokersTable tbody');
+        if (!tbody) return;
+        tbody.innerHTML = '';
+        const data = await fetchJson('/admin/app-users/' + encodeURIComponent(uid) + '/brokers');
+        if (!Array.isArray(data) || data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="muted">No brokers configured</td></tr>';
+            return;
+        }
+        data.forEach(b => {
+            const tr = document.createElement('tr');
+            const id = b.id || '';
+            const brokerName = b.brokerName || '';
+            const customerId = b.customerId != null ? b.customerId : '';
+            const clientCode = b.clientCode ? b.clientCode : '';
+            const hasApiKey = b.hasApiKey ? 'Yes' : 'No';
+            const active = b.active ? 'Yes' : 'No';
+            const actionsTd = document.createElement('td');
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'btn small';
+            editBtn.innerText = 'Edit';
+            editBtn.addEventListener('click', function () {
+                // show editor but don't populate secrets (they are encrypted). Allow editing visible fields.
+                try {
+                    document.getElementById('brokerEditor').style.display = 'block';
+                    document.getElementById('editBrokerIdLbl').innerText = id;
+                    document.getElementById('e_brokerName').value = brokerName;
+                    document.getElementById('e_customerId').value = customerId;
+                    document.getElementById('e_clientCode').value = clientCode || '';
+                    document.getElementById('e_apiKey').value = '';
+                    document.getElementById('e_brokerUser').value = '';
+                    document.getElementById('e_brokerPw').value = '';
+                    document.getElementById('e_totp').value = '';
+                    document.getElementById('e_secret').value = '';
+                    document.getElementById('e_active').checked = !!b.active;
+                } catch (e) { console.debug('open broker editor failed', e); }
+            });
+            actionsTd.appendChild(editBtn);
+
+            const delBtn = document.createElement('button');
+            delBtn.className = 'btn small danger';
+            delBtn.style.marginLeft = '6px';
+            delBtn.innerText = 'Delete';
+            delBtn.addEventListener('click', async function () {
+                if (!confirm('Delete broker id ' + id + '?')) return;
+                try {
+                    await ensureCsrf();
+                    await fetchJson('/admin/brokers/' + id, { method: 'DELETE' });
+                    await loadBrokers(uid);
+                } catch (e) {
+                    alert('Failed to delete broker: ' + (e && e.message ? e.message : e));
+                }
+            });
+            actionsTd.appendChild(delBtn);
+
+            tr.innerHTML = `<td>${id}</td><td>${escapeHtml(brokerName)}</td><td>${escapeHtml(customerId)}</td><td>${escapeHtml(clientCode)}</td><td>${hasApiKey}</td><td>${active}</td>`;
+            tr.appendChild(actionsTd);
+            tbody.appendChild(tr);
+        });
+    } catch (e) {
+        console.error('loadBrokers failed', e);
+    }
+}
+
+// Show add broker form
+try {
+    const showBtn = document.getElementById('showAddBrokerBtn');
+    if (showBtn) showBtn.addEventListener('click', function () {
+        try {
+            document.getElementById('addBrokerForm').style.display = 'block';
+            // clear fields
+            ['b_brokerName','b_apiKey','b_brokerUser','b_brokerPw','b_clientCode','b_totp','b_secret'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+            document.getElementById('b_active').checked = true;
+        } catch (e) { console.debug('show add broker failed', e); }
+    });
+} catch (e) { console.debug('attach showAddBrokerBtn failed', e); }
+
+// Cancel add
+try {
+    const cancel = document.getElementById('addBrokerCancel');
+    if (cancel) cancel.addEventListener('click', function () { document.getElementById('addBrokerForm').style.display = 'none'; });
+} catch (e) { console.debug('attach addBrokerCancel failed', e); }
+
+// Submit add broker
+try {
+    const submit = document.getElementById('addBrokerSubmit');
+    if (submit) submit.addEventListener('click', async function () {
+        try {
+            const uid = window.selectedUserId;
+            if (!uid) { alert('Select a user first'); return; }
+            const payload = {
+                brokerName: document.getElementById('b_brokerName').value,
+                customerId: (document.getElementById('b_customerId').value || '').trim() === '' ? null : Number(document.getElementById('b_customerId').value),
+                apiKey: document.getElementById('b_apiKey').value || null,
+                brokerUsername: document.getElementById('b_brokerUser').value || null,
+                brokerPassword: document.getElementById('b_brokerPw').value || null,
+                clientCode: document.getElementById('b_clientCode').value || null,
+                totpSecret: document.getElementById('b_totp').value || null,
+                secretKey: document.getElementById('b_secret').value || null,
+                active: document.getElementById('b_active').checked
+            };
+            if (!payload.brokerName || payload.brokerName.trim()==='') { alert('brokerName required'); return; }
+            await ensureCsrf();
+            const res = await fetchJson('/admin/app-users/' + encodeURIComponent(uid) + '/brokers', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            document.getElementById('addBrokerForm').style.display = 'none';
+            await loadBrokers(uid);
+            alert('Broker added');
+        } catch (e) {
+            console.error('add broker failed', e);
+            alert('Failed to add broker: ' + (e && e.message ? e.message : e));
+        }
+    });
+} catch (e) { console.debug('attach addBrokerSubmit failed', e); }
+
+// Refresh brokers button
+try {
+    const refBtn = document.getElementById('refreshBrokersBtn');
+    if (refBtn) refBtn.addEventListener('click', async () => { try { await loadBrokers(window.selectedUserId); alert('Brokers refreshed'); } catch (e) { alert('Failed to refresh brokers: ' + e); } });
+} catch (e) { console.debug('attach refreshBrokersBtn failed', e); }
+
+// Broker editor save/cancel
+try {
+    const saveBtn = document.getElementById('saveBrokerBtn');
+    if (saveBtn) saveBtn.addEventListener('click', async function () {
+        try {
+            const id = document.getElementById('editBrokerIdLbl').innerText;
+            if (!id) return alert('No broker selected');
+            const payload = {};
+            payload.brokerName = document.getElementById('e_brokerName').value || null;
+            const eCust = (document.getElementById('e_customerId').value || '').trim(); if (eCust !== '') payload.customerId = Number(eCust);
+            const api = document.getElementById('e_apiKey').value; if (api && api.trim()!=='') payload.apiKey = api;
+            const bu = document.getElementById('e_brokerUser').value; if (bu && bu.trim()!=='') payload.brokerUsername = bu;
+            const bp = document.getElementById('e_brokerPw').value; if (bp && bp.trim()!=='') payload.brokerPassword = bp;
+            const cc = document.getElementById('e_clientCode').value; if (cc && cc.trim()!=='') payload.clientCode = cc;
+            const totp = document.getElementById('e_totp').value; if (totp && totp.trim()!=='') payload.totpSecret = totp;
+            const secret = document.getElementById('e_secret').value; if (secret && secret.trim()!=='') payload.secretKey = secret;
+            payload.active = !!document.getElementById('e_active').checked;
+            await ensureCsrf();
+            await fetchJson('/admin/brokers/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            document.getElementById('brokerEditor').style.display = 'none';
+            await loadBrokers(window.selectedUserId);
+            alert('Broker updated');
+        } catch (e) { console.error('save broker failed', e); alert('Failed to save broker: ' + (e && e.message ? e.message : e)); }
+    });
+    const cancelEdit = document.getElementById('cancelEditBrokerBtn'); if (cancelEdit) cancelEdit.addEventListener('click', function () { document.getElementById('brokerEditor').style.display = 'none'; });
+} catch (e) { console.debug('attach broker editor handlers failed', e); }
 
 // Listen for messages from child iframe (place-order) to refresh lists when an order is triggered
 try {

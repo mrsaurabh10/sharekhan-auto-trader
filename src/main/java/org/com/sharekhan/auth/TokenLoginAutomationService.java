@@ -66,7 +66,7 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
         String loginUrl = sharekhanConnect.getLoginURL(apiKeyToUse, null, "1234", 1234L);
         try (Playwright playwright = Playwright.create();
              Browser browser = playwright.chromium().launch(new LaunchOptions()
-                     .setHeadless(true)
+                     .setHeadless(false)
                      .setArgs(Arrays.asList("--disable-gpu",
                              "--no-sandbox",
                              "--disable-dev-shm-usage",

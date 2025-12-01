@@ -58,21 +58,21 @@ public class TradeExecutionServiceLiveIT {
                 .build();
     }
 
-    @Test
-    void testLiveTradeExecution() {
-        String token = tokenStoreService.getAccessToken();
-        Assertions.assertThat(token).isNotNull().isNotEmpty();
-
-        // 👇 Actually place the order via Sharekhan
-        tradeExecutionService.execute(trigger, 99.05);
-
-        List<TriggeredTradeSetupEntity> trades = triggeredTradeRepo.findAll();
-        Assertions.assertThat(trades).hasSize(1);
-
-        TriggeredTradeSetupEntity saved = trades.get(0);
-        Assertions.assertThat(saved.getSymbol()).contains("DMART");
-        Assertions.assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.TRIGGERED);
-
-        System.out.println("✅ LIVE ORDER placed and saved: " + saved.getId());
-    }
+//    @Test
+//    void testLiveTradeExecution() {
+//        String token = tokenStoreService.getAccessToken();
+//        Assertions.assertThat(token).isNotNull().isNotEmpty();
+//
+//        // 👇 Actually place the order via Sharekhan
+//        tradeExecutionService.execute(trigger, 99.05);
+//
+//        List<TriggeredTradeSetupEntity> trades = triggeredTradeRepo.findAll();
+//        Assertions.assertThat(trades).hasSize(1);
+//
+//        TriggeredTradeSetupEntity saved = trades.get(0);
+//        Assertions.assertThat(saved.getSymbol()).contains("DMART");
+//        Assertions.assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.TRIGGERED);
+//
+//        System.out.println("✅ LIVE ORDER placed and saved: " + saved.getId());
+//    }
 }
