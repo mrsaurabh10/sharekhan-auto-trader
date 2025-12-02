@@ -1,0 +1,465 @@
+// admin-dashboard.js - full implementation
+(function () {
+  'use strict';
+
+  // --- Utilities ---
+  async function ensureCsrf() {
+    const meta = document.querySelector('meta[name="_csrf"]');
+    if (meta && meta.getAttribute('content')) return;
+    try {
+      const res = await fetch('/admin/csrf-token', { credentials: 'include' });
+      if (!res.ok) return;
+      const body = await res.json().catch(() => null);
+      if (!body || !body.token) return;
+      const set = (n, v) => {
+        let m = document.querySelector('meta[name="' + n + '"]');
+        if (!m) { m = document.createElement('meta'); m.setAttribute('name', n); document.head.appendChild(m); }
+        m.setAttribute('content', v);
+      };
+      set('_csrf', body.token);
+      set('_csrf_header', body.header || 'X-CSRF-TOKEN');
+      set('_csrf_parameter', body.parameter || '_csrf');
+    } catch (e) { console.debug('ensureCsrf failed', e); }
+  }
+
+  async function fetchJson(url, opts) {
+    opts = opts || {};
+    opts.credentials = opts.credentials || 'include';
+    opts.headers = opts.headers || {};
+    opts.headers['X-Requested-With'] = 'XMLHttpRequest';
+    const res = await fetch(url, opts);
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error('HTTP ' + res.status + ' ' + text);
+    }
+    return res.json();
+  }
+
+  function escapeHtml(v) { return (v == null) ? '' : String(v).replace(/[&<>'"`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;","`":"&#96;"})[c]); }
+
+  // --- Instruments / option helpers ---
+  async function fetchInstrumentsForExchange(exchange) {
+    if (!exchange) return [];
+    const url = '/api/scripts/instruments/' + encodeURIComponent(exchange);
+    try {
+      const j = await fetchJson(url).catch(() => null);
+      if (Array.isArray(j)) return j;
+      if (j && Array.isArray(j.instruments)) return j.instruments;
+    } catch (e) { console.debug('fetchInstruments json failed', e); }
+    try {
+      const resp = await fetch(url, { credentials: 'include' });
+      if (!resp.ok) return [];
+      const text = await resp.text().catch(() => null);
+      if (!text) return [];
+      try { const parsed = JSON.parse(text); if (Array.isArray(parsed)) return parsed; if (parsed && Array.isArray(parsed.instruments)) return parsed.instruments; } catch (e) {}
+      const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      if (lines.length > 1) return lines;
+      const parts = text.split(',').map(s => s.trim()).filter(Boolean);
+      if (parts.length > 1) return parts;
+      return text.trim() ? [text.trim()] : [];
+    } catch (e) { console.debug('fetchInstruments failed', e); return []; }
+  }
+
+  function populateInstruments(instruments) {
+    const sel = document.getElementById('instrument'); if (!sel) return;
+    sel.innerHTML = '<option value="">Select Instrument</option>';
+    if (!Array.isArray(instruments) || instruments.length === 0) { sel.disabled = true; return; }
+    sel.disabled = false;
+    const THRESH = 500, LIMIT = 300;
+    const parent = sel.parentNode;
+    let search = document.getElementById('admin-instrument-search');
+    if (instruments.length > THRESH) {
+      if (!search && parent) {
+        search = document.createElement('input'); search.id = 'admin-instrument-search'; search.type = 'search'; search.placeholder = 'Filter instruments...'; search.style.width = '100%'; search.style.marginBottom = '6px'; parent.insertBefore(search, sel);
+        let timer = null; search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => { const q = (search.value||'').trim().toUpperCase(); const matched = q ? instruments.filter(s => s.toUpperCase().includes(q)) : instruments.slice(0, LIMIT); sel.innerHTML = '<option value="">Select Instrument</option>' + matched.slice(0, LIMIT).map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join(''); }, 120); });
+      }
+      sel.innerHTML += instruments.slice(0, LIMIT).map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join('');
+    } else {
+      if (search) search.remove(); sel.innerHTML += instruments.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join('');
+    }
+  }
+
+  async function fetchStrikes(exchange, instrument) {
+    try { const j = await fetchJson('/api/scripts/strikes?exchange=' + encodeURIComponent(exchange) + '&instrument=' + encodeURIComponent(instrument)); return Array.isArray(j?.strikes) ? j.strikes : (Array.isArray(j) ? j : []); } catch (e) { console.debug('fetchStrikes failed', e); return []; }
+  }
+
+  async function fetchExpiries(exchange, instrument, strike) {
+    try { const j = await fetchJson('/api/scripts/expiries?exchange=' + encodeURIComponent(exchange) + '&instrument=' + encodeURIComponent(instrument) + '&strikePrice=' + encodeURIComponent(strike)); return Array.isArray(j?.expiries) ? j.expiries : (Array.isArray(j) ? j : []); } catch (e) { console.debug('fetchExpiries failed', e); return []; }
+  }
+
+  // --- Edit modal (no prompts) ---
+  function createEditModalIfNeeded() {
+    if (document.getElementById('adminEditModal')) return;
+    const modal = document.createElement('div'); modal.id = 'adminEditModal'; modal.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:9999;';
+    modal.innerHTML = '<div style="background:#fff;padding:16px;border-radius:6px;min-width:320px;max-width:520px;">' +
+      '<h3 id="adminEditModalTitle">Edit</h3>' +
+      '<div style="margin-bottom:8px"><label>Stop Loss</label><br/><input id="modal_stopLoss" type="number" step="0.01" style="width:100%"/></div>' +
+      '<div style="margin-bottom:8px"><label>Target1</label><br/><input id="modal_target1" type="number" step="0.01" style="width:100%"/></div>' +
+      '<div style="margin-bottom:8px"><label>Target2</label><br/><input id="modal_target2" type="number" step="0.01" style="width:100%"/></div>' +
+      '<div style="margin-bottom:8px"><label>Target3</label><br/><input id="modal_target3" type="number" step="0.01" style="width:100%"/></div>' +
+      '<div style="margin-bottom:8px"><label>Quantity</label><br/><input id="modal_quantity" type="number" min="1" style="width:100%"/></div>' +
+      '<div style="text-align:right;margin-top:8px"><button id="modalCancel" class="btn">Cancel</button> <button id="modalSave" class="btn primary">Save</button></div>' +
+      '</div>';
+    document.body.appendChild(modal);
+    document.getElementById('modalCancel').addEventListener('click', function () { modal.style.display = 'none'; });
+  }
+
+  function openEditModal(title, values, onSave) {
+    createEditModalIfNeeded(); const modal = document.getElementById('adminEditModal'); document.getElementById('adminEditModalTitle').innerText = title || 'Edit';
+    document.getElementById('modal_stopLoss').value = values.stopLoss != null ? values.stopLoss : '';
+    document.getElementById('modal_target1').value = values.target1 != null ? values.target1 : '';
+    document.getElementById('modal_target2').value = values.target2 != null ? values.target2 : '';
+    document.getElementById('modal_target3').value = values.target3 != null ? values.target3 : '';
+    document.getElementById('modal_quantity').value = values.quantity != null ? values.quantity : '';
+    modal.style.display = 'flex';
+    const saveBtn = document.getElementById('modalSave'); const newSave = saveBtn.cloneNode(true); saveBtn.parentNode.replaceChild(newSave, saveBtn);
+    newSave.addEventListener('click', async function () {
+      const payload = {};
+      const sl = document.getElementById('modal_stopLoss').value.trim();
+      const t1 = document.getElementById('modal_target1').value.trim();
+      const t2 = document.getElementById('modal_target2').value.trim();
+      const t3 = document.getElementById('modal_target3').value.trim();
+      const q = document.getElementById('modal_quantity').value.trim();
+      if (sl !== '') payload.stopLoss = Number(sl);
+      if (t1 !== '') payload.target1 = Number(t1);
+      if (t2 !== '') payload.target2 = Number(t2);
+      if (t3 !== '') payload.target3 = Number(t3);
+      if (q !== '') payload.quantity = Number(q);
+      try { await onSave(payload); modal.style.display = 'none'; } catch (e) { alert('Save failed: ' + (e && e.message ? e.message : e)); }
+    });
+  }
+
+  // --- Loaders for requests and executed trades ---
+  async function loadRequestedOrdersForUser(userId) {
+    const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-requests-table tbody'); if (!tbody) return; tbody.innerHTML = '';
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="11">No user selected</td></tr>'; return; }
+    try {
+      const data = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid));
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="11">No requests</td></tr>'; return; }
+      const seen = new Set(); const uniq = [];
+      for (const r of data) { const rid = r && (r.id || r.requestId || r.request_id); if (!rid) { uniq.push(r); continue; } if (seen.has(rid)) continue; seen.add(rid); uniq.push(r); }
+
+      const underlyingMap = { NF: 'NSE', BF: 'BSE', NC: 'NSE', BC: 'BSE' };
+      const optionMap = { NF: 'NFO', BF: 'BFO' };
+      const rows = []; const keySet = new Set();
+
+      for (const r of uniq) {
+        const tr = document.createElement('tr');
+        const id = r.id || '';
+        const symbol = r.instrument || r.symbol || r.tradingSymbol || '-';
+        const exchange = (r.exchange == null || r.exchange === '' || r.exchange === 'null') ? null : r.exchange;
+        const strike = r.strikePrice != null ? r.strikePrice : (r.strike || '');
+        const entry = r.entryPrice != null ? r.entryPrice : (r.entry || '-');
+        const sl = r.stopLoss != null ? r.stopLoss : (r.stop_loss || '-');
+        const t1 = r.target1 != null ? r.target1 : (r.t1 || '-');
+        const qty = r.quantity != null ? r.quantity : (r.qty || '-');
+        const status = r.status || r.requestStatus || '-';
+
+        // action cell
+        const actionCell = document.createElement('td');
+        // Edit
+        const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
+        editBtn.addEventListener('click', function () {
+          openEditModal('Edit Request ' + id, { stopLoss: r.stopLoss, target1: r.target1, target2: r.target2, target3: r.target3, quantity: r.quantity }, async function (payload) {
+            if (Object.keys(payload).length === 0) throw new Error('No changes'); await ensureCsrf(); await fetchJson('/api/trades/request/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadRequestedOrdersForUser(uid);
+          });
+        }); actionCell.appendChild(editBtn);
+
+        // Move SL
+        const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginRight = '6px'; moveBtn.innerText = 'Move SL to Cost';
+        moveBtn.addEventListener('click', async function () { const entryPrice = r.entryPrice != null ? r.entryPrice : (r.entry || null); if (entryPrice == null) { alert('No entry'); return; } await ensureCsrf(); await fetchJson('/api/trades/request/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stopLoss: Number(entryPrice) }) }); await loadRequestedOrdersForUser(uid); }); actionCell.appendChild(moveBtn);
+
+        // Cancel
+        const cancelBtn = document.createElement('button'); cancelBtn.className = 'btn small danger'; cancelBtn.style.marginRight = '6px'; cancelBtn.innerText = 'Cancel';
+        cancelBtn.addEventListener('click', async function () { if (!confirm('Cancel request id ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/cancel-request/' + id + '?userId=' + encodeURIComponent(uid), { method: 'POST' }); await loadRequestedOrdersForUser(uid); }); actionCell.appendChild(cancelBtn);
+
+        // Trigger (admin)
+        if (String(status).toUpperCase() !== 'TRIGGERED' && String(status).toUpperCase() !== 'EXECUTED') {
+          const trig = document.createElement('button'); trig.className = 'btn small'; trig.innerText = 'Trigger';
+          trig.addEventListener('click', async function () { trig.disabled = true; try { await ensureCsrf(); await fetchJson('/admin/trigger/' + id, { method: 'POST' }); await loadRequestedOrdersForUser(uid); await loadExecutedForUser(uid); } catch (e) { alert('Trigger failed: ' + (e && e.message ? e.message : e)); } finally { trig.disabled = false; } }); actionCell.appendChild(trig);
+        }
+
+        tr.innerHTML = '<td>' + escapeHtml(id) + '</td><td>' + escapeHtml(String(symbol)) + '</td><td>' + escapeHtml(String(exchange || '-')) + '</td><td>' + escapeHtml(String(strike || '-')) + '</td><td>' + escapeHtml(String(entry)) + '</td><td>' + escapeHtml(String(sl)) + '</td><td>' + escapeHtml(String(t1)) + '</td><td>' + escapeHtml(String(qty)) + '</td><td>' + escapeHtml(String(status)) + '</td>';
+        tr.appendChild(actionCell);
+        const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
+
+        // compute LTP candidates and attach
+        const candidates = [];
+        if (exchange) {
+          const ex = String(exchange).toUpperCase();
+          candidates.push((underlyingMap[ex] || ex) + ':' + symbol);
+          candidates.push((optionMap[ex] || ex) + ':' + symbol);
+        } else { ['NSE','BSE','NFO','BFO'].forEach(function(p){ candidates.push(p + ':' + symbol); }); }
+        if (strike && strike !== '') { const ex = exchange ? String(exchange).toUpperCase() : 'NF'; const mapped = (optionMap[ex] || ex); candidates.push(mapped + ':' + symbol + (r.expiry ? r.expiry : '') + strike + (r.optionType ? r.optionType : '')); }
+        const primary = candidates.length > 0 ? candidates[0] : null; if (primary) { tr.setAttribute('data-ltp-key', primary); ltpTd.setAttribute('data-ltp', primary); }
+        tbody.appendChild(tr);
+        candidates.forEach(function(k){ keySet.add(k); }); rows.push({ ltpTd: ltpTd, candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: r.expiry || null, optionType: r.optionType || null });
+      }
+
+      // fill LTP in batch
+      if (keySet.size > 0) {
+        const map = await batchFetchMstockLtp(Array.from(keySet));
+        for (const info of rows) {
+          let filled = false;
+          for (const k of info.candidates) {
+            if (map && map[k] && map[k].last_price != null) {
+              info.ltpTd.innerText = Number(map[k].last_price).toFixed(2);
+              filled = true;
+              break;
+            }
+          }
+          if (!filled) {
+            try {
+              const params = new URLSearchParams();
+              if (info.exchange) params.set('exchange', info.exchange);
+              params.set('instrument', info.symbol);
+              if (info.strike) params.set('strikePrice', String(info.strike));
+              if (info.optionType) params.set('optionType', info.optionType);
+              if (info.expiry) params.set('expiry', info.expiry);
+
+              const optRes = await fetch('/api/scripts/option?' + params.toString(), { credentials: 'include' });
+              if (optRes && optRes.ok) {
+                const oj = await optRes.json().catch(() => null);
+                if (oj && oj.tradingSymbol) {
+                  const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
+                  const key = mapped + ':' + oj.tradingSymbol;
+                  const lres = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
+                  if (lres && lres.ok) {
+                    const lj = await lres.json().catch(() => null);
+                    if (lj && lj.status === 'success' && lj.data && lj.data[key] && lj.data[key].last_price != null) {
+                      info.ltpTd.innerText = Number(lj.data[key].last_price).toFixed(2);
+                      filled = true;
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.debug('option-resolve failed', e);
+            }
+          }
+          if (!filled) {
+            try {
+              const dyn = await resolveOptionLtp(info.exchange, info.symbol, info.strike, info.expiry, info.optionType);
+              if (dyn != null) info.ltpTd.innerText = Number(dyn).toFixed(2);
+            } catch (e) { /* ignore */ }
+          }
+        }
+      }
+
+    } catch (e) { console.error('Failed to load requests for user', uid, e); tbody.innerHTML = '<tr><td colspan="11">Error loading requests</td></tr>'; }
+  }
+
+  async function loadExecutedForUser(userId) {
+    const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-executed-table tbody'); if (!tbody) return; tbody.innerHTML = '';
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="11">No user selected</td></tr>'; return; }
+    try {
+      const data = await fetchJson('/api/orders/executed?userId=' + encodeURIComponent(uid));
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="11">No executed trades</td></tr>'; return; }
+      const seen = new Set(); const uniq = [];
+      for (const t of data) { const tid = t && (t.id || t.tradeId || t.trade_id); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
+
+      const underlyingMap = { NF: 'NSE', BF: 'BSE', NC: 'NSE', BC: 'BSE' };
+      const optionMap = { NF: 'NFO', BF: 'BFO' };
+      const rows = []; const keySet = new Set();
+
+      for (const t of uniq) {
+        const tr = document.createElement('tr');
+        const id = t.id || '';
+        const symbol = t.instrument || t.symbol || t.tradingSymbol || '-';
+        const exchange = (t.exchange == null || t.exchange === '' || t.exchange === 'null') ? null : t.exchange;
+        const strike = t.strikePrice != null ? t.strikePrice : (t.strike || '');
+        const entry = t.entryPrice != null ? t.entryPrice : (t.entry || '-');
+        const sl = t.stopLoss != null ? t.stopLoss : (t.stop_loss || '-');
+        const t1 = t.target1 != null ? t.target1 : (t.t1 || '-');
+        const qty = t.quantity != null ? t.quantity : (t.qty || '-');
+        const status = t.status || '-';
+
+        const actionCell = document.createElement('td');
+        const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXITED_FAILURE', 'EXITED']);
+        if (!forbidden.has(String(status).toUpperCase())) {
+          const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
+          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid); }); }); actionCell.appendChild(editBtn);
+          const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginRight = '6px'; moveBtn.innerText = 'Move SL to Cost'; moveBtn.addEventListener('click', async function () { if (!confirm('Move SL to entry price for trade ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); await loadExecutedForUser(uid); }); actionCell.appendChild(moveBtn);
+          const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () { if (!confirm('Square off trade ' + id + ' now?')) return; await ensureCsrf(); await fetchJson('/api/trades/square-off/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid); } catch (e) { } }, 800); }); actionCell.appendChild(closeBtn);
+        } else { actionCell.innerText = '-'; }
+
+        tr.innerHTML = '<td>' + escapeHtml(id) + '</td><td>' + escapeHtml(String(symbol)) + '</td><td>' + escapeHtml(String(exchange || '-')) + '</td><td>' + escapeHtml(String(strike || '-')) + '</td><td>' + escapeHtml(String(entry)) + '</td><td>' + escapeHtml(String(sl)) + '</td><td>' + escapeHtml(String(t1)) + '</td><td>' + escapeHtml(String(qty)) + '</td><td>' + escapeHtml(String(status)) + '</td>';
+        tr.appendChild(actionCell);
+        const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
+
+        const candidates = [];
+        if (exchange) { const ex = String(exchange).toUpperCase(); candidates.push((underlyingMap[ex] || ex) + ':' + symbol); candidates.push((optionMap[ex] || ex) + ':' + symbol); } else { ['NSE','BSE','NFO','BFO'].forEach(function(p){ candidates.push(p + ':' + symbol); }); }
+        if (strike && strike !== '') { const ex = exchange ? String(exchange).toUpperCase() : 'NF'; const mapped = (optionMap[ex] || ex); candidates.push(mapped + ':' + symbol + (t.expiry ? t.expiry : '') + strike + (t.optionType ? t.optionType : '')); }
+        const primary = candidates.length > 0 ? candidates[0] : null; if (primary) { tr.setAttribute('data-ltp-key', primary); ltpTd.setAttribute('data-ltp', primary); }
+        tbody.appendChild(tr); candidates.forEach(function(k){ keySet.add(k); }); rows.push({ ltpTd: ltpTd, candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: t.expiry || null, optionType: t.optionType || null });
+      }
+
+      if (keySet.size > 0) {
+        const map = await batchFetchMstockLtp(Array.from(keySet));
+        for (const info of rows) {
+          let filled = false;
+          for (const k of info.candidates) {
+            if (map && map[k] && map[k].last_price != null) {
+              info.ltpTd.innerText = Number(map[k].last_price).toFixed(2);
+              filled = true;
+              break;
+            }
+          }
+          if (!filled) {
+            try {
+              const params = new URLSearchParams();
+              if (info.exchange) params.set('exchange', info.exchange);
+              params.set('instrument', info.symbol);
+              if (info.strike) params.set('strikePrice', String(info.strike));
+              if (info.optionType) params.set('optionType', info.optionType);
+              if (info.expiry) params.set('expiry', info.expiry);
+
+              const optRes = await fetch('/api/scripts/option?' + params.toString(), { credentials: 'include' });
+              if (optRes && optRes.ok) {
+                const oj = await optRes.json().catch(() => null);
+                if (oj && oj.tradingSymbol) {
+                  const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
+                  const key = mapped + ':' + oj.tradingSymbol;
+                  const lres = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
+                  if (lres && lres.ok) {
+                    const lj = await lres.json().catch(() => null);
+                    if (lj && lj.status === 'success' && lj.data && lj.data[key] && lj.data[key].last_price != null) {
+                      info.ltpTd.innerText = Number(lj.data[key].last_price).toFixed(2);
+                      filled = true;
+                    }
+                  }
+                }
+              }
+            } catch (e) {
+              console.debug('option-resolve failed', e);
+            }
+          }
+          if (!filled) {
+            try {
+              const dyn = await resolveOptionLtp(info.exchange, info.symbol, info.strike, info.expiry, info.optionType);
+              if (dyn != null) info.ltpTd.innerText = Number(dyn).toFixed(2);
+            } catch (e) { /* ignore */ }
+          }
+        }
+      }
+
+    } catch (e) { console.error('Failed to load executed trades for user', uid, e); tbody.innerHTML = '<tr><td colspan="11">Error loading executed trades</td></tr>'; }
+  }
+
+  // --- LTP helpers + websocket + polling fallback ---
+  async function batchFetchMstockLtp(keys) {
+    const out = {};
+    if (!Array.isArray(keys) || keys.length === 0) return out;
+    const CHUNK = 90;
+    for (let i = 0; i < keys.length; i += CHUNK) {
+      const chunk = keys.slice(i, i + CHUNK);
+      const url = '/api/mstock/ltp?' + chunk.map(k => 'i=' + encodeURIComponent(k)).join('&');
+      try {
+        const r = await fetch(url, { credentials: 'include' });
+        if (!r.ok) continue;
+        const j = await r.json().catch(() => null);
+        if (j && j.status === 'success' && j.data) Object.assign(out, j.data);
+      } catch (e) { console.debug('batchFetch failed', e); }
+    }
+    return out;
+  }
+
+  function resolveOptionLtp(exchange, instrument, strike, expiry, optionType) {
+    return fetchLtpForOption(exchange, instrument, strike, expiry, optionType);
+  }
+
+  async function fetchLtpForOption(exchange, instrument, strike, expiry, optionType) {
+    try {
+      if (!instrument) return null;
+      const ex = exchange ? String(exchange).toUpperCase() : null;
+      const underlyingMap = { NF: 'NSE', BF: 'BSE', NC: 'NSE', BC: 'BSE' };
+      const optionMap = { NF: 'NFO', BF: 'BFO' };
+      const candidates = [];
+      if (ex) {
+        candidates.push((underlyingMap[ex] || ex) + ':' + instrument);
+        candidates.push((optionMap[ex] || ex) + ':' + instrument);
+      } else {
+        candidates.push('NSE:' + instrument, 'BSE:' + instrument, 'NFO:' + instrument, 'BFO:' + instrument);
+      }
+
+      for (const k of candidates) {
+        try {
+          const r = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(k), { credentials: 'include' });
+          if (!r.ok) continue;
+          const j = await r.json().catch(() => null);
+          if (j && j.status === 'success' && j.data && j.data[k] && j.data[k].last_price != null) return Number(j.data[k].last_price);
+        } catch (e) { }
+      }
+
+      if (ex === 'NC' || ex === 'BC') {
+        const key = (underlyingMap[ex] || ex) + ':' + instrument;
+        try {
+          const r = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
+          if (r.ok) {
+            const j = await r.json().catch(() => null);
+            if (j && j.status === 'success' && j.data && j.data[key] && j.data[key].last_price != null) return Number(j.data[key].last_price);
+          }
+        } catch (e) { }
+      }
+
+      try {
+        const params = new URLSearchParams(); if (exchange) params.set('exchange', exchange); params.set('instrument', instrument); if (strike != null) params.set('strikePrice', String(strike)); if (optionType) params.set('optionType', optionType); if (expiry) params.set('expiry', expiry);
+        const optRes = await fetch('/api/scripts/option?' + params.toString(), { credentials: 'include' });
+        if (optRes && optRes.ok) {
+          const oj = await optRes.json().catch(() => null);
+          if (oj && oj.tradingSymbol) {
+            const mapped = (optionMap[ex] || ex) || ex;
+            const key = mapped + ':' + oj.tradingSymbol;
+            const lres = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
+            if (lres && lres.ok) {
+              const lj = await lres.json().catch(() => null);
+              if (lj && lj.status === 'success' && lj.data && lj.data[key] && lj.data[key].last_price != null) return Number(lj.data[key].last_price);
+            }
+          }
+        }
+      } catch (e) { }
+
+      return null;
+    } catch (e) { console.debug('fetchLtpForOption failed', e); return null; }
+  }
+
+  let adminWs = null; let pollHandle = null; let ltpCache = {};
+  function applyLtpMap(map) { try { Object.assign(ltpCache, map || {}); document.querySelectorAll('tr[data-ltp-key]').forEach(function(tr){ try { const key = tr.getAttribute('data-ltp-key'); if (!key) return; const td = tr.querySelector('td[data-ltp]'); if (td && ltpCache[key] && ltpCache[key].last_price != null) td.innerText = Number(ltpCache[key].last_price).toFixed(2); } catch (e) {} }); } catch (e) { console.debug('applyLtpMap failed', e); } }
+  function startAdminWs() { try { if (adminWs && adminWs.readyState === WebSocket.OPEN) return; const proto = location.protocol === 'https:' ? 'wss://' : 'ws://'; const url = proto + location.host + '/ws/ltp'; adminWs = new WebSocket(url); adminWs.onopen = function() { console.debug('admin LTP ws open'); if (pollHandle) { clearInterval(pollHandle); pollHandle = null; } }; adminWs.onmessage = function(ev) { try { const js = JSON.parse(ev.data); if (!js) return; if (js.i && js.last_price != null) { const m = {}; m[js.i] = { last_price: js.last_price }; applyLtpMap(m); return; } if (js.data) { applyLtpMap(js.data); return; } if (Array.isArray(js)) { const m = {}; js.forEach(function(it){ if (it.i && it.last_price != null) m[it.i] = { last_price: it.last_price }; }); applyLtpMap(m); } } catch (e) { console.debug('adminWs parse failed', e); } }; adminWs.onclose = function() { console.debug('admin LTP ws closed'); adminWs = null; startAdminPolling(); }; adminWs.onerror = function(e) { console.debug('admin LTP ws error', e); adminWs && adminWs.close(); }; } catch (e) { console.debug('startAdminWs failed', e); startAdminPolling(); } }
+  function startAdminPolling() { if (pollHandle) return; pollHandle = setInterval(async function(){ try { const keys = new Set(); document.querySelectorAll('tr[data-ltp-key]').forEach(function(tr){ const k = tr.getAttribute('data-ltp-key'); if (k) keys.add(k); }); if (keys.size === 0) return; const map = await batchFetchMstockLtp(Array.from(keys)); applyLtpMap(map); } catch (e) { console.debug('admin poll failed', e); } }, 5000); }
+
+  // --- load users and brokers ---
+  async function loadUsers() {
+    const container = document.getElementById('usersContainer'); if (!container) return; container.innerText = 'Loading users...';
+    try {
+      let users = null; try { users = await fetchJson('/admin/app-users'); } catch (e) { console.debug('/admin/app-users failed', e); }
+      if (!Array.isArray(users) || users.length === 0) { try { users = await fetchJson('/admin/users'); } catch (e) { console.debug('/admin/users failed', e); } }
+      // normalize users to an array to avoid null/undefined flows
+      if (!Array.isArray(users)) users = [];
+      if (users.length === 0) { container.innerText = 'No users'; return; }
+      const ul = document.createElement('ul'); ul.style.padding = '0'; users.forEach(function(u){ const li = document.createElement('li'); li.innerText = (u.username || ('user-' + u.id)) + (u.customerId ? (' [' + u.customerId + ']') : ''); li.style.padding = '6px'; li.style.cursor = 'pointer'; li.addEventListener('click', function(){ selectUser(u.id, li, u.customerId); }); ul.appendChild(li); }); container.innerHTML = ''; container.appendChild(ul); const first = ul.querySelector('li'); if (first) first.click();
+    } catch (e) { container.innerText = 'Error loading users: ' + (e && e.message ? e.message : e); }
+  }
+
+  async function loadBrokers(userId) { const tbody = document.querySelector('#brokersTable tbody'); if (!tbody) return; tbody.innerHTML = ''; try { const data = await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers'); if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="7">No brokers configured</td></tr>'; return; } data.forEach(function(b){ const tr = document.createElement('tr'); tr.innerHTML = '<td>' + escapeHtml(b.id || '') + '</td><td>' + escapeHtml(b.brokerName || '') + '</td><td>' + escapeHtml(b.customerId || '') + '</td><td>' + escapeHtml(b.clientCode || '') + '</td><td>' + (b.hasApiKey ? 'Yes' : 'No') + '</td><td>' + (b.active ? 'Yes' : 'No') + '</td><td>-</td>'; tbody.appendChild(tr); }); } catch (e) { console.debug('loadBrokers failed', e); tbody.innerHTML = '<tr><td colspan="7">Error loading brokers</td></tr>'; } }
+
+  // select user helper
+  function selectUser(appUserId, liElem, customerId) {
+    try { window.selectedUserId = appUserId; window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId; const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedCustomerId; const uc = document.getElementById('userContent'); if (uc) uc.style.display = 'block'; try { const parent = document.getElementById('usersContainer'); if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); }); if (liElem && liElem.classList) liElem.classList.add('active'); } catch (e) {} loadRequestedOrdersForUser(appUserId).catch(function(){}); loadExecutedForUser(appUserId).catch(function(){}); loadBrokers(appUserId).catch(function(){}); } catch (e) { console.debug('selectUser failed', e); }
+  }
+
+  // expose functions needed by template / other scripts
+  window.loadUsers = loadUsers;
+  window.loadRequestedOrdersForUser = loadRequestedOrdersForUser;
+  window.loadExecutedForUser = loadExecutedForUser;
+  window.loadBrokers = loadBrokers;
+  window.selectUser = selectUser;
+  window.fetchInstrumentsForExchange = fetchInstrumentsForExchange;
+  window.populateInstruments = populateInstruments;
+  window.fetchStrikes = fetchStrikes;
+  window.fetchExpiries = fetchExpiries;
+
+  // start ws on load
+  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); startAdminWs(); });
+
+})();

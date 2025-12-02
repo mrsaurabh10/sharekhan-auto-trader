@@ -1,11 +1,7 @@
 <!DOCTYPE html>
-<html xmlns:th="http://www.thymeleaf.org">
+<html lang="en">
 <head>
     <meta charset="utf-8" />
-    <!-- CSRF tokens injected by controller model (_csrf) -->
-    <meta name="_csrf" th:content="${_csrf.token}" />
-    <meta name="_csrf_header" th:content="${_csrf.headerName}" />
-    <meta name="_csrf_parameter" th:content="${_csrf.parameterName}" />
     <title>Admin Dashboard</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 1.5rem; }
@@ -29,8 +25,7 @@
 </head>
 <body>
 <h2>Admin Dashboard</h2>
-<!-- Show server-side dashboard load error, if any -->
-<div th:if="${error}" style="background:#ffeaea;border:1px solid #ffb6b6;padding:8px;margin-bottom:8px;color:#800">Error: <span th:text="${error}"></span></div>
+<div id="serverError" style="display:none;background:#ffeaea;border:1px solid #ffb6b6;padding:8px;margin-bottom:8px;color:#800"></div>
 <div style="display:flex">
     <div class="users-list">
         <h4>Users</h4>
@@ -46,12 +41,7 @@
         </div>
     </div>
     <div class="content">
-        <!-- selected user title removed to avoid duplicate label (place-order iframe shows its own header) -->
-
-        <!-- User tabs -->
         <div id="userTabs" style="margin-bottom:0.75rem;display:flex;gap:6px;flex-wrap:wrap"></div>
-
-        <!-- Per-user area: embed full Place Order page in an iframe so admin can use full feature-rich UI -->
         <div id="userContent" style="display:none">
             <div id="placeOrderPanel" style="border:1px solid #eee;padding:0.6rem;margin-bottom:0.8rem;background:#fbfbff;">
                 <h4>Place Order (Admin)</h4>
@@ -167,6 +157,7 @@
     </div>
 </div>
 
-<script th:src="@{/admin-dashboard.js(ts=${T(java.lang.System).currentTimeMillis()})}"></script>
+<script src="/admin-dashboard.js"></script>
 </body>
 </html>
+

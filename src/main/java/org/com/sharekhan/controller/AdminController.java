@@ -59,16 +59,15 @@ public class AdminController {
 
     @GetMapping("/dashboard")
     public String dashboard(@RequestParam(name = "userId", required = false) Long userId, Model model, HttpServletRequest request) {
-        List<TriggerTradeRequestEntity> requests = userId == null ? requestRepository.findTop10ByOrderByIdDesc() : requestRepository.findTop10ByAppUserIdOrderByIdDesc(userId);
-        List<TriggeredTradeSetupEntity> setups = userId == null ? setupRepository.findTop10ByOrderByIdDesc() : setupRepository.findTop10ByAppUserIdOrderByIdDesc(userId);
-        model.addAttribute("requests", requests);
-        model.addAttribute("setups", setups);
-        model.addAttribute("userId", userId);
-        model.addAttribute("adminLogoutUrl", "/admin/logout");
-        // expose CSRF token
-        Object csrf = request.getAttribute("_csrf");
-        if (csrf != null) model.addAttribute("_csrf", csrf);
-        return "admin-dashboard";
+        // Redirect to the static client-side rendered admin dashboard so the browser performs a fresh GET
+        // This avoids internal server forwarding which may stream content and risk truncated chunked responses.
+        return "redirect:/admin-dashboard.html";
+    }
+
+    @GetMapping("/dashboard-ping")
+    @ResponseBody
+    public ResponseEntity<?> dashboardPing() {
+        return ResponseEntity.ok(java.util.Map.of("status", "ok", "timestamp", java.time.Instant.now().toString()));
     }
 
     @PostMapping("/trigger/{id}")
@@ -119,18 +118,23 @@ public class AdminController {
 
     @GetMapping("/users")
     @ResponseBody
-    public Object getConfiguredUsers() {
-        @SuppressWarnings("unchecked")
-        // AppUser no longer stores broker customerId; return null in that column for compatibility with the UI
-        var rows = entityManager.createQuery("SELECT a.id, a.username, null FROM AppUser a").getResultList();
-        var list = rows.stream().map(r -> {
-            Object[] cols = (Object[]) r;
-            Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
-            String username = cols[1] == null ? null : cols[1].toString();
-            Long customerId = null;
-            return java.util.Map.of("id", id, "username", username, "customerId", customerId);
-        }).collect(Collectors.toList());
-        return list;
+    public ResponseEntity<?> getConfiguredUsers() {
+        try {
+            // AppUser no longer stores broker customerId; return null in that column for compatibility with the UI
+            @SuppressWarnings("unchecked")
+            var rows = entityManager.createQuery("SELECT a.id, a.username FROM AppUser a").getResultList();
+            var list = rows.stream().map(r -> {
+                Object[] cols = (Object[]) r;
+                Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
+                String username = cols[1] == null ? null : cols[1].toString();
+                Long customerId = null;
+                return java.util.Map.of("id", id, "username", username, "customerId", customerId);
+            }).collect(Collectors.toList());
+            return ResponseEntity.ok(list);
+        } catch (Exception e) {
+            // Avoid letting the exception propagate and potentially truncate the response stream
+            return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to load users", "message", e.toString()));
+        }
     }
 
     // Admin user management endpoints
@@ -191,18 +195,23 @@ public class AdminController {
     // Regular app user management using EntityManager to avoid repository symbol issues
     @GetMapping("/app-users")
     @ResponseBody
-    public Object listAppUsers() {
-        // select scalar fields to avoid needing Lombok-generated getters in static analysis
-        @SuppressWarnings("unchecked")
-        var rows = entityManager.createQuery("SELECT a.id, a.username, a.id, a.notes FROM AppUser a").getResultList();
-        return rows.stream().map(r -> {
-            Object[] cols = (Object[]) r;
-            Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
-            String username = cols[1] == null ? null : cols[1].toString();
-            Long customerId = cols[2] == null ? null : ((Number) cols[2]).longValue();
-            String notes = cols[3] == null ? null : cols[3].toString();
-            return java.util.Map.of("id", id, "username", username, "customerId", customerId, "notes", notes);
-        }).collect(Collectors.toList());
+    public ResponseEntity<?> listAppUsers() {
+        try {
+            // select scalar fields to avoid needing Lombok-generated getters in static analysis
+            @SuppressWarnings("unchecked")
+            var rows = entityManager.createQuery("SELECT a.id, a.username, a.id, a.notes FROM AppUser a").getResultList();
+            var list = rows.stream().map(r -> {
+                Object[] cols = (Object[]) r;
+                Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
+                String username = cols[1] == null ? null : cols[1].toString();
+                Long customerId = cols[2] == null ? null : ((Number) cols[2]).longValue();
+                String notes = cols[3] == null ? null : cols[3].toString();
+                return java.util.Map.of("id", id, "username", username, "customerId", customerId, "notes", notes);
+            }).collect(Collectors.toList());
+            return ResponseEntity.ok(list);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to load app users", "message", e.toString()));
+        }
     }
 
     @PostMapping("/app-users")
@@ -216,14 +225,18 @@ public class AdminController {
         String brokerPw = (String) body.get("brokerPassword");
         String notes = (String) body.getOrDefault("notes","");
         if (username==null || username.isBlank()) return ResponseEntity.badRequest().body("username required");
-        var exists = entityManager.createQuery("SELECT count(a) FROM AppUser a WHERE a.username = :u", Long.class)
-                .setParameter("u", username).getSingleResult();
-        if (exists != null && exists > 0) return ResponseEntity.status(409).body("user exists");
-        AppUser u = new AppUser();
-        u.setUsername(username);
-        u.setNotes(notes);
-        entityManager.persist(u);
-        return ResponseEntity.ok(java.util.Map.of("id", u.getId(), "username", u.getUsername(), "Id", u.getId()));
+        try {
+            var exists = entityManager.createQuery("SELECT count(a) FROM AppUser a WHERE a.username = :u", Long.class)
+                    .setParameter("u", username).getSingleResult();
+            if (exists != null && exists > 0) return ResponseEntity.status(409).body("user exists");
+            AppUser u = new AppUser();
+            u.setUsername(username);
+            u.setNotes(notes);
+            entityManager.persist(u);
+            return ResponseEntity.ok(java.util.Map.of("id", u.getId(), "username", u.getUsername(), "Id", u.getId()));
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to create user", "message", e.toString()));
+        }
     }
 
     @PutMapping("/app-users/{id}")
@@ -251,19 +264,23 @@ public class AdminController {
     @GetMapping("/app-users/{userId}/brokers")
     @ResponseBody
     public ResponseEntity<?> listBrokers(@PathVariable Long userId) {
-        // resolve AppUser -> customerId (UI passes AppUser.id)
-        AppUser app = entityManager.find(AppUser.class, userId);
-        var list = brokerCredentialsRepository.findByAppUserId(userId).stream()
-                .map(b -> java.util.Map.of(
-                        "id", b.getId(),
-                        "brokerName", b.getBrokerName(),
-                        "customerId", b.getCustomerId(),
-                        "appUserId", b.getAppUserId(),
-                        "clientCode", b.getClientCode(),
-                        "hasApiKey", b.getApiKey() != null && !b.getApiKey().isBlank(),
-                        "active", b.getActive() != null ? b.getActive() : Boolean.FALSE
-                )).collect(Collectors.toList());
-        return ResponseEntity.ok(list);
+        try {
+            // resolve AppUser -> customerId (UI passes AppUser.id)
+            AppUser app = entityManager.find(AppUser.class, userId);
+            var list = brokerCredentialsRepository.findByAppUserId(userId).stream()
+                    .map(b -> java.util.Map.of(
+                            "id", b.getId(),
+                            "brokerName", b.getBrokerName(),
+                            "customerId", b.getCustomerId(),
+                            "appUserId", b.getAppUserId(),
+                            "clientCode", b.getClientCode(),
+                            "hasApiKey", b.getApiKey() != null && !b.getApiKey().isBlank(),
+                            "active", b.getActive() != null ? b.getActive() : Boolean.FALSE
+                    )).collect(Collectors.toList());
+            return ResponseEntity.ok(list);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to list brokers", "message", e.toString()));
+        }
     }
 
     @PostMapping("/app-users/{userId}/brokers")
