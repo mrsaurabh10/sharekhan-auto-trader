@@ -40,28 +40,65 @@
   // --- Instruments / option helpers ---
   async function fetchInstrumentsForExchange(exchange) {
     if (!exchange) return [];
-    const url = '/api/scripts/instruments/' + encodeURIComponent(exchange);
+    const tried = [];
+    // primary: path-style
+    const url1 = '/api/scripts/instruments/' + encodeURIComponent(exchange);
+    tried.push(url1);
     try {
-      const j = await fetchJson(url).catch(() => null);
+      const j = await fetchJson(url1).catch(() => null);
       if (Array.isArray(j)) return j;
       if (j && Array.isArray(j.instruments)) return j.instruments;
-    } catch (e) { console.debug('fetchInstruments json failed', e); }
+    } catch (e) { console.debug('fetchInstruments json attempt1 failed', e); }
+
+    // fallback: query param style
+    const url2 = '/api/scripts/instruments?exchange=' + encodeURIComponent(exchange);
+    tried.push(url2);
     try {
-      const resp = await fetch(url, { credentials: 'include' });
-      if (!resp.ok) return [];
-      const text = await resp.text().catch(() => null);
-      if (!text) return [];
-      try { const parsed = JSON.parse(text); if (Array.isArray(parsed)) return parsed; if (parsed && Array.isArray(parsed.instruments)) return parsed.instruments; } catch (e) {}
-      const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-      if (lines.length > 1) return lines;
-      const parts = text.split(',').map(s => s.trim()).filter(Boolean);
-      if (parts.length > 1) return parts;
-      return text.trim() ? [text.trim()] : [];
-    } catch (e) { console.debug('fetchInstruments failed', e); return []; }
+      const j2 = await fetchJson(url2).catch(() => null);
+      if (Array.isArray(j2)) return j2;
+      if (j2 && Array.isArray(j2.instruments)) return j2.instruments;
+    } catch (e) { console.debug('fetchInstruments json attempt2 failed', e); }
+
+    // final attempt: raw fetch and bruteforce parse
+    try {
+      const resp = await fetch(url1, { credentials: 'include' });
+      if (resp && resp.ok) {
+        const text = await resp.text().catch(() => null);
+        if (text) {
+          try { const parsed = JSON.parse(text); if (Array.isArray(parsed)) return parsed; if (parsed && Array.isArray(parsed.instruments)) return parsed.instruments; } catch (e) { /* not json */ }
+          const lines = text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          if (lines.length > 1) return lines;
+          const parts = text.split(',').map(s => s.trim()).filter(Boolean);
+          if (parts.length > 1) return parts;
+          if (text.trim()) return [text.trim()];
+        }
+      }
+    } catch (e) { console.debug('fetchInstruments raw attempt failed', e); }
+
+    // try url2 raw as last resort
+    try {
+      const resp2 = await fetch(url2, { credentials: 'include' });
+      if (resp2 && resp2.ok) {
+        const text2 = await resp2.text().catch(() => null);
+        if (text2) {
+          try { const parsed = JSON.parse(text2); if (Array.isArray(parsed)) return parsed; if (parsed && Array.isArray(parsed.instruments)) return parsed.instruments; } catch (e) { }
+          const lines = text2.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          if (lines.length > 1) return lines;
+          const parts = text2.split(',').map(s => s.trim()).filter(Boolean);
+          if (parts.length > 1) return parts;
+          if (text2.trim()) return [text2.trim()];
+        }
+      }
+    } catch (e) { console.debug('fetchInstruments raw attempt2 failed', e); }
+
+    console.debug('fetchInstruments: tried endpoints', tried);
+    return [];
   }
 
   function populateInstruments(instruments) {
     const sel = document.getElementById('instrument'); if (!sel) return;
+    // remove previous search input if present so populate remains consistent
+    const prevSearch = document.getElementById('admin-instrument-search'); if (prevSearch && Array.isArray(instruments) && instruments.length <= 500) prevSearch.remove();
     sel.innerHTML = '<option value="">Select Instrument</option>';
     if (!Array.isArray(instruments) || instruments.length === 0) { sel.disabled = true; return; }
     sel.disabled = false;
@@ -448,6 +485,111 @@
     try { window.selectedUserId = appUserId; window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId; const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedCustomerId; const uc = document.getElementById('userContent'); if (uc) uc.style.display = 'block'; try { const parent = document.getElementById('usersContainer'); if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); }); if (liElem && liElem.classList) liElem.classList.add('active'); } catch (e) {} loadRequestedOrdersForUser(appUserId).catch(function(){}); loadExecutedForUser(appUserId).catch(function(){}); loadBrokers(appUserId).catch(function(){}); } catch (e) { console.debug('selectUser failed', e); }
   }
 
+  // UI wiring: exchange -> instruments -> strikes -> expiries
+  function wireAdminForm() {
+    try {
+      const exSel = document.getElementById('exchange');
+      const instrSel = document.getElementById('instrument');
+      const strikeSel = document.getElementById('strikePrice');
+      const expirySel = document.getElementById('expiry');
+      const optionTypeSel = document.getElementById('optionType');
+      if (!exSel) return;
+
+      exSel.addEventListener('change', async function () {
+        const ex = (this.value || '').trim();
+        console.debug('exchange changed to', ex);
+        if (!instrSel) return;
+        instrSel.disabled = true;
+        instrSel.innerHTML = '<option value="">Loading...</option>';
+
+        // disable/enable option type & strike/expiry for NC/BC
+        const isNCBC = (ex === 'NC' || ex === 'BC');
+        if (strikeSel) { strikeSel.disabled = !!isNCBC; strikeSel.innerHTML = '<option value="">Select Strike</option>'; }
+        if (expirySel) { expirySel.disabled = !!isNCBC; expirySel.innerHTML = '<option value="">Select Expiry</option>'; }
+        if (optionTypeSel) { optionTypeSel.disabled = !!isNCBC; if (isNCBC) optionTypeSel.value = ''; }
+
+        if (!ex) {
+          instrSel.innerHTML = '<option value="">Select Instrument</option>';
+          instrSel.disabled = true;
+          return;
+        }
+
+        try {
+          const instruments = await fetchInstrumentsForExchange(ex);
+          console.debug('instruments loaded for', ex, 'count=', (instruments && instruments.length) || 0);
+          if (!Array.isArray(instruments) || instruments.length === 0) {
+            instrSel.innerHTML = '<option value="">No instruments found</option>';
+            instrSel.disabled = true;
+          } else {
+            populateInstruments(instruments);
+            instrSel.disabled = false;
+          }
+          // if NC/BC, instrument select remains enabled but strike/expiry disabled
+        } catch (e) {
+          console.debug('Failed to load instruments for exchange', ex, e);
+          instrSel.innerHTML = '<option value="">Select Instrument</option>';
+          instrSel.disabled = true;
+        }
+      });
+
+      // debug: add small reload button next to instrument select (only if not present)
+      try {
+        const instrParent = instrSel ? instrSel.parentNode : null;
+        if (instrParent && !document.getElementById('admin-reload-instruments')) {
+          const btn = document.createElement('button'); btn.id = 'admin-reload-instruments'; btn.className = 'btn'; btn.style.marginLeft = '6px'; btn.innerText = 'Reload Instruments';
+          btn.addEventListener('click', function () {
+            const ex = (exSel.value || '').trim(); if (!ex) return alert('Select exchange first'); exSel.dispatchEvent(new Event('change'));
+          });
+          instrParent.appendChild(btn);
+        }
+      } catch (e) { console.debug('add reload button failed', e); }
+
+      if (instrSel) {
+        instrSel.addEventListener('change', async function () {
+          const instrument = (this.value || '').trim();
+          const ex = (exSel.value || '').trim();
+          if (strikeSel) { strikeSel.innerHTML = '<option value="">Select Strike</option>'; }
+          if (expirySel) { expirySel.innerHTML = '<option value="">Select Expiry</option>'; }
+          if (!instrument) return;
+          // for NC/BC no strikes
+          if (ex === 'NC' || ex === 'BC') return;
+          try {
+            const strikes = await fetchStrikes(ex, instrument);
+            if (Array.isArray(strikes) && strikeSel) {
+              strikeSel.innerHTML = '<option value="">Select Strike</option>' + strikes.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join('');
+              strikeSel.disabled = false;
+            }
+          } catch (e) { console.debug('fetchStrikes failed', e); }
+        });
+      }
+
+      // if exchange already selected on page load, trigger load
+      try {
+        if (exSel.value && exSel.value.trim() !== '') {
+          console.debug('exchange preset, triggering change for', exSel.value);
+          exSel.dispatchEvent(new Event('change'));
+        }
+      } catch (e) { console.debug('initial exchange trigger failed', e); }
+
+      if (strikeSel) {
+        strikeSel.addEventListener('change', async function () {
+          const strike = (this.value || '').trim();
+          const instrument = instrSel ? (instrSel.value || '').trim() : '';
+          const ex = (exSel.value || '').trim();
+          if (!strike) return;
+          try {
+            const expiries = await fetchExpiries(ex, instrument, strike);
+            if (Array.isArray(expiries) && expirySel) {
+              expirySel.innerHTML = '<option value="">Select Expiry</option>' + expiries.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join('');
+              expirySel.disabled = false;
+            }
+          } catch (e) { console.debug('fetchExpiries failed', e); }
+        });
+      }
+
+    } catch (e) { console.debug('wireAdminForm failed', e); }
+  }
+
   // expose functions needed by template / other scripts
   window.loadUsers = loadUsers;
   window.loadRequestedOrdersForUser = loadRequestedOrdersForUser;
@@ -460,6 +602,6 @@
   window.fetchExpiries = fetchExpiries;
 
   // start ws on load
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); startAdminWs(); });
 
 })();
