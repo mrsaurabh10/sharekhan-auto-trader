@@ -26,7 +26,31 @@
     opts = opts || {};
     opts.credentials = opts.credentials || 'include';
     opts.headers = opts.headers || {};
-    opts.headers['X-Requested-With'] = 'XMLHttpRequest';
+    // preserve headers passed by caller
+    opts.headers['X-Requested-With'] = opts.headers['X-Requested-With'] || 'XMLHttpRequest';
+
+    // ensure CSRF header for non-GET methods
+    try {
+      const method = (opts.method || 'GET').toUpperCase();
+      if (method !== 'GET') {
+        // try to read meta tags populated by ensureCsrf
+        const metaHeader = document.querySelector('meta[name="_csrf_header"]');
+        const metaToken = document.querySelector('meta[name="_csrf"]');
+        const headerName = metaHeader && metaHeader.getAttribute('content') ? metaHeader.getAttribute('content') : null;
+        const token = metaToken && metaToken.getAttribute('content') ? metaToken.getAttribute('content') : null;
+        if (headerName && token) {
+          // do not overwrite if caller explicitly set this header
+          if (!opts.headers[headerName]) opts.headers[headerName] = token;
+          // also set common fallback header name if not present (some configs expect X-CSRF-TOKEN)
+          if (!opts.headers['X-CSRF-TOKEN']) opts.headers['X-CSRF-TOKEN'] = token;
+        }
+        // if body present and no content-type set, default to json
+        if (opts.body && !Object.keys(opts.headers).some(h => h.toLowerCase() === 'content-type')) {
+          opts.headers['Content-Type'] = 'application/json';
+        }
+      }
+    } catch (e) { console.debug('fetchJson csrf attach failed', e); }
+
     const res = await fetch(url, opts);
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -183,6 +207,11 @@
       for (const r of uniq) {
         const tr = document.createElement('tr');
         const id = r.id || '';
+        // attach scripCode on row if available from API
+        const rowScripCode = r.scripCode || r.scrip_code || r.scripCodeStr || r.scrip || r.scrip_code;
+        if (rowScripCode) {
+          try { tr.setAttribute('data-scrip-code', String(rowScripCode)); } catch (e) {}
+        }
         const symbol = r.instrument || r.symbol || r.tradingSymbol || '-';
         const exchange = (r.exchange == null || r.exchange === '' || r.exchange === 'null') ? null : r.exchange;
         const strike = r.strikePrice != null ? r.strikePrice : (r.strike || '');
@@ -258,27 +287,23 @@
               if (optRes && optRes.ok) {
                 const oj = await optRes.json().catch(() => null);
                 if (oj && oj.tradingSymbol) {
+                  // if option lookup provided scripCode, annotate the row so ws updates can match
+                  if (oj.scripCode || oj.scrip_code) {
+                    try { tr.setAttribute('data-scrip-code', String(oj.scripCode || oj.scrip_code)); } catch (e) {}
+                  }
                   const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
                   const key = mapped + ':' + oj.tradingSymbol;
-                  const lres = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
-                  if (lres && lres.ok) {
-                    const lj = await lres.json().catch(() => null);
-                    if (lj && lj.status === 'success' && lj.data && lj.data[key] && lj.data[key].last_price != null) {
-                      info.ltpTd.innerText = Number(lj.data[key].last_price).toFixed(2);
-                      filled = true;
-                    }
+                  // prefer WS cache; fall back to REST only if websocket not available or data missing
+                  const maybe = await getLtpFromCacheOrFallback(key);
+                  if (maybe != null) {
+                    info.ltpTd.innerText = Number(maybe).toFixed(2);
+                    filled = true;
                   }
                 }
               }
             } catch (e) {
               console.debug('option-resolve failed', e);
             }
-          }
-          if (!filled) {
-            try {
-              const dyn = await resolveOptionLtp(info.exchange, info.symbol, info.strike, info.expiry, info.optionType);
-              if (dyn != null) info.ltpTd.innerText = Number(dyn).toFixed(2);
-            } catch (e) { /* ignore */ }
           }
         }
       }
@@ -302,6 +327,10 @@
       for (const t of uniq) {
         const tr = document.createElement('tr');
         const id = t.id || '';
+        const rowScripCode = t.scripCode || t.scrip_code || t.scrip || t.tradingScripCode;
+        if (rowScripCode) {
+          try { tr.setAttribute('data-scrip-code', String(rowScripCode)); } catch (e) {}
+        }
         const symbol = t.instrument || t.symbol || t.tradingSymbol || '-';
         const exchange = (t.exchange == null || t.exchange === '' || t.exchange === 'null') ? null : t.exchange;
         const strike = t.strikePrice != null ? t.strikePrice : (t.strike || '');
@@ -355,27 +384,18 @@
               if (optRes && optRes.ok) {
                 const oj = await optRes.json().catch(() => null);
                 if (oj && oj.tradingSymbol) {
+                  if (oj.scripCode || oj.scrip_code) {
+                    try { tr.setAttribute('data-scrip-code', String(oj.scripCode || oj.scrip_code)); } catch (e) {}
+                  }
                   const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
                   const key = mapped + ':' + oj.tradingSymbol;
-                  const lres = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
-                  if (lres && lres.ok) {
-                    const lj = await lres.json().catch(() => null);
-                    if (lj && lj.status === 'success' && lj.data && lj.data[key] && lj.data[key].last_price != null) {
-                      info.ltpTd.innerText = Number(lj.data[key].last_price).toFixed(2);
-                      filled = true;
-                    }
-                  }
+                  const val = await getLtpFromCacheOrFallback(key);
+                  if (val != null) return Number(val);
                 }
               }
             } catch (e) {
               console.debug('option-resolve failed', e);
             }
-          }
-          if (!filled) {
-            try {
-              const dyn = await resolveOptionLtp(info.exchange, info.symbol, info.strike, info.expiry, info.optionType);
-              if (dyn != null) info.ltpTd.innerText = Number(dyn).toFixed(2);
-            } catch (e) { /* ignore */ }
           }
         }
       }
@@ -387,6 +407,16 @@
   async function batchFetchMstockLtp(keys) {
     const out = {};
     if (!Array.isArray(keys) || keys.length === 0) return out;
+
+    // If websocket is connected, prefer cached values pushed by WS and avoid REST calls
+    if (adminWs && adminWs.readyState === WebSocket.OPEN) {
+      for (const k of keys) {
+        if (ltpCache[k] && ltpCache[k].last_price != null) out[k] = ltpCache[k];
+      }
+      return out;
+    }
+
+    // Fallback to REST batch fetch when websocket not available
     const CHUNK = 90;
     for (let i = 0; i < keys.length; i += CHUNK) {
       const chunk = keys.slice(i, i + CHUNK);
@@ -401,69 +431,143 @@
     return out;
   }
 
-  function resolveOptionLtp(exchange, instrument, strike, expiry, optionType) {
-    return fetchLtpForOption(exchange, instrument, strike, expiry, optionType);
-  }
-
-  async function fetchLtpForOption(exchange, instrument, strike, expiry, optionType) {
+  // Helper to get a single key's LTP from cache (preferred) or fallback to REST when WS not connected
+  async function getLtpFromCacheOrFallback(key) {
     try {
-      if (!instrument) return null;
-      const ex = exchange ? String(exchange).toUpperCase() : null;
-      const underlyingMap = { NF: 'NSE', BF: 'BSE', NC: 'NSE', BC: 'BSE' };
-      const optionMap = { NF: 'NFO', BF: 'BFO' };
-      const candidates = [];
-      if (ex) {
-        candidates.push((underlyingMap[ex] || ex) + ':' + instrument);
-        candidates.push((optionMap[ex] || ex) + ':' + instrument);
-      } else {
-        candidates.push('NSE:' + instrument, 'BSE:' + instrument, 'NFO:' + instrument, 'BFO:' + instrument);
-      }
-
-      for (const k of candidates) {
-        try {
-          const r = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(k), { credentials: 'include' });
-          if (!r.ok) continue;
-          const j = await r.json().catch(() => null);
-          if (j && j.status === 'success' && j.data && j.data[k] && j.data[k].last_price != null) return Number(j.data[k].last_price);
-        } catch (e) { }
-      }
-
-      if (ex === 'NC' || ex === 'BC') {
-        const key = (underlyingMap[ex] || ex) + ':' + instrument;
-        try {
-          const r = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
-          if (r.ok) {
-            const j = await r.json().catch(() => null);
-            if (j && j.status === 'success' && j.data && j.data[key] && j.data[key].last_price != null) return Number(j.data[key].last_price);
-          }
-        } catch (e) { }
-      }
-
-      try {
-        const params = new URLSearchParams(); if (exchange) params.set('exchange', exchange); params.set('instrument', instrument); if (strike != null) params.set('strikePrice', String(strike)); if (optionType) params.set('optionType', optionType); if (expiry) params.set('expiry', expiry);
-        const optRes = await fetch('/api/scripts/option?' + params.toString(), { credentials: 'include' });
-        if (optRes && optRes.ok) {
-          const oj = await optRes.json().catch(() => null);
-          if (oj && oj.tradingSymbol) {
-            const mapped = (optionMap[ex] || ex) || ex;
-            const key = mapped + ':' + oj.tradingSymbol;
-            const lres = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
-            if (lres && lres.ok) {
-              const lj = await lres.json().catch(() => null);
-              if (lj && lj.status === 'success' && lj.data && lj.data[key] && lj.data[key].last_price != null) return Number(lj.data[key].last_price);
-            }
-          }
-        }
-      } catch (e) { }
-
-      return null;
-    } catch (e) { console.debug('fetchLtpForOption failed', e); return null; }
+      if (!key) return null;
+      if (ltpCache && ltpCache[key] && ltpCache[key].last_price != null) return Number(ltpCache[key].last_price);
+      // if WS is up but value not yet received, prefer no REST call and let WS update later
+      if (adminWs && adminWs.readyState === WebSocket.OPEN) return null;
+      // fallback to REST for single key
+      const res = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
+      if (!res.ok) return null;
+      const j = await res.json().catch(() => null);
+      if (j && j.status === 'success' && j.data && j.data[key] && j.data[key].last_price != null) return Number(j.data[key].last_price);
+    } catch (e) { console.debug('getLtpFromCacheOrFallback failed', e); }
+    return null;
   }
 
-  let adminWs = null; let pollHandle = null; let ltpCache = {};
-  function applyLtpMap(map) { try { Object.assign(ltpCache, map || {}); document.querySelectorAll('tr[data-ltp-key]').forEach(function(tr){ try { const key = tr.getAttribute('data-ltp-key'); if (!key) return; const td = tr.querySelector('td[data-ltp]'); if (td && ltpCache[key] && ltpCache[key].last_price != null) td.innerText = Number(ltpCache[key].last_price).toFixed(2); } catch (e) {} }); } catch (e) { console.debug('applyLtpMap failed', e); } }
-  function startAdminWs() { try { if (adminWs && adminWs.readyState === WebSocket.OPEN) return; const proto = location.protocol === 'https:' ? 'wss://' : 'ws://'; const url = proto + location.host + '/ws/ltp'; adminWs = new WebSocket(url); adminWs.onopen = function() { console.debug('admin LTP ws open'); if (pollHandle) { clearInterval(pollHandle); pollHandle = null; } }; adminWs.onmessage = function(ev) { try { const js = JSON.parse(ev.data); if (!js) return; if (js.i && js.last_price != null) { const m = {}; m[js.i] = { last_price: js.last_price }; applyLtpMap(m); return; } if (js.data) { applyLtpMap(js.data); return; } if (Array.isArray(js)) { const m = {}; js.forEach(function(it){ if (it.i && it.last_price != null) m[it.i] = { last_price: it.last_price }; }); applyLtpMap(m); } } catch (e) { console.debug('adminWs parse failed', e); } }; adminWs.onclose = function() { console.debug('admin LTP ws closed'); adminWs = null; startAdminPolling(); }; adminWs.onerror = function(e) { console.debug('admin LTP ws error', e); adminWs && adminWs.close(); }; } catch (e) { console.debug('startAdminWs failed', e); startAdminPolling(); } }
-  function startAdminPolling() { if (pollHandle) return; pollHandle = setInterval(async function(){ try { const keys = new Set(); document.querySelectorAll('tr[data-ltp-key]').forEach(function(tr){ const k = tr.getAttribute('data-ltp-key'); if (k) keys.add(k); }); if (keys.size === 0) return; const map = await batchFetchMstockLtp(Array.from(keys)); applyLtpMap(map); } catch (e) { console.debug('admin poll failed', e); } }, 5000); }
+  let adminWs = null;
+  let pollHandle = null;
+  let ltpCache = {};
+
+  function applyLtpMap(map) {
+    try {
+      if (!map || typeof map !== 'object') return;
+      Object.assign(ltpCache, map || {});
+      // update rows that were annotated with data-ltp-key (mstock style keys)
+      document.querySelectorAll('tr[data-ltp-key]').forEach(function(tr) {
+        try {
+          const key = tr.getAttribute('data-ltp-key');
+          if (!key) return;
+          const td = tr.querySelector('td[data-ltp]');
+          if (td && ltpCache[key] && ltpCache[key].last_price != null) {
+            const v = Number(ltpCache[key].last_price).toFixed(2);
+            if (td.textContent !== v) td.textContent = v;
+          }
+        } catch (e) { /* ignore per-elem error */ }
+      });
+    } catch (e) {
+      console.debug('applyLtpMap failed', e);
+    }
+  }
+
+  function startAdminWs() {
+    try {
+      if (adminWs && adminWs.readyState === WebSocket.OPEN) return;
+      const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const url = proto + location.host + '/ws/ltp';
+      adminWs = new WebSocket(url);
+
+      adminWs.onopen = function() {
+        console.debug('admin LTP ws open');
+        if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+      };
+
+      adminWs.onmessage = function(ev) {
+        try {
+          const js = JSON.parse(ev.data);
+          if (!js) return;
+
+          // 1) numeric scripCode messages from backend: { scripCode: 12345, ltp: 123.45 }
+          if (js.scripCode != null && (js.ltp != null || js.last_price != null)) {
+            const sc = String(js.scripCode);
+            const lv = (js.ltp != null) ? js.ltp : js.last_price;
+            try {
+              // update any rows annotated with data-scrip-code
+              document.querySelectorAll('[data-scrip-code]').forEach(function(elem) {
+                try {
+                  if (elem.getAttribute('data-scrip-code') === sc) {
+                    // prefer a child td[data-ltp] if present
+                    const td = elem.querySelector ? elem.querySelector('td[data-ltp]') : null;
+                    const v = (lv != null && !isNaN(lv)) ? Number(lv).toFixed(2) : '-';
+                    if (!td && elem.getAttribute && elem.getAttribute('data-ltp') !== null) {
+                      if (elem.textContent !== v) elem.textContent = v;
+                    } else if (td) {
+                      if (td.textContent !== v) td.textContent = v;
+                    }
+                  }
+                } catch (e) { /* ignore per-elem error */ }
+              });
+            } catch (e) { console.debug('apply scripCode update failed', e); }
+            return;
+          }
+
+          // 2) mstock style single tick: { i: 'NFO:XYZ', last_price: 12.34 }
+          if (js.i && js.last_price != null) {
+            const m = {};
+            m[js.i] = { last_price: js.last_price };
+            applyLtpMap(m);
+            return;
+          }
+
+          // 3) wrapper with data map: { data: { 'NFO:XYZ': { last_price: 12.34 }, ... } }
+          if (js.data && typeof js.data === 'object') {
+            applyLtpMap(js.data);
+            return;
+          }
+
+          // 4) array of small items [{i:'NFO:XYZ', last_price:..}, ...]
+          if (Array.isArray(js)) {
+            const m = {};
+            js.forEach(function(it) { if (it && it.i && it.last_price != null) m[it.i] = { last_price: it.last_price }; });
+            applyLtpMap(m);
+            return;
+          }
+
+        } catch (e) {
+          console.debug('adminWs parse failed', e);
+        }
+      };
+
+      adminWs.onclose = function() {
+        console.debug('admin LTP ws closed');
+        adminWs = null;
+        startAdminPolling();
+      };
+
+      adminWs.onerror = function(e) {
+        console.debug('admin LTP ws error', e);
+        if (adminWs) try { adminWs.close(); } catch (ign) {}
+      };
+    } catch (e) {
+      console.debug('startAdminWs failed', e);
+      startAdminPolling();
+    }
+  }
+
+  function startAdminPolling() {
+    if (pollHandle) return;
+    pollHandle = setInterval(async function() {
+      try {
+        const keys = new Set();
+        document.querySelectorAll('tr[data-ltp-key]').forEach(function(tr) { const k = tr.getAttribute('data-ltp-key'); if (k) keys.add(k); });
+        if (keys.size === 0) return;
+        const map = await batchFetchMstockLtp(Array.from(keys));
+        applyLtpMap(map);
+      } catch (e) { console.debug('admin poll failed', e); }
+    }, 5000);
+  }
 
   // --- load users and brokers ---
   async function loadUsers() {
