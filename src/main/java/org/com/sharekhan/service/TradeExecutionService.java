@@ -19,6 +19,7 @@ import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
+import org.com.sharekhan.util.CryptoService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
@@ -57,6 +58,8 @@ public class TradeExecutionService {
 
     @Autowired
     private UserConfigService userConfigService;
+
+    private final CryptoService cryptoService;
 
 
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request) {
@@ -239,13 +242,20 @@ public class TradeExecutionService {
         try {
             // Prefer a customer specific token when placing the order
             Long custId = null;
+            String clientCode = "";
+            String apiKey = "";
             if (trigger.getBrokerCredentialsId() != null) {
-                custId = brokerCredentialsRepository.findById(trigger.getBrokerCredentialsId())
-                        .map(BrokerCredentialsEntity::getCustomerId).orElse(null);
+                Optional<BrokerCredentialsEntity> brokerCredentialsEntity =    brokerCredentialsRepository.
+                        findById(trigger.getBrokerCredentialsId());
+                if(brokerCredentialsEntity.isPresent()){
+                    custId = brokerCredentialsEntity.get().getCustomerId();
+                    clientCode =   cryptoService.decrypt(brokerCredentialsEntity.get().getClientCode()) ;
+                    apiKey =cryptoService.decrypt(brokerCredentialsEntity.get().getApiKey()) ;
+                }
             }
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, custId);
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
+            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, apiKey, accessToken);
 
             // 🧾 Build order request
             OrderParams order = new OrderParams();
@@ -268,7 +278,7 @@ public class TradeExecutionService {
             order.validity = "GFD";
             order.rmsCode ="ANY";
             order.disclosedQty = 0L;
-            order.channelUser = TokenLoginAutomationService.clientCode;
+            order.channelUser = clientCode ;//TokenLoginAutomationService.clientCode;
 
             var response = sharekhanConnect.placeOrder(order);
 
@@ -492,6 +502,66 @@ public class TradeExecutionService {
      * Admin helper: execute a saved TriggerTradeRequestEntity (re-use existing execute flow)
      */
     public void executeTradeFromEntity(TriggerTradeRequestEntity requestEntity) {
+        // If the saved request is missing broker credentials, resolve a sensible default
+        try {
+            if (requestEntity.getBrokerCredentialsId() == null) {
+                Long resolved = null;
+                Long uid = requestEntity.getAppUserId();
+                if (uid != null) {
+                    // Prefer active Sharekhan credentials for this AppUser, else any Sharekhan for the user
+                    List<BrokerCredentialsEntity> list = brokerCredentialsRepository.findByAppUserId(uid);
+                    if (list != null && !list.isEmpty()) {
+                        BrokerCredentialsEntity chosen = null;
+                        for (BrokerCredentialsEntity b : list) {
+                            if (b == null) continue;
+                            if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
+                                    && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
+                        }
+                        if (chosen == null) {
+                            for (BrokerCredentialsEntity b : list) {
+                                if (b == null) continue;
+                                if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
+                            }
+                        }
+                        if (chosen != null) {
+                            resolved = chosen.getId();
+                        }
+                    }
+                }
+                // As a final fallback, if still null, try any active Sharekhan credentials globally (admin/dev environments)
+                if (resolved == null) {
+                    try {
+                        List<BrokerCredentialsEntity> all = brokerCredentialsRepository.findAll();
+                        BrokerCredentialsEntity chosen = null;
+                        for (BrokerCredentialsEntity b : all) {
+                            if (b == null) continue;
+                            if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
+                                    && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
+                        }
+                        if (chosen == null) {
+                            for (BrokerCredentialsEntity b : all) {
+                                if (b == null) continue;
+                                if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
+                            }
+                        }
+                        if (chosen != null) {
+                            resolved = chosen.getId();
+                        }
+                    } catch (Exception ignore) { }
+                }
+
+                if (resolved != null) {
+                    requestEntity.setBrokerCredentialsId(resolved);
+                    // persist the resolution so subsequent actions don’t hit this path again
+                    try { triggerTradeRequestRepository.save(requestEntity); } catch (Exception ignore) { }
+                } else {
+                    log.warn("No brokerCredentialsId on request {} and no suitable default could be resolved; proceeding without credentials.", requestEntity.getId());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve broker credentials for request {}: {}", requestEntity != null ? requestEntity.getId() : null, e.toString());
+        }
+
         // attempt to fetch current LTP for the scrip
         Double ltp = ltpCacheService.getLtp(requestEntity.getScripCode());
         if (ltp == null) {
