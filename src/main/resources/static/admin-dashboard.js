@@ -56,7 +56,18 @@
       const text = await res.text().catch(() => '');
       throw new Error('HTTP ' + res.status + ' ' + text);
     }
-    return res.json();
+    // Gracefully handle non-JSON (e.g., plain text "updated") and empty responses
+    if (res.status === 204) return null;
+    const ct = (res.headers && res.headers.get && res.headers.get('content-type')) || '';
+    if (ct.toLowerCase().includes('json')) {
+      // return parsed JSON or empty object if parsing fails unexpectedly
+      try { return await res.json(); } catch (e) { return {}; }
+    }
+    // Fallbacks: try text then best-effort JSON parse
+    const text = await res.text().catch(() => '');
+    if (!text) return null;
+    try { return JSON.parse(text); } catch (e) { /* not JSON */ }
+    return text;
   }
 
   function escapeHtml(v) { return (v == null) ? '' : String(v).replace(/[&<>'"`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;","`":"&#96;"})[c]); }
@@ -582,11 +593,204 @@
     } catch (e) { container.innerText = 'Error loading users: ' + (e && e.message ? e.message : e); }
   }
 
-  async function loadBrokers(userId) { const tbody = document.querySelector('#brokersTable tbody'); if (!tbody) return; tbody.innerHTML = ''; try { const data = await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers'); if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="7">No brokers configured</td></tr>'; return; } data.forEach(function(b){ const tr = document.createElement('tr'); tr.innerHTML = '<td>' + escapeHtml(b.id || '') + '</td><td>' + escapeHtml(b.brokerName || '') + '</td><td>' + escapeHtml(b.customerId || '') + '</td><td>' + escapeHtml(b.clientCode || '') + '</td><td>' + (b.hasApiKey ? 'Yes' : 'No') + '</td><td>' + (b.active ? 'Yes' : 'No') + '</td><td>-</td>'; tbody.appendChild(tr); }); } catch (e) { console.debug('loadBrokers failed', e); tbody.innerHTML = '<tr><td colspan="7">Error loading brokers</td></tr>'; } }
+  async function loadBrokers(userId) {
+    const tbody = document.querySelector('#brokersTable tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    try {
+      const data = await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers');
+      if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="7">No brokers configured</td></tr>';
+        return;
+      }
+      data.forEach(function (b) {
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-broker-id', b.id);
+        tr.innerHTML =
+          '<td>' + escapeHtml(b.id || '') + '</td>' +
+          '<td>' + escapeHtml(b.brokerName || '') + '</td>' +
+          '<td>' + escapeHtml(b.customerId || '') + '</td>' +
+          '<td>' + escapeHtml(b.clientCode || '') + '</td>' +
+          '<td>' + (b.hasApiKey ? 'Yes' : 'No') + '</td>' +
+          '<td>' + (b.active ? 'Yes' : 'No') + '</td>' +
+          '<td>' +
+            '<button class="btn" data-action="edit">Edit</button> ' +
+            '<button class="btn danger" data-action="delete">Delete</button>' +
+          '</td>';
+        // attach actions
+        tr.querySelector('[data-action="edit"]').addEventListener('click', function(){ openBrokerEditor(b); });
+        tr.querySelector('[data-action="delete"]').addEventListener('click', function(){ deleteBroker(b.id); });
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      console.debug('loadBrokers failed', e);
+      tbody.innerHTML = '<tr><td colspan="7">Error loading brokers</td></tr>';
+    }
+  }
+
+  function showBrokersSectionFor(userId) {
+    const sec = document.getElementById('brokersSection');
+    const lbl = document.getElementById('selectedUserId');
+    if (lbl) lbl.innerText = String(userId);
+    if (sec) sec.style.display = 'block';
+  }
+
+  function resetAddBrokerForm() {
+    ['b_brokerName','b_customerId','b_apiKey','b_brokerUser','b_brokerPw','b_clientCode','b_totp','b_secret'].forEach(function(id){ const el = document.getElementById(id); if (el) el.value = ''; });
+    const chk = document.getElementById('b_active'); if (chk) chk.checked = true;
+  }
+
+  function openAddBrokerForm() {
+    resetAddBrokerForm();
+    const f = document.getElementById('addBrokerForm'); if (f) f.style.display = 'block';
+  }
+
+  function closeAddBrokerForm() {
+    const f = document.getElementById('addBrokerForm'); if (f) f.style.display = 'none';
+  }
+
+  async function openBrokerEditor(b) {
+    const editor = document.getElementById('brokerEditor'); if (!editor) return;
+    const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
+    try {
+      // Show basic info while loading
+      document.getElementById('editBrokerIdLbl').innerText = '#' + b.id;
+      editor.setAttribute('data-edit-id', b.id);
+      editor.style.display = 'block';
+      closeAddBrokerForm();
+
+      // Fetch full broker details (including decrypted secrets) for admin prefill
+      const full = await fetchJson('/admin/brokers/' + encodeURIComponent(b.id)).catch(() => null);
+      const data = full || b || {};
+
+      setVal('e_brokerName', data.brokerName);
+      setVal('e_customerId', data.customerId);
+      setVal('e_apiKey', data.apiKey);
+      setVal('e_brokerUser', data.brokerUsername);
+      setVal('e_brokerPw', data.brokerPassword);
+      setVal('e_clientCode', data.clientCode);
+      setVal('e_totp', data.totpSecret);
+      setVal('e_secret', data.secretKey);
+      const chk = document.getElementById('e_active'); if (chk) chk.checked = !!data.active;
+    } catch (e) {
+      console.debug('openBrokerEditor failed', e);
+      // fallback to minimal prefill
+      setVal('e_brokerName', b && b.brokerName);
+      setVal('e_customerId', b && b.customerId);
+      const chk = document.getElementById('e_active'); if (chk) chk.checked = !!(b && b.active);
+    }
+  }
+
+  function closeBrokerEditor() {
+    const editor = document.getElementById('brokerEditor'); if (editor) { editor.style.display = 'none'; editor.removeAttribute('data-edit-id'); }
+  }
+
+  async function saveEditedBroker() {
+    const editor = document.getElementById('brokerEditor'); if (!editor) return;
+    const id = editor.getAttribute('data-edit-id'); if (!id) return;
+    // Collect all fields (prefilled earlier) so we send complete state
+    const getVal = id => { const el = document.getElementById(id); return el ? el.value : null; };
+    const toNullIfEmpty = v => (v === '' || v === undefined) ? null : v;
+    let customerIdRaw = getVal('e_customerId');
+    const body = {
+      brokerName: toNullIfEmpty(getVal('e_brokerName')),
+      customerId: toNullIfEmpty(customerIdRaw),
+      apiKey: toNullIfEmpty(getVal('e_apiKey')),
+      brokerUsername: toNullIfEmpty(getVal('e_brokerUser')),
+      brokerPassword: toNullIfEmpty(getVal('e_brokerPw')),
+      clientCode: toNullIfEmpty(getVal('e_clientCode')),
+      totpSecret: toNullIfEmpty(getVal('e_totp')),
+      secretKey: toNullIfEmpty(getVal('e_secret')),
+      active: (document.getElementById('e_active')||{}).checked
+    };
+    // Normalize numeric types
+    if (body.customerId != null) {
+      const n = Number(body.customerId);
+      body.customerId = Number.isNaN(n) ? null : n;
+    }
+    try {
+      await ensureCsrf();
+      await fetchJson('/admin/brokers/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) });
+      closeBrokerEditor();
+      await loadBrokers(window.selectedUserId);
+    } catch (e) {
+      alert('Failed to save broker: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  async function deleteBroker(id) {
+    if (!id) return;
+    if (!confirm('Delete broker #' + id + '?')) return;
+    try {
+      await ensureCsrf();
+      await fetch('/admin/brokers/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      await loadBrokers(window.selectedUserId);
+    } catch (e) {
+      alert('Failed to delete broker: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  async function submitAddBroker() {
+    const userId = window.selectedUserId;
+    if (!userId) { alert('Select a user first'); return; }
+    const body = {
+      brokerName: (document.getElementById('b_brokerName')||{}).value || null,
+      customerId: (document.getElementById('b_customerId')||{}).value || null,
+      apiKey: (document.getElementById('b_apiKey')||{}).value || null,
+      brokerUsername: (document.getElementById('b_brokerUser')||{}).value || null,
+      brokerPassword: (document.getElementById('b_brokerPw')||{}).value || null,
+      clientCode: (document.getElementById('b_clientCode')||{}).value || null,
+      totpSecret: (document.getElementById('b_totp')||{}).value || null,
+      secretKey: (document.getElementById('b_secret')||{}).value || null,
+      active: (document.getElementById('b_active')||{}).checked
+    };
+    if (!body.brokerName) { alert('Broker Name is required'); return; }
+    try {
+      await ensureCsrf();
+      await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers', { method: 'POST', body: JSON.stringify(body) });
+      closeAddBrokerForm();
+      await loadBrokers(userId);
+    } catch (e) {
+      alert('Failed to add broker: ' + (e && e.message ? e.message : e));
+    }
+  }
+
+  function wireBrokersUI() {
+    try {
+      const btnRefresh = document.getElementById('refreshBrokersBtn');
+      if (btnRefresh) btnRefresh.addEventListener('click', function(){ if (window.selectedUserId) loadBrokers(window.selectedUserId); });
+      const btnShowAdd = document.getElementById('showAddBrokerBtn');
+      if (btnShowAdd) btnShowAdd.addEventListener('click', function(){ openAddBrokerForm(); });
+      const btnAddSubmit = document.getElementById('addBrokerSubmit');
+      if (btnAddSubmit) btnAddSubmit.addEventListener('click', function(){ submitAddBroker(); });
+      const btnAddCancel = document.getElementById('addBrokerCancel');
+      if (btnAddCancel) btnAddCancel.addEventListener('click', function(){ closeAddBrokerForm(); });
+      const btnSaveEdit = document.getElementById('saveBrokerBtn');
+      if (btnSaveEdit) btnSaveEdit.addEventListener('click', function(){ saveEditedBroker(); });
+      const btnCancelEdit = document.getElementById('cancelEditBrokerBtn');
+      if (btnCancelEdit) btnCancelEdit.addEventListener('click', function(){ closeBrokerEditor(); });
+    } catch (e) { console.debug('wireBrokersUI failed', e); }
+  }
 
   // select user helper
   function selectUser(appUserId, liElem, customerId) {
-    try { window.selectedUserId = appUserId; window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId; const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedCustomerId; const uc = document.getElementById('userContent'); if (uc) uc.style.display = 'block'; try { const parent = document.getElementById('usersContainer'); if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); }); if (liElem && liElem.classList) liElem.classList.add('active'); } catch (e) {} loadRequestedOrdersForUser(appUserId).catch(function(){}); loadExecutedForUser(appUserId).catch(function(){}); loadBrokers(appUserId).catch(function(){}); } catch (e) { console.debug('selectUser failed', e); }
+    try {
+      window.selectedUserId = appUserId;
+      window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId;
+      const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedCustomerId;
+      const uc = document.getElementById('userContent'); if (uc) uc.style.display = 'block';
+      try {
+        const parent = document.getElementById('usersContainer');
+        if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); });
+        if (liElem && liElem.classList) liElem.classList.add('active');
+      } catch (e) {}
+      // show and set brokers section label
+      showBrokersSectionFor(appUserId);
+      // load data
+      loadRequestedOrdersForUser(appUserId).catch(function(){});
+      loadExecutedForUser(appUserId).catch(function(){});
+      loadBrokers(appUserId).catch(function(){});
+    } catch (e) { console.debug('selectUser failed', e); }
   }
 
   // UI wiring: exchange -> instruments -> strikes -> expiries
@@ -706,6 +910,6 @@
   window.fetchExpiries = fetchExpiries;
 
   // start ws on load
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); startAdminWs(); });
 
 })();

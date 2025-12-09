@@ -326,7 +326,36 @@ public class AdminController {
         return ResponseEntity.ok(java.util.Map.of("id", b.getId(), "brokerName", b.getBrokerName(), "appUserId", b.getAppUserId()));
     }
 
-    @PutMapping("/admin/brokers/{id}")
+    // Note: class-level mapping already has "/admin" prefix.
+    // Use relative path here to avoid double "/admin/admin" which caused 404.
+    @GetMapping("/brokers/{id}")
+    @ResponseBody
+    @Transactional(readOnly = true)
+    public ResponseEntity<?> getBroker(@PathVariable Long id) {
+        var opt = brokerCredentialsRepository.findById(id);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        BrokerCredentialsEntity b = opt.get();
+        try {
+            Map<String, Object> resp = new java.util.HashMap<>();
+            resp.put("id", b.getId());
+            resp.put("brokerName", b.getBrokerName());
+            resp.put("customerId", b.getCustomerId());
+            resp.put("appUserId", b.getAppUserId());
+            resp.put("active", b.getActive() != null ? b.getActive() : Boolean.FALSE);
+            // Decrypt sensitive fields for admin edit prefill (admin area is protected by ROLE_ADMIN)
+            resp.put("apiKey", b.getApiKey() != null ? cryptoService.decrypt(b.getApiKey()) : null);
+            resp.put("brokerUsername", b.getBrokerUsername() != null ? cryptoService.decrypt(b.getBrokerUsername()) : null);
+            resp.put("brokerPassword", b.getBrokerPassword() != null ? cryptoService.decrypt(b.getBrokerPassword()) : null);
+            resp.put("clientCode", b.getClientCode() != null ? cryptoService.decrypt(b.getClientCode()) : null);
+            resp.put("totpSecret", b.getTotpSecret() != null ? cryptoService.decrypt(b.getTotpSecret()) : null);
+            resp.put("secretKey", b.getSecretKey() != null ? cryptoService.decrypt(b.getSecretKey()) : null);
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to decrypt broker", "message", e.toString()));
+        }
+    }
+
+    @PutMapping("/brokers/{id}")
     @ResponseBody
     @Transactional
     public ResponseEntity<?> updateBroker(@PathVariable Long id, @RequestBody java.util.Map<String,Object> body) {
@@ -362,7 +391,8 @@ public class AdminController {
         return ResponseEntity.ok("updated");
     }
 
-    @DeleteMapping("/admin/brokers/{id}")
+    // Same fix as above: keep path relative to class-level "/admin"
+    @DeleteMapping("/brokers/{id}")
     @ResponseBody
     @Transactional
     public ResponseEntity<?> deleteBroker(@PathVariable Long id) {
