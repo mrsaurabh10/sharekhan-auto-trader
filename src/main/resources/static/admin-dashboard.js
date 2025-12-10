@@ -253,7 +253,36 @@
         // Trigger (admin)
         if (String(status).toUpperCase() !== 'TRIGGERED' && String(status).toUpperCase() !== 'EXECUTED') {
           const trig = document.createElement('button'); trig.className = 'btn small'; trig.innerText = 'Trigger';
-          trig.addEventListener('click', async function () { trig.disabled = true; try { await ensureCsrf(); await fetchJson('/admin/trigger/' + id, { method: 'POST' }); await loadRequestedOrdersForUser(uid); await loadExecutedForUser(uid); } catch (e) { alert('Trigger failed: ' + (e && e.message ? e.message : e)); } finally { trig.disabled = false; } }); actionCell.appendChild(trig);
+          trig.addEventListener('click', async function () {
+            trig.disabled = true;
+            try {
+              await ensureCsrf();
+              const brokerId = await (async function resolveBrokerForTrigger(userId){
+                try {
+                  const list = await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers').catch(() => null);
+                  if (!Array.isArray(list) || list.length === 0) return null;
+                  // prefer active Sharekhan
+                  const activeSk = list.find(b => b && b.brokerName && String(b.brokerName).toLowerCase() === 'sharekhan' && b.active);
+                  if (activeSk) return activeSk.id;
+                  // else any active
+                  const activeAny = list.find(b => b && b.active);
+                  if (activeAny) return activeAny.id;
+                  // else any Sharekhan
+                  const anySk = list.find(b => b && b.brokerName && String(b.brokerName).toLowerCase() === 'sharekhan');
+                  if (anySk) return anySk.id;
+                  // fallback first
+                  return list[0].id || null;
+                } catch (e) { return null; }
+              })(uid);
+              const url = brokerId ? ('/admin/trigger/' + id + '?brokerCredentialsId=' + encodeURIComponent(brokerId)) : ('/admin/trigger/' + id);
+              const res = await fetchJson(url, { method: 'POST' });
+              await loadRequestedOrdersForUser(uid);
+              await loadExecutedForUser(uid);
+            } catch (e) {
+              alert('Trigger failed: ' + (e && e.message ? e.message : e));
+            } finally { trig.disabled = false; }
+          });
+          actionCell.appendChild(trig);
         }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td><td>' + escapeHtml(String(symbol)) + '</td><td>' + escapeHtml(String(exchange || '-')) + '</td><td>' + escapeHtml(String(strike || '-')) + '</td><td>' + escapeHtml(String(entry)) + '</td><td>' + escapeHtml(String(sl)) + '</td><td>' + escapeHtml(String(t1)) + '</td><td>' + escapeHtml(String(qty)) + '</td><td>' + escapeHtml(String(status)) + '</td>';

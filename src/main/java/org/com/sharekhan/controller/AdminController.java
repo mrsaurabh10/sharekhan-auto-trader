@@ -71,10 +71,41 @@ public class AdminController {
     }
 
     @PostMapping("/trigger/{id}")
-    public ResponseEntity<?> triggerForUser(@PathVariable Long id) {
+    public ResponseEntity<?> triggerForUser(@PathVariable Long id,
+                                            @RequestParam(name = "brokerCredentialsId", required = false) Long brokerCredentialsId) {
         var opt = requestRepository.findById(id);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         TriggerTradeRequestEntity r = opt.get();
+
+        // If broker credential is explicitly provided by UI, validate and attach it
+        if (brokerCredentialsId != null) {
+            var bcOpt = brokerCredentialsRepository.findById(brokerCredentialsId);
+            if (bcOpt.isEmpty()) {
+                return ResponseEntity.badRequest().body(java.util.Map.of(
+                        "error", "invalid_broker_credentials_id",
+                        "message", "Broker credentials not found: " + brokerCredentialsId
+                ));
+            }
+            BrokerCredentialsEntity bc = bcOpt.get();
+            // Optional guard: ensure the credential belongs to the same AppUser as the request (if set)
+            if (r.getAppUserId() != null && bc.getAppUserId() != null && !r.getAppUserId().equals(bc.getAppUserId())) {
+                return ResponseEntity.badRequest().body(java.util.Map.of(
+                        "error", "broker_user_mismatch",
+                        "message", "Broker credentials do not belong to this user"
+                ));
+            }
+            try {
+                r.setBrokerCredentialsId(brokerCredentialsId);
+                requestRepository.save(r);
+            } catch (Exception e) {
+                // proceed without failing hard; service layer also has a fallback, but inform caller
+                return ResponseEntity.status(500).body(java.util.Map.of(
+                        "error", "failed_to_attach_broker",
+                        "message", e.toString()
+                ));
+            }
+        }
+
         tradeExecutionService.executeTradeFromEntity(r);
         return ResponseEntity.ok("triggered");
     }
