@@ -285,9 +285,100 @@ public class TradeExecutionService {
             log.info("Response received " + response);
             if (response == null) {
                 log.error("❌ Sharekhan order failed or returned null for trigger {}", trigger.getId());
-            }else if (!response.has("data")){
-                log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trigger.getId());
-            }else if (response.getJSONObject("data").has("orderId")){
+                // Treat null response as immediate rejection
+                TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
+                rejected.setStatus(TriggeredTradeStatus.REJECTED);
+                rejected.setExitReason("Broker returned no response while placing order");
+                rejected.setScripCode(trigger.getScripCode());
+                rejected.setExchange(trigger.getExchange());
+                rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+                rejected.setAppUserId(trigger.getAppUserId());
+                rejected.setSymbol(trigger.getSymbol());
+                rejected.setExpiry(trigger.getExpiry());
+                rejected.setStrikePrice(trigger.getStrikePrice());
+                rejected.setStopLoss(trigger.getStopLoss());
+                rejected.setTarget1(trigger.getTarget1());
+                rejected.setTarget2(trigger.getTarget2());
+                rejected.setQuantity(trigger.getQuantity());
+                rejected.setTarget3(trigger.getTarget3());
+                rejected.setInstrumentType(trigger.getInstrumentType());
+                rejected.setEntryPrice(ltp);
+                rejected.setOptionType(trigger.getOptionType());
+                rejected.setIntraday(trigger.getIntraday());
+                triggeredTradeRepo.save(rejected);
+                return rejected;
+            }
+
+            // Handle explicit error object from broker, e.g. {"errorType":"input_error","message":"...","status":400}
+            try {
+                String errorType = response.optString("errorType", null);
+                Integer httpStatus = response.has("status") ? response.optInt("status", 0) : null;
+                if ((errorType != null && !errorType.isBlank()) || (httpStatus != null && httpStatus >= 400)) {
+                    log.warn("❌ Broker rejected order for trigger {}: type={}, status={}, message={} ",
+                            trigger.getId(), errorType, httpStatus, response.optString("message", ""));
+                    TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
+                    rejected.setStatus(TriggeredTradeStatus.REJECTED);
+                    StringBuilder reason = new StringBuilder();
+                    if (errorType != null && !errorType.isBlank()) {
+                        reason.append(errorType);
+                    }
+                    String msg = response.optString("message", "");
+                    if (msg != null && !msg.isBlank()) {
+                        if (!reason.isEmpty()) reason.append(": ");
+                        reason.append(msg);
+                    }
+                    if (httpStatus != null && httpStatus >= 400) {
+                        if (!reason.isEmpty()) reason.append(" (status ").append(httpStatus).append(")");
+                        else reason.append("HTTP ").append(httpStatus);
+                    }
+                    if (reason.isEmpty()) reason.append("Broker rejected the order");
+                    rejected.setExitReason(reason.toString());
+                    rejected.setScripCode(trigger.getScripCode());
+                    rejected.setExchange(trigger.getExchange());
+                    rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+                    rejected.setAppUserId(trigger.getAppUserId());
+                    rejected.setSymbol(trigger.getSymbol());
+                    rejected.setExpiry(trigger.getExpiry());
+                    rejected.setStrikePrice(trigger.getStrikePrice());
+                    rejected.setStopLoss(trigger.getStopLoss());
+                    rejected.setTarget1(trigger.getTarget1());
+                    rejected.setTarget2(trigger.getTarget2());
+                    rejected.setQuantity(trigger.getQuantity());
+                    rejected.setTarget3(trigger.getTarget3());
+                    rejected.setInstrumentType(trigger.getInstrumentType());
+                    rejected.setEntryPrice(ltp);
+                    rejected.setOptionType(trigger.getOptionType());
+                    rejected.setIntraday(trigger.getIntraday());
+                    triggeredTradeRepo.save(rejected);
+                    return rejected;
+                }
+            } catch (Exception ignore) { /* proceed to other parsing */ }
+
+            if (!response.has("data")){
+                log.error("❌ Sharekhan order failed or returned without data for trigger {}: {}", trigger.getId(), response);
+                // Treat missing data as rejection as well
+                TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
+                rejected.setStatus(TriggeredTradeStatus.REJECTED);
+                rejected.setExitReason("Broker response missing data field");
+                rejected.setScripCode(trigger.getScripCode());
+                rejected.setExchange(trigger.getExchange());
+                rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+                rejected.setAppUserId(trigger.getAppUserId());
+                rejected.setSymbol(trigger.getSymbol());
+                rejected.setExpiry(trigger.getExpiry());
+                rejected.setStrikePrice(trigger.getStrikePrice());
+                rejected.setStopLoss(trigger.getStopLoss());
+                rejected.setTarget1(trigger.getTarget1());
+                rejected.setTarget2(trigger.getTarget2());
+                rejected.setQuantity(trigger.getQuantity());
+                rejected.setTarget3(trigger.getTarget3());
+                rejected.setInstrumentType(trigger.getInstrumentType());
+                rejected.setEntryPrice(ltp);
+                rejected.setOptionType(trigger.getOptionType());
+                rejected.setIntraday(trigger.getIntraday());
+                triggeredTradeRepo.save(rejected);
+                return rejected;
+            } else if (response.getJSONObject("data").has("orderId")){
                 String orderIdRaw = response.getJSONObject("data").optString("orderId", null);
                 String orderId = (orderIdRaw != null ? orderIdRaw.trim() : null);
                 // Some broker responses return "0" or blank when an order id isn't yet assigned. Treat such values as null
@@ -309,6 +400,7 @@ public class TradeExecutionService {
                 // If broker returned placeholder/invalid orderId (treated as null), mark as REJECTED as per requirement
                 if (orderId == null) {
                     triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.REJECTED);
+                    triggeredTradeSetupEntity.setExitReason("Broker returned invalid orderId (0/blank)");
                 } else {
                     triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
                 }

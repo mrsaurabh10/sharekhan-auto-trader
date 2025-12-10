@@ -108,9 +108,15 @@ public class OrderStatusPollingService {
 
                 log.info("⌛ Order still pending: {}",orderIdToMonitor);
             } catch (SharekhanAPIException e) {
-                log.error("❌ Error polling order status for {}: {}", orderIdToMonitor, e.getMessage());
+                // SDK-level error (HTTP/Sharekhan error shape). Treat as transient and keep polling.
+                log.warn("❌ Error polling order status for {}: {}", orderIdToMonitor, e.getMessage());
+            } catch (NullPointerException npe) {
+                // Defensive guard: upstream SDK sometimes assumes a non-null Content-Type header and NPEs
+                // Make this non-fatal so our scheduled task keeps running until the endpoint stabilizes
+                log.warn("⚠️ Transient NPE from SDK while polling order {} — likely missing Content-Type on response; will retry", orderIdToMonitor, npe);
             } catch (Exception e) {
-                throw new RuntimeException(e);
+                // Do NOT rethrow — uncaught exceptions cancel ScheduledFuture. Log and continue so we keep polling.
+                log.warn("⚠️ Unexpected error while polling order {}: {} — continuing", orderIdToMonitor, e.toString(), e);
             }
         };
         // Poll every 0.5 seconds, up to 2 minutes

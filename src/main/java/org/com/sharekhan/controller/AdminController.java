@@ -113,7 +113,11 @@ public class AdminController {
             try {
                 requestRepository.delete(r);
             } catch (Exception ignore) {}
-            return ResponseEntity.ok(java.util.Map.of("status", "rejected", "message", "Request removed due to rejection"));
+            return ResponseEntity.ok(java.util.Map.of(
+                    "status", "rejected",
+                    "message", "Request removed due to rejection",
+                    "reason", executed.getExitReason() != null ? executed.getExitReason() : "Order was rejected"
+            ));
         }
         return ResponseEntity.ok("triggered");
     }

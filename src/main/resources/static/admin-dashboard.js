@@ -276,6 +276,17 @@
               })(uid);
               const url = brokerId ? ('/admin/trigger/' + id + '?brokerCredentialsId=' + encodeURIComponent(brokerId)) : ('/admin/trigger/' + id);
               const res = await fetchJson(url, { method: 'POST' });
+              // If rejected, show reason and prefill the Place Order form for quick retry
+              if (res && typeof res === 'object' && String(res.status).toLowerCase() === 'rejected') {
+                const errDiv = document.getElementById('serverError');
+                if (errDiv) {
+                  errDiv.style.display = 'block';
+                  errDiv.innerText = (res.reason ? ('Rejected: ' + res.reason) : (res.message || 'Order rejected'));
+                } else {
+                  alert((res.reason ? ('Rejected: ' + res.reason) : (res.message || 'Order rejected')));
+                }
+                try { prefillPlaceOrderFormFromRequestRow(r); } catch (e) { /* ignore */ }
+              }
               await loadRequestedOrdersForUser(uid);
               await loadExecutedForUser(uid);
             } catch (e) {
@@ -448,25 +459,9 @@
     const out = {};
     if (!Array.isArray(keys) || keys.length === 0) return out;
 
-    // If websocket is connected, prefer cached values pushed by WS and avoid REST calls
-    if (adminWs && adminWs.readyState === WebSocket.OPEN) {
-      for (const k of keys) {
-        if (ltpCache[k] && ltpCache[k].last_price != null) out[k] = ltpCache[k];
-      }
-      return out;
-    }
-
-    // Fallback to REST batch fetch when websocket not available
-    const CHUNK = 90;
-    for (let i = 0; i < keys.length; i += CHUNK) {
-      const chunk = keys.slice(i, i + CHUNK);
-      const url = '/api/mstock/ltp?' + chunk.map(k => 'i=' + encodeURIComponent(k)).join('&');
-      try {
-        const r = await fetch(url, { credentials: 'include' });
-        if (!r.ok) continue;
-        const j = await r.json().catch(() => null);
-        if (j && j.status === 'success' && j.data) Object.assign(out, j.data);
-      } catch (e) { console.debug('batchFetch failed', e); }
+    // Only use websocket-delivered cache; do not call REST LTP API anymore
+    for (const k of keys) {
+      if (ltpCache[k] && ltpCache[k].last_price != null) out[k] = ltpCache[k];
     }
     return out;
   }
@@ -476,13 +471,8 @@
     try {
       if (!key) return null;
       if (ltpCache && ltpCache[key] && ltpCache[key].last_price != null) return Number(ltpCache[key].last_price);
-      // if WS is up but value not yet received, prefer no REST call and let WS update later
-      if (adminWs && adminWs.readyState === WebSocket.OPEN) return null;
-      // fallback to REST for single key
-      const res = await fetch('/api/mstock/ltp?i=' + encodeURIComponent(key), { credentials: 'include' });
-      if (!res.ok) return null;
-      const j = await res.json().catch(() => null);
-      if (j && j.status === 'success' && j.data && j.data[key] && j.data[key].last_price != null) return Number(j.data[key].last_price);
+      // Do not use REST fallback anymore; wait for websocket to populate cache
+      return null;
     } catch (e) { console.debug('getLtpFromCacheOrFallback failed', e); }
     return null;
   }
@@ -521,7 +511,7 @@
 
       adminWs.onopen = function() {
         console.debug('admin LTP ws open');
-        if (pollHandle) { clearInterval(pollHandle); pollHandle = null; }
+        if (pollHandle) { clearTimeout(pollHandle); pollHandle = null; }
       };
 
       adminWs.onmessage = function(ev) {
@@ -583,7 +573,10 @@
       adminWs.onclose = function() {
         console.debug('admin LTP ws closed');
         adminWs = null;
-        startAdminPolling();
+        // Try to reconnect after a short delay instead of REST polling
+        if (!pollHandle) {
+          pollHandle = setTimeout(function() { pollHandle = null; startAdminWs(); }, 2000);
+        }
       };
 
       adminWs.onerror = function(e) {
@@ -592,21 +585,11 @@
       };
     } catch (e) {
       console.debug('startAdminWs failed', e);
-      startAdminPolling();
+      // Schedule a retry instead of REST polling
+      if (!pollHandle) {
+        pollHandle = setTimeout(function() { pollHandle = null; startAdminWs(); }, 3000);
+      }
     }
-  }
-
-  function startAdminPolling() {
-    if (pollHandle) return;
-    pollHandle = setInterval(async function() {
-      try {
-        const keys = new Set();
-        document.querySelectorAll('tr[data-ltp-key]').forEach(function(tr) { const k = tr.getAttribute('data-ltp-key'); if (k) keys.add(k); });
-        if (keys.size === 0) return;
-        const map = await batchFetchMstockLtp(Array.from(keys));
-        applyLtpMap(map);
-      } catch (e) { console.debug('admin poll failed', e); }
-    }, 5000);
   }
 
   // --- load users and brokers ---
@@ -1053,6 +1036,52 @@
         alert('Debug payload logged to console');
       });
     }
+  }
+
+  // Prefill Place Order form from a Trading Request row to help user correct and retry
+  function prefillPlaceOrderFormFromRequestRow(req) {
+    try {
+      if (!req) return;
+      const exSel = document.getElementById('exchange');
+      const instrSel = document.getElementById('instrument');
+      const strikeSel = document.getElementById('strikePrice');
+      const expirySel = document.getElementById('expiry');
+      const optSel = document.getElementById('optionType');
+
+      function ensureSelectValue(sel, val) {
+        if (!sel) return;
+        const v = val == null ? '' : String(val);
+        // if option with this value not present, add it temporarily so it shows up
+        if (v && !Array.from(sel.options).some(o => String(o.value) === v)) {
+          const opt = document.createElement('option'); opt.value = v; opt.textContent = v; sel.appendChild(opt);
+        }
+        sel.value = v;
+      }
+
+      ensureSelectValue(exSel, req.exchange || req.exch || null);
+      // trigger exchange change to load instruments if needed
+      try { exSel && exSel.dispatchEvent(new Event('change')); } catch (e) {}
+
+      // instrument/symbol
+      ensureSelectValue(instrSel, req.symbol || req.instrument || '');
+      // strike, expiry, option type
+      ensureSelectValue(strikeSel, req.strikePrice != null ? req.strikePrice : (req.strike || ''));
+      ensureSelectValue(expirySel, req.expiry || '');
+      ensureSelectValue(optSel, req.optionType || '');
+
+      // numeric fields
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : String(v)); };
+      setVal('entryPrice', req.entryPrice != null ? req.entryPrice : (req.entry || ''));
+      setVal('stopLoss', req.stopLoss != null ? req.stopLoss : (req.stop_loss || ''));
+      setVal('target1', req.target1 != null ? req.target1 : (req.t1 || ''));
+      setVal('target2', req.target2 != null ? req.target2 : (req.t2 || ''));
+      setVal('target3', req.target3 != null ? req.target3 : (req.t3 || ''));
+      setVal('quantity', req.quantity != null ? req.quantity : (req.qty || ''));
+      const intr = document.getElementById('intraday'); if (intr) intr.checked = !!(req.intraday);
+
+      // scroll into view
+      const panel = document.getElementById('placeOrderPanel'); if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) { console.debug('prefillPlaceOrderFormFromRequestRow failed', e); }
   }
 
   // start ws on load
