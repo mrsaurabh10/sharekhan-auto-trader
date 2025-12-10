@@ -6,6 +6,7 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.TradeExecutionService;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -106,7 +107,14 @@ public class AdminController {
             }
         }
 
-        tradeExecutionService.executeTradeFromEntity(r);
+        var executed = tradeExecutionService.executeTradeFromEntity(r);
+        // If the order was rejected (e.g., broker returned orderId=0), remove the request so it disappears from Trading Requests
+        if (executed != null && executed.getStatus() == TriggeredTradeStatus.REJECTED) {
+            try {
+                requestRepository.delete(r);
+            } catch (Exception ignore) {}
+            return ResponseEntity.ok(java.util.Map.of("status", "rejected", "message", "Request removed due to rejection"));
+        }
         return ResponseEntity.ok("triggered");
     }
 

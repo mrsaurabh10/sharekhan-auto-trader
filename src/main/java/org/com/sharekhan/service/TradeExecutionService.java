@@ -238,7 +238,7 @@ public class TradeExecutionService {
         return true;
     }
 
-    public void execute(TriggeredTradeSetupEntity trigger, double ltp) {
+    public TriggeredTradeSetupEntity execute(TriggeredTradeSetupEntity trigger, double ltp) {
         try {
             // Prefer a customer specific token when placing the order
             Long custId = null;
@@ -339,11 +339,13 @@ public class TradeExecutionService {
                 } else {
                     log.warn("❌ Marked trade as REJECTED due to invalid/zero orderId for scripCode {}", trigger.getScripCode());
                 }
+                return triggeredTradeSetupEntity;
             }
 
         } catch (Exception e) {
             log.error("❌ Error executing trade for trigger {}: {}", trigger.getId(), e.getMessage(), e);
         }
+        return null;
     }
 
 ////    public void markOrderExecuted(String orderId) {
@@ -518,7 +520,7 @@ public class TradeExecutionService {
     /**
      * Admin helper: execute a saved TriggerTradeRequestEntity (re-use existing execute flow)
      */
-    public void executeTradeFromEntity(TriggerTradeRequestEntity requestEntity) {
+    public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity) {
         // If the saved request is missing broker credentials, resolve a sensible default
         try {
             if (requestEntity.getBrokerCredentialsId() == null) {
@@ -617,6 +619,6 @@ public class TradeExecutionService {
         temp.setTrailingSl(requestEntity.getTrailingSl());
 
         // run execution using the converted entity
-        execute(temp, ltp);
+        return execute(temp, ltp);
     }
 }
