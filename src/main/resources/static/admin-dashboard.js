@@ -938,7 +938,124 @@
   window.fetchStrikes = fetchStrikes;
   window.fetchExpiries = fetchExpiries;
 
+  // --- Place Order wiring ---
+  async function resolveBrokerForUser(userId) {
+    try {
+      const list = await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers').catch(() => null);
+      if (!Array.isArray(list) || list.length === 0) return null;
+      const activeSk = list.find(b => b && b.brokerName && String(b.brokerName).toLowerCase() === 'sharekhan' && b.active);
+      if (activeSk) return activeSk.id;
+      const activeAny = list.find(b => b && b.active);
+      if (activeAny) return activeAny.id;
+      const anySk = list.find(b => b && b.brokerName && String(b.brokerName).toLowerCase() === 'sharekhan');
+      if (anySk) return anySk.id;
+      return list[0].id || null;
+    } catch (e) { return null; }
+  }
+
+  function wirePlaceOrderForm() {
+    const form = document.getElementById('adminPlaceOrderForm');
+    const resultDiv = document.getElementById('result');
+    const errDiv = document.getElementById('serverError');
+    const btn = document.getElementById('adminPlaceOrderBtn');
+    const resetBtn = document.getElementById('adminPlaceOrderReset');
+    const debugBtn = document.getElementById('debugSubmitBtn');
+
+    if (!form) return;
+
+    function readVal(id) { const el = document.getElementById(id); return el ? el.value : null; }
+    function readNum(id) {
+      const v = readVal(id);
+      if (v == null || v === '') return null;
+      const n = Number(v);
+      return (Number.isNaN(n) ? null : n);
+    }
+
+    async function buildPayload() {
+      const ex = readVal('exchange');
+      const instrument = readVal('instrument');
+      const strikeStr = readVal('strikePrice');
+      const expiry = readVal('expiry');
+      const optionType = readVal('optionType');
+      const isNCBC = (ex === 'NC' || ex === 'BC');
+
+      const payload = {
+        exchange: ex || null,
+        instrument: instrument || null,
+        strikePrice: isNCBC ? null : (strikeStr ? Number(strikeStr) : null),
+        expiry: isNCBC ? null : (expiry || null),
+        optionType: isNCBC ? null : (optionType || null),
+        entryPrice: readNum('entryPrice'),
+        stopLoss: readNum('stopLoss'),
+        target1: readNum('target1'),
+        target2: readNum('target2'),
+        target3: readNum('target3'),
+        quantity: readNum('quantity'),
+        intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked),
+        trailingSl: null,
+        userId: window.selectedUserId || null,
+        brokerCredentialsId: null
+      };
+
+      // resolve broker id
+      if (window.selectedUserId) {
+        payload.brokerCredentialsId = await resolveBrokerForUser(window.selectedUserId);
+      }
+      return payload;
+    }
+
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
+      if (resultDiv) { resultDiv.innerText = ''; }
+      try {
+        if (btn) btn.disabled = true;
+        await ensureCsrf();
+        const body = await buildPayload();
+        // basic validation
+        if (!body.exchange) throw new Error('Exchange is required');
+        if (!body.instrument) throw new Error('Instrument is required');
+        if (body.entryPrice == null) throw new Error('Entry Price is required');
+        if (body.stopLoss == null) throw new Error('Stop Loss is required');
+
+        const resp = await fetchJson('/api/trades/trigger-on-price', {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        if (resultDiv) resultDiv.innerText = 'Order placed: ' + (resp && resp.id ? ('Request #' + resp.id) : 'OK');
+        // refresh tables for current user
+        if (window.selectedUserId) {
+          await loadRequestedOrdersForUser(window.selectedUserId);
+          await loadExecutedForUser(window.selectedUserId);
+        }
+      } catch (err) {
+        const msg = (err && err.message) ? err.message : String(err);
+        if (errDiv) { errDiv.style.display = 'block'; errDiv.innerText = msg; }
+        else alert('Place Order failed: ' + msg);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
+
+    if (resetBtn) {
+      resetBtn.addEventListener('click', function () {
+        ['exchange','instrument','strikePrice','expiry','entryPrice','stopLoss','target1','target2','target3','optionType','quantity'].forEach(function(id){ const el = document.getElementById(id); if (el) { if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value=''; } });
+        const intr = document.getElementById('intraday'); if (intr) intr.checked = false;
+        if (resultDiv) resultDiv.innerText = '';
+        if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
+      });
+    }
+
+    if (debugBtn) {
+      debugBtn.addEventListener('click', async function () {
+        const body = await buildPayload();
+        console.debug('[DEBUG] place-order payload', body);
+        alert('Debug payload logged to console');
+      });
+    }
+  }
+
   // start ws on load
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); startAdminWs(); });
 
 })();

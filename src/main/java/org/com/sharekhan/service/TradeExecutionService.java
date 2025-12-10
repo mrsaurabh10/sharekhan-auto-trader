@@ -288,7 +288,13 @@ public class TradeExecutionService {
             }else if (!response.has("data")){
                 log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trigger.getId());
             }else if (response.getJSONObject("data").has("orderId")){
-                String orderId = response.getJSONObject("data").getString("orderId");
+                String orderIdRaw = response.getJSONObject("data").optString("orderId", null);
+                String orderId = (orderIdRaw != null ? orderIdRaw.trim() : null);
+                // Some broker responses return "0" or blank when an order id isn't yet assigned. Treat such values as null
+                if (orderId == null || orderId.isBlank() || orderId.equals("0") || orderId.equalsIgnoreCase("null") || orderId.equalsIgnoreCase("na")) {
+                    log.warn("⚠️ Broker returned a non-real orderId ({}). Persisting null to avoid unique key collisions.", orderIdRaw);
+                    orderId = null;
+                }
                 //order placed  successfully
                 log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
 
@@ -296,9 +302,16 @@ public class TradeExecutionService {
                 //Thread.sleep(500);
 
                 TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
-                triggeredTradeSetupEntity.setOrderId(orderId);
+                if (orderId != null) {
+                    triggeredTradeSetupEntity.setOrderId(orderId);
+                }
 
-                triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+                // If broker returned placeholder/invalid orderId (treated as null), mark as REJECTED as per requirement
+                if (orderId == null) {
+                    triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.REJECTED);
+                } else {
+                    triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+                }
 
                 triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
                 triggeredTradeSetupEntity.setExchange(trigger.getExchange());
@@ -319,9 +332,13 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
-                eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
-
-                log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
+                // Only publish order placed event and proceed with live monitoring when order is actually placed
+                if (triggeredTradeSetupEntity.getStatus() == TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION) {
+                    eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+                    log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
+                } else {
+                    log.warn("❌ Marked trade as REJECTED due to invalid/zero orderId for scripCode {}", trigger.getScripCode());
+                }
             }
 
         } catch (Exception e) {
