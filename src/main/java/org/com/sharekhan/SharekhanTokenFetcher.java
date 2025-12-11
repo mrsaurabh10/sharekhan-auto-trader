@@ -23,7 +23,7 @@ public class SharekhanTokenFetcher {
         try (Playwright playwright = Playwright.create()) {
 
             BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                    .setHeadless(false)  // Change to true for headless
+                    .setHeadless(true)  // Change to true for headless
                     .setArgs(Arrays.asList(
                             "--disable-blink-features=AutomationControlled",
                             "--disable-popup-blocking",
