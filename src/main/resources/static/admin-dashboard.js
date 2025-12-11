@@ -865,17 +865,34 @@
         }
       });
 
-      // debug: add small reload button next to instrument select (only if not present)
+      // wire inline reload button inside the instrument cell to avoid grid misalignment
       try {
-        const instrParent = instrSel ? instrSel.parentNode : null;
-        if (instrParent && !document.getElementById('admin-reload-instruments')) {
-          const btn = document.createElement('button'); btn.id = 'admin-reload-instruments'; btn.className = 'btn'; btn.style.marginLeft = '6px'; btn.innerText = 'Reload Instruments';
-          btn.addEventListener('click', function () {
-            const ex = (exSel.value || '').trim(); if (!ex) return alert('Select exchange first'); exSel.dispatchEvent(new Event('change'));
-          });
-          instrParent.appendChild(btn);
+        const cell = document.getElementById('instrumentCell');
+        if (cell) {
+          // Prefer existing inline button if present in markup
+          let btn = document.getElementById('reloadInstrumentsBtn');
+          if (!btn) {
+            // fallback: create a small button inside the same cell (kept within the second column)
+            btn = document.createElement('button');
+            btn.id = 'reloadInstrumentsBtn';
+            btn.className = 'btn';
+            btn.type = 'button';
+            btn.textContent = 'Reload';
+            try { cell.appendChild(btn); } catch (e) {}
+          }
+          if (btn && !btn.__wired) {
+            btn.__wired = true;
+            btn.addEventListener('click', async function () {
+              const ex = (exSel.value || '').trim();
+              if (!ex) { alert('Select exchange first'); return; }
+              try {
+                const instruments = await fetchInstrumentsForExchange(ex);
+                populateInstruments(instruments || []);
+              } catch (e) { console.debug('reload instruments failed', e); }
+            });
+          }
         }
-      } catch (e) { console.debug('add reload button failed', e); }
+      } catch (e) { console.debug('wire inline reload button failed', e); }
 
       if (instrSel) {
         instrSel.addEventListener('change', async function () {
