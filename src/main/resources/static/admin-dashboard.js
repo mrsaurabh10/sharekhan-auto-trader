@@ -204,10 +204,10 @@
   // --- Loaders for requests and executed trades ---
   async function loadRequestedOrdersForUser(userId) {
     const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-requests-table tbody'); if (!tbody) return; tbody.innerHTML = '';
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="11">No user selected</td></tr>'; return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="12">No user selected</td></tr>'; return; }
     try {
       const data = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid));
-      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="11">No requests</td></tr>'; return; }
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="12">No requests</td></tr>'; return; }
       const seen = new Set(); const uniq = [];
       for (const r of data) { const rid = r && (r.id || r.requestId || r.request_id); if (!rid) { uniq.push(r); continue; } if (seen.has(rid)) continue; seen.add(rid); uniq.push(r); }
 
@@ -226,6 +226,7 @@
         const symbol = r.instrument || r.symbol || r.tradingSymbol || '-';
         const exchange = (r.exchange == null || r.exchange === '' || r.exchange === 'null') ? null : r.exchange;
         const strike = r.strikePrice != null ? r.strikePrice : (r.strike || '');
+        const optType = r.optionType || r.option_type || '';
         const entry = r.entryPrice != null ? r.entryPrice : (r.entry || '-');
         const sl = r.stopLoss != null ? r.stopLoss : (r.stop_loss || '-');
         const t1 = r.target1 != null ? r.target1 : (r.t1 || '-');
@@ -296,7 +297,16 @@
           actionCell.appendChild(trig);
         }
 
-        tr.innerHTML = '<td>' + escapeHtml(id) + '</td><td>' + escapeHtml(String(symbol)) + '</td><td>' + escapeHtml(String(exchange || '-')) + '</td><td>' + escapeHtml(String(strike || '-')) + '</td><td>' + escapeHtml(String(entry)) + '</td><td>' + escapeHtml(String(sl)) + '</td><td>' + escapeHtml(String(t1)) + '</td><td>' + escapeHtml(String(qty)) + '</td><td>' + escapeHtml(String(status)) + '</td>';
+        tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       '<td>' + escapeHtml(String(symbol)) + '</td>' +
+                       '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
+                       '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
+                       '<td>' + escapeHtml(String(optType || '-')) + '</td>' +
+                       '<td>' + escapeHtml(String(entry)) + '</td>' +
+                       '<td>' + escapeHtml(String(sl)) + '</td>' +
+                       '<td>' + escapeHtml(String(t1)) + '</td>' +
+                       '<td>' + escapeHtml(String(qty)) + '</td>' +
+                       '<td>' + escapeHtml(String(status)) + '</td>';
         tr.appendChild(actionCell);
         const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
 
@@ -359,15 +369,15 @@
         }
       }
 
-    } catch (e) { console.error('Failed to load requests for user', uid, e); tbody.innerHTML = '<tr><td colspan="11">Error loading requests</td></tr>'; }
+    } catch (e) { console.error('Failed to load requests for user', uid, e); tbody.innerHTML = '<tr><td colspan="12">Error loading requests</td></tr>'; }
   }
 
   async function loadExecutedForUser(userId) {
     const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-executed-table tbody'); if (!tbody) return; tbody.innerHTML = '';
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="11">No user selected</td></tr>'; return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; return; }
     try {
       const data = await fetchJson('/api/orders/executed?userId=' + encodeURIComponent(uid));
-      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="11">No executed trades</td></tr>'; return; }
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No executed trades</td></tr>'; return; }
       const seen = new Set(); const uniq = [];
       for (const t of data) { const tid = t && (t.id || t.tradeId || t.trade_id); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
 
@@ -385,6 +395,7 @@
         const symbol = t.instrument || t.symbol || t.tradingSymbol || '-';
         const exchange = (t.exchange == null || t.exchange === '' || t.exchange === 'null') ? null : t.exchange;
         const strike = t.strikePrice != null ? t.strikePrice : (t.strike || '');
+        const optType = t.optionType || t.option_type || '';
         const entry = t.entryPrice != null ? t.entryPrice : (t.entry || '-');
         const sl = t.stopLoss != null ? t.stopLoss : (t.stop_loss || '-');
         const t1 = t.target1 != null ? t.target1 : (t.t1 || '-');
@@ -400,15 +411,29 @@
           const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () { if (!confirm('Square off trade ' + id + ' now?')) return; await ensureCsrf(); await fetchJson('/api/trades/square-off/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid); } catch (e) { } }, 800); }); actionCell.appendChild(closeBtn);
         } else { actionCell.innerText = '-'; }
 
-        tr.innerHTML = '<td>' + escapeHtml(id) + '</td><td>' + escapeHtml(String(symbol)) + '</td><td>' + escapeHtml(String(exchange || '-')) + '</td><td>' + escapeHtml(String(strike || '-')) + '</td><td>' + escapeHtml(String(entry)) + '</td><td>' + escapeHtml(String(sl)) + '</td><td>' + escapeHtml(String(t1)) + '</td><td>' + escapeHtml(String(qty)) + '</td><td>' + escapeHtml(String(status)) + '</td>';
+        tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       '<td>' + escapeHtml(String(symbol)) + '</td>' +
+                       '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
+                       '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
+                       '<td>' + escapeHtml(String(optType || '-')) + '</td>' +
+                       '<td>' + escapeHtml(String(entry)) + '</td>' +
+                       '<td>' + escapeHtml(String(sl)) + '</td>' +
+                       '<td>' + escapeHtml(String(t1)) + '</td>' +
+                       '<td>' + escapeHtml(String(qty)) + '</td>' +
+                       '<td>' + escapeHtml(String(status)) + '</td>';
         tr.appendChild(actionCell);
-        const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
+        const ltpTd = document.createElement('td'); ltpTd.setAttribute('data-ltp', ''); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
+        const pnlTd = document.createElement('td'); pnlTd.setAttribute('data-pnl', ''); pnlTd.innerText = '-'; tr.appendChild(pnlTd);
+
+        // store entry and qty on the row for PNL computation
+        try { tr.setAttribute('data-entry', (entry != null && entry !== '-' ? String(entry) : '')); } catch (e) {}
+        try { tr.setAttribute('data-qty', (qty != null && qty !== '-' ? String(qty) : '')); } catch (e) {}
 
         const candidates = [];
         if (exchange) { const ex = String(exchange).toUpperCase(); candidates.push((underlyingMap[ex] || ex) + ':' + symbol); candidates.push((optionMap[ex] || ex) + ':' + symbol); } else { ['NSE','BSE','NFO','BFO'].forEach(function(p){ candidates.push(p + ':' + symbol); }); }
         if (strike && strike !== '') { const ex = exchange ? String(exchange).toUpperCase() : 'NF'; const mapped = (optionMap[ex] || ex); candidates.push(mapped + ':' + symbol + (t.expiry ? t.expiry : '') + strike + (t.optionType ? t.optionType : '')); }
         const primary = candidates.length > 0 ? candidates[0] : null; if (primary) { tr.setAttribute('data-ltp-key', primary); ltpTd.setAttribute('data-ltp', primary); }
-        tbody.appendChild(tr); candidates.forEach(function(k){ keySet.add(k); }); rows.push({ ltpTd: ltpTd, candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: t.expiry || null, optionType: t.optionType || null });
+        tbody.appendChild(tr); candidates.forEach(function(k){ keySet.add(k); }); rows.push({ tr: tr, ltpTd: ltpTd, pnlTd: pnlTd, entry: (entry != null && entry !== '-' ? Number(entry) : null), qty: (qty != null && qty !== '-' ? Number(qty) : null), candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: t.expiry || null, optionType: t.optionType || null });
       }
 
       if (keySet.size > 0) {
@@ -417,7 +442,13 @@
           let filled = false;
           for (const k of info.candidates) {
             if (map && map[k] && map[k].last_price != null) {
-              info.ltpTd.innerText = Number(map[k].last_price).toFixed(2);
+              const ltpNum = Number(map[k].last_price);
+              info.ltpTd.innerText = ltpNum.toFixed(2);
+              // compute PNL if possible
+              if (info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
+                const pnl = info.qty * (ltpNum - Number(info.entry));
+                info.pnlTd.innerText = Number(pnl).toFixed(2);
+              }
               filled = true;
               break;
             }
@@ -436,12 +467,19 @@
                 const oj = await optRes.json().catch(() => null);
                 if (oj && oj.tradingSymbol) {
                   if (oj.scripCode || oj.scrip_code) {
-                    try { tr.setAttribute('data-scrip-code', String(oj.scripCode || oj.scrip_code)); } catch (e) {}
+                    try { info.tr && info.tr.setAttribute('data-scrip-code', String(oj.scripCode || oj.scrip_code)); } catch (e) {}
                   }
                   const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
                   const key = mapped + ':' + oj.tradingSymbol;
                   const val = await getLtpFromCacheOrFallback(key);
-                  if (val != null) return Number(val);
+                  if (val != null) {
+                    const ltpNum = Number(val);
+                    info.ltpTd.innerText = ltpNum.toFixed(2);
+                    if (info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
+                      const pnl = info.qty * (ltpNum - Number(info.entry));
+                      info.pnlTd.innerText = Number(pnl).toFixed(2);
+                    }
+                  }
                 }
               }
             } catch (e) {
@@ -451,7 +489,7 @@
         }
       }
 
-    } catch (e) { console.error('Failed to load executed trades for user', uid, e); tbody.innerHTML = '<tr><td colspan="11">Error loading executed trades</td></tr>'; }
+    } catch (e) { console.error('Failed to load executed trades for user', uid, e); tbody.innerHTML = '<tr><td colspan="13">Error loading executed trades</td></tr>'; }
   }
 
   // --- LTP helpers + websocket + polling fallback ---
@@ -492,8 +530,19 @@
           if (!key) return;
           const td = tr.querySelector('td[data-ltp]');
           if (td && ltpCache[key] && ltpCache[key].last_price != null) {
-            const v = Number(ltpCache[key].last_price).toFixed(2);
+            const ltpNum = Number(ltpCache[key].last_price);
+            const v = ltpNum.toFixed(2);
             if (td.textContent !== v) td.textContent = v;
+            // update PNL if this row has it
+            const pnlTd = tr.querySelector('td[data-pnl]');
+            if (pnlTd) {
+              const entry = parseFloat(tr.getAttribute('data-entry') || '');
+              const qty = parseFloat(tr.getAttribute('data-qty') || '');
+              if (!Number.isNaN(entry) && !Number.isNaN(qty)) {
+                const pnl = qty * (ltpNum - entry);
+                pnlTd.textContent = Number(pnl).toFixed(2);
+              }
+            }
           }
         } catch (e) { /* ignore per-elem error */ }
       });
@@ -530,11 +579,25 @@
                   if (elem.getAttribute('data-scrip-code') === sc) {
                     // prefer a child td[data-ltp] if present
                     const td = elem.querySelector ? elem.querySelector('td[data-ltp]') : null;
-                    const v = (lv != null && !isNaN(lv)) ? Number(lv).toFixed(2) : '-';
+                    const ltpNum = (lv != null && !isNaN(lv)) ? Number(lv) : NaN;
+                    const v = (!Number.isNaN(ltpNum)) ? ltpNum.toFixed(2) : '-';
                     if (!td && elem.getAttribute && elem.getAttribute('data-ltp') !== null) {
                       if (elem.textContent !== v) elem.textContent = v;
                     } else if (td) {
                       if (td.textContent !== v) td.textContent = v;
+                    }
+                    // update PNL if elem is a row with stored entry/qty
+                    const tr = elem.tagName === 'TR' ? elem : (elem.closest ? elem.closest('tr') : null);
+                    if (tr && !Number.isNaN(ltpNum)) {
+                      const pnlTd = tr.querySelector('td[data-pnl]');
+                      if (pnlTd) {
+                        const entry = parseFloat(tr.getAttribute('data-entry') || '');
+                        const qty = parseFloat(tr.getAttribute('data-qty') || '');
+                        if (!Number.isNaN(entry) && !Number.isNaN(qty)) {
+                          const pnl = qty * (ltpNum - entry);
+                          pnlTd.textContent = Number(pnl).toFixed(2);
+                        }
+                      }
                     }
                   }
                 } catch (e) { /* ignore per-elem error */ }
