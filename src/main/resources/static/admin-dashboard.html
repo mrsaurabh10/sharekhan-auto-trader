@@ -35,10 +35,6 @@
             <button class="btn primary" id="createUserBtn" style="width:100%;">Add User</button>
         </div>
         <div id="usersContainer">Loading users...</div>
-        <div style="margin-top:0.5rem">
-            <button class="btn" id="runUsersDiagBtn" style="width:100%">Run users diagnostics</button>
-            <div id="usersDiagOutput" style="margin-top:0.5rem;font-size:0.9rem;color:#333"></div>
-        </div>
     </div>
     <div class="content">
         <div id="userTabs" style="margin-bottom:0.75rem;display:flex;gap:6px;flex-wrap:wrap"></div>
@@ -76,7 +72,6 @@
                     </div>
                 </form>
                 <div id="result" style="margin-top:8px"></div>
-                <div style="margin-top:6px"><button id="debugSubmitBtn" class="btn">Debug Submit</button></div>
             </div>
 
             <div style="display:flex;gap:16px;">
@@ -98,7 +93,7 @@
         </div>
 
         <section id="brokersSection" style="display:none">
-            <h4>Brokers for user <span id="selectedUserId"></span></h4>
+            <h4>Brokers for user <span id="selectedUserName"></span></h4>
             <div style="margin-bottom:0.5rem">
                 <button class="btn primary" id="refreshBrokersBtn">Refresh</button>
                 <button class="btn" id="showAddBrokerBtn">Add Broker</button>

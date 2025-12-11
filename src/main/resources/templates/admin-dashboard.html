@@ -25,6 +25,20 @@
         .btn.primary { background: #2b7cff; color: white; border: none; }
         .btn.danger { background: #ff5c5c; color: white; border: none; }
         .muted { color: #666; font-size: 0.9rem; }
+
+        /* Improved Place Order layout */
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(220px, 1fr));
+            gap: 10px 16px;
+            align-items: center;
+        }
+        .form-grid .form-row { display: contents; }
+        .form-grid label.inline.small { width: auto; margin-right: 0; }
+        #placeOrderPanel form input,
+        #placeOrderPanel form select { width: 100%; box-sizing: border-box; }
+        @media (max-width: 720px) { .form-grid { grid-template-columns: 1fr; } }
+        .form-actions { margin-top: 0.5rem; display: flex; gap: 8px; }
     </style>
 </head>
 <body>
@@ -40,10 +54,6 @@
             <button class="btn primary" id="createUserBtn" style="width:100%;">Add User</button>
         </div>
         <div id="usersContainer">Loading users...</div>
-        <div style="margin-top:0.5rem">
-            <button class="btn" id="runUsersDiagBtn" style="width:100%">Run users diagnostics</button>
-            <div id="usersDiagOutput" style="margin-top:0.5rem;font-size:0.9rem;color:#333"></div>
-        </div>
     </div>
     <div class="content">
         <!-- selected user title removed to avoid duplicate label (place-order iframe shows its own header) -->
@@ -57,36 +67,42 @@
                 <h4>Place Order (Admin)</h4>
                 <div style="margin-bottom:0.5rem;color:#333">Placing order for user: <b id="placeOrderSelectedUser">-</b></div>
                 <form id="adminPlaceOrderForm" style="margin-bottom:0.5rem">
-                    <div class="form-row"><label class="inline small">Exchange</label>
-                        <select id="exchange" name="exchange" required>
-                            <option value="">Select Exchange</option>
-                            <option value="NF">NF</option>
-                            <option value="BF">BF</option>
-                            <option value="MX">MX</option>
-                            <option value="NC">NC</option>
-                            <option value="BC">BC</option>
-                        </select>
+                    <div class="form-grid">
+                        <div class="form-row"><label class="inline small">Exchange</label>
+                            <select id="exchange" name="exchange" required>
+                                <option value="">Select Exchange</option>
+                                <option value="NF">NF</option>
+                                <option value="BF">BF</option>
+                                <option value="MX">MX</option>
+                                <option value="NC">NC</option>
+                                <option value="BC">BC</option>
+                            </select>
+                        </div>
+                        <div class="form-row"><label class="inline small">Instrument</label>
+                            <select id="instrument" name="instrument"><option value="">Select Instrument</option></select>
+                        </div>
+                        <div class="form-row"><label class="inline small">Option Type</label>
+                            <select id="optionType">
+                                <option value="CE" selected>Call</option>
+                                <option value="PE">Put</option>
+                            </select>
+                        </div>
+                        <div class="form-row"><label class="inline small">Quantity</label><input id="quantity" type="number" value="1" required></div>
+                        <div class="form-row"><label class="inline small">Strike</label><select id="strikePrice"><option value="">Select Strike</option></select></div>
+                        <div class="form-row"><label class="inline small">Expiry</label><select id="expiry"><option value="">Select Expiry</option></select></div>
+                        <div class="form-row"><label class="inline small">Entry Price</label><input id="entryPrice" type="number" step="0.01" required></div>
+                        <div class="form-row"><label class="inline small">Stop Loss</label><input id="stopLoss" type="number" step="0.01" required></div>
+                        <div class="form-row"><label class="inline small">Target1</label><input id="target1" type="number" step="0.01"></div>
+                        <div class="form-row"><label class="inline small">Target2</label><input id="target2" type="number" step="0.01"></div>
+                        <div class="form-row"><label class="inline small">Target3</label><input id="target3" type="number" step="0.01"></div>
+                        <div class="form-row"><label class="inline small">Intraday</label><input id="intraday" type="checkbox"></div>
                     </div>
-                    <div class="form-row"><label class="inline small">Instrument</label>
-                        <select id="instrument" name="instrument"><option value="">Select Instrument</option></select>
-                    </div>
-                    <div class="form-row"><label class="inline small">Strike</label><select id="strikePrice"><option value="">Select Strike</option></select></div>
-                    <div class="form-row"><label class="inline small">Expiry</label><select id="expiry"><option value="">Select Expiry</option></select></div>
-                    <div class="form-row"><label class="inline small">Entry Price</label><input id="entryPrice" type="number" step="0.01" required></div>
-                    <div class="form-row"><label class="inline small">Stop Loss</label><input id="stopLoss" type="number" step="0.01" required></div>
-                    <div class="form-row"><label class="inline small">Target1</label><input id="target1" type="number" step="0.01"></div>
-                    <div class="form-row"><label class="inline small">Target2</label><input id="target2" type="number" step="0.01"></div>
-                    <div class="form-row"><label class="inline small">Target3</label><input id="target3" type="number" step="0.01"></div>
-                    <div class="form-row"><label class="inline small">Option Type</label><select id="optionType"><option value="">--</option><option value="CE">Call</option><option value="PE">Put</option></select></div>
-                    <div class="form-row"><label class="inline small">Quantity</label><input id="quantity" type="number" value="1" required></div>
-                    <div class="form-row"><label class="inline small">Intraday</label><input id="intraday" type="checkbox"></div>
-                    <div>
+                    <div class="form-actions">
                         <button class="btn primary" id="adminPlaceOrderBtn" type="submit">Place Order</button>
                         <button class="btn" id="adminPlaceOrderReset" type="button">Reset</button>
                     </div>
                 </form>
                 <div id="result" style="margin-top:8px"></div>
-                <div style="margin-top:6px"><button id="debugSubmitBtn" class="btn">Debug Submit</button></div>
             </div>
 
             <div style="display:flex;gap:16px;">
@@ -108,7 +124,7 @@
         </div>
 
         <section id="brokersSection" style="display:none">
-            <h4>Brokers for user <span id="selectedUserId"></span></h4>
+            <h4>Brokers for user <span id="selectedUserName"></span></h4>
             <div style="margin-bottom:0.5rem">
                 <button class="btn primary" id="refreshBrokersBtn">Refresh</button>
                 <button class="btn" id="showAddBrokerBtn">Add Broker</button>

@@ -601,7 +601,19 @@
       // normalize users to an array to avoid null/undefined flows
       if (!Array.isArray(users)) users = [];
       if (users.length === 0) { container.innerText = 'No users'; return; }
-      const ul = document.createElement('ul'); ul.style.padding = '0'; users.forEach(function(u){ const li = document.createElement('li'); li.innerText = (u.username || ('user-' + u.id)) + (u.customerId ? (' [' + u.customerId + ']') : ''); li.style.padding = '6px'; li.style.cursor = 'pointer'; li.addEventListener('click', function(){ selectUser(u.id, li, u.customerId); }); ul.appendChild(li); }); container.innerHTML = ''; container.appendChild(ul); const first = ul.querySelector('li'); if (first) first.click();
+      const ul = document.createElement('ul');
+      ul.style.padding = '0';
+      users.forEach(function(u){
+        const li = document.createElement('li');
+        li.innerText = (u.username || ('user-' + u.id));
+        li.style.padding = '6px';
+        li.style.cursor = 'pointer';
+        li.addEventListener('click', function(){ selectUser(u.id, li, u.customerId, u.username); });
+        ul.appendChild(li);
+      });
+      container.innerHTML = '';
+      container.appendChild(ul);
+      const first = ul.querySelector('li'); if (first) first.click();
     } catch (e) { container.innerText = 'Error loading users: ' + (e && e.message ? e.message : e); }
   }
 
@@ -640,10 +652,10 @@
     }
   }
 
-  function showBrokersSectionFor(userId) {
+  function showBrokersSectionFor(userId, userName) {
     const sec = document.getElementById('brokersSection');
-    const lbl = document.getElementById('selectedUserId');
-    if (lbl) lbl.innerText = String(userId);
+    const lbl = document.getElementById('selectedUserName');
+    if (lbl) lbl.innerText = String(userName != null ? userName : userId);
     if (sec) sec.style.display = 'block';
   }
 
@@ -785,11 +797,12 @@
   }
 
   // select user helper
-  function selectUser(appUserId, liElem, customerId) {
+  function selectUser(appUserId, liElem, customerId, username) {
     try {
       window.selectedUserId = appUserId;
       window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId;
-      const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedCustomerId;
+      window.selectedUserName = username || (typeof window.selectedCustomerId !== 'undefined' ? String(window.selectedCustomerId) : String(appUserId));
+      const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedUserName;
       const uc = document.getElementById('userContent'); if (uc) uc.style.display = 'block';
       try {
         const parent = document.getElementById('usersContainer');
@@ -797,7 +810,7 @@
         if (liElem && liElem.classList) liElem.classList.add('active');
       } catch (e) {}
       // show and set brokers section label
-      showBrokersSectionFor(appUserId);
+      showBrokersSectionFor(appUserId, window.selectedUserName);
       // load data
       loadRequestedOrdersForUser(appUserId).catch(function(){});
       loadExecutedForUser(appUserId).catch(function(){});
@@ -1022,7 +1035,10 @@
 
     if (resetBtn) {
       resetBtn.addEventListener('click', function () {
-        ['exchange','instrument','strikePrice','expiry','entryPrice','stopLoss','target1','target2','target3','optionType','quantity'].forEach(function(id){ const el = document.getElementById(id); if (el) { if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value=''; } });
+        ['exchange','instrument','strikePrice','expiry','entryPrice','stopLoss','target1','target2','target3'].forEach(function(id){ const el = document.getElementById(id); if (el) { if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value=''; } });
+        // Defaults: Option Type = CE (Call), Quantity = 1
+        const opt = document.getElementById('optionType'); if (opt) { opt.value = 'CE'; if (opt.value !== 'CE' && opt.options.length > 0) opt.selectedIndex = 0; }
+        const qty = document.getElementById('quantity'); if (qty) qty.value = '1';
         const intr = document.getElementById('intraday'); if (intr) intr.checked = false;
         if (resultDiv) resultDiv.innerText = '';
         if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
