@@ -1,6 +1,7 @@
 package org.com.sharekhan;
 
 import com.microsoft.playwright.*;
+import com.microsoft.playwright.options.ViewportSize;
 import com.microsoft.playwright.options.WaitForSelectorState;
 import com.microsoft.playwright.options.WaitUntilState;
 import org.com.sharekhan.util.TOTPGenerator;
@@ -22,27 +23,75 @@ public class SharekhanTokenFetcher {
 
         try (Playwright playwright = Playwright.create()) {
 
+            // Allow engine override by env (chromium|firefox|webkit)
+            String engine = System.getenv().getOrDefault("SK_ENGINE", "chromium").toLowerCase();
+            boolean lightMode = Boolean.parseBoolean(System.getenv().getOrDefault("SK_LIGHT_MODE", "true"));
+
+            BrowserType browserType =
+                    "firefox".equals(engine) ? playwright.firefox() :
+                    ("webkit".equals(engine) ? playwright.webkit() : playwright.chromium());
+
             BrowserType.LaunchOptions launchOptions = new BrowserType.LaunchOptions()
-                    .setHeadless(true)  // Change to true for headless
+                    .setHeadless(true)
                     .setArgs(Arrays.asList(
-                            "--disable-blink-features=AutomationControlled",
-                            "--disable-popup-blocking",
-                            "--disable-extensions",
+                            "--single-process",
+                            "--no-zygote",
                             "--no-sandbox",
+                            "--disable-setuid-sandbox",
+                            "--disable-gpu",
+                            "--disable-extensions",
+                            "--disable-background-networking",
+                            "--disable-popup-blocking",
+                            "--disable-default-apps",
+                            "--disable-sync",
+                            "--no-first-run",
+                            "--no-default-browser-check",
+                            "--metrics-recording-only",
+                            "--mute-audio",
+                            "--hide-scrollbars",
+                            "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints,AutofillServerCommunication,InterestFeed,ComputePressure",
+                            "--disable-blink-features=AutomationControlled",
+                            // Skip image decoding to save CPU/RAM
+                            "--blink-settings=imagesEnabled=false",
+                            // In containers / small SHM
                             "--disable-dev-shm-usage"
                     ));
-            Browser browser = playwright.chromium().launch(launchOptions);
+
+            Browser browser = browserType.launch(launchOptions);
             Browser.NewContextOptions contextOptions = new Browser.NewContextOptions()
-                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+                    .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .setViewportSize(new ViewportSize(800, 600))
+                    .setDeviceScaleFactor(1);
 
             BrowserContext context = browser.newContext(contextOptions);
-            Page page = context.newPage();
 
-            page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(1200000)
+            // Block heavy resources to reduce CPU/memory
+            context.route("**/*", route -> {
+                try {
+                    String type = route.request().resourceType();
+                    String url = route.request().url();
+                    if ("image".equals(type) || "media".equals(type) || "font".equals(type)
+                            || (lightMode && ("stylesheet".equals(type) || url.contains("/analytics")))) {
+                        route.abort();
+                    } else {
+                        route.resume();
+                    }
+                } catch (Exception e) {
+                    route.resume();
+                }
+            });
+
+            Page page = context.newPage();
+            page.setDefaultTimeout(20_000);
+            page.setDefaultNavigationTimeout(25_000);
+            // Remove animations/transitions to cut layout work
+            page.addInitScript("try{const s=document.createElement('style');s.innerHTML='*{animation:none!important;transition:none!important}';document.head.appendChild(s);}catch(e){}");
+
+            page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(120000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
             // Step 2: Wait explicitly for the password field (or your critical UI element) to appear
-            page.waitForSelector("#mpwd", new Page.WaitForSelectorOptions().setTimeout(200000));
+            page.waitForSelector("#mpwd", new Page.WaitForSelectorOptions().setTimeout(10000));
 
             Locator passwordLocator = page.locator("#mpwd");
             passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
