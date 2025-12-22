@@ -28,13 +28,20 @@ public class TriggeredTradeSetupEntity {
     // application user id
     private Long appUserId;
 
+    // reference to broker_credentials id
+    private Long brokerCredentialsId;
+
+    // application user id
+    private Long appUserId;
+
     private String exchange;
     private String instrumentType;
     private Double strikePrice;
     private String optionType;
     private String expiry;
 
-    private Integer quantity;
+    // Store final executed quantity as Long (number of shares) to avoid unit confusion with lots
+    private Long quantity;
 
     private Double entryPrice;
     private Double stopLoss;
@@ -61,6 +68,10 @@ public class TriggeredTradeSetupEntity {
     private TriggeredTradeStatus status;
 
     private LocalDateTime triggeredAt;
+
+    // Time when the entry order was actually executed (avgPrice observed)
+    private LocalDateTime entryAt;
+
     private LocalDateTime exitedAt;
 
     private Double exitPrice;

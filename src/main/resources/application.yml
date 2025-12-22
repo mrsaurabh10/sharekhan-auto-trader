@@ -51,3 +51,6 @@ app:
   # Crypto key (base64-encoded AES key). Replace with a secure key in production.
   crypto:
     key: "ZTuc7iRkkeGN+B9ayiZu5m6M56VWSNhktO6STOF8aXA="
+  telegram:
+    TELEGRAM_BOT_TOKEN: "8330200742:AAEinZnYlgatRTRcLrPH7r_MWIvJ0MBX_wY" # set to your bot token, e.g. 12345:ABCdef...
+    TELEGRAM_CHAT_ID: "376501162"   # set to target chat id (group or user)

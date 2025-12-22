@@ -114,16 +114,17 @@ public class WebSocketClientService  {
         if ("heartbeat".equalsIgnoreCase(message)) {
             log.debug("💓 Heartbeat received");
             return;
-        }else{
-            log.info("Message received: {}", message);
+        } else {
+            // keep a lightweight debug entry; avoid printing full raw message which is noisy
+            log.debug("WebSocket message received (type will be inspected)");
         }
         try {
             JsonNode json = OBJECT_MAPPER.readTree(message);
             if (json.has("message") && "feed".equalsIgnoreCase(json.get("message").asText())) {
-                JsonNode data = json.has("data") ? json.get("data") : null;
-                if (data == null) {
-                    log.debug("Received feed message without data: {}", message);
-                } else {
+                 JsonNode data = json.has("data") ? json.get("data") : null;
+                 if (data == null) {
+                    log.debug("Received feed message without data");
+                 } else {
                     // Try various common field names for scripCode and ltp
                     Integer scripCode = null;
                     Double ltp = null;
@@ -144,13 +145,14 @@ public class WebSocketClientService  {
                     else if (data.has("lastPrice") && data.get("lastPrice").isNumber()) ltp = data.get("lastPrice").asDouble();
 
                     if (scripCode == null || ltp == null || scripCode == 0) {
-                        log.debug("Feed message missing scripCode or ltp. scripCode={}, ltp={}, raw={}", scripCode, ltp, data);
+                        log.debug("Feed message missing scripCode or ltp");
                     } else {
                         // make effectively-final copies for use inside lambdas
                         final int sc = scripCode;
                         final double lv = ltp;
 
-                        log.info("📊 Tick received - Scrip: {}, LTP: {}", sc, lv);
+                        // Important: only log concise LTP tick info
+                        log.info("📊 LTP Tick received - scripCode={}, ltp={}", sc, lv);
                         try {
                             ltpCacheService.updateLtp(sc, lv);
                         } catch (Exception e) {
@@ -177,25 +179,43 @@ public class WebSocketClientService  {
                     }
                 }
             } else if (json.has("message")  && "ack".equalsIgnoreCase(json.get("message").asText()) ) {
-                 {
-                     log.info("📊 Ack received -  {}", message);
-                     JsonNode data = json.get("data");
-                     String orderId = data.get("SharekhanOrderID").asText();
-                     // need to find the buy price for calculation of pnl
-                     String ackState = data.get("AckState").asText();
-                     if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
-                         // Order is confirmed trigger a thread to poll the status
-                         Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
-                         triggeredTradeSetupEntity.ifPresent(tradeSetupEntity -> eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity.get())));// .monitorOrderStatus(tradeSetupEntity));
-                         //tradeExecutionService.markOrderExecuted(orderId);
-                     } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
-                         tradeExecutionService.markOrderRejected(orderId);
-                     }
-                 }
+                JsonNode data = json.get("data");
+                if (data == null) {
+                    log.debug("ACK received with empty data");
+                } else {
+                    String orderId = data.has("SharekhanOrderID") ? data.get("SharekhanOrderID").asText() : "";
+                    String ackState = data.has("AckState") ? data.get("AckState").asText() : "";
+                    if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
+                        // Order confirmed - try to map to either orderId or exitOrderId
+                        Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
+                        if (triggeredTradeSetupEntity.isEmpty()) {
+                            triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByExitOrderId(orderId);
+                        }
+                        if (triggeredTradeSetupEntity.isPresent()) {
+                            TriggeredTradeSetupEntity t = triggeredTradeSetupEntity.get();
+                            eventPublisher.publishEvent(new OrderPlacedEvent(t));
+                            log.info("✅ ACK TradeConfirmation - orderId={} mapped to tradeId={} status={}", orderId, t.getId(), t.getStatus());
+                        } else {
+                            log.info("✅ ACK TradeConfirmation - orderId={} no matching trade found", orderId);
+                        }
+                    } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
+                        Optional<TriggeredTradeSetupEntity> t = triggeredTradeSetupRepository.findByOrderId(orderId);
+                        if (t.isEmpty()) t = triggeredTradeSetupRepository.findByExitOrderId(orderId);
+                        if (t.isPresent()) {
+                            tradeExecutionService.markOrderRejected(orderId);
+                            log.warn("🔴 ACK NewOrderRejection - orderId={} mapped to tradeId={}", orderId, t.get().getId());
+                        } else {
+                            tradeExecutionService.markOrderRejected(orderId);
+                            log.warn("🔴 ACK NewOrderRejection - orderId={} (no mapped trade)", orderId);
+                        }
+                    } else {
+                        log.debug("ACK received - orderId={} ackState={}", orderId, ackState);
+                    }
+                }
              }
-        } catch (Exception e) {
-            log.error("❌ Failed to parse message: {}", message, e);
-        }
+         } catch (Exception e) {
+            log.error("❌ Failed to parse WebSocket message", e);
+         }
     }
 
     public void close() {

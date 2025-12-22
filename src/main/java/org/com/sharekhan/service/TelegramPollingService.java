@@ -63,19 +63,36 @@ public class TelegramPollingService {
             if (results == null || results.isEmpty()) return;
 
             for (Map<String, Object> update : results) {
-                lastUpdateId = ((Number) update.get("update_id")).longValue();
-
                 Map<String, Object> message = (Map<String, Object>) update.get("message");
-                if (message == null) continue;
+                long thisUpdateId = ((Number) update.get("update_id")).longValue();
+                if (message == null) {
+                    lastUpdateId = thisUpdateId;
+                    continue;
+                }
 
                 String text = (String) message.get("text");
-                if (text == null || text.isBlank()) continue;
+                if (text == null || text.isBlank()) {
+                    lastUpdateId = thisUpdateId;
+                    continue;
+                }
 
                 String sender = extractSenderName(message);
 
-                // Whether it's Telegram or forwarded WhatsApp text
-                tradingMessageService.handleRawMessage(text, sender);
-            }
+                // Construct a unique id for dedupe: telegram:<chatId>:<messageId>
+                String uniqueId = null;
+                try {
+                    Map<String, Object> chat = (Map<String, Object>) message.get("chat");
+                    Object chatId = chat != null ? chat.get("id") : null;
+                    Object messageId = message.get("message_id");
+                    if (chatId != null && messageId != null) {
+                        uniqueId = "telegram:" + chatId.toString() + ":" + messageId.toString();
+                    }
+                } catch (Exception ignored) {}
+
+                // Whether it's Telegram or forwarded WhatsApp text — pass uniqueId for dedupe
+                tradingMessageService.handleRawMessage(text, sender, uniqueId);
+                lastUpdateId = thisUpdateId;
+             }
 
         } catch (Exception e) {
             System.err.println("Polling error: " + e.getMessage());

@@ -12,40 +12,43 @@ public class TelegramSignalParser implements TradingSignalParser {
             return null;
         }
 
-        String[] linesArr = text.split("\n");
+        // Remove HERO-ZERO keyword from text
+        String cleanedText = text.replaceAll("(?i)HERO-ZERO", "").trim();
+
+        String[] linesArr = cleanedText.split("\n");
         List<String> lines = Arrays.stream(linesArr)
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
 
-        String action = null;
-        String symbol = null;
-        String strike = null;
-        String optionType = null;
-        Double entry = null;
-        String target1 = null;
-        String target2 = null;
-        String stopLossText = null;
-        String expiryRaw = null;
+        // Find the first line that matches the trade regex
+        Pattern tradePattern = Pattern.compile("(BUY|SELL)\\s+([A-Z]+)\\s+(\\d+)\\s+(CE|PE)\\s+ABOVE\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
+        String tradeLine = lines.stream()
+                .filter(line -> tradePattern.matcher(line).find())
+                .findFirst()
+                .orElse(null);
 
-        // Parse first line like "BUY BANKNIFTY 57500 PE ABOVE 560"
-        if (!lines.isEmpty()) {
-            String firstLine = lines.get(0);
-            Pattern regex = Pattern.compile("(BUY|SELL)\\s+([A-Z]+)\\s+(\\d+)\\s+(CE|PE)\\s+ABOVE\\s+(\\d+)", Pattern.CASE_INSENSITIVE);
-            Matcher matcher = regex.matcher(firstLine);
-            if (matcher.find()) {
-                action = matcher.group(1).toUpperCase();
-                symbol = matcher.group(2).toUpperCase();
-                strike = matcher.group(3);
-                optionType = matcher.group(4).toUpperCase();
-                entry = tryParseDouble(matcher.group(5));
-            }
+        if (tradeLine == null) {
+            return null; // no valid trade info found
         }
 
-        // Parse line starting with TARGET
+        Matcher matcher = tradePattern.matcher(tradeLine);
+        if (!matcher.find()) {
+            return null;
+        }
+
+        String action = matcher.group(1).toUpperCase();
+        String symbol = matcher.group(2).toUpperCase();
+        String strike = matcher.group(3);
+        String optionType = matcher.group(4).toUpperCase();
+        Double entry = tryParseDouble(matcher.group(5));
+
         Optional<String> targetLine = lines.stream()
                 .filter(l -> l.toUpperCase().startsWith("TARGET"))
                 .findFirst();
+
+        String target1 = null;
+        String target2 = null;
 
         if (targetLine.isPresent()) {
             String targetLineVal = targetLine.get();
@@ -55,18 +58,18 @@ public class TelegramSignalParser implements TradingSignalParser {
             target2 = targets.length > 1 ? targets[1].trim() : null;
         }
 
-        // Parse line starting with SL
         Optional<String> slLine = lines.stream()
                 .filter(l -> l.toUpperCase().startsWith("SL"))
                 .findFirst();
+
+        String stopLossText = null;
 
         if (slLine.isPresent()) {
             String slVal = slLine.get();
             stopLossText = slVal.substring(slVal.indexOf(":") + 1).replace("-", "").trim();
         }
 
-        // Parse expiry line (contains month names)
-        expiryRaw = lines.stream()
+        String expiryRaw = lines.stream()
                 .filter(this::isExpiryLine)
                 .findFirst()
                 .orElse(null);
@@ -77,7 +80,6 @@ public class TelegramSignalParser implements TradingSignalParser {
                 Optional.ofNullable(tryParseDouble(stopLossText)).orElse(entry != null ? entry * 0.90 : 0.0) :
                 (entry != null ? entry * 0.10 : 0.0);
 
-        // Mandatory fields check
         if (action == null || symbol == null || strike == null || optionType == null || entry == null) {
             return null;
         }
@@ -95,13 +97,18 @@ public class TelegramSignalParser implements TradingSignalParser {
         result.put("expiry", expiryFormatted);
         result.put("exchange", null);
 
+        // Set intraday false if "BTST" present anywhere in original message
+        boolean intraday = !text.toUpperCase().contains("BTST");
+        result.put("intraday", intraday);
+
         return result;
     }
 
     private boolean isExpiryLine(String line) {
         if (line == null) return false;
         String upper = line.toUpperCase();
-        List<String> months = Arrays.asList("JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC");
+        List<String> months = Arrays.asList("JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                "JUL", "AUG", "SEP", "OCT", "NOV", "DEC");
         return months.stream().anyMatch(upper::contains);
     }
 
@@ -128,8 +135,8 @@ public class TelegramSignalParser implements TradingSignalParser {
 
         if (parts.length == 2) {
             String day = parts[0].length() == 1 ? "0" + parts[0] : parts[0];
-            String month = months.getOrDefault(parts[1], "10"); // default October
-            return day + "/" + month + "/2025";  // hard coded 2025 as in Kotlin code
+            String month = months.getOrDefault(parts[1], "10"); // default to October
+            return day + "/" + month + "/2025";  // hardcoded year
         } else if (parts.length == 1) {
             String month = months.getOrDefault(parts[0], "10");
             return month + "/2025";
@@ -146,4 +153,5 @@ public class TelegramSignalParser implements TradingSignalParser {
         }
     }
 }
+
 
