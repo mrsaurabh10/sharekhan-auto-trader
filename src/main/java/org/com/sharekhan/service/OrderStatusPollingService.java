@@ -17,6 +17,7 @@ import org.com.sharekhan.util.ShareKhanOrderUtil;
 import org.com.sharekhan.ws.WebSocketClientService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -33,14 +34,9 @@ public class OrderStatusPollingService {
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
     private final TriggeredTradeSetupRepository tradeRepo;
     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
-     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
-     private final TriggeredTradeSetupRepository tradeRepo;
-     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
      // Track last modify price attempted per orderId to avoid spamming identical modify requests
      private final Map<String, Double> lastModifyPrice = new ConcurrentHashMap<>();
-     @Lazy
-     @Autowired
-     private final WebSocketClientService webSocketClientService;
+    private final WebSocketClientService webSocketClientService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
     private final TokenStoreService   tokenStoreService;
@@ -75,18 +71,20 @@ public class OrderStatusPollingService {
                 }
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
 
-                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), custId,
-                        orderIdToMonitor);
-                TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(trade,response);
-                if(TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
-                     // Determine if this was an exit order or entry order based on which orderId we monitored
-                     boolean wasExitOrder = usingExitOrder || TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus());
-                     if (wasExitOrder) {
-                         currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-                         webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
-                     } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
-                         currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
-                     }
+                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), custId, orderIdToMonitor);
+                // Always operate on the latest persisted trade state
+                TriggeredTradeSetupEntity currentTrade = tradeRepo.findById(trade.getId()).orElse(trade);
+                TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
+                if (TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
+                    // Determine if this was an exit order or entry order based on which orderId we monitored
+                    boolean wasExitOrder = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus())
+                            || (orderIdToMonitor != null && orderIdToMonitor.equals(currentTrade.getExitOrderId()));
+                    if (wasExitOrder) {
+                        currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+                        webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
+                    } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
+                        currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
+                    }
 
                     // Diagnostic: log currentTrade fields before save
                     log.info("Saving tradeId={} before save: status={} orderId={} exitOrderId={} entryPrice={} exitPrice={} pnl={}",
@@ -185,9 +183,9 @@ public class OrderStatusPollingService {
                         future.cancel(true);
                         log.info("🛑 Polling stopped for trade {} (orderId={})", tradeKeyLocal2, orderIdToMonitor);
                     }
-                     String feedKey = trade.getExchange() + trade.getScripCode();
-                     webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
-                     return;
+                    String feedKey = trade.getExchange() + trade.getScripCode();
+                    webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
+                    return;
                 } else if (TradeStatus.PENDING.equals(tradeStatus)) {
                     // Try to improve chances of execution by modifying the pending order to current LTP
                     try {

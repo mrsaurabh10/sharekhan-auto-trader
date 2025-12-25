@@ -28,12 +28,6 @@ public class TriggeredTradeSetupEntity {
     // application user id
     private Long appUserId;
 
-    // reference to broker_credentials id
-    private Long brokerCredentialsId;
-
-    // application user id
-    private Long appUserId;
-
     private String exchange;
     private String instrumentType;
     private Double strikePrice;

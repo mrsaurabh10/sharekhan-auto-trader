@@ -28,49 +28,9 @@ public class ScriptMasterEntity {
     private Integer lotSize;
     private String optionType;
 
-    @Entity
-    @Table(name = "triggered_trade_setups")
-    @Getter
-    @Setter
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    public static class TriggeredTradeSetupEntity {
-
-        @Id
-        @GeneratedValue(strategy = GenerationType.IDENTITY)
-        private Long id;
-
-        private String symbol;
-        private Integer scripCode;
-        private Long customerId;
-
-        private String exchange;
-        private String instrumentType;
-        private Double strikePrice;
-        private String optionType;
-        private String expiry;
-
-        private Integer quantity;
-
-        private Double entryPrice;
-        private Double stopLoss;
-
-        private Double target1;
-        private Double target2;
-        private Double target3;
-
-        private Double trailingSl;
-
-        @Enumerated(EnumType.STRING)
-        private TriggeredTradeStatus status;
-
-        private LocalDateTime triggeredAt;
-        private LocalDateTime exitedAt;
-
-        private Double exitPrice;
-        private Double pnl;
-    }
+    // NOTE: TriggeredTradeSetupEntity is defined as a standalone entity in
+    // src/main/java/org/com/sharekhan/entity/TriggeredTradeSetupEntity.java
+    // Any previous inner-class duplicate has been removed to avoid conflicts.
 }
 
 
