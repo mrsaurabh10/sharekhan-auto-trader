@@ -74,7 +74,7 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .findFirst()
                 .orElse(null);
 
-        String expiryFormatted = parseExpiry(expiryRaw);
+        String expiryFormatted = parseExpiry(expiryRaw, symbol);
 
         Double stopLoss = stopLossText != null ?
                 Optional.ofNullable(tryParseDouble(stopLossText)).orElse(entry != null ? entry * 0.90 : 0.0) :
@@ -112,37 +112,111 @@ public class TelegramSignalParser implements TradingSignalParser {
         return months.stream().anyMatch(upper::contains);
     }
 
-    private String parseExpiry(String rawExpiry) {
-        if (rawExpiry == null) return null;
+    private String parseExpiry(String rawExpiry, String symbolUpper) {
+        // Rules per requirement:
+        // - Output format: dd/MM/yyyy
+        // - STOCK (default): monthly last Tuesday
+        // - NIFTY: weekly Tuesday (next Tuesday when month not provided); if month provided → last Tuesday of that month
+        // - SENSEX: weekly Thursday (next Thursday when month not provided); if month provided → last Thursday of that month
+        // - BANKNIFTY: monthly last Tuesday (both default and when month provided)
 
-        String trimmed = rawExpiry.trim().toUpperCase();
-        Map<String, String> months = Map.ofEntries(
-                Map.entry("JANUARY", "01"), Map.entry("JAN", "01"),
-                Map.entry("FEBRUARY", "02"), Map.entry("FEB", "02"),
-                Map.entry("MARCH", "03"), Map.entry("MAR", "03"),
-                Map.entry("APRIL", "04"), Map.entry("APR", "04"),
-                Map.entry("MAY", "05"),
-                Map.entry("JUNE", "06"), Map.entry("JUN", "06"),
-                Map.entry("JULY", "07"), Map.entry("JUL", "07"),
-                Map.entry("AUGUST", "08"), Map.entry("AUG", "08"),
-                Map.entry("SEPTEMBER", "09"), Map.entry("SEP", "09"),
-                Map.entry("OCTOBER", "10"), Map.entry("OCT", "10"),
-                Map.entry("NOVEMBER", "11"), Map.entry("NOV", "11"),
-                Map.entry("DECEMBER", "12"), Map.entry("DEC", "12")
-        );
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        String sym = (symbolUpper == null ? "" : symbolUpper.toUpperCase(Locale.ROOT));
+        boolean isNifty = "NIFTY".equals(sym);
+        boolean isSensex = "SENSEX".equals(sym);
+        boolean isBankNifty = "BANKNIFTY".equals(sym);
 
-        String[] parts = trimmed.split(" ");
-
-        if (parts.length == 2) {
-            String day = parts[0].length() == 1 ? "0" + parts[0] : parts[0];
-            String month = months.getOrDefault(parts[1], "10"); // default to October
-            return day + "/" + month + "/2025";  // hardcoded year
-        } else if (parts.length == 1) {
-            String month = months.getOrDefault(parts[0], "10");
-            return month + "/2025";
+        // Month token parsing (JAN/JANUARY etc.)
+        Integer monthFromText = null;
+        if (rawExpiry != null && !rawExpiry.isBlank()) {
+            String upper = rawExpiry.trim().toUpperCase(Locale.ROOT);
+            Map<String, Integer> monthMap = new HashMap<>();
+            monthMap.put("JANUARY", 1); monthMap.put("JAN", 1);
+            monthMap.put("FEBRUARY", 2); monthMap.put("FEB", 2);
+            monthMap.put("MARCH", 3); monthMap.put("MAR", 3);
+            monthMap.put("APRIL", 4); monthMap.put("APR", 4);
+            monthMap.put("MAY", 5);
+            monthMap.put("JUNE", 6); monthMap.put("JUN", 6);
+            monthMap.put("JULY", 7); monthMap.put("JUL", 7);
+            monthMap.put("AUGUST", 8); monthMap.put("AUG", 8);
+            monthMap.put("SEPTEMBER", 9); monthMap.put("SEP", 9);
+            monthMap.put("OCTOBER", 10); monthMap.put("OCT", 10);
+            monthMap.put("NOVEMBER", 11); monthMap.put("NOV", 11);
+            monthMap.put("DECEMBER", 12); monthMap.put("DEC", 12);
+            for (String token : upper.split("[^A-Z]+")) {
+                if (token == null || token.isEmpty()) continue;
+                Integer m = monthMap.get(token);
+                if (m != null) { monthFromText = m; break; }
+            }
         }
 
-        return null;
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDate expiry;
+
+        if (monthFromText != null) {
+            // When month specified, pick that month's last Tue/Thu as per instrument
+            int year = today.getYear();
+            if (isSensex) {
+                java.time.LocalDate cand = lastWeekdayOfMonth(year, monthFromText, java.time.DayOfWeek.THURSDAY);
+                if (!cand.isAfter(today) && (today.getMonthValue() == monthFromText)) {
+                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.THURSDAY);
+                } else if (today.getMonthValue() > monthFromText) {
+                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.THURSDAY);
+                }
+                expiry = cand;
+            } else {
+                // STOCK, NIFTY (monthly interpretation), BANKNIFTY → last Tuesday
+                java.time.LocalDate cand = lastWeekdayOfMonth(year, monthFromText, java.time.DayOfWeek.TUESDAY);
+                if (!cand.isAfter(today) && (today.getMonthValue() == monthFromText)) {
+                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.TUESDAY);
+                } else if (today.getMonthValue() > monthFromText) {
+                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.TUESDAY);
+                }
+                expiry = cand;
+            }
+        } else {
+            // No month specified: use default cycles per instrument
+            if (isSensex) {
+                expiry = nextOnOrAfter(today.plusDays(1), java.time.DayOfWeek.THURSDAY); // next Thursday (weekly)
+            } else if (isNifty) {
+                expiry = nextOnOrAfter(today.plusDays(1), java.time.DayOfWeek.TUESDAY); // next Tuesday (weekly)
+            } else if (isBankNifty) {
+                // monthly last Tuesday for current month if not passed, else next month's last Tuesday
+                java.time.LocalDate cand = lastWeekdayOfMonth(today.getYear(), today.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                if (!cand.isAfter(today)) {
+                    java.time.LocalDate nextMonth = today.plusMonths(1);
+                    cand = lastWeekdayOfMonth(nextMonth.getYear(), nextMonth.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                }
+                expiry = cand;
+            } else {
+                // STOCK default monthly last Tuesday
+                java.time.LocalDate cand = lastWeekdayOfMonth(today.getYear(), today.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                if (!cand.isAfter(today)) {
+                    java.time.LocalDate nextMonth = today.plusMonths(1);
+                    cand = lastWeekdayOfMonth(nextMonth.getYear(), nextMonth.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                }
+                expiry = cand;
+            }
+        }
+
+        return expiry != null ? expiry.format(fmt) : null;
+    }
+
+    private static java.time.LocalDate lastWeekdayOfMonth(int year, int month, java.time.DayOfWeek dow) {
+        java.time.YearMonth ym = java.time.YearMonth.of(year, month);
+        java.time.LocalDate d = ym.atEndOfMonth();
+        while (d.getDayOfWeek() != dow) {
+            d = d.minusDays(1);
+        }
+        return d;
+    }
+
+    private static java.time.LocalDate nextOnOrAfter(java.time.LocalDate startExclusive, java.time.DayOfWeek dow) {
+        java.time.LocalDate d = startExclusive;
+        while (d.getDayOfWeek() != dow) {
+            d = d.plusDays(1);
+        }
+        return d;
     }
 
     private Double tryParseDouble(String val) {
