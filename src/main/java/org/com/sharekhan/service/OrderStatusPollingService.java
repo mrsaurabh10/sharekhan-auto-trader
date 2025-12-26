@@ -129,7 +129,7 @@ public class OrderStatusPollingService {
                         if (currentTrade.getEntryPrice() != null) body.append("\nEntry: ").append(currentTrade.getEntryPrice());
                         if (currentTrade.getExitPrice() != null) body.append("\nExit: ").append(currentTrade.getExitPrice());
                         if (currentTrade.getPnl() != null) body.append("\nPnL: ").append(currentTrade.getPnl());
-                        telegramNotificationService.sendTradeMessage(title, body.toString());
+                        telegramNotificationService.sendTradeMessageForUser(currentTrade.getAppUserId(), title, body.toString());
                     } catch (Exception e) {
                         log.warn("Failed sending telegram notification for execution: {}", e.getMessage());
                     }
@@ -166,7 +166,7 @@ public class OrderStatusPollingService {
                         body.append("\nOrderId: ").append(orderIdToMonitor);
                         body.append("\nStatus: ").append(currentTrade.getStatus());
                         if (currentTrade.getExitReason() != null) body.append("\nReason: ").append(currentTrade.getExitReason());
-                        telegramNotificationService.sendTradeMessage(title, body.toString());
+                        telegramNotificationService.sendTradeMessageForUser(currentTrade.getAppUserId(), title, body.toString());
                     } catch (Exception e) {
                         log.warn("Failed sending telegram notification for rejection: {}", e.getMessage());
                     }

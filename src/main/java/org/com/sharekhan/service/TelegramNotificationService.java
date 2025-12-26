@@ -1,7 +1,10 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.entity.AppUser;
+import org.com.sharekhan.repository.AppUserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -9,7 +12,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -26,6 +28,9 @@ public class TelegramNotificationService {
     private final String botToken;
     private final String chatId;
     private final RestTemplate restTemplate;
+
+    @Autowired(required = false)
+    private AppUserRepository appUserRepository;
 
     public TelegramNotificationService() {
         // Try to read from environment variables for easy runtime configuration
@@ -71,5 +76,26 @@ public class TelegramNotificationService {
             // Log but do not fail trading flow
             log.warn("Failed to send Telegram message: {}", e.getMessage());
         }
+    }
+
+    /**
+     * Convenience: prepend the AppUser's username (when available) to the body before sending.
+     */
+    public void sendTradeMessageForUser(Long appUserId, String title, String body) {
+        String prefix = "";
+        try {
+            if (appUserId != null && appUserRepository != null) {
+                String username = appUserRepository.findById(appUserId)
+                        .map(AppUser::getUsername)
+                        .orElse("user-" + appUserId);
+                prefix = "User: " + username + " (#" + appUserId + ")\n";
+            } else if (appUserId != null) {
+                prefix = "UserId: #" + appUserId + "\n";
+            }
+        } catch (Exception e) {
+            // ignore lookup failures and send without username
+            prefix = (appUserId != null) ? ("UserId: #" + appUserId + "\n") : "";
+        }
+        sendTradeMessage(title, prefix + (body == null ? "" : body));
     }
 }

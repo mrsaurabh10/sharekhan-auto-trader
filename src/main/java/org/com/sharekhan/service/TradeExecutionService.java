@@ -172,8 +172,20 @@ public class TradeExecutionService {
 
 
         if (request.getQuantity() == null) {
-            int maxAmtPerTrade = Integer.parseInt(userConfigService.getConfig("saurabh", "max_amount_per_trade", "25000"));
-            int maxLossPerTrade = Integer.parseInt(userConfigService.getConfig("saurabh", "max_loss_per_trade", "8000"));
+            // Prefer per-user configuration via appUserId; fallback defaults are provided
+            Long appUserId = request.getUserId();
+            int maxAmtPerTrade;
+            int maxLossPerTrade;
+            try {
+                String amtStr = userConfigService.getConfig(appUserId, "max_amount_per_trade", "25000");
+                String lossStr = userConfigService.getConfig(appUserId, "max_loss_per_trade", "8000");
+                maxAmtPerTrade = Integer.parseInt(amtStr);
+                maxLossPerTrade = Integer.parseInt(lossStr);
+            } catch (Exception e) {
+                // In case of bad/missing config values, use safe defaults
+                maxAmtPerTrade = 25000;
+                maxLossPerTrade = 8000;
+            }
 
             Double stopLoss = request.getStopLoss();
             if (stopLoss == null) {
@@ -219,7 +231,7 @@ public class TradeExecutionService {
                 body.append("StopLoss: ").append(request.getStopLoss()).append("\n");
                 body.append("Targets: ").append(request.getTarget1()).append(",").append(request.getTarget2()).append(",").append(request.getTarget3()).append("\n");
                 body.append("Note: quantity was null and request rejected by server (requireQuantity=true)");
-                telegramNotificationService.sendTradeMessage(title, body.toString());
+                telegramNotificationService.sendTradeMessageForUser(request.getUserId(), title, body.toString());
             } catch (Exception e) {
                 log.warn("Failed to send telegram alert for missing quantity: {}", e.getMessage());
             }
@@ -232,6 +244,24 @@ public class TradeExecutionService {
             finalQuantity = request.getQuantity() != null ? request.getQuantity().longValue() : 0L;
         } else {
             finalQuantity = (long) request.getQuantity() * lotSize;
+        }
+
+        // Hard stop: never place or persist a trade with zero/negative quantity
+        if (finalQuantity <= 0L) {
+            try {
+                String title = "Invalid Trade Request: Quantity <= 0 (blocked)";
+                StringBuilder body = new StringBuilder();
+                body.append("Instrument: ").append(request.getInstrument()).append("\n");
+                body.append("Exchange: ").append(request.getExchange()).append("\n");
+                body.append("EntryPrice: ").append(request.getEntryPrice()).append("\n");
+                body.append("StopLoss: ").append(request.getStopLoss()).append("\n");
+                body.append("Computed Qty (lots->shares): ").append(finalQuantity).append("\n");
+                body.append("Reason: Quantity must be greater than zero. Request rejected and not persisted.");
+                telegramNotificationService.sendTradeMessageForUser(request.getUserId(), title, body.toString());
+            } catch (Exception e) {
+                log.warn("Failed to send telegram alert for zero quantity block: {}", e.getMessage());
+            }
+            throw new InvalidTradeRequestException("Quantity must be greater than zero");
         }
 
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
@@ -280,6 +310,40 @@ public class TradeExecutionService {
     // New overload: allow caller to pass exact triggeredAt (time when entry condition met)
     public TriggeredTradeSetupEntity execute(TriggeredTradeSetupEntity trigger, double ltp, java.time.LocalDateTime triggeredAt) {
         try {
+            // Safety guard: do not attempt broker placement if quantity is null/zero
+            if (trigger.getQuantity() == null || trigger.getQuantity() <= 0L) {
+                log.warn("Blocking placement for trigger {} due to non-positive quantity: {}", trigger.getId(), trigger.getQuantity());
+                TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
+                rejected.setStatus(TriggeredTradeStatus.REJECTED);
+                rejected.setExitReason("Quantity must be greater than zero");
+                rejected.setScripCode(trigger.getScripCode());
+                rejected.setExchange(trigger.getExchange());
+                rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+                rejected.setAppUserId(trigger.getAppUserId());
+                rejected.setSymbol(trigger.getSymbol());
+                rejected.setExpiry(trigger.getExpiry());
+                rejected.setStrikePrice(trigger.getStrikePrice());
+                rejected.setStopLoss(trigger.getStopLoss());
+                rejected.setTarget1(trigger.getTarget1());
+                rejected.setTarget2(trigger.getTarget2());
+                rejected.setQuantity(trigger.getQuantity());
+                rejected.setTarget3(trigger.getTarget3());
+                rejected.setInstrumentType(trigger.getInstrumentType());
+                rejected.setEntryPrice(ltp);
+                rejected.setOptionType(trigger.getOptionType());
+                rejected.setIntraday(trigger.getIntraday());
+                try { triggeredTradeRepo.save(rejected); } catch (Exception ignore) { }
+                try {
+                    String title = "Order Rejected ❌";
+                    StringBuilder body = new StringBuilder();
+                    body.append("Instrument: ").append(trigger.getSymbol());
+                    if (trigger.getStrikePrice() != null) body.append(" ").append(trigger.getStrikePrice());
+                    if (trigger.getOptionType() != null) body.append(" ").append(trigger.getOptionType());
+                    body.append("\nReason: Quantity must be greater than zero");
+                    telegramNotificationService.sendTradeMessageForUser(trigger.getAppUserId(), title, body.toString());
+                } catch (Exception e) { log.warn("Failed to send telegram for zero-qty rejection: {}", e.getMessage()); }
+                return rejected;
+            }
             // Prefer a customer specific token when placing the order
             Long custId = null;
             String clientCode = "";
@@ -419,7 +483,7 @@ public class TradeExecutionService {
                     body.append("Attempted Price(LTP): ").append(ltp).append("\n");
                     body.append("Trigger Entity Id: ").append(trigger.getId()).append("\n");
                     body.append("Note: PlaceOrder did not return orderId after " ).append(maxAttempts).append(" attempts.");
-                    telegramNotificationService.sendTradeMessage(title, body.toString());
+                    telegramNotificationService.sendTradeMessageForUser(trigger.getAppUserId(), title, body.toString());
                 } catch (Exception e) {
                     log.warn("Failed sending telegram notification for placeOrder failure: {}", e.getMessage());
                 }
@@ -658,7 +722,7 @@ public class TradeExecutionService {
             body.append("\nOrderId: ").append(orderId);
             body.append("\nStatus: ").append(trade.getStatus());
             if (trade.getExitReason() != null) body.append("\nReason: ").append(trade.getExitReason());
-            telegramNotificationService.sendTradeMessage(title, body.toString());
+            telegramNotificationService.sendTradeMessageForUser(trade.getAppUserId(), title, body.toString());
         } catch (Exception e) {
             log.warn("Failed sending telegram notification for rejection in execute(): {}", e.getMessage());
         }
@@ -835,7 +899,7 @@ public class TradeExecutionService {
                 body.append("Attempted Price: ").append(exitPrice).append("\n");
                 body.append("TradeId: ").append(persisted.getId()).append("\n");
                 body.append("Note: Exit placeOrder did not return orderId after ").append(maxAttempts).append(" attempts.");
-                telegramNotificationService.sendTradeMessage(title, body.toString());
+                telegramNotificationService.sendTradeMessageForUser(persisted.getAppUserId(), title, body.toString());
             } catch (Exception e) {
                 log.warn("Failed sending telegram notification for exit placeOrder failure: {}", e.getMessage());
             }

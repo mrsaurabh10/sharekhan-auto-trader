@@ -50,7 +50,17 @@ public class UserConfig {
         this.userId = userId;
     }
 
+    public Long getAppUserId() {
+        return appUserId;
+    }
+
+    public void setAppUserId(Long appUserId) {
+        this.appUserId = appUserId;
+    }
+
     private String userId;       // user or telegram ID
+    @Column(name = "app_user_id")
+    private Long appUserId;      // Numeric AppUser.id reference (preferred)
     private String keyName;      // e.g. max_trade_amount, auto_move_sl
     @Column(name = "config_value")
     private String value;        // e.g. 10000, true, etc.
