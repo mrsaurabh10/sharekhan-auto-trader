@@ -1,5 +1,8 @@
 package org.com.sharekhan.parser;
 
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.*;
 import java.util.regex.*;
 import java.util.stream.Collectors;
@@ -74,7 +77,7 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .findFirst()
                 .orElse(null);
 
-        String expiryFormatted = parseExpiry(expiryRaw);
+        String expiryFormatted = parseExpiry(expiryRaw, symbol);
 
         Double stopLoss = stopLossText != null ?
                 Optional.ofNullable(tryParseDouble(stopLossText)).orElse(entry != null ? entry * 0.90 : 0.0) :
@@ -112,37 +115,66 @@ public class TelegramSignalParser implements TradingSignalParser {
         return months.stream().anyMatch(upper::contains);
     }
 
-    private String parseExpiry(String rawExpiry) {
+    private String parseExpiry(String rawExpiry, String symbol) {
         if (rawExpiry == null) return null;
 
-        String trimmed = rawExpiry.trim().toUpperCase();
-        Map<String, String> months = Map.ofEntries(
-                Map.entry("JANUARY", "01"), Map.entry("JAN", "01"),
-                Map.entry("FEBRUARY", "02"), Map.entry("FEB", "02"),
-                Map.entry("MARCH", "03"), Map.entry("MAR", "03"),
-                Map.entry("APRIL", "04"), Map.entry("APR", "04"),
-                Map.entry("MAY", "05"),
-                Map.entry("JUNE", "06"), Map.entry("JUN", "06"),
-                Map.entry("JULY", "07"), Map.entry("JUL", "07"),
-                Map.entry("AUGUST", "08"), Map.entry("AUG", "08"),
-                Map.entry("SEPTEMBER", "09"), Map.entry("SEP", "09"),
-                Map.entry("OCTOBER", "10"), Map.entry("OCT", "10"),
-                Map.entry("NOVEMBER", "11"), Map.entry("NOV", "11"),
-                Map.entry("DECEMBER", "12"), Map.entry("DEC", "12")
-        );
+        String upper = rawExpiry.trim().toUpperCase();
+        // Extract month token
+        Integer month = detectMonth(upper);
+        if (month == null) return null;
 
-        String[] parts = trimmed.split(" ");
+        LocalDate now = LocalDate.now();
 
-        if (parts.length == 2) {
-            String day = parts[0].length() == 1 ? "0" + parts[0] : parts[0];
-            String month = months.getOrDefault(parts[1], "10"); // default to October
-            return day + "/" + month + "/2025";  // hardcoded year
-        } else if (parts.length == 1) {
-            String month = months.getOrDefault(parts[0], "10");
-            return month + "/2025";
+        // Decide expiry weekday rules based on symbol when month is provided
+        DayOfWeek dow;
+        String sym = symbol == null ? "" : symbol.toUpperCase();
+        if (sym.contains("SENSEX")) {
+            dow = DayOfWeek.THURSDAY; // monthly last Thursday for SENSEX when month specified
+        } else {
+            // Default and BANKNIFTY/NIFTY/STOCKS when month specified → last Tuesday
+            dow = DayOfWeek.TUESDAY;
         }
 
+        // Determine year (current or next) such that the last <dow> of that month is not in the past
+        int year = now.getYear();
+        LocalDate candidateThisYear = lastWeekdayOfMonth(year, month, dow);
+        if (now.isAfter(candidateThisYear)) {
+            year = year + 1;
+        }
+        LocalDate expiryDate = lastWeekdayOfMonth(year, month, dow);
+
+        return String.format("%02d/%02d/%d", expiryDate.getDayOfMonth(), month, year);
+    }
+
+    private Integer detectMonth(String textUpper) {
+        if (textUpper == null) return null;
+        Map<String, Integer> monthMap = new HashMap<>();
+        monthMap.put("JANUARY", 1); monthMap.put("JAN", 1);
+        monthMap.put("FEBRUARY", 2); monthMap.put("FEB", 2);
+        monthMap.put("MARCH", 3); monthMap.put("MAR", 3);
+        monthMap.put("APRIL", 4); monthMap.put("APR", 4);
+        monthMap.put("MAY", 5);
+        monthMap.put("JUNE", 6); monthMap.put("JUN", 6);
+        monthMap.put("JULY", 7); monthMap.put("JUL", 7);
+        monthMap.put("AUGUST", 8); monthMap.put("AUG", 8);
+        monthMap.put("SEPTEMBER", 9); monthMap.put("SEP", 9);
+        monthMap.put("OCTOBER", 10); monthMap.put("OCT", 10);
+        monthMap.put("NOVEMBER", 11); monthMap.put("NOV", 11);
+        monthMap.put("DECEMBER", 12); monthMap.put("DEC", 12);
+
+        for (Map.Entry<String, Integer> e : monthMap.entrySet()) {
+            if (textUpper.contains(e.getKey())) return e.getValue();
+        }
         return null;
+    }
+
+    private LocalDate lastWeekdayOfMonth(int year, int month, DayOfWeek dow) {
+        YearMonth ym = YearMonth.of(year, month);
+        LocalDate date = ym.atEndOfMonth();
+        while (date.getDayOfWeek() != dow) {
+            date = date.minusDays(1);
+        }
+        return date;
     }
 
     private Double tryParseDouble(String val) {
