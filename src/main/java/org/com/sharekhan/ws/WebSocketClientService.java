@@ -5,21 +5,17 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.websocket.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
-import org.com.sharekhan.service.OrderStatusPollingService;
 import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.ScripExecutorManager;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.context.annotation.Lazy;
-import org.springframework.context.event.ContextClosedEvent;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -62,15 +58,22 @@ public class WebSocketClientService  {
     public void connect() {
         try {
             // Prefer the first non-expired token for SHAREKHAN: global, per-customer in-memory, then persisted latest
-            String accessToken = tokenStoreService.getFirstNonExpiredTokenForBroker(Broker.SHAREKHAN);
-            if (accessToken == null) {
-                accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            }
-            if (accessToken == null || accessToken.isBlank()) {
+            TokenStoreService.TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN);
+            
+            if (tokenInfo == null || tokenInfo.getToken() == null || tokenInfo.getToken().isBlank()) {
                 log.warn("⚠️ No valid access token available for SHAREKHAN websocket connection. Skipping connect; will retry on scheduled reconnects.");
                 return;
             }
-            String wsUrl = String.format("wss://stream.sharekhan.com/skstream/api/stream?ACCESS_TOKEN=%s&API_KEY=%s", accessToken, API_KEY);
+            
+            String accessToken = tokenInfo.getToken();
+            String apiKey = tokenInfo.getApiKey();
+            
+            if (apiKey == null || apiKey.isBlank()) {
+                 log.warn("⚠️ No valid API Key available for SHAREKHAN websocket connection. Skipping connect.");
+                 return;
+            }
+
+            String wsUrl = String.format("wss://stream.sharekhan.com/skstream/api/stream?ACCESS_TOKEN=%s&API_KEY=%s", accessToken, apiKey);
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
             container.connectToServer(this, new URI(wsUrl));
 

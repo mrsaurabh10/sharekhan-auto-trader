@@ -478,4 +478,54 @@ public class TokenStoreService {
             log.debug("Failed to shutdown token loader executor: {}", e.getMessage());
         }
     }
+
+    @lombok.Data
+    @lombok.AllArgsConstructor
+    public static class TokenInfo {
+        private String token;
+        private String apiKey;
+    }
+
+    public TokenInfo getFirstNonExpiredTokenInfo(Broker broker) {
+        if (broker == null) return null;
+
+        // 1) per-customer in-memory tokens
+        String prefix = broker.getDisplayName() + ":";
+        try {
+            for (Map.Entry<String, String> e : tokenByCustomer.entrySet()) {
+                String key = e.getKey();
+                if (key != null && key.startsWith(prefix)) {
+                    Instant exp = expiryByCustomer.get(key);
+                    String tok = e.getValue();
+                    if (tok != null && exp != null && Instant.now().isBefore(exp)) {
+                        String[] parts = key.split(":");
+                        if (parts.length >= 2) {
+                            try {
+                                Long customerId = Long.parseLong(parts[1]);
+                                var creds = brokerCredentialsService.findForBrokerAndCustomer(broker.getDisplayName(), customerId);
+                                if (creds.isPresent() && creds.get().getApiKey() != null) {
+                                    return new TokenInfo(tok, creds.get().getApiKey());
+                                }
+                            } catch (Exception ex) {}
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // 2) persisted latest token for this broker
+        try {
+            var latest = persistenceService.findLatestByBroker(broker.getDisplayName());
+            if (latest != null && latest.getExpiry() != null && Instant.now().isBefore(latest.getExpiry()) && latest.getToken() != null) {
+                if (latest.getBrokerCredentialsId() != null) {
+                    var creds = brokerCredentialsRepository.findById(latest.getBrokerCredentialsId());
+                    if (creds.isPresent() && creds.get().getApiKey() != null) {
+                        return new TokenInfo(latest.getToken(), creds.get().getApiKey());
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+
+        return null;
+    }
 }
