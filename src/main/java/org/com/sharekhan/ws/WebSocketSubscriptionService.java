@@ -1,7 +1,5 @@
 package org.com.sharekhan.ws;
 
-import org.com.sharekhan.auth.TokenLoginAutomationService;
-
 public interface WebSocketSubscriptionService {
     /**
      * Subscribe to LTP for a given scrip key.

@@ -56,7 +56,6 @@ public class WebSocketClientService  {
     // 🧠 Cache to track active subscriptions (e.g., NC2885, NF42120, etc.)
     private final Set<String> activeLtpSubscriptions = ConcurrentHashMap.newKeySet();
 
-    private static final String API_KEY = TokenLoginAutomationService.apiKey; // replace with actual key
     @Autowired
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
 

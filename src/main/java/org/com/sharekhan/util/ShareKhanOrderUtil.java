@@ -3,7 +3,6 @@ package org.com.sharekhan.util;
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
 import com.sharekhan.model.OrderParams;
-import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.json.JSONObject;
@@ -12,14 +11,18 @@ import java.io.IOException;
 
 public class ShareKhanOrderUtil {
 
-    public static JSONObject modifyOrder(SharekhanConnect sharekhanConnect,TriggeredTradeSetupEntity tradeSetupEntity, Double orderPrice) throws SharekhanAPIException, IOException {
+    public static JSONObject modifyOrder(SharekhanConnect sharekhanConnect,
+                                         TriggeredTradeSetupEntity tradeSetupEntity,
+                                         Double orderPrice,
+                                         Long customerId,
+                                         String channelUser) throws SharekhanAPIException, IOException {
         OrderParams orderParams = new OrderParams();
         if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus()) ){
             orderParams.orderId = tradeSetupEntity.getExitOrderId();
         }else{
             orderParams.orderId = tradeSetupEntity.getOrderId();
         }
-        orderParams.customerId = (long) TokenLoginAutomationService.customerId;
+        orderParams.customerId = customerId;
         orderParams.scripCode = tradeSetupEntity.getScripCode();
         orderParams.disclosedQty = (long) 0;
         orderParams.validity = "GFD";
@@ -39,7 +42,7 @@ public class ShareKhanOrderUtil {
         orderParams.triggerPrice = "0";
         orderParams.rmsCode= "ANY";
         orderParams.afterHour= "N";
-        orderParams.channelUser=TokenLoginAutomationService.clientCode; //enter the clientCode
+        orderParams.channelUser=channelUser; // client/user code from broker credentials
         orderParams.requestType="MODIFY"; //
         orderParams.instrumentType=tradeSetupEntity.getInstrumentType(); //(Future Stocks(FS)/ Future Index(FI)/ Option Index(OI)/ Option Stocks(OS)/ Future Currency(FUTCUR)/ Option Currency(OPTCUR))
         // For NC/BC (equities) these may be null — set only when present to avoid sending the literal "null"

@@ -25,48 +25,55 @@ import static com.microsoft.playwright.BrowserType.*;
 @Service
 @RequiredArgsConstructor
 public class TokenLoginAutomationService implements BrokerAuthProvider {
-
-    public static final String clientCode = "SGUPTA78";
-    public static final Long customerId = 73196L;
-    private static final String password = "Anvi@2023";
-    private static final String totpSecret = "3VNUAS5GNB5UXCXR";
-    private static final String secretKey = "iOpn2GrHHzmjdWu795RRw79d0OPZn7jh";
-    public static final String apiKey = "M57X7RqA9C43IOq8iJSySWv8LAD2DzkM";
+    // All previously hardcoded credentials have been removed. Credentials must
+    // come from BrokerCredentialsEntity records.
 
     private final CryptoService cryptoService;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
 
     @Override
     public AuthTokenResult loginAndFetchToken() {
-        // Try to load credentials for the configured default customer if present
+        // Resolve any active Sharekhan broker credentials; require at least one configured
         try {
-            var opt = brokerCredentialsRepository.findTopByBrokerNameAndAppUserIdAndActiveTrue("SHAREKHAN", customerId);
-            if (opt.isEmpty()) {
-                opt = brokerCredentialsRepository.findTopByBrokerNameAndAppUserId("SHAREKHAN", customerId);
+            var all = brokerCredentialsRepository.findAll();
+            org.com.sharekhan.entity.BrokerCredentialsEntity chosen = null;
+            for (var b : all) {
+                if (b == null) continue;
+                if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
+                        && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
             }
-            if (opt.isPresent()) {
-                return loginAndFetchToken(opt.get());
+            if (chosen == null) {
+                for (var b : all) {
+                    if (b == null) continue;
+                    if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
+                }
             }
+            if (chosen == null) {
+                throw new IllegalStateException("No Sharekhan broker configured. Please add broker credentials.");
+            }
+            return loginAndFetchToken(chosen);
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            // ignore db errors and fallback to defaults
+            throw new IllegalStateException("Failed to resolve broker credentials for login: " + e.getMessage(), e);
         }
-        // fallback to existing behavior
-        return loginAndFetchToken(null);
     }
 
     @Override
     public AuthTokenResult loginAndFetchToken(org.com.sharekhan.entity.BrokerCredentialsEntity creds) {
-        // If creds provided, prefer values from creds; otherwise fall back to static defaults
-        final String apiKeyToUse = (creds != null && creds.getApiKey() != null && !creds.getApiKey().isBlank()) ? maybeDecrypt(creds.getApiKey()) : apiKey;
-        final String pwdToUse = (creds != null && creds.getBrokerPassword() != null && !creds.getBrokerPassword().isBlank()) ? maybeDecrypt(creds.getBrokerPassword()) : password;
-        final String totpToUse = (creds != null && creds.getTotpSecret() != null && !creds.getTotpSecret().isBlank()) ? maybeDecrypt(creds.getTotpSecret()) : totpSecret;
-        final String secretToUse = (creds != null && creds.getSecretKey() != null && !creds.getSecretKey().isBlank()) ? maybeDecrypt(creds.getSecretKey()) : secretKey;
+        if (creds == null) {
+            throw new IllegalStateException("Broker credentials are required for login (no hardcoded defaults).");
+        }
+        final String apiKeyToUse = requireNonBlank(maybeDecrypt(creds.getApiKey()), "apiKey");
+        final String pwdToUse = requireNonBlank(maybeDecrypt(creds.getBrokerPassword()), "brokerPassword");
+        final String totpToUse = requireNonBlank(maybeDecrypt(creds.getTotpSecret()), "totpSecret");
+        final String secretToUse = requireNonBlank(maybeDecrypt(creds.getSecretKey()), "secretKey");
 
         SharekhanConnect sharekhanConnect = new SharekhanConnect();
         String loginUrl = sharekhanConnect.getLoginURL(apiKeyToUse, null, "1234", 1234L);
         try (Playwright playwright = Playwright.create();
              Browser browser = playwright.chromium().launch(new LaunchOptions()
-                     .setHeadless(false)
+                     .setHeadless(true)
                      .setArgs(Arrays.asList("--disable-gpu",
                              "--no-sandbox",
                              "--disable-dev-shm-usage",
@@ -151,5 +158,12 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
         } catch (Exception e) {
             return value;
         }
+    }
+
+    private String requireNonBlank(String v, String fieldName) {
+        if (v == null || v.isBlank()) {
+            throw new IllegalStateException("Missing required broker credential: " + fieldName);
+        }
+        return v;
     }
 }

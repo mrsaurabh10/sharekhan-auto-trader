@@ -345,26 +345,18 @@ public class TradeExecutionService {
                 return rejected;
             }
             // Prefer a customer specific token when placing the order
-            Long custId = null;
-            String clientCode = "";
-            String apiKey = "";
-            if (trigger.getBrokerCredentialsId() != null) {
-                Optional<BrokerCredentialsEntity> brokerCredentialsEntity =    brokerCredentialsRepository.
-                        findById(trigger.getBrokerCredentialsId());
-                if(brokerCredentialsEntity.isPresent()){
-                    custId = brokerCredentialsEntity.get().getCustomerId();
-                    clientCode =   cryptoService.decrypt(brokerCredentialsEntity.get().getClientCode()) ;
-                    apiKey =cryptoService.decrypt(brokerCredentialsEntity.get().getApiKey()) ;
-                }
+            BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
+            if (ctx == null || ctx.apiKey == null || ctx.customerId == null) {
+                throw new IllegalStateException("No active Sharekhan broker configured for this user");
             }
-            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, custId);
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, ctx.customerId);
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, apiKey, accessToken);
+            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx.apiKey, accessToken);
 
             // 🧾 Build order request
             OrderParams order = new OrderParams();
             // Use the customerId from broker credentials when available; otherwise fall back to default
-            order.customerId = custId != null ? custId : TokenLoginAutomationService.customerId;
+            order.customerId = ctx.customerId;
             order.scripCode =  trigger.getScripCode();
             order.tradingSymbol = trigger.getSymbol();
             order.exchange = trigger.getExchange();
@@ -395,7 +387,7 @@ public class TradeExecutionService {
             order.validity = "GFD";
             order.rmsCode ="ANY";
             order.disclosedQty = 0L;
-            order.channelUser = clientCode ;//TokenLoginAutomationService.clientCode;
+            order.channelUser = ctx.clientCode;
 
             // Retry logic: attempt up to 3 times when broker response doesn't return an orderId.
             JSONObject response = null;
@@ -790,15 +782,11 @@ public class TradeExecutionService {
         // Build exit order params using persisted (fresh) values
         OrderParams exitOrder = new OrderParams();
         // Resolve customerId from broker credentials if available; fallback to default
-        Long exitCustId = null;
-        try {
-            if (persisted.getBrokerCredentialsId() != null) {
-                exitCustId = brokerCredentialsRepository.findById(persisted.getBrokerCredentialsId())
-                        .map(BrokerCredentialsEntity::getCustomerId)
-                        .orElse(null);
-            }
-        } catch (Exception ignore) { }
-        exitOrder.customerId = (exitCustId != null ? exitCustId : TokenLoginAutomationService.customerId);
+    BrokerContext exitCtx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
+        if (exitCtx == null || exitCtx.customerId == null) {
+            throw new IllegalStateException("No active Sharekhan broker configured for this user (exit)");
+        }
+        exitOrder.customerId = exitCtx.customerId;
         exitOrder.exchange = persisted.getExchange();
         exitOrder.scripCode = persisted.getScripCode();
         // For equities (NC/BC) strikePrice/optionType/expiry may be null — send null instead of "null"
@@ -829,10 +817,11 @@ public class TradeExecutionService {
         exitOrder.validity = "GFD";
         exitOrder.rmsCode = "ANY";
         exitOrder.disclosedQty = 0L;
-        exitOrder.channelUser = TokenLoginAutomationService.clientCode;
+        exitOrder.channelUser = exitCtx.clientCode;
 
-        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-        SharekhanConnect sharekhanConnect = new SharekhanConnect(null, TokenLoginAutomationService.apiKey, accessToken);
+        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, exitCtx.customerId);
+        if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+        SharekhanConnect sharekhanConnect = new SharekhanConnect(null, exitCtx.apiKey, accessToken);
 
         // Retry logic for exit order placement
         JSONObject response = null;
@@ -1157,12 +1146,12 @@ public class TradeExecutionService {
                 }
             }
             // subscribe to ACK for this customer's feed
-            Long custId = null;
-            if (executedTrades.get(0).getBrokerCredentialsId() != null) {
-                custId = brokerCredentialsRepository.findById(executedTrades.get(0).getBrokerCredentialsId())
-                        .map(BrokerCredentialsEntity::getCustomerId).orElse(null);
+            BrokerContext subCtx = resolveBrokerContext(executedTrades.get(0).getBrokerCredentialsId(), executedTrades.get(0).getAppUserId());
+            if (subCtx != null && subCtx.customerId != null) {
+                webSocketSubscriptionService.subscribeToAck(String.valueOf(subCtx.customerId));
+            } else {
+                throw new IllegalStateException("No active Sharekhan broker configured for ACK subscribe");
             }
-            webSocketSubscriptionService.subscribeToAck(String.valueOf(custId != null ? custId : TokenLoginAutomationService.customerId));
         }
 
         log.info("✅ Monitoring setup complete.");
@@ -1267,5 +1256,65 @@ public class TradeExecutionService {
 
         // run execution using the converted entity
         return execute(temp, ltp);
+    }
+
+    // ---------------- Broker context resolution ----------------
+    @lombok.Data
+    private static class BrokerContext {
+        private final Long customerId;
+        private final String apiKey;
+        private final String clientCode;
+    }
+
+    private BrokerContext resolveBrokerContext(Long brokerCredentialsId, Long appUserId) {
+        try {
+            org.com.sharekhan.entity.BrokerCredentialsEntity chosen = null;
+            if (brokerCredentialsId != null) {
+                chosen = brokerCredentialsRepository.findById(brokerCredentialsId).orElse(null);
+            }
+            if (chosen == null && appUserId != null) {
+                // prefer active Sharekhan for this user, else any Sharekhan
+                java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> list = brokerCredentialsRepository.findByAppUserId(appUserId);
+                if (list != null) {
+                    for (var b : list) {
+                        if (b == null) continue;
+                        if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
+                                && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
+                    }
+                    if (chosen == null) {
+                        for (var b : list) {
+                            if (b == null) continue;
+                            if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
+                        }
+                    }
+                }
+            }
+            if (chosen == null) {
+                // global fallback: any active Sharekhan
+                java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> all = brokerCredentialsRepository.findAll();
+                for (var b : all) {
+                    if (b == null) continue;
+                    if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
+                            && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
+                }
+                if (chosen == null) {
+                    for (var b : all) {
+                        if (b == null) continue;
+                        if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
+                    }
+                }
+            }
+            if (chosen == null) return null;
+
+            Long customerId = chosen.getCustomerId();
+            String apiKey = null;
+            String clientCode = null;
+            try { apiKey = cryptoService.decrypt(chosen.getApiKey()); } catch (Exception e) { apiKey = chosen.getApiKey(); }
+            try { clientCode = cryptoService.decrypt(chosen.getClientCode()); } catch (Exception e) { clientCode = chosen.getClientCode(); }
+            return new BrokerContext(customerId, apiKey, clientCode);
+        } catch (Exception e) {
+            log.warn("Failed to resolve broker context: {}", e.toString());
+            return null;
+        }
     }
 }

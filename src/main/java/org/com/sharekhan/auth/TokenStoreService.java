@@ -405,11 +405,11 @@ public class TokenStoreService {
     // Strategy: 1) check global token map; 2) check per-customer in-memory tokens; 3) check latest persisted token for broker.
     public String getFirstNonExpiredTokenForBroker(Broker broker) {
         if (broker == null) return null;
-        // 1) global token
-        try {
-            String global = getValidTokenOrNull(broker);
-            if (global != null) return global;
-        } catch (Exception ignored) {}
+//        // 1) global token
+//        try {
+//            String global = getValidTokenOrNull(broker);
+//            if (global != null) return global;
+//        } catch (Exception ignored) {}
 
         // 2) per-customer in-memory tokens
         String prefix = broker.getDisplayName() + ":";

@@ -21,6 +21,12 @@ public class TradingMessageService {
     @Autowired
     private BrokerCredentialsService brokerCredentialsService;
 
+    @Autowired
+    private UserConfigService userConfigService;
+
+    @Autowired(required = false)
+    private TelegramNotificationService telegramNotificationService;
+
     private final TradingSignalParser parserChain = new ParserChain(
             new TelegramSignalParser(),
             new WhatsappSignalParser(),
@@ -84,10 +90,9 @@ public class TradingMessageService {
                 System.err.println("Failed to place order for all Sharekhan customers: " + e.getMessage());
             }
 
-            System.out.println("✅ Parsed message: " + parsed + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
-            TriggerRequest req = mapToTriggerRequest(parsed);
-            tradingExecutorService.executeTrade(req, true);
-            // trigger trading logic
+            // Note: Do NOT place a generic trade here without appUser context.
+            // All telegram-triggered placements are handled per-user in placeForAllSharekhanCustomers()
+            System.out.println("✅ Parsed message handled" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
         } else {
             System.out.println("⚠️ No parser matched message" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
         }
@@ -113,6 +118,32 @@ public class TradingMessageService {
                 // Attach broker credential id and app user id so backend uses the right token/customer when placing
                 req.setBrokerCredentialsId(c.getId());
                 req.setUserId(c.getAppUserId());
+
+                // Per-user configuration: telegram_trade_enabled (default true)
+                boolean enabled = true;
+                try {
+                    String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
+                    if (v != null) {
+                        String s = v.trim().toLowerCase();
+                        enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
+                    }
+                } catch (Exception ignore) { enabled = true; }
+
+                if (!enabled) {
+                    // Skip placing for this user; optionally notify/log
+                    System.out.println("⏭️ Skipping telegram trade for user #" + c.getAppUserId() + " due to telegram_trade_enabled=false");
+                    try {
+                        if (telegramNotificationService != null) {
+                            String title = "Telegram Trade Skipped";
+                            String body = "telegram_trade_enabled=false; Trade ignored for incoming signal.\n" +
+                                    "Instrument: " + (req.getInstrument()) +
+                                    (req.getStrikePrice()!=null?(" "+req.getStrikePrice()):"") +
+                                    (req.getOptionType()!=null?(" "+req.getOptionType()):"");
+                            telegramNotificationService.sendTradeMessageForUser(c.getAppUserId(), title, body);
+                        }
+                    } catch (Exception ignored) {}
+                    continue;
+                }
 
                 // Submit placement concurrently
                 CompletableFuture<Void> f = CompletableFuture.runAsync(() -> {
@@ -144,6 +175,28 @@ public class TradingMessageService {
                     TriggerRequest req = cloneRequest(base);
                     req.setBrokerCredentialsId(c.getId());
                     req.setUserId(c.getAppUserId());
+                    boolean enabled = true;
+                    try {
+                        String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
+                        if (v != null) {
+                            String s = v.trim().toLowerCase();
+                            enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
+                        }
+                    } catch (Exception ignore) { enabled = true; }
+                    if (!enabled) {
+                        System.out.println("⏭️ Skipping telegram trade for user #" + c.getAppUserId() + " due to telegram_trade_enabled=false");
+                        try {
+                            if (telegramNotificationService != null) {
+                                String title = "Telegram Trade Skipped";
+                                String body = "telegram_trade_enabled=false; Trade ignored for incoming signal.\n" +
+                                        "Instrument: " + (req.getInstrument()) +
+                                        (req.getStrikePrice()!=null?(" "+req.getStrikePrice()):"") +
+                                        (req.getOptionType()!=null?(" "+req.getOptionType()):"");
+                                telegramNotificationService.sendTradeMessageForUser(c.getAppUserId(), title, body);
+                            }
+                        } catch (Exception ignored) {}
+                        continue;
+                    }
                     tradingExecutorService.executeTrade(req);
                 } catch (Exception ex) {
                     System.err.println("Failed to place order for broker credential id " + (c != null ? c.getId() : "null") + ": " + ex.getMessage());
