@@ -22,17 +22,17 @@ import static org.junit.jupiter.api.Assertions.*;
 class SharekhanLoginIntegrationTest {
 
     //@Test
-    @Disabled("Enable only for live integration testing")
-    void testFetchAccessTokenLive() {
-        try {
-            String token = SharekhanLoginAutomation.fetchAccessToken();
-            assertNotNull(token);
-            assertTrue(token.length() > 100, "Access token looks too short");
-            System.out.println("✅ Fetched live token: " + token);
-        } catch (IOException | SharekhanAPIException e) {
-            fail("Exception during fetchAccessToken: " + e.getMessage());
-        }
-    }
+//    @Disabled("Enable only for live integration testing")
+//    void testFetchAccessTokenLive() {
+//        try {
+//            String token = SharekhanLoginAutomation.fetchAccessToken();
+//            assertNotNull(token);
+//            assertTrue(token.length() > 100, "Access token looks too short");
+//            System.out.println("✅ Fetched live token: " + token);
+//        } catch (IOException | SharekhanAPIException e) {
+//            fail("Exception during fetchAccessToken: " + e.getMessage());
+//        }
+//    }
 
 //    @Test
 //    @Disabled("Enable only for live integration testing")
