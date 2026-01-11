@@ -1065,8 +1065,24 @@ public class TradeExecutionService {
 
                 if (price != null) {
                     if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus())) {
+
+                        Double actualEntryPrice = tradeSetupEntity.getEntryPrice();
                         tradeSetupEntity.setEntryPrice(price);
                         tradeSetupEntity.setEntryAt(LocalDateTime.now());
+                        
+                        // Logic to update Target 1 and Stop Loss if entry price > Target 1
+                        Double entryPrice = tradeSetupEntity.getEntryPrice();
+                        Double target1 = tradeSetupEntity.getTarget1();
+                        Double target2 = tradeSetupEntity.getTarget2();
+                        
+                        if (entryPrice != null && target1 != null && target1 > 0d && entryPrice > target1) {
+                            if (target2 != null && target2 > 0d) {
+                                log.info("🚀 Actual Entry Price ({}) > Target 1 ({}). Updating Target 1 to Target 2 ({}) and Stop Loss to Actual Entry Price ({}) for trade {}", 
+                                        entryPrice, target1, target2, entryPrice, tradeSetupEntity.getId());
+                                tradeSetupEntity.setTarget1(target2);
+                                tradeSetupEntity.setStopLoss(actualEntryPrice);
+                            }
+                        }
                     } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
                         tradeSetupEntity.setExitPrice(price);
                         tradeSetupEntity.setExitedAt(LocalDateTime.now());
