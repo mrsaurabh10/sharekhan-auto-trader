@@ -18,7 +18,7 @@ public class TriggerRequest {
     private String optionType;
     private String expiry; // format: 31/07/2025
     private Boolean intraday;
-    // optional user id (customer id) - if absent backend will fallback to default TokenLoginAutomationService.customerId
+    // optional user id (customer id) - if absent backend will fallback to default
     private Long userId;
     // optional broker credentials id to use for this request (broker_credentials.id)
     private Long brokerCredentialsId;

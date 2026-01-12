@@ -11,5 +11,6 @@ public class SharekhanProperties {
     private String clientCode;
     private String password;
     private String totpSecret;
+    private String secretKey;
+    private String apiKey;
 }
-

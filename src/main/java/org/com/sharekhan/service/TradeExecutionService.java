@@ -4,7 +4,6 @@ import com.sharekhan.SharekhanConnect;
 import com.sharekhan.model.OrderParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.dto.TriggerRequest;

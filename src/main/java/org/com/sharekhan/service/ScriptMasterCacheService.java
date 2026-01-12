@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.auth.TokenLoginAutomationService;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
@@ -33,18 +32,15 @@ public class ScriptMasterCacheService {
     private final Map<String, JSONObject> scriptCache = new HashMap<>();
     private final ScriptMasterRepository repository;
     private final TokenStoreService tokenStoreService;
-    private final TokenLoginAutomationService tokenLoginAutomationService;
 
 
     private static final String apiKey = "M57X7RqA9C43IOq8iJSySWv8LAD2DzkM";
 
     @Autowired
     public ScriptMasterCacheService(ScriptMasterRepository repository,
-                                    TokenStoreService tokenStoreService,
-                                    TokenLoginAutomationService tokenLoginAutomationService) {
+                                    TokenStoreService tokenStoreService) {
         this.repository = repository;
         this.tokenStoreService = tokenStoreService;
-        this.tokenLoginAutomationService = tokenLoginAutomationService;
     }
 
     public Map<String, JSONObject> getScriptCache(String exchange) throws IOException, SharekhanAPIException {
