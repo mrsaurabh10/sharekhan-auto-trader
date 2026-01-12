@@ -7,8 +7,11 @@ import org.com.sharekhan.auth.AccessTokenPersistenceService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.security.web.csrf.CsrfToken;
+import jakarta.servlet.http.HttpServletRequest;
 
 import java.time.Instant;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -48,5 +51,12 @@ public class AuthController {
             accessTokenPersistenceService.replaceTokenForCustomer(broker, customerId, null, token, expiry);
         }
         return ResponseEntity.ok().body("token saved");
+    }
+
+    @GetMapping("/csrf-token")
+    public Map<String, String> csrfToken(HttpServletRequest request) {
+        CsrfToken token = (CsrfToken) request.getAttribute("_csrf");
+        if (token == null) return Map.of();
+        return Map.of("header", token.getHeaderName(), "parameter", token.getParameterName(), "token", token.getToken());
     }
 }

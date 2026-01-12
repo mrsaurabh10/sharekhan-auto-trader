@@ -7,7 +7,8 @@
     const meta = document.querySelector('meta[name="_csrf"]');
     if (meta && meta.getAttribute('content')) return;
     try {
-      const res = await fetch('/admin/csrf-token', { credentials: 'include' });
+      // Use public endpoint to fetch CSRF token
+      const res = await fetch('/api/auth/csrf-token', { credentials: 'include' });
       if (!res.ok) return;
       const body = await res.json().catch(() => null);
       if (!body || !body.token) return;
