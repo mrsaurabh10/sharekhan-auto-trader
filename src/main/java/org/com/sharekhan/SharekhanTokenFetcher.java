@@ -116,7 +116,7 @@ public class SharekhanTokenFetcher {
             passwordLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
 
             // Fill credentials
-            page.locator("#clientcode").fill(clientCode);
+            //page.locator("#clientcode").fill(clientCode);
             page.locator("#password").fill(password);
             String totp = TOTPGenerator.generateCode(totpSecret);
             page.locator("#totp").fill(totp);
