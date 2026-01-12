@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    active: user-test
   datasource:
     url: jdbc:h2:file:./data/scriptdb  # file-based for persistence
     driver-class-name: org.h2.Driver
