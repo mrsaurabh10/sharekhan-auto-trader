@@ -58,11 +58,13 @@ public class SharekhanAuthProvider implements BrokerAuthProvider {
         String clientCode = null;
         String password = null;
         String totpSecret = null;
+        String apiKey = null;
 
         if (creds != null) {
             try { clientCode = creds.getClientCode() != null && !creds.getClientCode().isBlank() ? cryptoService.decrypt(creds.getClientCode()) : null; } catch (Exception e) { clientCode = creds.getClientCode(); }
             try { password = creds.getBrokerPassword() != null && !creds.getBrokerPassword().isBlank() ? cryptoService.decrypt(creds.getBrokerPassword()) : null; } catch (Exception e) { password = creds.getBrokerPassword(); }
             try { totpSecret = creds.getTotpSecret() != null && !creds.getTotpSecret().isBlank() ? cryptoService.decrypt(creds.getTotpSecret()) : null; } catch (Exception e) { totpSecret = creds.getTotpSecret(); }
+            try { apiKey = creds.getApiKey() != null && !creds.getApiKey().isBlank() ? cryptoService.decrypt(creds.getApiKey()) : null; } catch (Exception e) { apiKey = creds.getApiKey(); }
         }
 
         if (clientCode == null || clientCode.isBlank()) clientCode = props.getClientCode();
@@ -80,7 +82,7 @@ public class SharekhanAuthProvider implements BrokerAuthProvider {
                 throw new IllegalStateException("Sharekhan totp secret (app.sharekhan.totp-secret) not configured");
             }
 
-            String token = fetcher.fetchAccessToken(clientCode, password, totpSecret);
+            String token = fetcher.fetchAccessToken(clientCode, password, totpSecret, apiKey);
             if (token == null || token.isBlank()) {
                 throw new RuntimeException("Sharekhan token fetcher returned no token");
             }

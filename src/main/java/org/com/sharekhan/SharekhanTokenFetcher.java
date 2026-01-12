@@ -4,6 +4,7 @@ import com.microsoft.playwright.*;
 import com.microsoft.playwright.options.ViewportSize;
 import com.microsoft.playwright.options.WaitForSelectorState;
 import com.microsoft.playwright.options.WaitUntilState;
+import com.sharekhan.SharekhanConnect;
 import org.com.sharekhan.util.TOTPGenerator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -15,10 +16,13 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class SharekhanTokenFetcher {
 
-    private static final String LOGIN_URL = "https://www.sharekhan.com/login";
     private static final String REDIRECT_URL_CONTAINS = "accessToken";
 
     public String fetchAccessToken(String clientCode, String password, String totpSecret) {
+        return fetchAccessToken(clientCode, password, totpSecret, null);
+    }
+
+    public String fetchAccessToken(String clientCode, String password, String totpSecret, String apiKey) {
         AtomicReference<String> accessToken = new AtomicReference<>(null);
 
         try (Playwright playwright = Playwright.create()) {
@@ -87,7 +91,21 @@ public class SharekhanTokenFetcher {
             // Remove animations/transitions to cut layout work
             page.addInitScript("try{const s=document.createElement('style');s.innerHTML='*{animation:none!important;transition:none!important}';document.head.appendChild(s);}catch(e){}");
 
-            page.navigate(LOGIN_URL, new Page.NavigateOptions().setTimeout(120000)
+            String loginUrl;
+            if (apiKey != null && !apiKey.isBlank()) {
+                try {
+                    SharekhanConnect sk = new SharekhanConnect(null, apiKey, null);
+                    loginUrl = sk.getLoginURL(apiKey, null, null, 12345L);
+                    log.info("Generated dynamic login URL using apiKey: {}", loginUrl);
+                } catch (Exception e) {
+                    log.warn("Failed to generate dynamic login URL, falling back to default: {}", e.getMessage());
+                    loginUrl = "https://www.sharekhan.com/login";
+                }
+            } else {
+                loginUrl = "https://www.sharekhan.com/login";
+            }
+
+            page.navigate(loginUrl, new Page.NavigateOptions().setTimeout(120000)
                     .setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
 
             // Step 2: Wait explicitly for the password field (or your critical UI element) to appear
