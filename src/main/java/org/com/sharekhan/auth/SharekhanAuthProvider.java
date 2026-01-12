@@ -60,7 +60,7 @@ public class SharekhanAuthProvider implements BrokerAuthProvider {
         String totpSecret = null;
 
         if (creds != null) {
-            try { clientCode = creds.getClientCode(); } catch (Exception ignored) {}
+            try { clientCode = creds.getClientCode() != null && !creds.getClientCode().isBlank() ? cryptoService.decrypt(creds.getClientCode()) : null; } catch (Exception e) { clientCode = creds.getClientCode(); }
             try { password = creds.getBrokerPassword() != null && !creds.getBrokerPassword().isBlank() ? cryptoService.decrypt(creds.getBrokerPassword()) : null; } catch (Exception e) { password = creds.getBrokerPassword(); }
             try { totpSecret = creds.getTotpSecret() != null && !creds.getTotpSecret().isBlank() ? cryptoService.decrypt(creds.getTotpSecret()) : null; } catch (Exception e) { totpSecret = creds.getTotpSecret(); }
         }
