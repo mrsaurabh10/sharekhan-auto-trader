@@ -975,8 +975,6 @@ public class TradeExecutionService {
         } catch (Exception e) {
             log.warn("Failed to schedule order status polling for trade {}: {}", persisted.getId(), e.getMessage());
         }
-
-        orderExitService.performSquareOff(trade, exitPrice, exitReason);
     }
 
 
