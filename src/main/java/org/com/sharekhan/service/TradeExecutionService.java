@@ -731,15 +731,12 @@ public class TradeExecutionService {
             log.info("🛑 Force-closing trade {} at price: {}", trade.getId(), exitPrice);
 
             // delegate directly to OrderExitService to avoid self-invocation of transactional logic
-            orderExitService.performSquareOff(trade, exitPrice, "Force fully close the trade"); // reuse existing logic
+            squareOff(trade, exitPrice, "Force fully close the trade"); // reuse existing logic
             return true;
         } else {
             return false;
         }
     }
-
-    @Autowired
-    private OrderExitService orderExitService;
 
     public void squareOff(TriggeredTradeSetupEntity trade, double exitPrice, String exitReason) {
         // Re-load the trade from DB (within transaction) to avoid races. Claim the trade by setting status
@@ -825,36 +822,51 @@ public class TradeExecutionService {
         // Retry logic for exit order placement
         JSONObject response = null;
         String exitOrderId = null;
-        
-        // Removed retry loop to prevent duplicate orders on timeout
-        try {
-            response = sharekhanConnect.placeOrder(exitOrder);
-        } catch (Exception e) {
-            log.warn("Exit placeOrder threw exception for trade {}: {}", persisted.getId(), e.getMessage());
-        }
+        final int maxAttempts = 3;
+        long[] backoffMs = new long[]{300L, 700L, 1500L};
 
-        try {
-            if (response != null && response.has("data")) {
-                JSONObject d = response.getJSONObject("data");
-                String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
-                String respStatus = d.optString("orderStatus", "");
-                String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
-                String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
-                log.info("Sharekhan exit placeOrder summary: orderId={} status={} avg/price={} execQty={}", respOrderId, respStatus, respAvg, respExecQty);
-                if (respOrderId != null && !respOrderId.isBlank()) {
-                    exitOrderId = respOrderId;
-                }
-            } else if (response != null) {
-                log.info("Sharekhan exit placeOrder received response but missing data object: status={}", response.optInt("status", -1));
-            } else {
-                log.info("Sharekhan exit placeOrder returned null response for trade {}", persisted.getId());
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                response = sharekhanConnect.placeOrder(exitOrder);
+            } catch (Exception e) {
+                log.warn("Exit attempt {}: placeOrder threw exception for trade {}: {}", attempt, persisted.getId(), e.getMessage());
             }
-        } catch (Exception e) {
-            log.debug("Failed to compactly log exit placeOrder response: {}", e.getMessage());
+
+            try {
+                if (response != null && response.has("data")) {
+                    JSONObject d = response.getJSONObject("data");
+                    String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
+                    String respStatus = d.optString("orderStatus", "");
+                    String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
+                    String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
+                    log.info("Sharekhan exit placeOrder attempt {} summary: orderId={} status={} avg/price={} execQty={}", attempt, respOrderId, respStatus, respAvg, respExecQty);
+                    if (respOrderId != null && !respOrderId.isBlank()) {
+                        exitOrderId = respOrderId;
+                    }
+                } else if (response != null) {
+                    log.info("Sharekhan exit placeOrder attempt {} received response but missing data object: status={}", attempt, response.optInt("status", -1));
+                } else {
+                    log.info("Sharekhan exit placeOrder attempt {} returned null response for trade {}", attempt, persisted.getId());
+                }
+            } catch (Exception e) {
+                log.debug("Failed to compactly log exit placeOrder attempt {} response: {}", attempt, e.getMessage());
+            }
+
+            if (exitOrderId != null) break;
+
+            if (attempt < maxAttempts) {
+                long sleepMs = backoffMs[Math.min(attempt - 1, backoffMs.length - 1)];
+                try {
+                    Thread.sleep(sleepMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
 
         if (exitOrderId == null) {
-            log.error("❌ Exit place order failed for trade {}. Response: {}", persisted.getId(), response);
+            log.error("❌ Exit place order failed after {} attempts for trade {}. Response: {}", maxAttempts, persisted.getId(), response);
             try {
                 persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                 triggeredTradeRepo.save(persisted);
@@ -864,14 +876,14 @@ public class TradeExecutionService {
             }
 
             try {
-                String title = "Exit Order Placement Failed ❌";
+                String title = "Exit Order Placement Failed after retries ❌";
                 StringBuilder body = new StringBuilder();
                 body.append("Instrument: ").append(persisted.getSymbol()).append("\n");
                 body.append("Exchange: ").append(persisted.getExchange()).append("\n");
                 body.append("Attempted Qty: ").append(persisted.getQuantity()).append("\n");
                 body.append("Attempted Price: ").append(exitPrice).append("\n");
                 body.append("TradeId: ").append(persisted.getId()).append("\n");
-                body.append("Note: Exit placeOrder did not return orderId.");
+                body.append("Note: Exit placeOrder did not return orderId after ").append(maxAttempts).append(" attempts.");
                 telegramNotificationService.sendTradeMessageForUser(persisted.getAppUserId(), title, body.toString());
             } catch (Exception e) {
                 log.warn("Failed sending telegram notification for exit placeOrder failure: {}", e.getMessage());
@@ -981,7 +993,7 @@ public class TradeExecutionService {
     public void squareOffTrade(Long id) {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Trade not found"));
-        orderExitService.performSquareOff(tradeSetupEntity, ltpCacheService.getLtp(tradeSetupEntity.getScripCode()),
+        squareOff(tradeSetupEntity, ltpCacheService.getLtp(tradeSetupEntity.getScripCode()),
                 "Manual Exit");
     }
 
