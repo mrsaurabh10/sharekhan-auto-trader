@@ -373,14 +373,23 @@
     } catch (e) { console.error('Failed to load requests for user', uid, e); tbody.innerHTML = '<tr><td colspan="12">Error loading requests</td></tr>'; }
   }
 
-  async function loadExecutedForUser(userId) {
+  async function loadExecutedForUser(userId, filterStatuses) {
     const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-executed-table tbody'); if (!tbody) return; tbody.innerHTML = '';
     if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; return; }
     try {
       const data = await fetchJson('/api/orders/executed?userId=' + encodeURIComponent(uid));
       if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No executed trades</td></tr>'; return; }
+
+      // Filter data based on selected statuses
+      let filteredData = data;
+      if (filterStatuses && filterStatuses.length > 0) {
+        filteredData = data.filter(t => filterStatuses.includes(String(t.status).toUpperCase()));
+      }
+
+      if (filteredData.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No trades match filter</td></tr>'; return; }
+
       const seen = new Set(); const uniq = [];
-      for (const t of data) { const tid = t && (t.id || t.tradeId || t.trade_id); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
+      for (const t of filteredData) { const tid = t && (t.id || t.tradeId || t.trade_id); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
 
       const underlyingMap = { NF: 'NSE', BF: 'BSE', NC: 'NSE', BC: 'BSE' };
       const optionMap = { NF: 'NFO', BF: 'BFO' };
@@ -408,9 +417,9 @@
         const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(String(status).toUpperCase())) {
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
-          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid); }); }); actionCell.appendChild(editBtn);
-          const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginRight = '6px'; moveBtn.innerText = 'Move SL to Cost'; moveBtn.addEventListener('click', async function () { if (!confirm('Move SL to entry price for trade ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); await loadExecutedForUser(uid); }); actionCell.appendChild(moveBtn);
-          const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () { if (!confirm('Square off trade ' + id + ' now?')) return; await ensureCsrf(); await fetchJson('/api/trades/square-off/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid); } catch (e) { } }, 800); }); actionCell.appendChild(closeBtn);
+          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
+          const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginRight = '6px'; moveBtn.innerText = 'Move SL to Cost'; moveBtn.addEventListener('click', async function () { if (!confirm('Move SL to entry price for trade ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); await loadExecutedForUser(uid, getSelectedStatuses()); }); actionCell.appendChild(moveBtn);
+          const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () { if (!confirm('Square off trade ' + id + ' now?')) return; await ensureCsrf(); await fetchJson('/api/trades/square-off/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); }); actionCell.appendChild(closeBtn);
         } else { actionCell.innerText = '-'; }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
@@ -527,6 +536,24 @@
       }
 
     } catch (e) { console.error('Failed to load executed trades for user', uid, e); tbody.innerHTML = '<tr><td colspan="13">Error loading executed trades</td></tr>'; }
+  }
+
+  function getSelectedStatuses() {
+    const sel = document.getElementById('statusFilter');
+    if (!sel) return [];
+    return Array.from(sel.selectedOptions).map(o => o.value);
+  }
+
+  // Wire up the filter button
+  function wireStatusFilter() {
+    const btn = document.getElementById('applyStatusFilterBtn');
+    if (btn) {
+      btn.addEventListener('click', function() {
+        if (window.selectedUserId) {
+          loadExecutedForUser(window.selectedUserId, getSelectedStatuses());
+        }
+      });
+    }
   }
 
   // --- LTP helpers + websocket + polling fallback ---
@@ -915,7 +942,7 @@
       showBrokersSectionFor(appUserId, window.selectedUserName);
       // load data
       loadRequestedOrdersForUser(appUserId).catch(function(){});
-      loadExecutedForUser(appUserId).catch(function(){});
+      loadExecutedForUser(appUserId, getSelectedStatuses()).catch(function(){});
       loadBrokers(appUserId).catch(function(){});
     } catch (e) { console.debug('selectUser failed', e); }
   }
@@ -1141,7 +1168,7 @@
         // refresh tables for current user
         if (window.selectedUserId) {
           await loadRequestedOrdersForUser(window.selectedUserId);
-          await loadExecutedForUser(window.selectedUserId);
+          await loadExecutedForUser(window.selectedUserId, getSelectedStatuses());
         }
       } catch (err) {
         const msg = (err && err.message) ? err.message : String(err);
@@ -1220,6 +1247,6 @@
   }
 
   // start ws on load
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); wireStatusFilter(); startAdminWs(); });
 
 })();
