@@ -1054,14 +1054,14 @@ public class TradeExecutionService {
                         Double target1 = tradeSetupEntity.getTarget1();
                         Double target2 = tradeSetupEntity.getTarget2();
                         
-                        if (entryPrice != null && target1 != null && target1 > 0d && entryPrice > target1) {
-                            if (target2 != null && target2 > 0d) {
-                                log.info("🚀 Actual Entry Price ({}) > Target 1 ({}). Updating Target 1 to Target 2 ({}) and Stop Loss to Actual Entry Price ({}) for trade {}", 
-                                        entryPrice, target1, target2, entryPrice, tradeSetupEntity.getId());
-                                tradeSetupEntity.setTarget1(target2);
-                                tradeSetupEntity.setStopLoss(actualEntryPrice);
-                            }
-                        }
+//                        if (entryPrice != null && target1 != null && target1 > 0d && entryPrice > target1) {
+//                            if (target2 != null && target2 > 0d) {
+//                                log.info("🚀 Actual Entry Price ({}) > Target 1 ({}). Updating Target 1 to Target 2 ({}) and Stop Loss to Actual Entry Price ({}) for trade {}",
+//                                        entryPrice, target1, target2, entryPrice, tradeSetupEntity.getId());
+//                                tradeSetupEntity.setTarget1(target2);
+//                                tradeSetupEntity.setStopLoss(actualEntryPrice);
+//                            }
+//                        }
                         
                         // New logic: Adjust SL and Targets based on actual entry price difference
                         if (actualEntryPrice != null && price != null) {
