@@ -17,6 +17,11 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
 
     private final WebSocketConnector connector;
 
+    public void reset() {
+        log.info("🧹 Resetting WebSocket subscription reference counts");
+        refCounts.clear();
+    }
+
     @Override
     public boolean subscribeToScrip(String scripKey) {
         final AtomicInteger[] created = new AtomicInteger[1];

@@ -37,6 +37,7 @@ public class WebSocketClientService  {
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketConnector webSocketConnector;
     private final LtpWebSocketHandler ltpWebSocketHandler;
+    private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
     private Session session;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final Set<String> subscribedScrips = ConcurrentHashMap.newKeySet();
@@ -87,6 +88,10 @@ public class WebSocketClientService  {
         log.info("✅ Connected to Sharekhan WebSocket");
         this.session = session;
         webSocketConnector.setSession(session);
+        
+        // Reset subscription helper state on new connection to ensure we re-subscribe correctly
+        webSocketSubscriptionHelper.reset();
+
         sendSubscribeMessage();
         tradeExecutionService.subscribeForOpenTrades();
     }
