@@ -622,7 +622,7 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
                 triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
                 triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
-                triggeredTradeSetupEntity.setEntryPrice(ltp);
+                triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
                 triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
                 triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
                 // attach broker credentials id and app user id from the trigger for traceability
@@ -643,7 +643,7 @@ public class TradeExecutionService {
                 triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
                 triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
                 triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
-                triggeredTradeSetupEntity.setEntryPrice(ltp);
+                triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
                 triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
                 triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
@@ -1046,9 +1046,22 @@ public class TradeExecutionService {
                     if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus())) {
 
                         Double actualEntryPrice = tradeSetupEntity.getEntryPrice();
-                        log.info("Actual Entry Price is {} and executedPrice is {}", actualEntryPrice, price);
                         tradeSetupEntity.setEntryPrice(price);
                         tradeSetupEntity.setEntryAt(LocalDateTime.now());
+                        
+                        // Logic to update Target 1 and Stop Loss if entry price > Target 1
+                        Double entryPrice = tradeSetupEntity.getEntryPrice();
+                        Double target1 = tradeSetupEntity.getTarget1();
+                        Double target2 = tradeSetupEntity.getTarget2();
+                        
+//                        if (entryPrice != null && target1 != null && target1 > 0d && entryPrice > target1) {
+//                            if (target2 != null && target2 > 0d) {
+//                                log.info("🚀 Actual Entry Price ({}) > Target 1 ({}). Updating Target 1 to Target 2 ({}) and Stop Loss to Actual Entry Price ({}) for trade {}",
+//                                        entryPrice, target1, target2, entryPrice, tradeSetupEntity.getId());
+//                                tradeSetupEntity.setTarget1(target2);
+//                                tradeSetupEntity.setStopLoss(actualEntryPrice);
+//                            }
+//                        }
                         
                         // New logic: Adjust SL and Targets based on actual entry price difference
                         if (actualEntryPrice != null && price != null) {
