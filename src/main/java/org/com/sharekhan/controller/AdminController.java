@@ -1,6 +1,7 @@
 package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
@@ -118,8 +119,24 @@ public class AdminController {
                     "message", "Request removed due to rejection",
                     "reason", executed.getExitReason() != null ? executed.getExitReason() : "Order was rejected"
             ));
+        } else if (executed != null) {
+             // NEW: If successfully executed (or pending confirmation), delete the request
+             try {
+                 requestRepository.delete(r);
+             } catch (Exception ignore) {}
         }
         return ResponseEntity.ok("triggered");
+    }
+
+    @PostMapping("/add-executed-trade")
+    @ResponseBody
+    public ResponseEntity<?> addExecutedTrade(@RequestBody TriggerRequest request) {
+        try {
+            TriggeredTradeSetupEntity trade = tradeExecutionService.createExecutedTrade(request);
+            return ResponseEntity.ok(trade);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
+        }
     }
 
     @PostMapping("/update-request/{id}")

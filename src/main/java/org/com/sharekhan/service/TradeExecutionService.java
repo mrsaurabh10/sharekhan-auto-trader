@@ -292,6 +292,171 @@ public class TradeExecutionService {
         return saved;
     }
 
+    public TriggeredTradeSetupEntity createExecutedTrade(TriggerRequest request) {
+        // Reuse logic to resolve script and calculate quantity
+        // We can call executeTrade to get the request entity, but we need to intercept it before saving or modify it after
+        // Better to extract the common logic or just reuse executeTrade and then immediately convert it.
+        // But executeTrade saves to triggerTradeRequestRepository. We want to save to triggeredTradeRepo directly.
+
+        // Let's copy the logic for resolving script and quantity.
+        // Initialize formatter for expiry date parsing
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        LocalDateTime now = LocalDateTime.now(zoneId);
+        LocalTime cutoff = LocalTime.of(15, 30); // 3:30 PM IST
+
+        final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
+        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+
+        if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
+            List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
+                    request.getInstrument(),
+                    request.getStrikePrice(),
+                    request.getOptionType()
+            );
+            Optional<LocalDate> latestExpiryOpt = allExpiryStrings.stream()
+                    .map(s -> {
+                        try { return LocalDate.parse(s, formatter); } catch (DateTimeParseException e) { return null; }
+                    })
+                    .filter(Objects::nonNull)
+                    .filter(expiryDate -> {
+                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
+                        return expiryDate.isAfter(now.toLocalDate()) || (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+                    })
+                    .min(Comparator.naturalOrder());
+
+            if (latestExpiryOpt.isPresent()) {
+                request.setExpiry(latestExpiryOpt.get().format(formatter));
+            } else {
+                throw new RuntimeException("No valid expiry found for the given instrument and strike price");
+            }
+        }
+
+        ScriptMasterEntity script;
+        if (isNoStrikeExchange) {
+            Optional<ScriptMasterEntity> opt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull(exch, request.getInstrument());
+            if (opt.isPresent()) {
+                script = opt.get();
+            } else {
+                List<ScriptMasterEntity> allForExchange = scriptMasterRepository.findByExchangeIgnoreCase(exch);
+                if (allForExchange == null) allForExchange = List.of();
+                Optional<ScriptMasterEntity> match = allForExchange.stream()
+                        .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(request.getInstrument()))
+                        .filter(s -> (s.getStrikePrice() == null || Double.compare(s.getStrikePrice(), 0.0) == 0) && (s.getExpiry() == null || s.getExpiry().isBlank()))
+                        .findFirst();
+                if (match.isPresent()) {
+                    script = match.get();
+                } else {
+                    Optional<ScriptMasterEntity> anyMatch = allForExchange.stream()
+                            .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(request.getInstrument()))
+                            .findFirst();
+                    if (anyMatch.isPresent()) {
+                        script = anyMatch.get();
+                    } else {
+                        throw new RuntimeException("Script not found in master DB for instrument on exchange " + exch);
+                    }
+                }
+            }
+        } else {
+            script = scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
+                    request.getInstrument(), request.getStrikePrice(), request.getOptionType(), request.getExpiry()
+            ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+        }
+
+        if (request.getQuantity() == null) {
+            // ... (quantity calculation logic same as executeTrade) ...
+            // For brevity, assuming quantity is provided or calculated same way.
+            // If quantity is null here, we can default to 1 lot or throw error.
+            // Let's assume user provides quantity for manual entry or we use default logic.
+            // Copying logic:
+            Long appUserId = request.getUserId();
+            int maxAmtPerTrade = 25000;
+            int maxLossPerTrade = 8000;
+            try {
+                String amtStr = userConfigService.getConfig(appUserId, "max_amount_per_trade", "25000");
+                String lossStr = userConfigService.getConfig(appUserId, "max_loss_per_trade", "8000");
+                maxAmtPerTrade = Integer.parseInt(amtStr);
+                maxLossPerTrade = Integer.parseInt(lossStr);
+            } catch (Exception e) {}
+
+            Double stopLoss = request.getStopLoss();
+            if (stopLoss == null) {
+                stopLoss = request.getEntryPrice();
+                request.setStopLoss(0.05); // dummy SL? No, keep original logic
+            }
+            double lossPerShare = Math.abs(request.getEntryPrice() - stopLoss);
+            if (lossPerShare == 0) {
+                request.setQuantity(0);
+            } else {
+                if (isNoStrikeExchange) {
+                    int quantityAsPerLoss = (int) (maxLossPerTrade / lossPerShare);
+                    int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / request.getEntryPrice());
+                    int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
+                    if (quantity < 0) quantity = 0;
+                    request.setQuantity(quantity);
+                } else {
+                    int lotSizeForCalc = script.getLotSize() != null ? script.getLotSize() : 1;
+                    int lossPerLot = (int) (lossPerShare * lotSizeForCalc);
+                    if (lossPerLot == 0) {
+                        request.setQuantity(0);
+                    } else {
+                        int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
+                        int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * lotSizeForCalc));
+                        int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
+                        if (quantity < 0) quantity = 0;
+                        request.setQuantity(quantity);
+                    }
+                }
+            }
+        }
+
+        int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
+        long finalQuantity;
+        if (isNoStrikeExchange) {
+            finalQuantity = request.getQuantity() != null ? request.getQuantity().longValue() : 0L;
+        } else {
+            finalQuantity = (long) request.getQuantity() * lotSize;
+        }
+
+        if (finalQuantity <= 0L) {
+            throw new InvalidTradeRequestException("Quantity must be greater than zero");
+        }
+
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setSymbol(request.getInstrument());
+        trade.setScripCode(script.getScripCode());
+        trade.setExchange(script.getExchange());
+        trade.setInstrumentType(script.getInstrumentType());
+        trade.setStrikePrice(request.getStrikePrice());
+        trade.setOptionType(request.getOptionType());
+        trade.setExpiry(request.getExpiry());
+        trade.setEntryPrice(request.getEntryPrice());
+        trade.setStopLoss(request.getStopLoss());
+        trade.setTarget1(request.getTarget1());
+        trade.setTarget2(request.getTarget2());
+        trade.setTarget3(request.getTarget3());
+        trade.setTrailingSl(request.getTrailingSl());
+        trade.setQuantity(finalQuantity);
+        trade.setStatus(TriggeredTradeStatus.EXECUTED); // Mark as EXECUTED immediately
+        trade.setTriggeredAt(LocalDateTime.now());
+        trade.setEntryAt(LocalDateTime.now());
+        trade.setIntraday(request.getIntraday());
+        trade.setBrokerCredentialsId(request.getBrokerCredentialsId());
+        trade.setAppUserId(request.getUserId());
+        // Set a dummy orderId to indicate manual entry, or leave null?
+        // If null, polling service might be confused. Better to set a marker.
+        trade.setOrderId("MANUAL-" + System.currentTimeMillis());
+
+        TriggeredTradeSetupEntity saved = triggeredTradeRepo.save(trade);
+
+        // Start monitoring
+        String key = trade.getExchange() + trade.getScripCode();
+        webSocketSubscriptionService.subscribeToScrip(key);
+
+        log.info("✅ Manually added executed trade: {}", saved.getId());
+        return saved;
+    }
+
     public boolean moveStopLossToCost(Long tradeId) {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(tradeId).orElse(null);
         if (tradeSetupEntity == null) return false;

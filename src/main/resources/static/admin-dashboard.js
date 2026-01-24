@@ -1160,11 +1160,21 @@
         if (body.entryPrice == null) throw new Error('Entry Price is required');
         if (body.stopLoss == null) throw new Error('Stop Loss is required');
 
-        const resp = await fetchJson('/api/trades/trigger-on-price', {
+        // Check if "Already Executed" is checked
+        const alreadyExecuted = document.getElementById('alreadyExecuted') && document.getElementById('alreadyExecuted').checked;
+        const url = alreadyExecuted ? '/admin/add-executed-trade' : '/api/trades/trigger-on-price';
+
+        const resp = await fetchJson(url, {
           method: 'POST',
           body: JSON.stringify(body)
         });
-        if (resultDiv) resultDiv.innerText = 'Order placed: ' + (resp && resp.id ? ('Request #' + resp.id) : 'OK');
+
+        if (alreadyExecuted) {
+             if (resultDiv) resultDiv.innerText = 'Executed trade added: ' + (resp && resp.id ? ('Trade #' + resp.id) : 'OK');
+        } else {
+             if (resultDiv) resultDiv.innerText = 'Order placed: ' + (resp && resp.id ? ('Request #' + resp.id) : 'OK');
+        }
+
         // refresh tables for current user
         if (window.selectedUserId) {
           await loadRequestedOrdersForUser(window.selectedUserId);
@@ -1186,6 +1196,7 @@
         const opt = document.getElementById('optionType'); if (opt) { opt.value = 'CE'; if (opt.value !== 'CE' && opt.options.length > 0) opt.selectedIndex = 0; }
         const qty = document.getElementById('quantity'); if (qty) qty.value = '1';
         const intr = document.getElementById('intraday'); if (intr) intr.checked = false;
+        const ae = document.getElementById('alreadyExecuted'); if (ae) ae.checked = false;
         if (resultDiv) resultDiv.innerText = '';
         if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
       });
