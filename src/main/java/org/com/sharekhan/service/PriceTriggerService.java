@@ -15,6 +15,8 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Stream;
@@ -33,6 +35,13 @@ public class PriceTriggerService {
     private EntityManager entityManager;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
+        // Check if current time is after 9:20 AM IST
+        LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
+        if (now.isBefore(LocalTime.of(9, 20))) {
+            log.debug("Skipping price trigger evaluation before 9:20 AM. Current time: {}", now);
+            return;
+        }
+
         try {
             List<TriggerTradeRequestEntity> candidates = triggerRepo.findByScripCodeAndStatus(
                     scripCode, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
