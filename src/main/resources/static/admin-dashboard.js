@@ -1,4 +1,5 @@
 // admin-dashboard.js - full implementation
+// Updated at 2025-01-13T12:00:00Z to force cache bust and apply LTP cache fix
 (function () {
   'use strict';
 
@@ -361,10 +362,11 @@
                   // if option lookup provided scripCode, annotate the row so ws updates can match
                   if (oj.scripCode || oj.scrip_code) {
                     const sc = String(oj.scripCode || oj.scrip_code);
-                    try { tr.setAttribute('data-scrip-code', sc); } catch (e) {}
+                    try { info.tr && info.tr.setAttribute('data-scrip-code', sc); } catch (e) {}
                     // Check cache for resolved scripCode
                     if (ltpCache[sc] && ltpCache[sc].last_price != null) {
-                        info.ltpTd.innerText = Number(ltpCache[sc].last_price).toFixed(2);
+                        const ltpNum = Number(ltpCache[sc].last_price);
+                        info.ltpTd.innerText = ltpNum.toFixed(2);
                         filled = true;
                     }
                   }
