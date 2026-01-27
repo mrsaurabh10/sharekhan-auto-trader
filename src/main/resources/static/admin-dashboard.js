@@ -322,6 +322,14 @@
         const primary = candidates.length > 0 ? candidates[0] : null; if (primary) { tr.setAttribute('data-ltp-key', primary); ltpTd.setAttribute('data-ltp', primary); }
         tbody.appendChild(tr);
         candidates.forEach(function(k){ keySet.add(k); }); rows.push({ ltpTd: ltpTd, candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: r.expiry || null, optionType: r.optionType || null });
+
+        // Check cache immediately for scripCode
+        if (rowScripCode) {
+            const sc = String(rowScripCode);
+            if (ltpCache[sc] && ltpCache[sc].last_price != null) {
+                ltpTd.innerText = Number(ltpCache[sc].last_price).toFixed(2);
+            }
+        }
       }
 
       // fill LTP in batch
@@ -329,6 +337,7 @@
         const map = await batchFetchMstockLtp(Array.from(keySet));
         for (const info of rows) {
           let filled = false;
+          // Check string keys from map
           for (const k of info.candidates) {
             if (map && map[k] && map[k].last_price != null) {
               info.ltpTd.innerText = Number(map[k].last_price).toFixed(2);
@@ -351,15 +360,23 @@
                 if (oj && oj.tradingSymbol) {
                   // if option lookup provided scripCode, annotate the row so ws updates can match
                   if (oj.scripCode || oj.scrip_code) {
-                    try { tr.setAttribute('data-scrip-code', String(oj.scripCode || oj.scrip_code)); } catch (e) {}
+                    const sc = String(oj.scripCode || oj.scrip_code);
+                    try { tr.setAttribute('data-scrip-code', sc); } catch (e) {}
+                    // Check cache for resolved scripCode
+                    if (ltpCache[sc] && ltpCache[sc].last_price != null) {
+                        info.ltpTd.innerText = Number(ltpCache[sc].last_price).toFixed(2);
+                        filled = true;
+                    }
                   }
-                  const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
-                  const key = mapped + ':' + oj.tradingSymbol;
-                  // prefer WS cache; fall back to REST only if websocket not available or data missing
-                  const maybe = await getLtpFromCacheOrFallback(key);
-                  if (maybe != null) {
-                    info.ltpTd.innerText = Number(maybe).toFixed(2);
-                    filled = true;
+                  if (!filled) {
+                      const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
+                      const key = mapped + ':' + oj.tradingSymbol;
+                      // prefer WS cache; fall back to REST only if websocket not available or data missing
+                      const maybe = await getLtpFromCacheOrFallback(key);
+                      if (maybe != null) {
+                        info.ltpTd.innerText = Number(maybe).toFixed(2);
+                        filled = true;
+                      }
                   }
                 }
               }
@@ -480,6 +497,20 @@
         if (strike && strike !== '') { const ex = exchange ? String(exchange).toUpperCase() : 'NF'; const mapped = (optionMap[ex] || ex); candidates.push(mapped + ':' + symbol + (t.expiry ? t.expiry : '') + strike + (t.optionType ? t.optionType : '')); }
         const primary = candidates.length > 0 ? candidates[0] : null; if (primary) { tr.setAttribute('data-ltp-key', primary); ltpTd.setAttribute('data-ltp', primary); }
         tbody.appendChild(tr); candidates.forEach(function(k){ keySet.add(k); }); rows.push({ tr: tr, ltpTd: ltpTd, pnlTd: pnlTd, entry: (entry != null && entry !== '-' ? Number(entry) : null), qty: (qty != null && qty !== '-' ? Number(qty) : null), status: statusUpper, candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: t.expiry || null, optionType: t.optionType || null });
+
+        // Check cache immediately for scripCode
+        if (rowScripCode) {
+            const sc = String(rowScripCode);
+            if (ltpCache[sc] && ltpCache[sc].last_price != null) {
+                const ltpNum = Number(ltpCache[sc].last_price);
+                ltpTd.innerText = ltpNum.toFixed(2);
+                // compute PNL only for EXECUTED
+                if (statusUpper === 'EXECUTED' && pnlTd && entry != null && qty != null && !Number.isNaN(ltpNum)) {
+                    const pnl = qty * (ltpNum - Number(entry));
+                    pnlTd.innerText = Number(pnl).toFixed(2);
+                }
+            }
+        }
       }
 
       if (keySet.size > 0) {
@@ -513,18 +544,31 @@
                 const oj = await optRes.json().catch(() => null);
                 if (oj && oj.tradingSymbol) {
                   if (oj.scripCode || oj.scrip_code) {
-                    try { info.tr && info.tr.setAttribute('data-scrip-code', String(oj.scripCode || oj.scrip_code)); } catch (e) {}
-                  }
-                  const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
-                  const key = mapped + ':' + oj.tradingSymbol;
-                  const val = await getLtpFromCacheOrFallback(key);
-                  if (val != null) {
-                    const ltpNum = Number(val);
-                    info.ltpTd.innerText = ltpNum.toFixed(2);
-                    if (info.status === 'EXECUTED' && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
-                      const pnl = info.qty * (ltpNum - Number(info.entry));
-                      info.pnlTd.innerText = Number(pnl).toFixed(2);
+                    const sc = String(oj.scripCode || oj.scrip_code);
+                    try { info.tr && info.tr.setAttribute('data-scrip-code', sc); } catch (e) {}
+                    // Check cache for resolved scripCode
+                    if (ltpCache[sc] && ltpCache[sc].last_price != null) {
+                        const ltpNum = Number(ltpCache[sc].last_price);
+                        info.ltpTd.innerText = ltpNum.toFixed(2);
+                        if (info.status === 'EXECUTED' && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
+                          const pnl = info.qty * (ltpNum - Number(info.entry));
+                          info.pnlTd.innerText = Number(pnl).toFixed(2);
+                        }
+                        filled = true;
                     }
+                  }
+                  if (!filled) {
+                      const mapped = (info.exchange ? (info.exchange.toUpperCase() === 'NF' ? 'NFO' : (info.exchange.toUpperCase() === 'BF' ? 'BFO' : info.exchange)) : info.exchange) || info.exchange;
+                      const key = mapped + ':' + oj.tradingSymbol;
+                      const val = await getLtpFromCacheOrFallback(key);
+                      if (val != null) {
+                        const ltpNum = Number(val);
+                        info.ltpTd.innerText = ltpNum.toFixed(2);
+                        if (info.status === 'EXECUTED' && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
+                          const pnl = info.qty * (ltpNum - Number(info.entry));
+                          info.pnlTd.innerText = Number(pnl).toFixed(2);
+                        }
+                      }
                   }
                 }
               }
@@ -637,6 +681,10 @@
           if (js.scripCode != null && (js.ltp != null || js.last_price != null)) {
             const sc = String(js.scripCode);
             const lv = (js.ltp != null) ? js.ltp : js.last_price;
+
+            // UPDATE CACHE with scripCode key
+            ltpCache[sc] = { last_price: lv };
+
             try {
               // update any rows annotated with data-scrip-code
               document.querySelectorAll('[data-scrip-code]').forEach(function(elem) {
