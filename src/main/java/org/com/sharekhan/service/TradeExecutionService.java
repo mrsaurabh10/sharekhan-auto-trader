@@ -1288,11 +1288,31 @@ public class TradeExecutionService {
         return triggeredTradeRepo.findTop10ByAppUserIdOrderByIdDesc(userId);
     }
 
-    public Page<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId, Pageable pageable) {
-        if (userId == null) {
-            return triggeredTradeRepo.findAll(pageable);
+    public Page<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId, List<String> statusList, Pageable pageable) {
+        List<TriggeredTradeStatus> statuses = null;
+        if (statusList != null && !statusList.isEmpty()) {
+            statuses = statusList.stream()
+                    .map(s -> {
+                        try { return TriggeredTradeStatus.valueOf(s.toUpperCase()); }
+                        catch (Exception e) { return null; }
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(java.util.stream.Collectors.toList());
         }
-        return triggeredTradeRepo.findByAppUserId(userId, pageable);
+
+        if (statuses != null && !statuses.isEmpty()) {
+            if (userId == null) {
+                return triggeredTradeRepo.findByStatusIn(statuses, pageable);
+            } else {
+                return triggeredTradeRepo.findByAppUserIdAndStatusIn(userId, statuses, pageable);
+            }
+        } else {
+            if (userId == null) {
+                return triggeredTradeRepo.findAll(pageable);
+            } else {
+                return triggeredTradeRepo.findByAppUserId(userId, pageable);
+            }
+        }
     }
 
     public void subscribeForOpenTrades(){

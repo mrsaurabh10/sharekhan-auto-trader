@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/orders")
 @RequiredArgsConstructor
@@ -29,9 +31,10 @@ public class OrderViewController {
 
     @GetMapping("/executed")
     public ResponseEntity<?> getExecuted(@RequestParam(name = "userId", required = false) Long userId,
+                                         @RequestParam(name = "status", required = false) List<String> statuses,
                                          @RequestParam(defaultValue = "0") int page,
                                          @RequestParam(defaultValue = "10") int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("id").descending());
-        return ResponseEntity.ok(tradeExecutionService.getRecentExecutionsForUser(userId, pageable));
+        return ResponseEntity.ok(tradeExecutionService.getRecentExecutionsForUser(userId, statuses, pageable));
     }
 }

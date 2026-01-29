@@ -408,7 +408,15 @@
     if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; updatePaginationUI(null); return; }
     try {
       // Use pagination params
-      const url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&page=' + currentExecPage + '&size=' + execPageSize;
+      let url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&page=' + currentExecPage + '&size=' + execPageSize;
+
+      // Append status filters if any
+      if (filterStatuses && filterStatuses.length > 0) {
+          filterStatuses.forEach(s => {
+              url += '&status=' + encodeURIComponent(s);
+          });
+      }
+
       const responseData = await fetchJson(url);
 
       let data = [];
@@ -435,11 +443,8 @@
           return;
       }
 
-      // Filter data based on selected statuses
+      // Use data directly as filteredData
       let filteredData = data;
-      if (filterStatuses && filterStatuses.length > 0) {
-        filteredData = data.filter(t => filterStatuses.includes(String(t.status).toUpperCase()));
-      }
 
       if (filteredData.length === 0) {
           tbody.innerHTML = '<tr><td colspan="13">No trades match filter</td></tr>';
