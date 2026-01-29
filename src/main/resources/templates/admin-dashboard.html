@@ -142,6 +142,17 @@
             </div>
             <div style="margin-top:12px">
                 <h4>Trades Executed</h4>
+                <div style="margin-bottom: 8px;">
+                    <label for="statusFilter">Status:</label>
+                    <select id="statusFilter" multiple style="height: 60px; vertical-align: top;">
+                        <option value="EXECUTED">EXECUTED</option>
+                        <option value="EXITED_SUCCESS">EXITED_SUCCESS</option>
+                        <option value="EXITED_FAILURE">EXITED_FAILURE</option>
+                        <option value="REJECTED">REJECTED</option>
+                        <option value="PLACED_PENDING_CONFIRMATION">PENDING</option>
+                    </select>
+                    <button id="applyStatusFilterBtn" class="btn">Apply Filter</button>
+                </div>
                 <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
                     <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>PNL</th></tr></thead>
                     <tbody></tbody>
