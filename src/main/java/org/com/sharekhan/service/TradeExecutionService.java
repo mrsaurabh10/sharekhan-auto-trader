@@ -27,6 +27,8 @@ import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -1284,6 +1286,13 @@ public class TradeExecutionService {
     public List<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId) {
         if (userId == null) return getRecentExecutions();
         return triggeredTradeRepo.findTop10ByAppUserIdOrderByIdDesc(userId);
+    }
+
+    public Page<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId, Pageable pageable) {
+        if (userId == null) {
+            return triggeredTradeRepo.findAll(pageable);
+        }
+        return triggeredTradeRepo.findByAppUserId(userId, pageable);
     }
 
     public void subscribeForOpenTrades(){

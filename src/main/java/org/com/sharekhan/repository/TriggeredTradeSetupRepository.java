@@ -2,6 +2,8 @@ package org.com.sharekhan.repository;
 
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -29,6 +31,10 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     // app-user-scoped recent executions
     List<TriggeredTradeSetupEntity> findTop10ByAppUserIdOrderByIdDesc(Long appUserId);
+
+    // Pagination support
+    Page<TriggeredTradeSetupEntity> findByAppUserId(Long appUserId, Pageable pageable);
+
     // Atomically claim the exit flow by setting status and exit_reason only if current status is not already in an exiting/terminal state.
     // Using native SQL to avoid JPQL symbol resolution issues; pass status names (String) for newStatus and forbids.
     @Modifying
