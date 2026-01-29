@@ -35,6 +35,11 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     // Pagination support
     Page<TriggeredTradeSetupEntity> findByAppUserId(Long appUserId, Pageable pageable);
 
+    // Pagination support with status filter
+    Page<TriggeredTradeSetupEntity> findByStatusIn(List<TriggeredTradeStatus> statuses, Pageable pageable);
+    Page<TriggeredTradeSetupEntity> findByAppUserIdAndStatusIn(Long appUserId, List<TriggeredTradeStatus> statuses, Pageable pageable);
+
+
     // Atomically claim the exit flow by setting status and exit_reason only if current status is not already in an exiting/terminal state.
     // Using native SQL to avoid JPQL symbol resolution issues; pass status names (String) for newStatus and forbids.
     @Modifying

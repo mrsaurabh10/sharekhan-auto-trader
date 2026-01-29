@@ -3,6 +3,9 @@
 (function () {
   'use strict';
 
+  let currentExecPage = 0;
+  const execPageSize = 10;
+
   // --- Utilities ---
   async function ensureCsrf() {
     const meta = document.querySelector('meta[name="_csrf"]');
@@ -392,12 +395,45 @@
     } catch (e) { console.error('Failed to load requests for user', uid, e); tbody.innerHTML = '<tr><td colspan="12">Error loading requests</td></tr>'; }
   }
 
-  async function loadExecutedForUser(userId, filterStatuses) {
-    const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-executed-table tbody'); if (!tbody) return; tbody.innerHTML = '';
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; return; }
+  async function loadExecutedForUser(userId, filterStatuses, page) {
+    const uid = userId || window.selectedUserId;
+    const tbody = document.querySelector('#user-executed-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (typeof page === 'number') {
+        currentExecPage = page;
+    }
+
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; updatePaginationUI(null); return; }
     try {
-      const data = await fetchJson('/api/orders/executed?userId=' + encodeURIComponent(uid));
-      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No executed trades</td></tr>'; return; }
+      // Use pagination params
+      const url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&page=' + currentExecPage + '&size=' + execPageSize;
+      const responseData = await fetchJson(url);
+
+      let data = [];
+      let pageInfo = null;
+
+      if (responseData && Array.isArray(responseData.content)) {
+          data = responseData.content;
+          pageInfo = {
+              number: responseData.number,
+              totalPages: responseData.totalPages,
+              first: responseData.first,
+              last: responseData.last
+          };
+      } else if (Array.isArray(responseData)) {
+          data = responseData;
+      } else {
+          // fallback or empty
+          data = [];
+      }
+
+      if (data.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="13">No executed trades</td></tr>';
+          updatePaginationUI(pageInfo);
+          return;
+      }
 
       // Filter data based on selected statuses
       let filteredData = data;
@@ -405,7 +441,11 @@
         filteredData = data.filter(t => filterStatuses.includes(String(t.status).toUpperCase()));
       }
 
-      if (filteredData.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No trades match filter</td></tr>'; return; }
+      if (filteredData.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="13">No trades match filter</td></tr>';
+          updatePaginationUI(pageInfo);
+          return;
+      }
 
       const seen = new Set(); const uniq = [];
       for (const t of filteredData) { const tid = t && (t.id || t.tradeId || t.trade_id); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
@@ -581,7 +621,47 @@
         }
       }
 
-    } catch (e) { console.error('Failed to load executed trades for user', uid, e); tbody.innerHTML = '<tr><td colspan="13">Error loading executed trades</td></tr>'; }
+      updatePaginationUI(pageInfo);
+
+    } catch (e) { console.error('Failed to load executed trades for user', uid, e); tbody.innerHTML = '<tr><td colspan="13">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+  }
+
+  function updatePaginationUI(pageInfo) {
+      const prevBtn = document.getElementById('exec-prev-btn');
+      const nextBtn = document.getElementById('exec-next-btn');
+      const infoSpan = document.getElementById('exec-page-info');
+
+      if (!prevBtn || !nextBtn || !infoSpan) return;
+
+      if (!pageInfo) {
+          prevBtn.disabled = true;
+          nextBtn.disabled = true;
+          infoSpan.innerText = '';
+          return;
+      }
+
+      prevBtn.disabled = pageInfo.first;
+      nextBtn.disabled = pageInfo.last;
+      infoSpan.innerText = 'Page ' + (pageInfo.number + 1) + ' of ' + pageInfo.totalPages;
+  }
+
+  function wireExecutedPagination() {
+      const prevBtn = document.getElementById('exec-prev-btn');
+      const nextBtn = document.getElementById('exec-next-btn');
+
+      if (prevBtn) {
+          prevBtn.addEventListener('click', function() {
+              if (currentExecPage > 0) {
+                  loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), currentExecPage - 1);
+              }
+          });
+      }
+
+      if (nextBtn) {
+          nextBtn.addEventListener('click', function() {
+              loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), currentExecPage + 1);
+          });
+      }
   }
 
   function getSelectedStatuses() {
@@ -596,7 +676,7 @@
     if (btn) {
       btn.addEventListener('click', function() {
         if (window.selectedUserId) {
-          loadExecutedForUser(window.selectedUserId, getSelectedStatuses());
+          loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0);
         }
       });
     }
@@ -992,7 +1072,7 @@
       showBrokersSectionFor(appUserId, window.selectedUserName);
       // load data
       loadRequestedOrdersForUser(appUserId).catch(function(){});
-      loadExecutedForUser(appUserId, getSelectedStatuses()).catch(function(){});
+      loadExecutedForUser(appUserId, getSelectedStatuses(), 0).catch(function(){});
       loadBrokers(appUserId).catch(function(){});
     } catch (e) { console.debug('selectUser failed', e); }
   }
@@ -1308,6 +1388,6 @@
   }
 
   // start ws on load
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); wireStatusFilter(); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); wireStatusFilter(); wireExecutedPagination(); startAdminWs(); });
 
 })();
