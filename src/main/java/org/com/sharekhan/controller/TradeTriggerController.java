@@ -27,14 +27,20 @@ public class TradeTriggerController {
         return ResponseEntity.ok(saved);
     }
 
+    @PostMapping("/manual-execute")
+    public ResponseEntity<?> manualExecuteTrade(@RequestBody TriggerRequest request) {
+        TriggeredTradeSetupEntity saved = tradeExecutionService.createExecutedTrade(request);
+        return ResponseEntity.ok(saved);
+    }
+
     @GetMapping("/requests/user/{userId}")
     public ResponseEntity<?> getRequestsForUser(@PathVariable Long userId) {
         return ResponseEntity.ok(triggerTradeRequestRepository.findTop10ByAppUserIdOrderByIdDesc(userId));
     }
 
     @PutMapping("/force-close/{scripCode}")
-    public ResponseEntity<String> forceCloseTrade(@PathVariable int scripCode) {
-        boolean result = tradeExecutionService.forceCloseByScripCode(scripCode);
+    public ResponseEntity<String> forceCloseTrade(@PathVariable int scripCode, @RequestParam(required = false) Double price) {
+        boolean result = tradeExecutionService.forceCloseByScripCode(scripCode, price);
         if (result) {
             return ResponseEntity.ok("✅ Trade for scripCode " + scripCode + " closed forcefully.");
         } else {

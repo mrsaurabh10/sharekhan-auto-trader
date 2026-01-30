@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -28,9 +29,9 @@ public class TradeExecutionController {
     }
 
     @PostMapping("/square-off/{id}")
-    public ResponseEntity<String> squareOff(@PathVariable Long id) {
+    public ResponseEntity<String> squareOff(@PathVariable Long id, @RequestParam(required = false) Double price) {
         try {
-            tradeExecutionService.squareOffTrade(id);
+            tradeExecutionService.squareOffTrade(id, price);
             return ResponseEntity.ok("Trade square off initiated");
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

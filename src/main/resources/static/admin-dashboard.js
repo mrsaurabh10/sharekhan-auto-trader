@@ -483,7 +483,17 @@
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
           editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginRight = '6px'; moveBtn.innerText = 'Move SL to Cost'; moveBtn.addEventListener('click', async function () { if (!confirm('Move SL to entry price for trade ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); await loadExecutedForUser(uid, getSelectedStatuses()); }); actionCell.appendChild(moveBtn);
-          const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () { if (!confirm('Square off trade ' + id + ' now?')) return; await ensureCsrf(); await fetchJson('/api/trades/square-off/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); }); actionCell.appendChild(closeBtn);
+          const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () {
+            const price = prompt('Enter price to close trade ' + id + ' (optional, leave empty for market/LTP):');
+            if (price === null) return; // cancelled
+            await ensureCsrf();
+            let url = '/api/trades/square-off/' + id;
+            if (price && price.trim() !== '') {
+                url += '?price=' + encodeURIComponent(price.trim());
+            }
+            await fetchJson(url, { method: 'POST' });
+            setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800);
+          }); actionCell.appendChild(closeBtn);
         } else { actionCell.innerText = '-'; }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
@@ -1297,7 +1307,7 @@
 
         // Check if "Already Executed" is checked
         const alreadyExecuted = document.getElementById('alreadyExecuted') && document.getElementById('alreadyExecuted').checked;
-        const url = alreadyExecuted ? '/admin/add-executed-trade' : '/api/trades/trigger-on-price';
+        const url = alreadyExecuted ? '/api/trades/manual-execute' : '/api/trades/trigger-on-price';
 
         const resp = await fetchJson(url, {
           method: 'POST',

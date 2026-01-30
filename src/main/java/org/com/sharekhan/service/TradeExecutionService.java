@@ -887,13 +887,22 @@ public class TradeExecutionService {
     }
 
     public boolean forceCloseByScripCode(int scripCode) {
+        return forceCloseByScripCode(scripCode, null);
+    }
+
+    public boolean forceCloseByScripCode(int scripCode, Double price) {
         java.util.List<TriggeredTradeSetupEntity> trades = triggeredTradeRepo.findByScripCodeAndStatus(scripCode, TriggeredTradeStatus.EXECUTED);
 
         if (trades != null && !trades.isEmpty()) {
             TriggeredTradeSetupEntity trade = trades.get(0);
 
-            Double ltp = ltpCacheService.getLtp(scripCode);
-            double exitPrice = (ltp != null) ? ltp : trade.getEntryPrice(); // fallback to entry
+            double exitPrice;
+            if (price != null) {
+                exitPrice = price;
+            } else {
+                Double ltp = ltpCacheService.getLtp(scripCode);
+                exitPrice = (ltp != null) ? ltp : trade.getEntryPrice(); // fallback to entry
+            }
 
             log.info("🛑 Force-closing trade {} at price: {}", trade.getId(), exitPrice);
 
@@ -1143,10 +1152,20 @@ public class TradeExecutionService {
 
 
     public void squareOffTrade(Long id) {
+        squareOffTrade(id, null);
+    }
+
+    public void squareOffTrade(Long id, Double price) {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Trade not found"));
-        squareOff(tradeSetupEntity, ltpCacheService.getLtp(tradeSetupEntity.getScripCode()),
-                "Manual Exit");
+
+        double exitPrice;
+        if (price != null) {
+            exitPrice = price;
+        } else {
+            exitPrice = ltpCacheService.getLtp(tradeSetupEntity.getScripCode());
+        }
+        squareOff(tradeSetupEntity, exitPrice, "Manual Exit");
     }
 
 
