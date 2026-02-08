@@ -103,6 +103,11 @@
         Intraday
     </label>
 
+    <label>
+        <input type="checkbox" id="tslEnabled" name="tslEnabled">
+        Enable TSL (Partial Booking)
+    </label>
+
     <button type="submit">Place Order</button>
 </form>
 
@@ -731,22 +736,22 @@
     // Submit form via REST - attach after DOM ready
     function attachFormHandlers() {
          const form = document.getElementById('placeOrderForm');
-+        // If page opened with ?userId=... (e.g. inside admin iframe), pre-fill userId input and disable it
-+        try {
-+            const params = new URLSearchParams(window.location.search || '');
-+            const uid = params.get('userId');
-+            if (uid) {
-+                try {
-+                    const userInput = document.getElementById('userId');
-+                    if (userInput) {
-+                        userInput.value = uid;
-+                        // mark readonly so admin cannot accidentally change user mapping inside iframe
-+                        userInput.disabled = true;
-+                        userInput.setAttribute('data-prefilled-from-query', 'true');
-+                    }
-+                } catch (e) { console.debug('prefill userId from query failed', e); }
-+            }
-+        } catch (e) { console.debug('parse querystring failed', e); }
+        // If page opened with ?userId=... (e.g. inside admin iframe), pre-fill userId input and disable it
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            const uid = params.get('userId');
+            if (uid) {
+                try {
+                    const userInput = document.getElementById('userId');
+                    if (userInput) {
+                        userInput.value = uid;
+                        // mark readonly so admin cannot accidentally change user mapping inside iframe
+                        userInput.disabled = true;
+                        userInput.setAttribute('data-prefilled-from-query', 'true');
+                    }
+                } catch (e) { console.debug('prefill userId from query failed', e); }
+            }
+        } catch (e) { console.debug('parse querystring failed', e); }
 
         function buildPayload(formEl) {
             const exch = (formEl.exchange && formEl.exchange.value) ? formEl.exchange.value.toUpperCase() : '';
@@ -765,6 +770,7 @@
                 optionType: isNoStrike ? '' : (formEl.optionType.value || null),
                 quantity: parseInt(formEl.quantity.value),
                 intraday: formEl.intraday.checked,
+                tslEnabled: formEl.tslEnabled.checked,
                 userId: formEl.userId && formEl.userId.value ? parseInt(formEl.userId.value) : null
             };
         }
@@ -858,4 +864,3 @@
     } else {
         attachFormHandlers();
     }
-***

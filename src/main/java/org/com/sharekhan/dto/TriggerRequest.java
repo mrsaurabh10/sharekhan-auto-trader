@@ -13,7 +13,9 @@ public class TriggerRequest {
     private Double target2;
     private Double target3;
     private Double trailingSl;
+    private Boolean tslEnabled; // Flag to enable TSL logic
     private Integer quantity; // in lots
+    private Integer lots; // Explicit lots field
     private Double strikePrice;
     private String optionType;
     private String expiry; // format: 31/07/2025

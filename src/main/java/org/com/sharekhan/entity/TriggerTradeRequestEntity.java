@@ -29,6 +29,8 @@ public class TriggerTradeRequestEntity {
     private String expiry;
 
     private Long quantity; // Final quantity = lots × lotSize
+    
+    private Integer lots; // Number of lots
 
     // Reference to broker_credentials.id for the broker credentials used
     private Long brokerCredentialsId;
@@ -44,6 +46,8 @@ public class TriggerTradeRequestEntity {
     private Double target3;
 
     private Double trailingSl;
+    
+    private Boolean tslEnabled; // Flag to enable TSL logic
 
     @Column(name = "intraday")
     private Boolean intraday;  // default false

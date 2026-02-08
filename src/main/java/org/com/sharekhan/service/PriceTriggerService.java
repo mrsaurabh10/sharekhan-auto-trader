@@ -1,25 +1,24 @@
 package org.com.sharekhan.service;
 
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
-import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -30,6 +29,7 @@ public class PriceTriggerService {
     private final TriggeredTradeSetupRepository triggeredRepo;
     private final TradeExecutionService tradeExecutionService;
     private final PlatformTransactionManager transactionManager;
+    private final ScriptMasterRepository scriptMasterRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -63,7 +63,6 @@ public class PriceTriggerService {
         }
     }
 
-    @org.springframework.transaction.annotation.Transactional
     public void monitorOpenTrades(Integer scripCode, double ltp) {
         try {
             log.debug("Invoked monitorOpenTrades for scripCode={} with ltp={}", scripCode, ltp);
@@ -72,7 +71,6 @@ public class PriceTriggerService {
             );
 
             for (TriggeredTradeSetupEntity trade : trades) {
-                // process each trade but perform claim inside a short transaction to avoid long locks
                 try {
                     handleTradeWithLock(trade.getId(), ltp);
                 } catch (Exception e) {
@@ -84,7 +82,6 @@ public class PriceTriggerService {
         }
     }
 
-    // NOTE: this method no longer uses @Transactional; it uses a TransactionTemplate to perform a short atomic claim
     protected void handleTradeWithLock(Long tradeId, double ltp) {
         try {
             final TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
@@ -102,33 +99,54 @@ public class PriceTriggerService {
                 boolean hasValidSl = (slVal != null && slVal > 0d);
                 boolean slHit = hasValidSl && (ltp <= slVal);
 
-                boolean targetHit = Stream.of(persisted.getTarget1(), persisted.getTarget2(), persisted.getTarget3())
-                        .filter(Objects::nonNull)
-                        .filter(t -> t > 0d)
-                        .anyMatch(target -> ltp >= target);
+                if (slHit) {
+                    return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
+                }
 
-                if (!slHit && !targetHit) return 0; // nothing to do
+                // Check if any target hit and if we need to book lots
+                // Only perform partial booking logic if TSL is enabled
+                if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
+                    int lotsToBook = calculateLotsToBook(persisted, ltp);
+                    if (lotsToBook > 0) {
+                        return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                    }
+                } else {
+                    // Standard target hit logic (any target hit -> exit all)
+                    boolean targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && ltp >= persisted.getTarget1()) ||
+                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && ltp >= persisted.getTarget2()) ||
+                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && ltp >= persisted.getTarget3());
+                    
+                    if (targetHit) {
+                         return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                    }
+                }
 
-                // Attempt atomic transition EXECUTED -> EXIT_TRIGGERED
-                int res = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "SL_OR_TARGET_HIT");
-                return res;
+                return 0;
             });
 
             if (claimed != null && claimed == 1) {
                 // Claim succeeded — now re-load the entity (outside the short transaction) and proceed to squareOff
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
 
-                // Determine whether it was SL or target by comparing ltp with reloaded values (best-effort)
-                Double slVal = reloaded.getStopLoss();
-                boolean hasValidSl = (slVal != null && slVal > 0d);
-                boolean slHit = hasValidSl && (ltp <= slVal);
-
-                if (slHit) {
+                String exitReason = reloaded.getExitReason();
+                if ("STOP_LOSS_HIT".equals(exitReason)) {
                     log.warn("📉 SL hit for trade {} at LTP: {} - proceeding to squareOff", tradeId, ltp);
                     tradeExecutionService.squareOff(reloaded, ltp, "STOP_LOSS_HIT");
                 } else {
-                    log.info("🎯 Target hit for trade {} at LTP: {} - proceeding to squareOff", tradeId, ltp);
-                    tradeExecutionService.squareOff(reloaded, ltp, "TARGET_HIT");
+                    // TARGET_HIT
+                    if (Boolean.TRUE.equals(reloaded.getTslEnabled())) {
+                        Integer lots = reloaded.getLots();
+                        // If lots info is missing, assume single lot / full exit
+                        if (lots == null || lots <= 1) {
+                            log.info("🎯 Target hit for trade {} at LTP: {} - proceeding to squareOff (Single/Unknown Lot)", tradeId, ltp);
+                            tradeExecutionService.squareOff(reloaded, ltp, "TARGET_HIT");
+                        } else {
+                            handlePartialBooking(reloaded, ltp, lots);
+                        }
+                    } else {
+                        log.info("🎯 Target hit for trade {} at LTP: {} - proceeding to squareOff (TSL Disabled)", tradeId, ltp);
+                        tradeExecutionService.squareOff(reloaded, ltp, "TARGET_HIT");
+                    }
                 }
 
                 // ensure pnl persisted if needed
@@ -141,7 +159,202 @@ public class PriceTriggerService {
         }
     }
 
-    // If squareOff did not save pnl/exit, compute and persist here as a fallback
+    private int calculateLotsToBook(TriggeredTradeSetupEntity trade, double ltp) {
+        boolean target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && ltp >= trade.getTarget1();
+        boolean target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && ltp >= trade.getTarget2();
+        boolean target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && ltp >= trade.getTarget3();
+
+        if (!target1Hit && !target2Hit && !target3Hit) return 0;
+
+        int currentLots = trade.getLots() != null ? trade.getLots() : 1;
+        int totalLots = trade.getOriginalLots() != null ? trade.getOriginalLots() : currentLots;
+
+        int lotsToBook = 0;
+
+        if (totalLots == 3) {
+            // 3 Lots: 1 @ T1, 1 @ T2, 1 @ T3
+            if (target3Hit) {
+                lotsToBook = currentLots;
+            } else if (target2Hit) {
+                // Should have 1 lot remaining (Lot 3)
+                int desiredRemaining = 1;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                }
+            } else if (target1Hit) {
+                // Should have 2 lots remaining (Lot 2, Lot 3)
+                int desiredRemaining = 2;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                }
+            }
+        } else if (totalLots == 2) {
+            // 2 Lots: 1 @ T1, 1 @ T2 (Final)
+            if (target2Hit) {
+                lotsToBook = currentLots; // Close all
+            } else if (target1Hit) {
+                // Should have 1 lot remaining
+                int desiredRemaining = 1;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                }
+            }
+        } else {
+            // Mix: 40% @ T1, 40% @ T2, 20% @ T3
+            int lot40 = (int) Math.round(totalLots * 0.4);
+            if (lot40 < 1) lot40 = 1;
+
+            int exitAtT1 = lot40;
+            int exitAtT2 = lot40;
+            int exitAtT3 = totalLots - exitAtT1 - exitAtT2;
+
+            if (target3Hit) {
+                lotsToBook = currentLots;
+            } else if (target2Hit) {
+                int desiredRemaining = exitAtT3;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                }
+            } else if (target1Hit) {
+                int desiredRemaining = exitAtT2 + exitAtT3;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                }
+            }
+        }
+        
+        // Safety cap
+        if (lotsToBook > currentLots) lotsToBook = currentLots;
+        
+        return lotsToBook;
+    }
+
+    private void handlePartialBooking(TriggeredTradeSetupEntity trade, double ltp, int currentLots) {
+        // Re-calculate lotsToBook to determine split and new SL
+        // (Logic duplicated from calculateLotsToBook but needed for newStopLoss determination)
+        
+        boolean target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && ltp >= trade.getTarget1();
+        boolean target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && ltp >= trade.getTarget2();
+        boolean target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && ltp >= trade.getTarget3();
+
+        int totalLots = trade.getOriginalLots() != null ? trade.getOriginalLots() : currentLots;
+        if (trade.getOriginalLots() == null) {
+            trade.setOriginalLots(totalLots);
+            triggeredRepo.save(trade);
+        }
+
+        log.info("🎯 Target hit for trade {} with {} current lots (original: {}). Calculating partial booking.", trade.getId(), currentLots, totalLots);
+
+        int lotsToBook = 0;
+        double newStopLoss = trade.getStopLoss();
+
+        if (totalLots == 3) {
+            if (target3Hit) {
+                lotsToBook = currentLots;
+            } else if (target2Hit) {
+                int desiredRemaining = 1;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                    newStopLoss = trade.getTarget1();
+                }
+            } else if (target1Hit) {
+                int desiredRemaining = 2;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                    newStopLoss = trade.getEntryPrice();
+                }
+            }
+        } else if (totalLots == 2) {
+            if (target2Hit) {
+                lotsToBook = currentLots;
+            } else if (target1Hit) {
+                int desiredRemaining = 1;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                    newStopLoss = trade.getEntryPrice();
+                }
+            }
+        } else {
+            int lot40 = (int) Math.round(totalLots * 0.4);
+            if (lot40 < 1) lot40 = 1;
+            int exitAtT1 = lot40;
+            int exitAtT2 = lot40;
+            int exitAtT3 = totalLots - exitAtT1 - exitAtT2;
+
+            if (target3Hit) {
+                lotsToBook = currentLots;
+            } else if (target2Hit) {
+                int desiredRemaining = exitAtT3;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                    newStopLoss = trade.getTarget1();
+                }
+            } else if (target1Hit) {
+                int desiredRemaining = exitAtT2 + exitAtT3;
+                if (currentLots > desiredRemaining) {
+                    lotsToBook = currentLots - desiredRemaining;
+                    newStopLoss = trade.getEntryPrice();
+                }
+            }
+        }
+
+        if (lotsToBook > currentLots) lotsToBook = currentLots;
+        if (lotsToBook <= 0) lotsToBook = currentLots; // Fallback
+
+        if (lotsToBook >= currentLots) {
+            // Full exit
+            tradeExecutionService.squareOff(trade, ltp, "TARGET_HIT_FULL");
+        } else {
+            // Partial exit
+            long originalQty = trade.getQuantity();
+            ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
+            int lotSize = script != null && script.getLotSize() != null ? script.getLotSize() : 1;
+
+            long qtyToBook = (long) lotsToBook * lotSize;
+            long remainingQty = originalQty - qtyToBook;
+            int remainingLots = currentLots - lotsToBook;
+
+            log.info("Partial Booking: Booking {} lots ({} qty), Remaining {} lots ({} qty)", lotsToBook, qtyToBook, remainingLots, remainingQty);
+
+            // Create a new entity for the remaining portion
+            TriggeredTradeSetupEntity remainingTrade = new TriggeredTradeSetupEntity();
+            remainingTrade.setSymbol(trade.getSymbol());
+            remainingTrade.setScripCode(trade.getScripCode());
+            remainingTrade.setBrokerCredentialsId(trade.getBrokerCredentialsId());
+            remainingTrade.setAppUserId(trade.getAppUserId());
+            remainingTrade.setExchange(trade.getExchange());
+            remainingTrade.setInstrumentType(trade.getInstrumentType());
+            remainingTrade.setStrikePrice(trade.getStrikePrice());
+            remainingTrade.setOptionType(trade.getOptionType());
+            remainingTrade.setExpiry(trade.getExpiry());
+            remainingTrade.setEntryPrice(trade.getEntryPrice());
+            remainingTrade.setStopLoss(newStopLoss); // Updated SL
+            remainingTrade.setTarget1(trade.getTarget1());
+            remainingTrade.setTarget2(trade.getTarget2());
+            remainingTrade.setTarget3(trade.getTarget3());
+            remainingTrade.setTrailingSl(trade.getTrailingSl());
+            remainingTrade.setQuantity(remainingQty);
+            remainingTrade.setLots(remainingLots);
+            remainingTrade.setOriginalLots(totalLots);
+            remainingTrade.setTslEnabled(trade.getTslEnabled()); // Preserve TSL flag
+            remainingTrade.setIntraday(trade.getIntraday());
+            remainingTrade.setStatus(TriggeredTradeStatus.EXECUTED);
+            remainingTrade.setTriggeredAt(trade.getTriggeredAt());
+            remainingTrade.setEntryAt(trade.getEntryAt());
+            remainingTrade.setOrderId(trade.getOrderId());
+
+            triggeredRepo.save(remainingTrade);
+
+            // Update current trade to be the exited portion and SAVE it so squareOff sees the new quantity
+            trade.setQuantity(qtyToBook);
+            trade.setLots(lotsToBook);
+            triggeredRepo.save(trade);
+
+            // Proceed to square off this portion
+            tradeExecutionService.squareOff(trade, ltp, "TARGET_HIT_PARTIAL");
+        }
+    }
+
     private void persistPnlIfMissing(TriggeredTradeSetupEntity originalTrade, double ltp) {
         try {
             if (originalTrade == null || originalTrade.getId() == null) return;
@@ -151,14 +364,11 @@ public class PriceTriggerService {
 
             TriggeredTradeSetupEntity saved = opt.get();
 
-            // If an exit order was placed (we have an exitOrderId) then the final status/exitPrice
-            // must be determined by order status polling. Do not attempt to compute/mark EXITED here.
             if (saved.getExitOrderId() != null && !saved.getExitOrderId().isBlank()) {
                 log.debug("Skipping persistPnlIfMissing for trade {} because exitOrderId={} is present; order polling will update status.", saved.getId(), saved.getExitOrderId());
                 return;
             }
 
-            // If PnL already present, assume squareOff handled persistence.
             if (saved.getPnl() != null) return;
 
             Double entryPrice = saved.getEntryPrice();
@@ -182,7 +392,7 @@ public class PriceTriggerService {
                 log.warn("Failed computing PnL in persistPnlIfMissing for trade {}: {}", saved.getId(), e.getMessage());
                 return;
             }
-            // Persist exitPrice and mark as exited success to stop further monitoring
+
             if (saved.getExitPrice() == null) saved.setExitPrice(exitPrice);
             saved.setExitedAt(LocalDateTime.now());
             saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);

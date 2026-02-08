@@ -36,6 +36,10 @@ public class TriggeredTradeSetupEntity {
 
     // Store final executed quantity as Long (number of shares) to avoid unit confusion with lots
     private Long quantity;
+    
+    private Integer lots; // Current number of lots
+    
+    private Integer originalLots; // Original number of lots for partial booking calculations
 
     private Double entryPrice;
     private Double stopLoss;
@@ -45,6 +49,8 @@ public class TriggeredTradeSetupEntity {
     private Double target3;
 
     private Double trailingSl;
+    
+    private Boolean tslEnabled; // Flag to enable TSL logic
 
     @Column(name = "order_id",unique = true)
     private String orderId;

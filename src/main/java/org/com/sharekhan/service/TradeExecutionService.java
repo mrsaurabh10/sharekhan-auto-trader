@@ -284,6 +284,8 @@ public class TradeExecutionService {
                 .target3(request.getTarget3())
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
+                .lots(request.getQuantity()) // Store the lots
+                .tslEnabled(request.getTslEnabled()) // Store TSL flag
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
@@ -443,6 +445,8 @@ public class TradeExecutionService {
         trade.setTarget3(request.getTarget3());
         trade.setTrailingSl(request.getTrailingSl());
         trade.setQuantity(finalQuantity);
+        trade.setLots(request.getQuantity()); // Store the lots
+        trade.setTslEnabled(request.getTslEnabled()); // Store TSL flag
         trade.setStatus(TriggeredTradeStatus.EXECUTED); // Mark as EXECUTED immediately
         trade.setTriggeredAt(LocalDateTime.now());
         trade.setEntryAt(LocalDateTime.now());
@@ -497,6 +501,8 @@ public class TradeExecutionService {
                 rejected.setTarget1(trigger.getTarget1());
                 rejected.setTarget2(trigger.getTarget2());
                 rejected.setQuantity(trigger.getQuantity());
+                rejected.setLots(trigger.getLots()); // Pass lots
+                rejected.setTslEnabled(trigger.getTslEnabled()); // Pass TSL flag
                 rejected.setTarget3(trigger.getTarget3());
                 rejected.setInstrumentType(trigger.getInstrumentType());
                 rejected.setEntryPrice(ltp);
@@ -544,6 +550,8 @@ public class TradeExecutionService {
                 rejected.setTarget1(trigger.getTarget1());
                 rejected.setTarget2(trigger.getTarget2());
                 rejected.setQuantity(trigger.getQuantity());
+                rejected.setLots(trigger.getLots()); // Pass lots
+                rejected.setTslEnabled(trigger.getTslEnabled()); // Pass TSL flag
                 rejected.setTarget3(trigger.getTarget3());
                 rejected.setInstrumentType(trigger.getInstrumentType());
                 rejected.setEntryPrice(ltp);
@@ -590,6 +598,8 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
             triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
             triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
+            triggeredTradeSetupEntity.setLots(trigger.getLots()); // Pass lots
+            triggeredTradeSetupEntity.setTslEnabled(trigger.getTslEnabled()); // Pass TSL flag
             triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
             triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
             triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
@@ -1179,6 +1189,8 @@ public class TradeExecutionService {
         if (requestEntity.getQuantity() != null) {
             temp.setQuantity(requestEntity.getQuantity());
         }
+        temp.setLots(requestEntity.getLots()); // Pass lots
+        temp.setTslEnabled(requestEntity.getTslEnabled()); // Pass TSL flag
         temp.setInstrumentType(requestEntity.getInstrumentType());
         temp.setStrikePrice(requestEntity.getStrikePrice());
         temp.setOptionType(requestEntity.getOptionType());

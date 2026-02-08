@@ -64,4 +64,6 @@ public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity
             @Param("exchange") String exchange,
             @Param("symbol") String symbol
     );
+    
+    ScriptMasterEntity findByScripCode(Integer scripCode);
 }

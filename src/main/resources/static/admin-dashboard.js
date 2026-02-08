@@ -1279,6 +1279,7 @@
         target3: readNum('target3'),
         quantity: readNum('quantity'),
         intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked),
+        tslEnabled: !!(document.getElementById('tslEnabled') && document.getElementById('tslEnabled').checked),
         trailingSl: null,
         userId: window.selectedUserId || null,
         brokerCredentialsId: null
@@ -1342,6 +1343,7 @@
         const qty = document.getElementById('quantity'); if (qty) qty.value = '1';
         const intr = document.getElementById('intraday'); if (intr) intr.checked = false;
         const ae = document.getElementById('alreadyExecuted'); if (ae) ae.checked = false;
+        const tsl = document.getElementById('tslEnabled'); if (tsl) tsl.checked = false;
         if (resultDiv) resultDiv.innerText = '';
         if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
       });
@@ -1396,6 +1398,7 @@
       setVal('target3', req.target3 != null ? req.target3 : (req.t3 || ''));
       setVal('quantity', req.quantity != null ? req.quantity : (req.qty || ''));
       const intr = document.getElementById('intraday'); if (intr) intr.checked = !!(req.intraday);
+      const tsl = document.getElementById('tslEnabled'); if (tsl) tsl.checked = !!(req.tslEnabled);
 
       // scroll into view
       const panel = document.getElementById('placeOrderPanel'); if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
