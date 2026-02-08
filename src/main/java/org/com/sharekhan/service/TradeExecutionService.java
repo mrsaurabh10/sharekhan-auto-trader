@@ -608,6 +608,8 @@ public class TradeExecutionService {
                     triggeredTradeSetupEntity.setEntryPrice(result.getExecutedPrice());
                 }
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
+                log.info("✅ Trade executed immediately. Skipping order status polling.");
+                return triggeredTradeSetupEntity;
             }
 
             // Publish event AFTER transaction commit so pollers/readers see the committed DB state
@@ -875,15 +877,17 @@ public class TradeExecutionService {
     }
 
     public TradeStatus evaluateOrderFinalStatus(TriggeredTradeSetupEntity tradeSetupEntity, JSONObject orderHistoryResponse) {
-        Object data = orderHistoryResponse.get("data");
+        if (orderHistoryResponse == null) {
+            return TradeStatus.NO_RECORDS;
+        }
+        Object data = orderHistoryResponse.opt("data");
 
         if (data instanceof String && "no_records".equalsIgnoreCase((String) data)) {
             return TradeStatus.NO_RECORDS;
         }
 
-        JSONArray trades = orderHistoryResponse.getJSONArray("data");
-
-        if (data instanceof String && "no_records".equalsIgnoreCase((String) data)) {
+        JSONArray trades = orderHistoryResponse.optJSONArray("data");
+        if (trades == null) {
             return TradeStatus.NO_RECORDS;
         }
 
