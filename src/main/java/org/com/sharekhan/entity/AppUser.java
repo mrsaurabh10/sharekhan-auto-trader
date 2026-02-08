@@ -18,6 +18,7 @@ public class AppUser {
     @Column(nullable = false, unique = true)
     private String username;
 
+    private Long customerId;
+
     private String notes;
 }
-

@@ -28,11 +28,13 @@ import org.com.sharekhan.entity.AppUser;
 import org.com.sharekhan.util.CryptoService;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
+import org.com.sharekhan.repository.AppUserRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.web.csrf.CsrfToken;
 import java.util.Map;
+import java.util.HashMap;
 
 @Controller
 @RequiredArgsConstructor
@@ -47,6 +49,7 @@ public class AdminController {
     private final PasswordEncoder passwordEncoder;
     private final CryptoService cryptoService;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
+    private final AppUserRepository appUserRepository;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -180,19 +183,15 @@ public class AdminController {
     @ResponseBody
     public ResponseEntity<?> getConfiguredUsers() {
         try {
-            // AppUser no longer stores broker customerId; return null in that column for compatibility with the UI
-            @SuppressWarnings("unchecked")
-            var rows = entityManager.createQuery("SELECT a.id, a.username FROM AppUser a").getResultList();
-            var list = rows.stream().map(r -> {
-                Object[] cols = (Object[]) r;
-                Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
-                String username = cols[1] == null ? null : cols[1].toString();
-                Long customerId = null;
-                return java.util.Map.of("id", id, "username", username, "customerId", customerId);
+            var list = appUserRepository.findAll().stream().map(u -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("id", u.getId());
+                map.put("username", u.getUsername());
+                map.put("customerId", u.getCustomerId());
+                return map;
             }).collect(Collectors.toList());
             return ResponseEntity.ok(list);
         } catch (Exception e) {
-            // Avoid letting the exception propagate and potentially truncate the response stream
             return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to load users", "message", e.toString()));
         }
     }
@@ -252,21 +251,18 @@ public class AdminController {
         return ResponseEntity.ok("updated");
     }
 
-    // Regular app user management using EntityManager to avoid repository symbol issues
+    // Regular app user management using Repository to avoid transaction issues
     @GetMapping("/app-users")
     @ResponseBody
     public ResponseEntity<?> listAppUsers() {
         try {
-            // select scalar fields to avoid needing Lombok-generated getters in static analysis
-            @SuppressWarnings("unchecked")
-            var rows = entityManager.createQuery("SELECT a.id, a.username, a.id, a.notes FROM AppUser a").getResultList();
-            var list = rows.stream().map(r -> {
-                Object[] cols = (Object[]) r;
-                Long id = cols[0] == null ? null : ((Number) cols[0]).longValue();
-                String username = cols[1] == null ? null : cols[1].toString();
-                Long customerId = cols[2] == null ? null : ((Number) cols[2]).longValue();
-                String notes = cols[3] == null ? null : cols[3].toString();
-                return java.util.Map.of("id", id, "username", username, "customerId", customerId, "notes", notes);
+            var list = appUserRepository.findAll().stream().map(u -> {
+                Map<String, Object> map = new HashMap<>();
+                map.put("id", u.getId());
+                map.put("username", u.getUsername());
+                map.put("customerId", u.getCustomerId());
+                map.put("notes", u.getNotes());
+                return map;
             }).collect(Collectors.toList());
             return ResponseEntity.ok(list);
         } catch (Exception e) {
@@ -276,23 +272,20 @@ public class AdminController {
 
     @PostMapping("/app-users")
     @ResponseBody
-    @Transactional
     public ResponseEntity<?> createAppUser(@RequestBody java.util.Map<String,Object> body) {
         String username = (String) body.get("username");
         Long customerId = body.get("customerId") == null ? null : Long.valueOf(body.get("customerId").toString());
-        String apiKey = (String) body.get("brokerApiKey");
-        String brokerUser = (String) body.get("brokerUsername");
-        String brokerPw = (String) body.get("brokerPassword");
         String notes = (String) body.getOrDefault("notes","");
         if (username==null || username.isBlank()) return ResponseEntity.badRequest().body("username required");
         try {
-            var exists = entityManager.createQuery("SELECT count(a) FROM AppUser a WHERE a.username = :u", Long.class)
-                    .setParameter("u", username).getSingleResult();
-            if (exists != null && exists > 0) return ResponseEntity.status(409).body("user exists");
+            if (appUserRepository.findByUsername(username).isPresent()) {
+                return ResponseEntity.status(409).body("user exists");
+            }
             AppUser u = new AppUser();
             u.setUsername(username);
+            u.setCustomerId(customerId);
             u.setNotes(notes);
-            entityManager.persist(u);
+            appUserRepository.save(u);
             return ResponseEntity.ok(java.util.Map.of("id", u.getId(), "username", u.getUsername(), "Id", u.getId()));
         } catch (Exception e) {
             return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to create user", "message", e.toString()));

@@ -1402,7 +1402,50 @@
     } catch (e) { console.debug('prefillPlaceOrderFormFromRequestRow failed', e); }
   }
 
+  // --- User Creation Wiring ---
+  function wireUserCreation() {
+    const btn = document.getElementById('createUserBtn');
+    if (!btn) return;
+    btn.addEventListener('click', async function() {
+      const nameInput = document.getElementById('newUserName');
+      const custIdInput = document.getElementById('newUserCustomerId');
+      const username = nameInput ? nameInput.value.trim() : '';
+      const customerId = custIdInput ? custIdInput.value.trim() : '';
+
+      if (!username) {
+        alert('Username is required');
+        return;
+      }
+
+      try {
+        await ensureCsrf();
+        const payload = { username: username };
+        if (customerId) {
+            payload.customerId = customerId;
+        }
+
+        const res = await fetchJson('/admin/app-users', {
+          method: 'POST',
+          body: JSON.stringify(payload)
+        });
+
+        if (res && res.id) {
+          // Clear inputs
+          if (nameInput) nameInput.value = '';
+          if (custIdInput) custIdInput.value = '';
+          // Reload user list
+          await loadUsers();
+          alert('User created: ' + res.username);
+        } else {
+          alert('Failed to create user');
+        }
+      } catch (e) {
+        alert('Error creating user: ' + (e.message || e));
+      }
+    });
+  }
+
   // start ws on load
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); wireStatusFilter(); wireExecutedPagination(); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); wireStatusFilter(); wireExecutedPagination(); wireUserCreation(); startAdminWs(); });
 
 })();
