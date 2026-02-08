@@ -35,6 +35,9 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.web.csrf.CsrfToken;
 import java.util.Map;
 import java.util.HashMap;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Controller
 @RequiredArgsConstructor
@@ -50,6 +53,7 @@ public class AdminController {
     private final CryptoService cryptoService;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final AppUserRepository appUserRepository;
+    private final PlatformTransactionManager transactionManager;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -277,16 +281,31 @@ public class AdminController {
         Long customerId = body.get("customerId") == null ? null : Long.valueOf(body.get("customerId").toString());
         String notes = (String) body.getOrDefault("notes","");
         if (username==null || username.isBlank()) return ResponseEntity.badRequest().body("username required");
+        
+        AppUser u = new AppUser();
+        u.setUsername(username);
+        u.setCustomerId(customerId);
+        u.setNotes(notes);
+
         try {
             if (appUserRepository.findByUsername(username).isPresent()) {
                 return ResponseEntity.status(409).body("user exists");
             }
-            AppUser u = new AppUser();
-            u.setUsername(username);
-            u.setCustomerId(customerId);
-            u.setNotes(notes);
             appUserRepository.save(u);
             return ResponseEntity.ok(java.util.Map.of("id", u.getId(), "username", u.getUsername(), "Id", u.getId()));
+        } catch (DataIntegrityViolationException dve) {
+            // Try to recover from H2 sequence mismatch
+            try {
+                new TransactionTemplate(transactionManager).execute(status -> {
+                    entityManager.createNativeQuery("ALTER TABLE APP_USER ALTER COLUMN ID RESTART WITH (SELECT coalesce(MAX(ID), 0) + 1 FROM APP_USER)").executeUpdate();
+                    return null;
+                });
+                // Retry save
+                appUserRepository.save(u);
+                return ResponseEntity.ok(java.util.Map.of("id", u.getId(), "username", u.getUsername(), "Id", u.getId()));
+            } catch (Exception retryEx) {
+                 return ResponseEntity.status(409).body(java.util.Map.of("error", "User creation failed", "message", "Constraint violation: " + dve.getMessage()));
+            }
         } catch (Exception e) {
             return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to create user", "message", e.toString()));
         }
