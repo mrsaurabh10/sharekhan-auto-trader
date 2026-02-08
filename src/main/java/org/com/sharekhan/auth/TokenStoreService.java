@@ -526,6 +526,11 @@ public class TokenStoreService {
             }
         } catch (Exception ignored) {}
 
+        // 3) For simulator, return dummy token info
+        if (broker == Broker.SIMULATOR) {
+            return new TokenInfo("SIMULATOR_TOKEN", "SIMULATOR_API_KEY");
+        }
+
         return null;
     }
 }

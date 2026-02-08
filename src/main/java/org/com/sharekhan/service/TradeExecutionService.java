@@ -1,11 +1,12 @@
 package org.com.sharekhan.service;
 
-import com.sharekhan.SharekhanConnect;
 import com.sharekhan.model.OrderParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.dto.BrokerContext;
+import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
@@ -19,6 +20,8 @@ import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
+import org.com.sharekhan.service.broker.BrokerService;
+import org.com.sharekhan.service.broker.BrokerServiceFactory;
 import org.com.sharekhan.util.CryptoService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
@@ -61,6 +64,7 @@ public class TradeExecutionService {
     private final ScriptMasterRepository scriptMasterRepository;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
+    private final BrokerServiceFactory brokerServiceFactory;
 
     @Autowired
     private UserConfigService userConfigService;
@@ -512,103 +516,23 @@ public class TradeExecutionService {
             }
             // Prefer a customer specific token when placing the order
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
-            if (ctx == null || ctx.apiKey == null || ctx.customerId == null) {
-                throw new IllegalStateException("No active Sharekhan broker configured for this user");
-            }
-            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, ctx.customerId);
-            if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx.apiKey, accessToken);
-
-            // 🧾 Build order request
-            OrderParams order = new OrderParams();
-            // Use the customerId from broker credentials when available; otherwise fall back to default
-            order.customerId = ctx.customerId;
-            order.scripCode =  trigger.getScripCode();
-            order.tradingSymbol = trigger.getSymbol();
-            order.exchange = trigger.getExchange();
-            order.transactionType = "B";
-            order.quantity = trigger.getQuantity();
-            // For some broad-market indices/equity feeds we send price=0.0 to indicate a market order
-            String sym = trigger.getSymbol() != null ? trigger.getSymbol().toUpperCase() : "";
-            final Set<String> MARKET_SYMBOLS = Set.of("SENSEX", "NIFTY", "BANKNIFTY", "BANKEX", "FINNIFTY");
-            if (MARKET_SYMBOLS.contains(sym)) {
-                order.price = "0.0";
-            } else {
-                order.price = String.valueOf(ltp); //choosing ltp as higher chances of execution
-            }
-            order.quantity = Long.valueOf(trigger.getQuantity());
-            order.price =  String.valueOf(ltp); //choosing ltp as higher chances of execution
-            order.orderType = "NORMAL";
-            order.productType = "INVESTMENT";
-            order.instrumentType = trigger.getInstrumentType(); //FUTCUR, FS, FI, OI, OS, FUTCURR, OPTCURR
-            if (trigger.getStrikePrice() != null) {
-                order.strikePrice = String.valueOf(trigger.getStrikePrice());
-            } else {
-                order.strikePrice = null;
-            }
-            order.optionType = (trigger.getOptionType() != null && !trigger.getOptionType().isBlank()) ? trigger.getOptionType() : null;
-            order.expiry = (trigger.getExpiry() != null && !trigger.getExpiry().isBlank()) ? trigger.getExpiry() : null;
-            order.requestType = "NEW";
-            order.afterHour =  "N";
-            order.validity = "GFD";
-            order.rmsCode ="ANY";
-            order.disclosedQty = 0L;
-            order.channelUser = ctx.clientCode;
-
-            // Retry logic: attempt up to 3 times when broker response doesn't return an orderId.
-            JSONObject response = null;
-            String orderId = null;
-            final int maxAttempts = 3;
-            long[] backoffMs = new long[]{300L, 700L, 1500L};
-
-            for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-                try {
-                    response = sharekhanConnect.placeOrder(order);
-                } catch (Exception e) {
-                    log.warn("Attempt {}: placeOrder threw exception for trigger {}: {}", attempt, trigger.getId(), e.getMessage());
-                }
-
-                // Compact logging per attempt
-                try {
-                    if (response != null && response.has("data")) {
-                        JSONObject d = response.getJSONObject("data");
-                        String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
-                        String respStatus = d.optString("orderStatus", "");
-                        String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
-                        String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
-                        log.info("Sharekhan placeOrder attempt {} summary: orderId={} status={} avg/price={} execQty={}", attempt, respOrderId, respStatus, respAvg, respExecQty);
-                        if (respOrderId != null && !respOrderId.isBlank()) {
-                            orderId = respOrderId;
-                        }
-                    } else if (response != null) {
-                        log.info("Sharekhan placeOrder attempt {} received response but missing data object: status={}", attempt, response.optInt("status", -1));
-                    } else {
-                        log.info("Sharekhan placeOrder attempt {} returned null response", attempt);
-                    }
-                } catch (Exception e) {
-                    log.debug("Failed to compactly log placeOrder attempt {} response: {}", attempt, e.getMessage());
-                }
-
-                if (orderId != null) break; // success
-
-                // If not last attempt, wait before retrying
-                if (attempt < maxAttempts) {
-                    long sleepMs = backoffMs[Math.min(attempt-1, backoffMs.length-1)];
-                    try {
-                        Thread.sleep(sleepMs);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
+            
+            if (ctx == null || ctx.getApiKey() == null || ctx.getCustomerId() == null) {
+                throw new IllegalStateException("No active broker configured for this user");
             }
 
-            if (orderId == null) {
-                // After retries, still no orderId — mark as rejected, persist a rejected trade entity and notify
-                log.error("❌ Place order failed after {} attempts for trigger {}. Response: {}", maxAttempts, trigger.getId(), response);
+            BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+            if (brokerService == null) {
+                throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
+            }
+
+            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, ltp);
+
+            if (!result.isSuccess()) {
+                log.error("❌ Place order failed for trigger {}. Reason: {}", trigger.getId(), result.getRejectionReason());
                 TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
                 rejected.setStatus(TriggeredTradeStatus.REJECTED);
-                rejected.setExitReason("Broker did not return orderId after retries");
+                rejected.setExitReason(result.getRejectionReason());
                 rejected.setScripCode(trigger.getScripCode());
                 rejected.setExchange(trigger.getExchange());
                 rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
@@ -633,233 +557,79 @@ public class TradeExecutionService {
                 }
 
                 try {
-                    String title = "Order Placement Failed after retries ❌";
+                    String title = "Order Placement Failed ❌";
                     StringBuilder body = new StringBuilder();
                     body.append("Instrument: ").append(trigger.getSymbol()).append("\n");
                     body.append("Exchange: ").append(trigger.getExchange()).append("\n");
                     body.append("Attempted Qty: ").append(trigger.getQuantity()).append("\n");
                     body.append("Attempted Price(LTP): ").append(ltp).append("\n");
                     body.append("Trigger Entity Id: ").append(trigger.getId()).append("\n");
-                    body.append("Note: PlaceOrder did not return orderId after " ).append(maxAttempts).append(" attempts.");
+                    body.append("Reason: ").append(result.getRejectionReason());
                     telegramNotificationService.sendTradeMessageForUser(trigger.getAppUserId(), title, body.toString());
                 } catch (Exception e) {
                     log.warn("Failed sending telegram notification for placeOrder failure: {}", e.getMessage());
                 }
 
-                return rejected; // abort with rejected entity
-            }
-
-            // order placed attempt completed, response received
-            log.info("✅ Sharekhan placeOrder attempt completed. orderId={}", orderId);
-            log.info("Response received " + response);
-            if (response == null) {
-                log.error("❌ Sharekhan order failed or returned null for trigger {}", trigger.getId());
-                // Treat null response as immediate rejection
-                TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
-                rejected.setStatus(TriggeredTradeStatus.REJECTED);
-                rejected.setExitReason("Broker returned no response while placing order");
-                rejected.setScripCode(trigger.getScripCode());
-                rejected.setExchange(trigger.getExchange());
-                rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
-                rejected.setAppUserId(trigger.getAppUserId());
-                rejected.setSymbol(trigger.getSymbol());
-                rejected.setExpiry(trigger.getExpiry());
-                rejected.setStrikePrice(trigger.getStrikePrice());
-                rejected.setStopLoss(trigger.getStopLoss());
-                rejected.setTarget1(trigger.getTarget1());
-                rejected.setTarget2(trigger.getTarget2());
-                rejected.setQuantity(trigger.getQuantity());
-                rejected.setTarget3(trigger.getTarget3());
-                rejected.setInstrumentType(trigger.getInstrumentType());
-                rejected.setEntryPrice(ltp);
-                rejected.setOptionType(trigger.getOptionType());
-                rejected.setIntraday(trigger.getIntraday());
-                triggeredTradeRepo.save(rejected);
                 return rejected;
             }
 
-            // Handle explicit error object from broker, e.g. {"errorType":"input_error","message":"...","status":400}
-            try {
-                String errorType = response.optString("errorType", null);
-                Integer httpStatus = response.has("status") ? response.optInt("status", 0) : null;
-                if ((errorType != null && !errorType.isBlank()) || (httpStatus != null && httpStatus >= 400)) {
-                    log.warn("❌ Broker rejected order for trigger {}: type={}, status={}, message={} ",
-                            trigger.getId(), errorType, httpStatus, response.optString("message", ""));
-                    TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
-                    rejected.setStatus(TriggeredTradeStatus.REJECTED);
-                    StringBuilder reason = new StringBuilder();
-                    if (errorType != null && !errorType.isBlank()) {
-                        reason.append(errorType);
-                    }
-                    String msg = response.optString("message", "");
-                    if (msg != null && !msg.isBlank()) {
-                        if (!reason.isEmpty()) reason.append(": ");
-                        reason.append(msg);
-                    }
-                    if (httpStatus != null && httpStatus >= 400) {
-                        if (!reason.isEmpty()) reason.append(" (status ").append(httpStatus).append(")");
-                        else reason.append("HTTP ").append(httpStatus);
-                    }
-                    if (reason.isEmpty()) reason.append("Broker rejected the order");
-                    rejected.setExitReason(reason.toString());
-                    rejected.setScripCode(trigger.getScripCode());
-                    rejected.setExchange(trigger.getExchange());
-                    rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
-                    rejected.setAppUserId(trigger.getAppUserId());
-                    rejected.setSymbol(trigger.getSymbol());
-                    rejected.setExpiry(trigger.getExpiry());
-                    rejected.setStrikePrice(trigger.getStrikePrice());
-                    rejected.setStopLoss(trigger.getStopLoss());
-                    rejected.setTarget1(trigger.getTarget1());
-                    rejected.setTarget2(trigger.getTarget2());
-                    rejected.setQuantity(trigger.getQuantity());
-                    rejected.setTarget3(trigger.getTarget3());
-                    rejected.setInstrumentType(trigger.getInstrumentType());
-                    rejected.setEntryPrice(ltp);
-                    rejected.setOptionType(trigger.getOptionType());
-                    rejected.setIntraday(trigger.getIntraday());
-                    triggeredTradeRepo.save(rejected);
-                    return rejected;
+            // Order placed successfully
+            log.info("✅ Order placed successfully: orderId={}", result.getOrderId());
+
+            TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
+            triggeredTradeSetupEntity.setOrderId(result.getOrderId());
+            triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            triggeredTradeSetupEntity.setTriggeredAt(triggeredAt != null ? triggeredAt : java.time.LocalDateTime.now());
+
+            triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
+            triggeredTradeSetupEntity.setExchange(trigger.getExchange());
+            triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
+            triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
+            triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());
+            triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
+            triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
+            triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
+            triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
+            triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
+            triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
+            triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
+            triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
+            triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
+            triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+            triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
+            
+            triggeredTradeRepo.save(triggeredTradeSetupEntity);
+
+            // If broker returned immediate execution details (e.g. Simulator or fast market order)
+            if ("Fully Executed".equalsIgnoreCase(result.getStatus())) {
+                triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.EXECUTED);
+                triggeredTradeSetupEntity.setEntryAt(LocalDateTime.now());
+                if (result.getExecutedPrice() != null) {
+                    triggeredTradeSetupEntity.setEntryPrice(result.getExecutedPrice());
                 }
-            } catch (Exception ignore) { /* proceed to other parsing */ }
-
-            if (!response.has("data")){
-                log.error("❌ Sharekhan order failed or returned without data for trigger {}: {}", trigger.getId(), response);
-                // Treat missing data as rejection as well
-                TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
-                rejected.setStatus(TriggeredTradeStatus.REJECTED);
-                rejected.setExitReason("Broker response missing data field");
-                rejected.setScripCode(trigger.getScripCode());
-                rejected.setExchange(trigger.getExchange());
-                rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
-                rejected.setAppUserId(trigger.getAppUserId());
-                rejected.setSymbol(trigger.getSymbol());
-                rejected.setExpiry(trigger.getExpiry());
-                rejected.setStrikePrice(trigger.getStrikePrice());
-                rejected.setStopLoss(trigger.getStopLoss());
-                rejected.setTarget1(trigger.getTarget1());
-                rejected.setTarget2(trigger.getTarget2());
-                rejected.setQuantity(trigger.getQuantity());
-                rejected.setTarget3(trigger.getTarget3());
-                rejected.setInstrumentType(trigger.getInstrumentType());
-                rejected.setEntryPrice(ltp);
-                rejected.setOptionType(trigger.getOptionType());
-                rejected.setIntraday(trigger.getIntraday());
-                triggeredTradeRepo.save(rejected);
-                return rejected;
-            } else if (response.getJSONObject("data").has("orderId")){
-                String orderIdRaw = response.getJSONObject("data").optString("orderId", null);
-                orderId = (orderIdRaw != null ? orderIdRaw.trim() : null);
-                // Some broker responses return "0" or blank when an order id isn't yet assigned. Treat such values as null
-                if (orderId == null || orderId.isBlank() || orderId.equals("0") || orderId.equalsIgnoreCase("null") || orderId.equalsIgnoreCase("na")) {
-                    log.warn("⚠️ Broker returned a non-real orderId ({}). Persisting null to avoid unique key collisions.", orderIdRaw);
-                    orderId = null;
-                }
-                //order placed  successfully
-                log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
-
-                // check the status with a delay of .5 second
-                //Thread.sleep(500);
-
-                TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
-                if (orderId != null) {
-                    triggeredTradeSetupEntity.setOrderId(orderId);
-                }
-
-                triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
-                // mark the time when this trigger was converted into a live trade (trigger fired -> order placed)
-                triggeredTradeSetupEntity.setTriggeredAt(triggeredAt != null ? triggeredAt : java.time.LocalDateTime.now());
-                // If broker returned placeholder/invalid orderId (treated as null), mark as REJECTED as per requirement
-                if (orderId == null) {
-                    triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.REJECTED);
-                    triggeredTradeSetupEntity.setExitReason("Broker returned invalid orderId (0/blank)");
-                } else {
-                    triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
-                }
-
-                triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
-                triggeredTradeSetupEntity.setExchange(trigger.getExchange());
-                triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
-                triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
-                triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());
-                triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
-                triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
-                triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
-                // trigger.getQuantity() already stores the final quantity (shares) as Long
-                triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
-                triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
-                triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
-                triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
-                triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
-                triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
-                // attach broker credentials id and app user id from the trigger for traceability
-                triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
-                triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
                 triggeredTradeRepo.save(triggeredTradeSetupEntity);
-                triggeredTradeSetupEntity.setScripCode(trigger.getScripCode());
-                triggeredTradeSetupEntity.setExchange(trigger.getExchange());
-                // attach broker credentials id and app user id from the trigger for traceability
-                triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
-                triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
-                triggeredTradeSetupEntity.setSymbol(trigger.getSymbol());
-                triggeredTradeSetupEntity.setExpiry(trigger.getExpiry());
-                triggeredTradeSetupEntity.setStrikePrice(trigger.getStrikePrice());
-                triggeredTradeSetupEntity.setStopLoss(trigger.getStopLoss());
-                triggeredTradeSetupEntity.setTarget1(trigger.getTarget1());
-                triggeredTradeSetupEntity.setTarget2(trigger.getTarget2());
-                triggeredTradeSetupEntity.setQuantity(trigger.getQuantity());
-                triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
-                triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
-                triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
-                triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
-                triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
-                triggeredTradeRepo.save(triggeredTradeSetupEntity);
-
-                // Publish event AFTER transaction commit so pollers/readers see the committed DB state
-                if (TransactionSynchronizationManager.isSynchronizationActive()) {
-                    TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-                        @Override
-                        public void afterCommit() {
-                            eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
-                        }
-                    });
-                } else {
-                    eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
-                }
-
-            //dont need the unsubscribe code here as we will not unsubscribe
-            // reason being need to take care of pending order
-           // String feedKey = trigger.getExchange() + trigger.getScripCode();
-            //webSocketSubscriptionService.unsubscribeFromScrip(feedKey);
-
-
-                log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
-                // Only publish order placed event and proceed with live monitoring when order is actually placed
-                if (triggeredTradeSetupEntity.getStatus() != TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION) {
-                    log.warn("❌ Marked trade as REJECTED due to invalid/zero orderId for scripCode {}", trigger.getScripCode());
-                }
-                return triggeredTradeSetupEntity;
             }
+
+            // Publish event AFTER transaction commit so pollers/readers see the committed DB state
+            if (TransactionSynchronizationManager.isSynchronizationActive()) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+                    }
+                });
+            } else {
+                eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+            }
+
+            log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
+            return triggeredTradeSetupEntity;
 
         } catch (Exception e) {
             log.error("❌ Error executing trade for trigger {}: {}", trigger.getId(), e.getMessage(), e);
         }
         return null;
     }
-
-////    public void markOrderExecuted(String orderId) {
-////        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByOrderId(orderId)
-////                .orElseThrow(() -> new RuntimeException("Trade not found"));
-////
-////        trade.setStatus(TriggeredTradeStatus.EXECUTED);
-////        triggeredTradeRepo.save(trade);
-////
-////        // ✅ Start LTP monitoring
-////        String feedKey = trade.getExchange() + trade.getScripCode();
-////        webSocketSubscriptionService.subscribeToScrip(feedKey);
-////
-////        log.info("✅ Order executed, monitoring LTP for SL/target: {}", feedKey);
-////    }
 
     public void markOrderRejected(String orderId) {
         TriggeredTradeSetupEntity trade = triggeredTradeRepo.findByOrderId(orderId)
@@ -951,83 +721,22 @@ public class TradeExecutionService {
         persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found after claim: " + trade.getId()));
 
-        // Build exit order params using persisted (fresh) values
-        OrderParams exitOrder = new OrderParams();
         // Resolve customerId from broker credentials if available; fallback to default
-    BrokerContext exitCtx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
-        if (exitCtx == null || exitCtx.customerId == null) {
-            throw new IllegalStateException("No active Sharekhan broker configured for this user (exit)");
-        }
-        exitOrder.customerId = exitCtx.customerId;
-        exitOrder.exchange = persisted.getExchange();
-        exitOrder.scripCode = persisted.getScripCode();
-        // For equities (NC/BC) strikePrice/optionType/expiry may be null — send null instead of "null"
-        if (persisted.getStrikePrice() != null) {
-            exitOrder.strikePrice = String.valueOf(persisted.getStrikePrice());
-        } else {
-            exitOrder.strikePrice = null;
-        }
-        exitOrder.optionType = (persisted.getOptionType() != null && !persisted.getOptionType().isBlank()) ? persisted.getOptionType() : null;
-        exitOrder.tradingSymbol = persisted.getSymbol();
-        exitOrder.expiry = (persisted.getExpiry() != null && !persisted.getExpiry().isBlank()) ? persisted.getExpiry() : null;
-        exitOrder.quantity = persisted.getQuantity().longValue();
-        exitOrder.instrumentType = persisted.getInstrumentType();
-        exitOrder.productType = "INVESTMENT";
-        // For some broad-market indices/equity feeds we send price=0.0 to indicate a market order
-        String persistedSym = persisted.getSymbol() != null ? persisted.getSymbol().toUpperCase() : "";
-        final Set<String> EXIT_MARKET_SYMBOLS = Set.of("SENSEX", "NIFTY", "BANKNIFTY", "BANKEX", "FINNIFTY");
-        if (EXIT_MARKET_SYMBOLS.contains(persistedSym)) {
-            exitOrder.price = "0.0";
-        } else {
-            exitOrder.price = String.valueOf(exitPrice);
-        }
-        exitOrder.transactionType = "S";
-        exitOrder.orderType = "NORMAL";
-        // expiry already set above conditionally
-        exitOrder.requestType = "NEW";
-        exitOrder.afterHour = "N";
-        exitOrder.validity = "GFD";
-        exitOrder.rmsCode = "ANY";
-        exitOrder.disclosedQty = 0L;
-        exitOrder.channelUser = exitCtx.clientCode;
-
-        String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, exitCtx.customerId);
-        if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-        SharekhanConnect sharekhanConnect = new SharekhanConnect(null, exitCtx.apiKey, accessToken);
-
-        // Retry logic for exit order placement
-        JSONObject response = null;
-        String exitOrderId = null;
-        
-        // Removed retry loop to prevent duplicate orders on timeout
-        try {
-            response = sharekhanConnect.placeOrder(exitOrder);
-        } catch (Exception e) {
-            log.warn("Exit placeOrder threw exception for trade {}: {}", persisted.getId(), e.getMessage());
+        BrokerContext exitCtx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
+    
+        if (exitCtx == null || exitCtx.getCustomerId() == null) {
+            throw new IllegalStateException("No active broker configured for this user (exit)");
         }
 
-        try {
-            if (response != null && response.has("data")) {
-                JSONObject d = response.getJSONObject("data");
-                String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
-                String respStatus = d.optString("orderStatus", "");
-                String respAvg = d.optString("avgPrice", d.optString("orderPrice", ""));
-                String respExecQty = d.has("execQty") ? String.valueOf(d.optInt("execQty")) : d.optString("execQty", "");
-                log.info("Sharekhan exit placeOrder summary: orderId={} status={} avg/price={} execQty={}", respOrderId, respStatus, respAvg, respExecQty);
-                if (respOrderId != null && !respOrderId.isBlank()) {
-                    exitOrderId = respOrderId;
-                }
-            } else if (response != null) {
-                log.info("Sharekhan exit placeOrder received response but missing data object: status={}", response.optInt("status", -1));
-            } else {
-                log.info("Sharekhan exit placeOrder returned null response for trade {}", persisted.getId());
-            }
-        } catch (Exception e) {
-            log.debug("Failed to compactly log exit placeOrder response: {}", e.getMessage());
+        BrokerService brokerService = brokerServiceFactory.getService(exitCtx.getBrokerName());
+        if (brokerService == null) {
+            throw new IllegalStateException("No broker service found for: " + exitCtx.getBrokerName());
         }
 
-        if (exitOrderId == null) {
-            log.error("❌ Exit place order failed for trade {}. Response: {}", persisted.getId(), response);
+        OrderPlacementResult result = brokerService.placeExitOrder(persisted, exitCtx, exitPrice);
+
+        if (!result.isSuccess()) {
+            log.error("❌ Exit place order failed for trade {}. Reason: {}", persisted.getId(), result.getRejectionReason());
             try {
                 persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                 triggeredTradeRepo.save(persisted);
@@ -1044,7 +753,7 @@ public class TradeExecutionService {
                 body.append("Attempted Qty: ").append(persisted.getQuantity()).append("\n");
                 body.append("Attempted Price: ").append(exitPrice).append("\n");
                 body.append("TradeId: ").append(persisted.getId()).append("\n");
-                body.append("Note: Exit placeOrder did not return orderId.");
+                body.append("Reason: ").append(result.getRejectionReason());
                 telegramNotificationService.sendTradeMessageForUser(persisted.getAppUserId(), title, body.toString());
             } catch (Exception e) {
                 log.warn("Failed sending telegram notification for exit placeOrder failure: {}", e.getMessage());
@@ -1054,7 +763,7 @@ public class TradeExecutionService {
         }
 
         // Order placed successfully - persist exitOrderId in DB (native update) first
-        triggeredTradeRepo.setExitOrderId(persisted.getId(), exitOrderId);
+        triggeredTradeRepo.setExitOrderId(persisted.getId(), result.getOrderId());
 
         // Evict caches and clear persistence context so subsequent reads see the native update
         try {
@@ -1068,7 +777,7 @@ public class TradeExecutionService {
 
         // Now update the in-memory entity and mark status EXIT_ORDER_PLACED (we have an exitOrderId now)
         try {
-            persisted.setExitOrderId(exitOrderId);
+            persisted.setExitOrderId(result.getOrderId());
             persisted.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
             persisted.setExitReason(exitReason);
             triggeredTradeRepo.save(persisted);
@@ -1079,48 +788,37 @@ public class TradeExecutionService {
 
         // If the broker response already indicates the exit order was fully executed and provides a price,
         // we can mark the trade EXITED_SUCCESS immediately to avoid waiting on the poller.
-        try {
-            if (response.has("data")) {
-                JSONObject d = response.getJSONObject("data");
-                String respStatus = d.optString("orderStatus", "").toLowerCase();
-                String avgPrice = d.optString("avgPrice", "").trim();
-                String execPrice = d.optString("execPrice", "").trim();
-                String orderPrice = d.optString("orderPrice", "").trim();
-                String candidate = !avgPrice.isBlank() ? avgPrice : (!execPrice.isBlank() ? execPrice : (!orderPrice.isBlank() ? orderPrice : null));
-                boolean fullyExecuted = respStatus.contains("fully") || respStatus.contains("executed");
-                   if (fullyExecuted && candidate != null) {
-                    try {
-                        double exitPriceVal = Double.parseDouble(candidate);
-                        double pnlVal = 0.0d;
-                        if (persisted.getEntryPrice() != null && persisted.getQuantity() != null) {
-                            pnlVal = java.math.BigDecimal.valueOf(exitPriceVal).subtract(java.math.BigDecimal.valueOf(persisted.getEntryPrice()))
-                                    .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
-                                    .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
-                        }
-                        int updated = triggeredTradeRepo.markExitedWithPNL(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
-                        if (updated == 1) {
-                            log.info("✅ placeOrder response indicated fully executed - markExited updated trade {} to EXITED_SUCCESS", persisted.getId());
-                            // evict 2nd-level cache and clear persistence context so other threads see the terminal state
-                            try {
-                                if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
-                                    entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
-                                    entityManager.clear();
-                                }
-                            } catch (Exception ignore) {
-                                log.debug("Failed to evict/clear JPA cache after markExited for {}: {}", persisted.getId(), ignore.getMessage());
-                            }
-                            // ensure we unsubscribe and don't leave poller active
-                            try { webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode()); } catch (Exception ignored) {}
-                        }
-                        return;
-                    } catch (Exception ex) {
-                        log.debug("Failed to parse candidate exit price from placeOrder response for trade {}: {}", persisted.getId(), ex.getMessage());
-                    }
+        if ("Fully Executed".equalsIgnoreCase(result.getStatus()) && result.getExecutedPrice() != null) {
+            try {
+                double exitPriceVal = result.getExecutedPrice();
+                double pnlVal = result.getPnl() != null ? result.getPnl() : 0.0d;
+                
+                if (pnlVal == 0.0d && persisted.getEntryPrice() != null && persisted.getQuantity() != null) {
+                    pnlVal = java.math.BigDecimal.valueOf(exitPriceVal).subtract(java.math.BigDecimal.valueOf(persisted.getEntryPrice()))
+                            .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
+                            .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
                 }
+                
+                int updated = triggeredTradeRepo.markExitedWithPNL(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
+                if (updated == 1) {
+                    log.info("✅ placeOrder response indicated fully executed - markExited updated trade {} to EXITED_SUCCESS", persisted.getId());
+                    // evict 2nd-level cache and clear persistence context so other threads see the terminal state
+                    try {
+                        if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
+                            entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
+                            entityManager.clear();
+                        }
+                    } catch (Exception ignore) {
+                        log.debug("Failed to evict/clear JPA cache after markExited for {}: {}", persisted.getId(), ignore.getMessage());
+                    }
+                    // ensure we unsubscribe and don't leave poller active
+                    try { webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode()); } catch (Exception ignored) {}
+                }
+                return;
+            } catch (Exception ex) {
+                log.debug("Failed to parse candidate exit price from placeOrder response for trade {}: {}", persisted.getId(), ex.getMessage());
             }
-        } catch (Exception e) {
-            log.debug("Error while inspecting placeOrder response for immediate exit persist: {}", e.getMessage());
-       }
+        }
 
         // If we didn't mark the trade as EXITED_SUCCESS immediately (below), start the order-status poller to watch exitOrderId
         try {
@@ -1377,10 +1075,15 @@ public class TradeExecutionService {
             }
             // subscribe to ACK for this customer's feed
             BrokerContext subCtx = resolveBrokerContext(executedTrades.get(0).getBrokerCredentialsId(), executedTrades.get(0).getAppUserId());
-            if (subCtx != null && subCtx.customerId != null) {
-                webSocketSubscriptionService.subscribeToAck(String.valueOf(subCtx.customerId));
+            if (subCtx != null && subCtx.getCustomerId() != null) {
+                webSocketSubscriptionService.subscribeToAck(String.valueOf(subCtx.getCustomerId()));
             } else {
-                throw new IllegalStateException("No active Sharekhan broker configured for ACK subscribe");
+                // For simulator, we don't need to subscribe to ACK
+                if (subCtx != null && "Simulator".equalsIgnoreCase(subCtx.getBrokerName())) {
+                    log.info("Skipping ACK subscription for Simulator broker");
+                } else {
+                    throw new IllegalStateException("No active Sharekhan broker configured for ACK subscribe");
+                }
             }
         }
 
@@ -1489,13 +1192,6 @@ public class TradeExecutionService {
     }
 
     // ---------------- Broker context resolution ----------------
-    @lombok.Data
-    private static class BrokerContext {
-        private final Long customerId;
-        private final String apiKey;
-        private final String clientCode;
-    }
-
     private BrokerContext resolveBrokerContext(Long brokerCredentialsId, Long appUserId) {
         try {
             org.com.sharekhan.entity.BrokerCredentialsEntity chosen = null;
@@ -1541,7 +1237,7 @@ public class TradeExecutionService {
             String clientCode = null;
             try { apiKey = cryptoService.decrypt(chosen.getApiKey()); } catch (Exception e) { apiKey = chosen.getApiKey(); }
             try { clientCode = cryptoService.decrypt(chosen.getClientCode()); } catch (Exception e) { clientCode = chosen.getClientCode(); }
-            return new BrokerContext(customerId, apiKey, clientCode);
+            return new BrokerContext(customerId, apiKey, clientCode, chosen.getBrokerName());
         } catch (Exception e) {
             log.warn("Failed to resolve broker context: {}", e.toString());
             return null;
