@@ -2,6 +2,7 @@ package org.com.sharekhan.service;
 
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
@@ -24,6 +25,7 @@ import java.time.DayOfWeek;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -58,6 +60,48 @@ public class OrderStatusPollingService {
         private final Long customerId;
         private final String apiKey;
         private final String clientCode;
+    }
+
+    @PostConstruct
+    public void init() {
+        // On restart, resume polling for any trades that are in a pending state
+        // This ensures we don't lose track of orders placed before the restart
+        log.info("Initializing OrderStatusPollingService - checking for pending orders to resume monitoring");
+        resumePollingForPendingOrders();
+        
+        // Also schedule a periodic check to catch any orders that might need monitoring when market opens
+        // or if polling was interrupted
+        executor.scheduleAtFixedRate(this::resumePollingForPendingOrders, 1, 5, TimeUnit.MINUTES);
+    }
+
+    private void resumePollingForPendingOrders() {
+        try {
+            // Find trades in states where we expect an order to be open/pending
+            List<TriggeredTradeSetupEntity> pendingExitOrders = tradeRepo.findByStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+            List<TriggeredTradeSetupEntity> pendingEntryOrders = tradeRepo.findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            
+            int resumedCount = 0;
+            
+            for (TriggeredTradeSetupEntity trade : pendingExitOrders) {
+                if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
+                    monitorOrderStatus(trade);
+                    resumedCount++;
+                }
+            }
+            
+            for (TriggeredTradeSetupEntity trade : pendingEntryOrders) {
+                if (trade.getOrderId() != null && !trade.getOrderId().isEmpty()) {
+                    monitorOrderStatus(trade);
+                    resumedCount++;
+                }
+            }
+            
+            if (resumedCount > 0) {
+                log.info("Resumed polling for {} pending orders", resumedCount);
+            }
+        } catch (Exception e) {
+            log.error("Error resuming polling for pending orders: {}", e.getMessage(), e);
+        }
     }
 
     // Resolve context based on brokerCredentialsId/appUserId
