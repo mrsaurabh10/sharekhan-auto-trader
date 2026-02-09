@@ -608,16 +608,37 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
             triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
             
-            triggeredTradeRepo.save(triggeredTradeSetupEntity);
+            triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
             // If broker returned immediate execution details (e.g. Simulator or fast market order)
             if ("Fully Executed".equalsIgnoreCase(result.getStatus())) {
                 triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.EXECUTED);
                 triggeredTradeSetupEntity.setEntryAt(LocalDateTime.now());
                 if (result.getExecutedPrice() != null) {
-                    triggeredTradeSetupEntity.setEntryPrice(result.getExecutedPrice());
+                    Double originalEntryPrice = triggeredTradeSetupEntity.getEntryPrice();
+                    Double executedPrice = result.getExecutedPrice();
+
+                    if (originalEntryPrice != null && executedPrice != null) {
+                        double diff = executedPrice - originalEntryPrice;
+                        if (Math.abs(diff) > 0.0001) {
+                            log.info("Adjusting SL and Targets for trade {} due to immediate execution price difference: {}", triggeredTradeSetupEntity.getId(), diff);
+                            if (triggeredTradeSetupEntity.getStopLoss() != null) {
+                                triggeredTradeSetupEntity.setStopLoss(triggeredTradeSetupEntity.getStopLoss() + diff);
+                            }
+                            if (triggeredTradeSetupEntity.getTarget1() != null) {
+                                triggeredTradeSetupEntity.setTarget1(triggeredTradeSetupEntity.getTarget1() + diff);
+                            }
+                            if (triggeredTradeSetupEntity.getTarget2() != null) {
+                                triggeredTradeSetupEntity.setTarget2(triggeredTradeSetupEntity.getTarget2() + diff);
+                            }
+                            if (triggeredTradeSetupEntity.getTarget3() != null) {
+                                triggeredTradeSetupEntity.setTarget3(triggeredTradeSetupEntity.getTarget3() + diff);
+                            }
+                        }
+                    }
+                    triggeredTradeSetupEntity.setEntryPrice(executedPrice);
                 }
-                triggeredTradeRepo.save(triggeredTradeSetupEntity);
+                triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
                 log.info("✅ Trade executed immediately. Skipping order status polling.");
                 return triggeredTradeSetupEntity;
             }
@@ -1200,8 +1221,8 @@ public class TradeExecutionService {
         temp.setStopLoss(requestEntity.getStopLoss());
         temp.setTarget1(requestEntity.getTarget1());
         temp.setTarget2(requestEntity.getTarget2());
-        temp.setTarget3(requestEntity.getTarget3());
-        temp.setTrailingSl(requestEntity.getTrailingSl());
+        temp.setTarget3(request.getTarget3());
+        temp.setTrailingSl(request.getTrailingSl());
 
         // run execution using the converted entity
         return execute(temp, ltp);
