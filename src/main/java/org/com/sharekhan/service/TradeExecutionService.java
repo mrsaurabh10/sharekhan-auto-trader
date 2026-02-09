@@ -644,15 +644,16 @@ public class TradeExecutionService {
             }
 
             // Publish event AFTER transaction commit so pollers/readers see the committed DB state
+            final TriggeredTradeSetupEntity finalEntity = triggeredTradeSetupEntity;
             if (TransactionSynchronizationManager.isSynchronizationActive()) {
                 TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                     @Override
                     public void afterCommit() {
-                        eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+                        eventPublisher.publishEvent(new OrderPlacedEvent(finalEntity));
                     }
                 });
             } else {
-                eventPublisher.publishEvent(new OrderPlacedEvent(triggeredTradeSetupEntity));
+                eventPublisher.publishEvent(new OrderPlacedEvent(finalEntity));
             }
 
             log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
@@ -1221,8 +1222,8 @@ public class TradeExecutionService {
         temp.setStopLoss(requestEntity.getStopLoss());
         temp.setTarget1(requestEntity.getTarget1());
         temp.setTarget2(requestEntity.getTarget2());
-        temp.setTarget3(request.getTarget3());
-        temp.setTrailingSl(request.getTrailingSl());
+        temp.setTarget3(requestEntity.getTarget3());
+        temp.setTrailingSl(requestEntity.getTrailingSl());
 
         // run execution using the converted entity
         return execute(temp, ltp);
