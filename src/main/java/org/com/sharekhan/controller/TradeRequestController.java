@@ -45,6 +45,10 @@ public class TradeRequestController {
         return tradeRequestRepository.findById(id)
                 .map(request -> {
                     boolean changed = false;
+                    if (update.getEntryPrice() != null) {
+                        request.setEntryPrice(update.getEntryPrice());
+                        changed = true;
+                    }
                     if (update.getStopLoss() != null) {
                         request.setStopLoss(update.getStopLoss());
                         changed = true;

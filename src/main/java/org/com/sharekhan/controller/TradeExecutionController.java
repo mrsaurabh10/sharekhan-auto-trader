@@ -54,6 +54,10 @@ public class TradeExecutionController {
         return triggeredTradeSetupRepository.findById(id)
                 .map(trade -> {
                     boolean changed = false;
+                    if (update.getEntryPrice() != null) {
+                        trade.setEntryPrice(update.getEntryPrice());
+                        changed = true;
+                    }
                     if (update.getStopLoss() != null) {
                         trade.setStopLoss(update.getStopLoss());
                         changed = true;

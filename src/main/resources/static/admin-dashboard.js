@@ -170,11 +170,13 @@
     const modal = document.createElement('div'); modal.id = 'adminEditModal'; modal.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.35);z-index:9999;';
     modal.innerHTML = '<div style="background:#fff;padding:16px;border-radius:6px;min-width:320px;max-width:520px;">' +
       '<h3 id="adminEditModalTitle">Edit</h3>' +
+      '<div style="margin-bottom:8px"><label>Entry Price</label><br/><input id="modal_entryPrice" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Stop Loss</label><br/><input id="modal_stopLoss" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Target1</label><br/><input id="modal_target1" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Target2</label><br/><input id="modal_target2" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Target3</label><br/><input id="modal_target3" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Quantity</label><br/><input id="modal_quantity" type="number" min="1" style="width:100%"/></div>' +
+      '<div style="margin-bottom:8px"><label><input id="modal_intraday" type="checkbox"/> Intraday</label></div>' +
       '<div style="text-align:right;margin-top:8px"><button id="modalCancel" class="btn">Cancel</button> <button id="modalSave" class="btn primary">Save</button></div>' +
       '</div>';
     document.body.appendChild(modal);
@@ -183,25 +185,33 @@
 
   function openEditModal(title, values, onSave) {
     createEditModalIfNeeded(); const modal = document.getElementById('adminEditModal'); document.getElementById('adminEditModalTitle').innerText = title || 'Edit';
+    document.getElementById('modal_entryPrice').value = values.entryPrice != null ? values.entryPrice : '';
     document.getElementById('modal_stopLoss').value = values.stopLoss != null ? values.stopLoss : '';
     document.getElementById('modal_target1').value = values.target1 != null ? values.target1 : '';
     document.getElementById('modal_target2').value = values.target2 != null ? values.target2 : '';
     document.getElementById('modal_target3').value = values.target3 != null ? values.target3 : '';
     document.getElementById('modal_quantity').value = values.quantity != null ? values.quantity : '';
+    document.getElementById('modal_intraday').checked = !!values.intraday;
     modal.style.display = 'flex';
     const saveBtn = document.getElementById('modalSave'); const newSave = saveBtn.cloneNode(true); saveBtn.parentNode.replaceChild(newSave, saveBtn);
     newSave.addEventListener('click', async function () {
       const payload = {};
+      const ep = document.getElementById('modal_entryPrice').value.trim();
       const sl = document.getElementById('modal_stopLoss').value.trim();
       const t1 = document.getElementById('modal_target1').value.trim();
       const t2 = document.getElementById('modal_target2').value.trim();
       const t3 = document.getElementById('modal_target3').value.trim();
       const q = document.getElementById('modal_quantity').value.trim();
+      const intraday = document.getElementById('modal_intraday').checked;
+
+      if (ep !== '') payload.entryPrice = Number(ep);
       if (sl !== '') payload.stopLoss = Number(sl);
       if (t1 !== '') payload.target1 = Number(t1);
       if (t2 !== '') payload.target2 = Number(t2);
       if (t3 !== '') payload.target3 = Number(t3);
       if (q !== '') payload.quantity = Number(q);
+      payload.intraday = intraday;
+
       try { await onSave(payload); modal.style.display = 'none'; } catch (e) { alert('Save failed: ' + (e && e.message ? e.message : e)); }
     });
   }
@@ -243,7 +253,7 @@
         // Edit
         const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
         editBtn.addEventListener('click', function () {
-          openEditModal('Edit Request ' + id, { stopLoss: r.stopLoss, target1: r.target1, target2: r.target2, target3: r.target3, quantity: r.quantity }, async function (payload) {
+          openEditModal('Edit Request ' + id, { entryPrice: r.entryPrice, intraday: r.intraday, stopLoss: r.stopLoss, target1: r.target1, target2: r.target2, target3: r.target3, quantity: r.quantity }, async function (payload) {
             if (Object.keys(payload).length === 0) throw new Error('No changes'); await ensureCsrf(); await fetchJson('/api/trades/request/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadRequestedOrdersForUser(uid);
           });
         }); actionCell.appendChild(editBtn);
@@ -481,7 +491,7 @@
         const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(String(status).toUpperCase())) {
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
-          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
+          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginRight = '6px'; moveBtn.innerText = 'Move SL to Cost'; moveBtn.addEventListener('click', async function () { if (!confirm('Move SL to entry price for trade ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); await loadExecutedForUser(uid, getSelectedStatuses()); }); actionCell.appendChild(moveBtn);
           const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () {
             const price = prompt('Enter price to close trade ' + id + ' (optional, leave empty for market/LTP):');

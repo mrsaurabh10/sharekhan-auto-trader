@@ -4,6 +4,7 @@ import lombok.Data;
 
 @Data
 public class UpdateTargetsRequest {
+    private Double entryPrice;
     private Double stopLoss;
     private Double target1;
     private Double target2;
