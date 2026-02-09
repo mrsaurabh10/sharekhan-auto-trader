@@ -20,6 +20,10 @@ import org.json.JSONArray;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.DayOfWeek;
+import java.time.LocalTime;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -107,6 +111,32 @@ public class OrderStatusPollingService {
         }
     }
 
+    private boolean isMarketOpen(String exchange) {
+        if (exchange == null) return false;
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        ZonedDateTime now = ZonedDateTime.now(zoneId);
+        DayOfWeek day = now.getDayOfWeek();
+
+        // Check if it's a weekday (Monday to Friday)
+        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) {
+            return false;
+        }
+
+        LocalTime time = now.toLocalTime();
+
+        if ("MX".equalsIgnoreCase(exchange)) {
+            // Commodity: 9:00 AM - 11:30 PM
+            LocalTime start = LocalTime.of(9, 0);
+            LocalTime end = LocalTime.of(23, 30);
+            return !time.isBefore(start) && !time.isAfter(end);
+        } else {
+            // Equity: 9:15 AM - 3:30 PM
+            LocalTime start = LocalTime.of(9, 15);
+            LocalTime end = LocalTime.of(15, 30);
+            return !time.isBefore(start) && !time.isAfter(end);
+        }
+    }
+
     public void monitorOrderStatus(TriggeredTradeSetupEntity trade) {
         // Use DB id as key so we don't schedule multiple polls for same trade
         final String tradeKey = String.valueOf(trade.getId());
@@ -117,6 +147,9 @@ public class OrderStatusPollingService {
         }
 
         Runnable pollTask = () -> {
+            if (!isMarketOpen(trade.getExchange())) {
+                return;
+            }
             String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
             try {
 
