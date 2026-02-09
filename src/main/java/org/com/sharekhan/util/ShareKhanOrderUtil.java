@@ -8,8 +8,21 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.time.LocalTime;
+import java.time.ZoneId;
 
 public class ShareKhanOrderUtil {
+
+    public static boolean isAfterHours() {
+        LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
+        // 6 PM to 9 PM
+        boolean evening = !now.isBefore(LocalTime.of(17, 0)) && !now.isAfter(LocalTime.of(21, 0));
+        // 11 PM to 8:58 AM
+        boolean night = !now.isBefore(LocalTime.of(23, 0));
+        boolean morning = !now.isAfter(LocalTime.of(8, 58));
+
+        return evening || night || morning;
+    }
 
     public static JSONObject modifyOrder(SharekhanConnect sharekhanConnect,
                                          TriggeredTradeSetupEntity tradeSetupEntity,
@@ -41,7 +54,7 @@ public class ShareKhanOrderUtil {
         orderParams.price = String.valueOf(orderPrice);
         orderParams.triggerPrice = "0";
         orderParams.rmsCode= "ANY";
-        orderParams.afterHour= "N";
+        orderParams.afterHour= isAfterHours() ? "Y" : "N";
         orderParams.channelUser=channelUser; // client/user code from broker credentials
         orderParams.requestType="MODIFY"; //
         orderParams.instrumentType=tradeSetupEntity.getInstrumentType(); //(Future Stocks(FS)/ Future Index(FI)/ Option Index(OI)/ Option Stocks(OS)/ Future Currency(FUTCUR)/ Option Currency(OPTCUR))

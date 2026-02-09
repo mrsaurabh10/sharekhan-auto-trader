@@ -9,6 +9,7 @@ import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
+import org.com.sharekhan.util.ShareKhanOrderUtil;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
 
@@ -72,7 +73,7 @@ public class SharekhanBrokerService implements BrokerService {
             order.optionType = (trade.getOptionType() != null && !trade.getOptionType().isBlank()) ? trade.getOptionType() : null;
             order.expiry = (trade.getExpiry() != null && !trade.getExpiry().isBlank()) ? trade.getExpiry() : null;
             order.requestType = requestType;
-            order.afterHour = "N";
+            order.afterHour = ShareKhanOrderUtil.isAfterHours() ? "Y" : "N";
             order.validity = "GFD";
             order.rmsCode = "ANY";
             order.disclosedQty = 0L;

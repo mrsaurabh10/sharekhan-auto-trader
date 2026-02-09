@@ -12,6 +12,7 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
+import org.com.sharekhan.util.ShareKhanOrderUtil;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
@@ -110,7 +111,7 @@ public class OrderExitService {
         exitOrder.orderType = "NORMAL";
         exitOrder.expiry = trade.getExpiry();
         exitOrder.requestType = "NEW";
-        exitOrder.afterHour =  "N";
+        exitOrder.afterHour =  ShareKhanOrderUtil.isAfterHours() ? "Y" : "N";
         exitOrder.validity = "GFD";
         exitOrder.rmsCode = "ANY";
         exitOrder.disclosedQty = 0L;
