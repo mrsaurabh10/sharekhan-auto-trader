@@ -341,7 +341,11 @@ public class PriceTriggerService {
             remainingTrade.setStatus(TriggeredTradeStatus.EXECUTED);
             remainingTrade.setTriggeredAt(trade.getTriggeredAt());
             remainingTrade.setEntryAt(trade.getEntryAt());
-            remainingTrade.setOrderId(trade.getOrderId());
+            
+            // Append suffix to orderId to avoid unique constraint violation
+            if (trade.getOrderId() != null) {
+                remainingTrade.setOrderId(trade.getOrderId() + "-REM-" + System.currentTimeMillis());
+            }
 
             triggeredRepo.save(remainingTrade);
 
