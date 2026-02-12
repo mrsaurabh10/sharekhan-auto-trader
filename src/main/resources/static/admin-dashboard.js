@@ -549,7 +549,7 @@
                 pnlTd.innerText = String(finalPnl);
                 tr.setAttribute('data-final-pnl', String(finalPnl));
               }
-            } else if (statusUpper !== 'EXECUTED') {
+            } else if (statusUpper !== 'EXECUTED' && statusUpper !== 'EXIT_ORDER_PLACED') {
               // For non-executed, non-exited_success rows: if backend gave a realized/final PNL, show it once; otherwise leave '-'
               if (finalPnl != null && !isNaN(finalPnl)) {
                 pnlTd.innerText = Number(finalPnl).toFixed(2);
@@ -572,7 +572,7 @@
                 const ltpNum = Number(ltpCache[sc].last_price);
                 ltpTd.innerText = ltpNum.toFixed(2);
                 // compute PNL only for EXECUTED
-                if (statusUpper === 'EXECUTED' && pnlTd && entry != null && qty != null && !Number.isNaN(ltpNum)) {
+                if ((statusUpper === 'EXECUTED' || statusUpper === 'EXIT_ORDER_PLACED') && pnlTd && entry != null && qty != null && !Number.isNaN(ltpNum)) {
                     const pnl = qty * (ltpNum - Number(entry));
                     pnlTd.innerText = Number(pnl).toFixed(2);
                 }
@@ -589,7 +589,7 @@
               const ltpNum = Number(map[k].last_price);
               info.ltpTd.innerText = ltpNum.toFixed(2);
               // compute PNL only for EXECUTED
-              if (info.status === 'EXECUTED' && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
+              if ((info.status === 'EXECUTED' || info.status === 'EXIT_ORDER_PLACED') && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
                 const pnl = info.qty * (ltpNum - Number(info.entry));
                 info.pnlTd.innerText = Number(pnl).toFixed(2);
               }
@@ -617,7 +617,7 @@
                     if (ltpCache[sc] && ltpCache[sc].last_price != null) {
                         const ltpNum = Number(ltpCache[sc].last_price);
                         info.ltpTd.innerText = ltpNum.toFixed(2);
-                        if (info.status === 'EXECUTED' && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
+                        if ((info.status === 'EXECUTED' || info.status === 'EXIT_ORDER_PLACED') && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
                           const pnl = info.qty * (ltpNum - Number(info.entry));
                           info.pnlTd.innerText = Number(pnl).toFixed(2);
                         }
@@ -631,7 +631,7 @@
                       if (val != null) {
                         const ltpNum = Number(val);
                         info.ltpTd.innerText = ltpNum.toFixed(2);
-                        if (info.status === 'EXECUTED' && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
+                        if ((info.status === 'EXECUTED' || info.status === 'EXIT_ORDER_PLACED') && info.pnlTd && info.entry != null && info.qty != null && !Number.isNaN(ltpNum)) {
                           const pnl = info.qty * (ltpNum - Number(info.entry));
                           info.pnlTd.innerText = Number(pnl).toFixed(2);
                         }
@@ -751,7 +751,7 @@
             // update PNL if this row has it
             const pnlTd = tr.querySelector('td[data-pnl]');
             const status = (tr.getAttribute('data-status') || '').toUpperCase();
-            if (pnlTd && status === 'EXECUTED') {
+            if (pnlTd && (status === 'EXECUTED' || status === 'EXIT_ORDER_PLACED')) {
               const entry = parseFloat(tr.getAttribute('data-entry') || '');
               const qty = parseFloat(tr.getAttribute('data-qty') || '');
               if (!Number.isNaN(entry) && !Number.isNaN(qty)) {
@@ -811,7 +811,7 @@
                     if (tr && !Number.isNaN(ltpNum)) {
                       const pnlTd = tr.querySelector('td[data-pnl]');
                       const status = (tr.getAttribute('data-status') || '').toUpperCase();
-                      if (pnlTd && status === 'EXECUTED') {
+                      if (pnlTd && (status === 'EXECUTED' || status === 'EXIT_ORDER_PLACED')) {
                         const entry = parseFloat(tr.getAttribute('data-entry') || '');
                         const qty = parseFloat(tr.getAttribute('data-qty') || '');
                         if (!Number.isNaN(entry) && !Number.isNaN(qty)) {

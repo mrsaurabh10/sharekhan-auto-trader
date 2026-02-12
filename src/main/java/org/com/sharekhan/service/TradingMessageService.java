@@ -101,6 +101,7 @@ public class TradingMessageService {
     private void placeForAllSharekhanCustomers(TriggerRequest base) {
         // Fetch all broker credentials for SHAREKHAN
         var creds = brokerCredentialsService.findAllForBroker("Sharekhan");
+        creds.addAll(brokerCredentialsService.findAllForBroker("Simulator"));
         if (creds == null || creds.isEmpty()) return;
 
         // Create an executor that uses virtual threads if available; otherwise fallback to cached thread pool

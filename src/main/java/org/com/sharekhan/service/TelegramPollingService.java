@@ -42,15 +42,15 @@ public class TelegramPollingService {
         LocalTime currentTime = now.toLocalTime();
         DayOfWeek day = now.getDayOfWeek();
 
-        // Restrict to weekdays only (Mon–Fri)
-        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) {
-            return;
-        }
-
-        // Restrict to trading hours only
-        if (currentTime.isBefore(START_TIME) || currentTime.isAfter(END_TIME)) {
-            return;
-        }
+//        // Restrict to weekdays only (Mon–Fri)
+//        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) {
+//            return;
+//        }
+//
+//        // Restrict to trading hours only
+//        if (currentTime.isBefore(START_TIME) || currentTime.isAfter(END_TIME)) {
+//            return;
+//        }
 
         try {
             String url = API_URL + "?timeout=10&offset=" + (lastUpdateId + 1);
