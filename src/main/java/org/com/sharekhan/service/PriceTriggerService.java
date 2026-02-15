@@ -11,6 +11,7 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -30,6 +31,7 @@ public class PriceTriggerService {
     private final TradeExecutionService tradeExecutionService;
     private final PlatformTransactionManager transactionManager;
     private final ScriptMasterRepository scriptMasterRepository;
+    private final WebSocketSubscriptionService webSocketSubscriptionService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -353,6 +355,12 @@ public class PriceTriggerService {
             trade.setQuantity(qtyToBook);
             trade.setLots(lotsToBook);
             triggeredRepo.save(trade);
+
+            // IMPORTANT: Subscribe to the new remaining trade's scrip code to ensure monitoring continues
+            // We do this BEFORE squareOff because squareOff might result in an immediate unsubscribe (if fully executed),
+            // which would drop the refCount to 0 if we haven't incremented it for the remaining portion yet.
+            String key = remainingTrade.getExchange() + remainingTrade.getScripCode();
+            webSocketSubscriptionService.subscribeToScrip(key);
 
             // Proceed to square off this portion
             tradeExecutionService.squareOff(trade, ltp, "TARGET_HIT_PARTIAL");
