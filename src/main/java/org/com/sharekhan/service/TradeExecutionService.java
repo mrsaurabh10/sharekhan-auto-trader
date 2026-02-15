@@ -522,49 +522,49 @@ public class TradeExecutionService {
             }
 
             // Check for price difference > 8%
-            if (trigger.getEntryPrice() != null && trigger.getEntryPrice() > 0) {
-                double priceDiff = Math.abs(ltp - trigger.getEntryPrice());
-                double percentageDiff = (priceDiff / trigger.getEntryPrice()) * 100;
-
-                if (percentageDiff > 20) {
-                    log.warn("Blocking placement for trigger {} due to price difference > 8%: EntryPrice={}, LTP={}, Diff%={}",
-                            trigger.getId(), trigger.getEntryPrice(), ltp, percentageDiff);
-                    TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
-                    rejected.setStatus(TriggeredTradeStatus.REJECTED);
-                    rejected.setExitReason("Price difference > 8% (Slippage protection)");
-                    rejected.setScripCode(trigger.getScripCode());
-                    rejected.setExchange(trigger.getExchange());
-                    rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
-                    rejected.setAppUserId(trigger.getAppUserId());
-                    rejected.setSymbol(trigger.getSymbol());
-                    rejected.setExpiry(trigger.getExpiry());
-                    rejected.setStrikePrice(trigger.getStrikePrice());
-                    rejected.setStopLoss(trigger.getStopLoss());
-                    rejected.setTarget1(trigger.getTarget1());
-                    rejected.setTarget2(trigger.getTarget2());
-                    rejected.setQuantity(trigger.getQuantity());
-                    rejected.setLots(trigger.getLots());
-                    rejected.setTslEnabled(trigger.getTslEnabled());
-                    rejected.setTarget3(trigger.getTarget3());
-                    rejected.setInstrumentType(trigger.getInstrumentType());
-                    rejected.setEntryPrice(ltp);
-                    rejected.setOptionType(trigger.getOptionType());
-                    rejected.setIntraday(trigger.getIntraday());
-                    try { triggeredTradeRepo.save(rejected); } catch (Exception ignore) { }
-                    try {
-                        String title = "Order Rejected ❌";
-                        StringBuilder body = new StringBuilder();
-                        body.append("Instrument: ").append(trigger.getSymbol());
-                        if (trigger.getStrikePrice() != null) body.append(" ").append(trigger.getStrikePrice());
-                        if (trigger.getOptionType() != null) body.append(" ").append(trigger.getOptionType());
-                        body.append("\nReason: Price difference is more than 8%");
-                        body.append("\nExpected: ").append(trigger.getEntryPrice());
-                        body.append("\nActual: ").append(ltp);
-                        telegramNotificationService.sendTradeMessageForUser(trigger.getAppUserId(), title, body.toString());
-                    } catch (Exception e) { log.warn("Failed to send telegram for price diff rejection: {}", e.getMessage()); }
-                    return rejected;
-                }
-            }
+//            if (trigger.getEntryPrice() != null && trigger.getEntryPrice() > 0) {
+//                double priceDiff = Math.abs(ltp - trigger.getEntryPrice());
+//                double percentageDiff = (priceDiff / trigger.getEntryPrice()) * 100;
+//
+//                if (percentageDiff > 20) {
+//                    log.warn("Blocking placement for trigger {} due to price difference > 8%: EntryPrice={}, LTP={}, Diff%={}",
+//                            trigger.getId(), trigger.getEntryPrice(), ltp, percentageDiff);
+//                    TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
+//                    rejected.setStatus(TriggeredTradeStatus.REJECTED);
+//                    rejected.setExitReason("Price difference > 8% (Slippage protection)");
+//                    rejected.setScripCode(trigger.getScripCode());
+//                    rejected.setExchange(trigger.getExchange());
+//                    rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+//                    rejected.setAppUserId(trigger.getAppUserId());
+//                    rejected.setSymbol(trigger.getSymbol());
+//                    rejected.setExpiry(trigger.getExpiry());
+//                    rejected.setStrikePrice(trigger.getStrikePrice());
+//                    rejected.setStopLoss(trigger.getStopLoss());
+//                    rejected.setTarget1(trigger.getTarget1());
+//                    rejected.setTarget2(trigger.getTarget2());
+//                    rejected.setQuantity(trigger.getQuantity());
+//                    rejected.setLots(trigger.getLots());
+//                    rejected.setTslEnabled(trigger.getTslEnabled());
+//                    rejected.setTarget3(trigger.getTarget3());
+//                    rejected.setInstrumentType(trigger.getInstrumentType());
+//                    rejected.setEntryPrice(ltp);
+//                    rejected.setOptionType(trigger.getOptionType());
+//                    rejected.setIntraday(trigger.getIntraday());
+//                    try { triggeredTradeRepo.save(rejected); } catch (Exception ignore) { }
+//                    try {
+//                        String title = "Order Rejected ❌";
+//                        StringBuilder body = new StringBuilder();
+//                        body.append("Instrument: ").append(trigger.getSymbol());
+//                        if (trigger.getStrikePrice() != null) body.append(" ").append(trigger.getStrikePrice());
+//                        if (trigger.getOptionType() != null) body.append(" ").append(trigger.getOptionType());
+//                        body.append("\nReason: Price difference is more than 8%");
+//                        body.append("\nExpected: ").append(trigger.getEntryPrice());
+//                        body.append("\nActual: ").append(ltp);
+//                        telegramNotificationService.sendTradeMessageForUser(trigger.getAppUserId(), title, body.toString());
+//                    } catch (Exception e) { log.warn("Failed to send telegram for price diff rejection: {}", e.getMessage()); }
+//                    return rejected;
+//                }
+//            }
 
             // Prefer a customer specific token when placing the order
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
