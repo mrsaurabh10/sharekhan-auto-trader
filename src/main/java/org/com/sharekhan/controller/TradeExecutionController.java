@@ -78,6 +78,10 @@ public class TradeExecutionController {
                         trade.setIntraday(update.getIntraday());
                         changed = true;
                     }
+                    if (update.getQuantity() != null) {
+                        trade.setQuantity(update.getQuantity());
+                        changed = true;
+                    }
                     if (changed) {
                         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                         boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
