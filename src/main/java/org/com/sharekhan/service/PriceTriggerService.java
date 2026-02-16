@@ -51,8 +51,8 @@ public class PriceTriggerService {
 
             for (TriggerTradeRequestEntity trigger : candidates) {
                 // Check if LTP is more than 20% of the entry price
-                if (trigger.getEntryPrice() != null && ltp > trigger.getEntryPrice() * 1.20) {
-                    log.warn("⚠️ LTP {} is more than 20% above entry price {} for trigger {}. Deleting request.", ltp, trigger.getEntryPrice(), trigger.getId());
+                if (trigger.getEntryPrice() != null && ltp > trigger.getEntryPrice() * 1.10) {
+                    log.warn("⚠️ LTP {} is more than 10% above entry price {} for trigger {}. Deleting request.", ltp, trigger.getEntryPrice(), trigger.getId());
                     triggerRepo.deleteById(trigger.getId());
                     continue;
                 }
