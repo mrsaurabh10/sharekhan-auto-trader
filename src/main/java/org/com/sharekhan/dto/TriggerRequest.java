@@ -24,4 +24,13 @@ public class TriggerRequest {
     private Long userId;
     // optional broker credentials id to use for this request (broker_credentials.id)
     private Long brokerCredentialsId;
+    
+    private Boolean useSpotPrice; // Legacy flag for backward compatibility
+    
+    // Granular spot price usage flags
+    private Boolean useSpotForEntry;
+    private Boolean useSpotForSl;
+    private Boolean useSpotForTarget;
+
+    private Integer spotScripCode; // Scrip code of the underlying spot
 }

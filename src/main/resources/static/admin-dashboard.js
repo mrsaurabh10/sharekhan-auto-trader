@@ -177,6 +177,10 @@
       '<div style="margin-bottom:8px"><label>Target3</label><br/><input id="modal_target3" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Quantity</label><br/><input id="modal_quantity" type="number" min="1" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_intraday" type="checkbox"/> Intraday</label></div>' +
+      '<div style="margin-bottom:8px"><label><input id="modal_useSpotPrice" type="checkbox"/> Use Spot Price (All)</label></div>' +
+      '<div style="margin-bottom:8px"><label><input id="modal_useSpotForEntry" type="checkbox"/> Spot for Entry</label></div>' +
+      '<div style="margin-bottom:8px"><label><input id="modal_useSpotForSl" type="checkbox"/> Spot for SL</label></div>' +
+      '<div style="margin-bottom:8px"><label><input id="modal_useSpotForTarget" type="checkbox"/> Spot for Target</label></div>' +
       '<div style="text-align:right;margin-top:8px"><button id="modalCancel" class="btn">Cancel</button> <button id="modalSave" class="btn primary">Save</button></div>' +
       '</div>';
     document.body.appendChild(modal);
@@ -192,6 +196,10 @@
     document.getElementById('modal_target3').value = values.target3 != null ? values.target3 : '';
     document.getElementById('modal_quantity').value = values.quantity != null ? values.quantity : '';
     document.getElementById('modal_intraday').checked = !!values.intraday;
+    document.getElementById('modal_useSpotPrice').checked = !!values.useSpotPrice;
+    document.getElementById('modal_useSpotForEntry').checked = !!values.useSpotForEntry;
+    document.getElementById('modal_useSpotForSl').checked = !!values.useSpotForSl;
+    document.getElementById('modal_useSpotForTarget').checked = !!values.useSpotForTarget;
     modal.style.display = 'flex';
     const saveBtn = document.getElementById('modalSave'); const newSave = saveBtn.cloneNode(true); saveBtn.parentNode.replaceChild(newSave, saveBtn);
     newSave.addEventListener('click', async function () {
@@ -203,6 +211,10 @@
       const t3 = document.getElementById('modal_target3').value.trim();
       const q = document.getElementById('modal_quantity').value.trim();
       const intraday = document.getElementById('modal_intraday').checked;
+      const useSpotPrice = document.getElementById('modal_useSpotPrice').checked;
+      const useSpotForEntry = document.getElementById('modal_useSpotForEntry').checked;
+      const useSpotForSl = document.getElementById('modal_useSpotForSl').checked;
+      const useSpotForTarget = document.getElementById('modal_useSpotForTarget').checked;
 
       if (ep !== '') payload.entryPrice = Number(ep);
       if (sl !== '') payload.stopLoss = Number(sl);
@@ -211,6 +223,10 @@
       if (t3 !== '') payload.target3 = Number(t3);
       if (q !== '') payload.quantity = Number(q);
       payload.intraday = intraday;
+      payload.useSpotPrice = useSpotPrice;
+      payload.useSpotForEntry = useSpotForEntry;
+      payload.useSpotForSl = useSpotForSl;
+      payload.useSpotForTarget = useSpotForTarget;
 
       try { await onSave(payload); modal.style.display = 'none'; } catch (e) { alert('Save failed: ' + (e && e.message ? e.message : e)); }
     });
@@ -253,7 +269,19 @@
         // Edit
         const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
         editBtn.addEventListener('click', function () {
-          openEditModal('Edit Request ' + id, { entryPrice: r.entryPrice, intraday: r.intraday, stopLoss: r.stopLoss, target1: r.target1, target2: r.target2, target3: r.target3, quantity: r.quantity }, async function (payload) {
+          openEditModal('Edit Request ' + id, {
+              entryPrice: r.entryPrice,
+              intraday: r.intraday,
+              stopLoss: r.stopLoss,
+              target1: r.target1,
+              target2: r.target2,
+              target3: r.target3,
+              quantity: r.quantity,
+              useSpotPrice: r.useSpotPrice,
+              useSpotForEntry: r.useSpotForEntry,
+              useSpotForSl: r.useSpotForSl,
+              useSpotForTarget: r.useSpotForTarget
+          }, async function (payload) {
             if (Object.keys(payload).length === 0) throw new Error('No changes'); await ensureCsrf(); await fetchJson('/api/trades/request/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadRequestedOrdersForUser(uid);
           });
         }); actionCell.appendChild(editBtn);
@@ -491,7 +519,7 @@
         const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(String(status).toUpperCase())) {
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
-          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
+          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginRight = '6px'; moveBtn.innerText = 'Move SL to Cost'; moveBtn.addEventListener('click', async function () { if (!confirm('Move SL to entry price for trade ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); await loadExecutedForUser(uid, getSelectedStatuses()); }); actionCell.appendChild(moveBtn);
           const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.innerText = 'Close'; closeBtn.addEventListener('click', async function () {
             const price = prompt('Enter price to close trade ' + id + ' (optional, leave empty for market/LTP):');
@@ -1290,6 +1318,11 @@
         quantity: readNum('quantity'),
         intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked),
         tslEnabled: !!(document.getElementById('tslEnabled') && document.getElementById('tslEnabled').checked),
+        useSpotPrice: !!(document.getElementById('useSpotPrice') && document.getElementById('useSpotPrice').checked),
+        useSpotForEntry: !!(document.getElementById('useSpotForEntry') && document.getElementById('useSpotForEntry').checked),
+        useSpotForSl: !!(document.getElementById('useSpotForSl') && document.getElementById('useSpotForSl').checked),
+        useSpotForTarget: !!(document.getElementById('useSpotForTarget') && document.getElementById('useSpotForTarget').checked),
+        spotScripCode: readNum('spotScripCode'),
         trailingSl: null,
         userId: window.selectedUserId || null,
         brokerCredentialsId: null
@@ -1347,13 +1380,17 @@
 
     if (resetBtn) {
       resetBtn.addEventListener('click', function () {
-        ['exchange','instrument','strikePrice','expiry','entryPrice','stopLoss','target1','target2','target3'].forEach(function(id){ const el = document.getElementById(id); if (el) { if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value=''; } });
+        ['exchange','instrument','strikePrice','expiry','entryPrice','stopLoss','target1','target2','target3','spotScripCode'].forEach(function(id){ const el = document.getElementById(id); if (el) { if (el.tagName === 'SELECT') el.selectedIndex = 0; else el.value=''; } });
         // Defaults: Option Type = CE (Call), Quantity = 1
         const opt = document.getElementById('optionType'); if (opt) { opt.value = 'CE'; if (opt.value !== 'CE' && opt.options.length > 0) opt.selectedIndex = 0; }
         const qty = document.getElementById('quantity'); if (qty) qty.value = '1';
         const intr = document.getElementById('intraday'); if (intr) intr.checked = false;
         const ae = document.getElementById('alreadyExecuted'); if (ae) ae.checked = false;
         const tsl = document.getElementById('tslEnabled'); if (tsl) tsl.checked = false;
+        const usp = document.getElementById('useSpotPrice'); if (usp) usp.checked = false;
+        const use = document.getElementById('useSpotForEntry'); if (use) use.checked = false;
+        const uss = document.getElementById('useSpotForSl'); if (uss) uss.checked = false;
+        const ust = document.getElementById('useSpotForTarget'); if (ust) ust.checked = false;
         if (resultDiv) resultDiv.innerText = '';
         if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
       });
@@ -1407,8 +1444,13 @@
       setVal('target2', req.target2 != null ? req.target2 : (req.t2 || ''));
       setVal('target3', req.target3 != null ? req.target3 : (req.t3 || ''));
       setVal('quantity', req.quantity != null ? req.quantity : (req.qty || ''));
+      setVal('spotScripCode', req.spotScripCode != null ? req.spotScripCode : '');
       const intr = document.getElementById('intraday'); if (intr) intr.checked = !!(req.intraday);
       const tsl = document.getElementById('tslEnabled'); if (tsl) tsl.checked = !!(req.tslEnabled);
+      const usp = document.getElementById('useSpotPrice'); if (usp) usp.checked = !!(req.useSpotPrice);
+      const use = document.getElementById('useSpotForEntry'); if (use) use.checked = !!(req.useSpotForEntry);
+      const uss = document.getElementById('useSpotForSl'); if (uss) uss.checked = !!(req.useSpotForSl);
+      const ust = document.getElementById('useSpotForTarget'); if (ust) ust.checked = !!(req.useSpotForTarget);
 
       // scroll into view
       const panel = document.getElementById('placeOrderPanel'); if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });

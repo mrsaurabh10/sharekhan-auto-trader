@@ -268,6 +268,46 @@ public class TradeExecutionService {
             }
             throw new InvalidTradeRequestException("Quantity must be greater than zero");
         }
+        
+        // Resolve spot scrip code if needed
+        Integer spotScripCode = request.getSpotScripCode();
+        boolean useSpotForEntry = Boolean.TRUE.equals(request.getUseSpotForEntry());
+        boolean useSpotForSl = Boolean.TRUE.equals(request.getUseSpotForSl());
+        boolean useSpotForTarget = Boolean.TRUE.equals(request.getUseSpotForTarget());
+        
+        // If the legacy useSpotPrice flag is set, enable all granular flags
+        if (Boolean.TRUE.equals(request.getUseSpotPrice())) {
+            useSpotForEntry = true;
+            useSpotForSl = true;
+            useSpotForTarget = true;
+        }
+
+        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && spotScripCode == null) {
+            // Try to resolve spot scrip code from instrument name
+            // Assuming instrument name is like "NIFTY", "BANKNIFTY", "FINNIFTY" etc.
+            // We need to find the corresponding spot scrip in NC exchange.
+            try {
+                String instrumentName = request.getInstrument();
+                // Common indices mapping or lookup
+                // Try exact match in NC exchange first
+                Optional<ScriptMasterEntity> spotOpt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("NC", instrumentName);
+                if (spotOpt.isPresent()) {
+                    spotScripCode = spotOpt.get().getScripCode();
+                } else {
+                    // Try BSE (BC) if not found in NSE (NC)
+                     Optional<ScriptMasterEntity> spotOptBc = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("BC", instrumentName);
+                     if (spotOptBc.isPresent()) {
+                         spotScripCode = spotOptBc.get().getScripCode();
+                     }
+                }
+                
+                if (spotScripCode == null) {
+                    log.warn("Could not resolve spot scrip code for instrument: {}", instrumentName);
+                }
+            } catch (Exception e) {
+                log.warn("Error resolving spot scrip code: {}", e.getMessage());
+            }
+        }
 
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
                 .symbol(request.getInstrument())
@@ -291,12 +331,26 @@ public class TradeExecutionService {
                 .intraday(request.getIntraday())
                 .brokerCredentialsId(request.getBrokerCredentialsId())
                 .appUserId(request.getUserId())
+                .useSpotForEntry(useSpotForEntry)
+                .useSpotForSl(useSpotForSl)
+                .useSpotForTarget(useSpotForTarget)
+                .spotScripCode(spotScripCode)
                 .build();
 
         // Persist request entity (no more storing legacy customerId on the request)
         TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
         String key = entity.getExchange() + entity.getScripCode();
         webSocketSubscriptionService.subscribeToScrip(key);
+        
+        // Also subscribe to spot scrip if needed
+        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && entity.getSpotScripCode() != null) {
+            ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(entity.getSpotScripCode());
+            if (spotScript != null) {
+                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
+                webSocketSubscriptionService.subscribeToScrip(spotKey);
+            }
+        }
+        
         return saved;
     }
 
@@ -429,6 +483,36 @@ public class TradeExecutionService {
         if (finalQuantity <= 0L) {
             throw new InvalidTradeRequestException("Quantity must be greater than zero");
         }
+        
+        // Resolve spot scrip code if needed
+        Integer spotScripCode = request.getSpotScripCode();
+        boolean useSpotForEntry = Boolean.TRUE.equals(request.getUseSpotForEntry());
+        boolean useSpotForSl = Boolean.TRUE.equals(request.getUseSpotForSl());
+        boolean useSpotForTarget = Boolean.TRUE.equals(request.getUseSpotForTarget());
+        
+        // If the legacy useSpotPrice flag is set, enable all granular flags
+        if (Boolean.TRUE.equals(request.getUseSpotPrice())) {
+            useSpotForEntry = true;
+            useSpotForSl = true;
+            useSpotForTarget = true;
+        }
+
+        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && spotScripCode == null) {
+            try {
+                String instrumentName = request.getInstrument();
+                Optional<ScriptMasterEntity> spotOpt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("NC", instrumentName);
+                if (spotOpt.isPresent()) {
+                    spotScripCode = spotOpt.get().getScripCode();
+                } else {
+                     Optional<ScriptMasterEntity> spotOptBc = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("BC", instrumentName);
+                     if (spotOptBc.isPresent()) {
+                         spotScripCode = spotOptBc.get().getScripCode();
+                     }
+                }
+            } catch (Exception e) {
+                log.warn("Error resolving spot scrip code: {}", e.getMessage());
+            }
+        }
 
         TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
         trade.setSymbol(request.getInstrument());
@@ -453,6 +537,10 @@ public class TradeExecutionService {
         trade.setIntraday(request.getIntraday());
         trade.setBrokerCredentialsId(request.getBrokerCredentialsId());
         trade.setAppUserId(request.getUserId());
+        trade.setUseSpotForEntry(useSpotForEntry);
+        trade.setUseSpotForSl(useSpotForSl);
+        trade.setUseSpotForTarget(useSpotForTarget);
+        trade.setSpotScripCode(spotScripCode);
         // Set a dummy orderId to indicate manual entry, or leave null?
         // If null, polling service might be confused. Better to set a marker.
         trade.setOrderId("MANUAL-" + System.currentTimeMillis());
@@ -462,6 +550,15 @@ public class TradeExecutionService {
         // Start monitoring
         String key = trade.getExchange() + trade.getScripCode();
         webSocketSubscriptionService.subscribeToScrip(key);
+        
+        // Also subscribe to spot scrip if needed
+        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && trade.getSpotScripCode() != null) {
+            ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(trade.getSpotScripCode());
+            if (spotScript != null) {
+                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
+                webSocketSubscriptionService.subscribeToScrip(spotKey);
+            }
+        }
 
         log.info("✅ Manually added executed trade: {}", saved.getId());
         return saved;
@@ -653,6 +750,10 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
             triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
             triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
+            triggeredTradeSetupEntity.setUseSpotForEntry(trigger.getUseSpotForEntry());
+            triggeredTradeSetupEntity.setUseSpotForSl(trigger.getUseSpotForSl());
+            triggeredTradeSetupEntity.setUseSpotForTarget(trigger.getUseSpotForTarget());
+            triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             
             triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
@@ -1131,6 +1232,15 @@ public class TradeExecutionService {
                 } else {
                     log.debug("Already subscribed to LTP for scrip {} (ref++)", scripCode);
                 }
+                
+                // Also subscribe to spot scrip if needed
+                if ((Boolean.TRUE.equals(request.getUseSpotForEntry()) || Boolean.TRUE.equals(request.getUseSpotForSl()) || Boolean.TRUE.equals(request.getUseSpotForTarget())) && request.getSpotScripCode() != null) {
+                    ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(request.getSpotScripCode());
+                    if (spotScript != null) {
+                        String spotKey = spotScript.getExchange() + spotScript.getScripCode();
+                        webSocketSubscriptionHelper.subscribeToScrip(spotKey);
+                    }
+                }
             } catch (Exception e) {
                 log.error("❌ Failed to subscribe LTP for trade request {}", request.getId(), e);
             }
@@ -1150,6 +1260,15 @@ public class TradeExecutionService {
                         log.info("🔁 Subscribed to LTP for executed scrip {}", scripCode);
                     } else {
                         log.debug("Already subscribed to LTP for executed scrip {} (ref++)", scripCode);
+                    }
+                    
+                    // Also subscribe to spot scrip if needed
+                    if ((Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry()) || Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForSl()) || Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForTarget())) && tradeSetupEntity.getSpotScripCode() != null) {
+                        ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(tradeSetupEntity.getSpotScripCode());
+                        if (spotScript != null) {
+                            String spotKey = spotScript.getExchange() + spotScript.getScripCode();
+                            webSocketSubscriptionHelper.subscribeToScrip(spotKey);
+                        }
                     }
                 } catch (Exception e) {
                     log.error("❌ Failed to subscribe LTP for trade request {}", tradeSetupEntity.getId(), e);
@@ -1270,6 +1389,10 @@ public class TradeExecutionService {
         temp.setTarget2(requestEntity.getTarget2());
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
+        temp.setUseSpotForEntry(requestEntity.getUseSpotForEntry());
+        temp.setUseSpotForSl(requestEntity.getUseSpotForSl());
+        temp.setUseSpotForTarget(requestEntity.getUseSpotForTarget());
+        temp.setSpotScripCode(requestEntity.getSpotScripCode());
 
         // run execution using the converted entity
         return execute(temp, ltp);

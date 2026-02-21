@@ -82,6 +82,14 @@ public class TradeExecutionController {
                         trade.setQuantity(update.getQuantity());
                         changed = true;
                     }
+                    if (update.getUseSpotPrice() != null) {
+                        trade.setUseSpotPrice(update.getUseSpotPrice());
+                        changed = true;
+                    }
+                    if (update.getSpotScripCode() != null) {
+                        trade.setSpotScripCode(update.getSpotScripCode());
+                        changed = true;
+                    }
                     if (changed) {
                         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                         boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));

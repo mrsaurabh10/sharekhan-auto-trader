@@ -14,6 +14,8 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     List<TriggerTradeRequestEntity> findByStatus(TriggeredTradeStatus status);
 
     List<TriggerTradeRequestEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
+    
+    List<TriggerTradeRequestEntity> findBySpotScripCodeAndStatus(Integer spotScripCode, TriggeredTradeStatus status);
 
     List<TriggerTradeRequestEntity>  findTop10ByOrderByIdDesc();
 
