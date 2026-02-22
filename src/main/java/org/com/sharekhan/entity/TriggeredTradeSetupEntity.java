@@ -51,6 +51,15 @@ public class TriggeredTradeSetupEntity {
     private Double trailingSl;
     
     private Boolean tslEnabled; // Flag to enable TSL logic
+    
+    private Boolean useSpotPrice; // Legacy flag for backward compatibility
+    
+    // Granular spot price usage flags
+    private Boolean useSpotForEntry;
+    private Boolean useSpotForSl;
+    private Boolean useSpotForTarget;
+
+    private Integer spotScripCode; // Scrip code of the underlying spot
 
     @Column(name = "order_id",unique = true)
     private String orderId;

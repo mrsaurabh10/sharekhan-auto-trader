@@ -73,6 +73,14 @@ public class TradeRequestController {
                         request.setIntraday(update.getIntraday());
                         changed = true;
                     }
+                    if (update.getUseSpotPrice() != null) {
+                        request.setUseSpotPrice(update.getUseSpotPrice());
+                        changed = true;
+                    }
+                    if (update.getSpotScripCode() != null) {
+                        request.setSpotScripCode(update.getSpotScripCode());
+                        changed = true;
+                    }
                     if (changed) {
                         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                         boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
