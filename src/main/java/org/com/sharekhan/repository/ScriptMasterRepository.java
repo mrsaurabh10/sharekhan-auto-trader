@@ -59,7 +59,7 @@ public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity
     List<ScriptMasterEntity> findByExchangeIgnoreCase(@Param("exchangeUpper") String exchangeUpper);
 
     // Find script where strikePrice IS NULL and expiry IS NULL for a specific exchange (used for NC/BC equities)
-    @Query("SELECT s FROM ScriptMasterEntity s WHERE s.exchange = :exchange AND s.tradingSymbol = :symbol AND s.strikePrice IS NULL AND s.expiry IS NULL")
+    @Query("SELECT s FROM ScriptMasterEntity s WHERE s.exchange = :exchange AND s.tradingSymbol = :symbol AND s.strikePrice =0.0 AND s.expiry IS NULL")
     Optional<ScriptMasterEntity> findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull(
             @Param("exchange") String exchange,
             @Param("symbol") String symbol
