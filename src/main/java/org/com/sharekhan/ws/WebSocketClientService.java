@@ -154,35 +154,7 @@ public class WebSocketClientService  {
                     if (scripCode == null || ltp == null || scripCode == 0) {
                         log.debug("Feed message missing scripCode or ltp");
                     } else {
-                        // make effectively-final copies for use inside lambdas
-                        final int sc = scripCode;
-                        final double lv = ltp;
-
-                        // Important: only log concise LTP tick info
-                        log.info("📊 LTP Tick received - scripCode={}, ltp={}", sc, lv);
-                        try {
-                            ltpCacheService.updateLtp(sc, lv);
-                        } catch (Exception e) {
-                            log.warn("Failed to update LTP cache for {}: {}", sc, e.getMessage());
-                        }
-
-                        try {
-                            scripExecutorManager.submitTriggerTask(sc, () -> priceTriggerService.evaluatePriceTrigger(sc, lv));
-                        } catch (Exception e) {
-                            log.error("Failed to submit trigger task for scrip {}: {}", sc, e.getMessage(), e);
-                        }
-
-                        try {
-                            scripExecutorManager.submitMonitorTask(sc, () -> priceTriggerService.monitorOpenTrades(sc, lv));
-                        } catch (Exception e) {
-                            log.error("Failed to submit monitor task for scrip {}: {}", sc, e.getMessage(), e);
-                        }
-
-                        try {
-                            ltpWebSocketHandler.broadcastLtp(sc, lv);
-                        } catch (Exception e) {
-                            log.warn("Failed to broadcast LTP to frontend for {}: {}", sc, e.getMessage());
-                        }
+                        processLtpUpdate(scripCode, ltp);
                     }
                 }
             } else if (json.has("message")  && "ack".equalsIgnoreCase(json.get("message").asText()) ) {
@@ -223,6 +195,38 @@ public class WebSocketClientService  {
          } catch (Exception e) {
             log.error("❌ Failed to parse WebSocket message", e);
          }
+    }
+
+    public void processLtpUpdate(Integer scripCode, Double ltp) {
+        // make effectively-final copies for use inside lambdas
+        final int sc = scripCode;
+        final double lv = ltp;
+
+        // Important: only log concise LTP tick info
+        log.info("📊 LTP Tick received - scripCode={}, ltp={}", sc, lv);
+        try {
+            ltpCacheService.updateLtp(sc, lv);
+        } catch (Exception e) {
+            log.warn("Failed to update LTP cache for {}: {}", sc, e.getMessage());
+        }
+
+        try {
+            scripExecutorManager.submitTriggerTask(sc, () -> priceTriggerService.evaluatePriceTrigger(sc, lv));
+        } catch (Exception e) {
+            log.error("Failed to submit trigger task for scrip {}: {}", sc, e.getMessage(), e);
+        }
+
+        try {
+            scripExecutorManager.submitMonitorTask(sc, () -> priceTriggerService.monitorOpenTrades(sc, lv));
+        } catch (Exception e) {
+            log.error("Failed to submit monitor task for scrip {}: {}", sc, e.getMessage(), e);
+        }
+
+        try {
+            ltpWebSocketHandler.broadcastLtp(sc, lv);
+        } catch (Exception e) {
+            log.warn("Failed to broadcast LTP to frontend for {}: {}", sc, e.getMessage());
+        }
     }
 
     public void close() {

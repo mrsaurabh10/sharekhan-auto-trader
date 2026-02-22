@@ -40,11 +40,11 @@ public class PriceTriggerService {
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         // Check if current time is after 9:20 AM IST
-        LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
-        if (now.isBefore(LocalTime.of(9, 20))) {
-            log.debug("Skipping price trigger evaluation before 9:20 AM. Current time: {}", now);
-            return;
-        }
+        // LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
+        // if (now.isBefore(LocalTime.of(9, 20))) {
+        //     log.debug("Skipping price trigger evaluation before 9:20 AM. Current time: {}", now);
+        //     return;
+        // }
 
         try {
             List<TriggerTradeRequestEntity> candidates = triggerRepo.findByScripCodeAndStatus(
