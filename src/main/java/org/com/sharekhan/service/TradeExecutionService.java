@@ -1101,8 +1101,8 @@ public class TradeExecutionService {
                     try { price = Double.parseDouble(avgPrice); } catch (Exception ignored) {}
                 }
 
-                if (!execPrice.isBlank()) {
-                    try { price = Double.parseDouble(orderPrice); } catch (Exception ignored) {}
+                if (price == null && !execPrice.isBlank()) {
+                    try { price = Double.parseDouble(execPrice); } catch (Exception ignored) {}
                 }
 
                 if (price == null && !orderPrice.isBlank()) {
@@ -1112,41 +1112,37 @@ public class TradeExecutionService {
                 if (price != null) {
                     if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus())) {
 
-                        Double actualEntryPrice = tradeSetupEntity.getEntryPrice();
-                        tradeSetupEntity.setEntryPrice(price);
+                        Double originalTriggerPrice = tradeSetupEntity.getEntryPrice();
+                        tradeSetupEntity.setActualEntryPrice(price);
                         tradeSetupEntity.setEntryAt(LocalDateTime.now());
-                        
-                        // Logic to update Target 1 and Stop Loss if entry price > Target 1
-                        Double entryPrice = tradeSetupEntity.getEntryPrice();
-                        Double target1 = tradeSetupEntity.getTarget1();
-                        Double target2 = tradeSetupEntity.getTarget2();
-                        
-//                        if (entryPrice != null && target1 != null && target1 > 0d && entryPrice > target1) {
-//                            if (target2 != null && target2 > 0d) {
-//                                log.info("🚀 Actual Entry Price ({}) > Target 1 ({}). Updating Target 1 to Target 2 ({}) and Stop Loss to Actual Entry Price ({}) for trade {}",
-//                                        entryPrice, target1, target2, entryPrice, tradeSetupEntity.getId());
-//                                tradeSetupEntity.setTarget1(target2);
-//                                tradeSetupEntity.setStopLoss(actualEntryPrice);
-//                            }
-//                        }
-                        
-                        // New logic: Adjust SL and Targets based on actual entry price difference
-                        if (actualEntryPrice != null && price != null) {
-                            double diff = price - actualEntryPrice;
-                            if (Math.abs(diff) > 0.0001) { // if there is a significant difference
-                                log.info("Adjusting SL and Targets for trade {} due to entry price difference: {}", tradeSetupEntity.getId(), diff);
-                                
-                                if (tradeSetupEntity.getStopLoss() != null) {
-                                    tradeSetupEntity.setStopLoss(tradeSetupEntity.getStopLoss() + diff);
-                                }
-                                if (tradeSetupEntity.getTarget1() != null) {
-                                    tradeSetupEntity.setTarget1(tradeSetupEntity.getTarget1() + diff);
-                                }
-                                if (tradeSetupEntity.getTarget2() != null) {
-                                    tradeSetupEntity.setTarget2(tradeSetupEntity.getTarget2() + diff);
-                                }
-                                if (tradeSetupEntity.getTarget3() != null) {
-                                    tradeSetupEntity.setTarget3(tradeSetupEntity.getTarget3() + diff);
+
+                        // For non-spot trades, update entryPrice to executed price for consistency
+                        // and to allow existing SL/TGT adjustment logic to work as-is.
+                        // For spot trades, entryPrice remains the spot trigger price.
+                        if (!Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry())) {
+                            tradeSetupEntity.setEntryPrice(price);
+                        }
+
+                        // New logic: Adjust SL and Targets based on actual entry price difference (slippage)
+                        // This should only apply to non-spot trades where the trigger price was for the option itself.
+                        if (!Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry())) {
+                            if (originalTriggerPrice != null && price != null) {
+                                double diff = price - originalTriggerPrice;
+                                if (Math.abs(diff) > 0.0001) { // if there is a significant difference
+                                    log.info("Adjusting SL and Targets for trade {} due to entry price difference: {}", tradeSetupEntity.getId(), diff);
+                                    
+                                    if (tradeSetupEntity.getStopLoss() != null) {
+                                        tradeSetupEntity.setStopLoss(tradeSetupEntity.getStopLoss() + diff);
+                                    }
+                                    if (tradeSetupEntity.getTarget1() != null) {
+                                        tradeSetupEntity.setTarget1(tradeSetupEntity.getTarget1() + diff);
+                                    }
+                                    if (tradeSetupEntity.getTarget2() != null) {
+                                        tradeSetupEntity.setTarget2(tradeSetupEntity.getTarget2() + diff);
+                                    }
+                                    if (tradeSetupEntity.getTarget3() != null) {
+                                        tradeSetupEntity.setTarget3(tradeSetupEntity.getTarget3() + diff);
+                                    }
                                 }
                             }
                         }
@@ -1154,7 +1150,14 @@ public class TradeExecutionService {
                     } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
                         tradeSetupEntity.setExitPrice(price);
                         tradeSetupEntity.setExitedAt(LocalDateTime.now());
-                        double pnl = (price - tradeSetupEntity.getEntryPrice())
+
+                        Double entryForPnl = tradeSetupEntity.getActualEntryPrice();
+                        if (entryForPnl == null) {
+                            // Fallback for older trades or non-spot trades where entryPrice is the executed price
+                            entryForPnl = tradeSetupEntity.getEntryPrice();
+                        }
+                        
+                        double pnl = (price - entryForPnl)
                                 * tradeSetupEntity.getQuantity();
                         // just keep integer part, positive/negative safe
                         pnl = pnl > 0 ? Math.floor(pnl) : Math.ceil(pnl);
