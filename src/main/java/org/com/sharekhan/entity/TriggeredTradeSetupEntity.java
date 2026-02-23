@@ -42,6 +42,10 @@ public class TriggeredTradeSetupEntity {
     private Integer originalLots; // Original number of lots for partial booking calculations
 
     private Double entryPrice;
+    
+    // Actual entry price of the option/instrument (especially useful when entry is based on spot)
+    private Double actualEntryPrice;
+
     private Double stopLoss;
 
     private Double target1;
