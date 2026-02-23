@@ -1,7 +1,5 @@
 package org.com.sharekhan.service;
 
-import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.cache.LtpCacheService;
@@ -17,9 +15,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -35,28 +33,36 @@ public class PriceTriggerService {
     private final WebSocketSubscriptionService webSocketSubscriptionService;
     private final LtpCacheService ltpCacheService;
 
-    @PersistenceContext
-    private EntityManager entityManager;
-
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         // Check if current time is after 9:20 AM IST
-        // LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
-        // if (now.isBefore(LocalTime.of(9, 20))) {
-        //     log.debug("Skipping price trigger evaluation before 9:20 AM. Current time: {}", now);
-        //     return;
-        // }
+         LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
+         if (now.isBefore(LocalTime.of(9, 20))) {
+             log.debug("Skipping price trigger evaluation before 9:20 AM. Current time: {}", now);
+             return;
+         }
 
         try {
+            // 1. Check triggers where scripCode is the TRADED instrument
             List<TriggerTradeRequestEntity> candidates = triggerRepo.findByScripCodeAndStatus(
                     scripCode, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
             );
 
             for (TriggerTradeRequestEntity trigger : candidates) {
-                // Determine tolerance based on whether spot price is used for entry
-                double tolerance = Boolean.TRUE.equals(trigger.getUseSpotForEntry()) ? 1.006 : 1.10;
+                // Check if entry is based on spot price (using granular flag or legacy flag)
+                boolean isSpotEntry = Boolean.TRUE.equals(trigger.getUseSpotForEntry()) 
+                        || (trigger.getUseSpotForEntry() == null && Boolean.TRUE.equals(trigger.getUseSpotPrice()));
+
+                // If entry is based on spot, we ignore updates on the traded instrument for entry trigger
+                if (isSpotEntry) {
+                    continue;
+                }
+                
+                if (trigger.getEntryPrice() == null) continue;
+
+                double tolerance = 1.10;
                 
                 // Check if LTP is more than tolerance % of the entry price
-                if (trigger.getEntryPrice() != null && ltp > trigger.getEntryPrice() * tolerance) {
+                if (ltp > trigger.getEntryPrice() * tolerance) {
                     log.warn("⚠️ LTP {} is more than {}% above entry price {} for trigger {}. Deleting request.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
                     triggerRepo.deleteById(trigger.getId());
                     continue;
@@ -64,6 +70,42 @@ public class PriceTriggerService {
 
                 if (ltp >= trigger.getEntryPrice()) {
                     log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
+
+                    // convert request -> executed entity and run execution flow
+                    tradeExecutionService.executeTradeFromEntity(trigger);
+                    triggerRepo.deleteById(trigger.getId());
+
+                    log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());
+                }
+            }
+
+            // 2. Check triggers where scripCode is the SPOT instrument
+            List<TriggerTradeRequestEntity> spotCandidates = triggerRepo.findBySpotScripCodeAndStatus(
+                    scripCode, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+            );
+
+            for (TriggerTradeRequestEntity trigger : spotCandidates) {
+                // Check if entry is based on spot price
+                boolean isSpotEntry = Boolean.TRUE.equals(trigger.getUseSpotForEntry()) 
+                        || (trigger.getUseSpotForEntry() == null && Boolean.TRUE.equals(trigger.getUseSpotPrice()));
+
+                // Only process if entry is based on spot
+                if (!isSpotEntry) {
+                    continue;
+                }
+                
+                if (trigger.getEntryPrice() == null) continue;
+
+                double tolerance = 1.006;
+
+                if (ltp > trigger.getEntryPrice() * tolerance) {
+                    log.warn("⚠️ Spot LTP {} is more than {}% above entry price {} for trigger {}. Deleting request.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
+                    triggerRepo.deleteById(trigger.getId());
+                    continue;
+                }
+
+                if (ltp >= trigger.getEntryPrice()) {
+                    log.info("🚀 Spot Entry condition met for {} at SpotLTP: {}", trigger.getSymbol(), ltp);
 
                     // convert request -> executed entity and run execution flow
                     tradeExecutionService.executeTradeFromEntity(trigger);
@@ -223,8 +265,7 @@ public class PriceTriggerService {
         int totalLots = trade.getOriginalLots() != null ? trade.getOriginalLots() : currentLots;
 
         int lotsToBook = 0;
-        double newStopLoss = trade.getStopLoss(); // Initialize newStopLoss
-
+        
         if (totalLots == 3) {
             // 3 Lots: 1 @ T1, 1 @ T2, 1 @ T3
             if (target3Hit) {
