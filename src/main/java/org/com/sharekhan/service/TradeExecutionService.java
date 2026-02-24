@@ -179,48 +179,62 @@ public class TradeExecutionService {
         if (request.getQuantity() == null) {
             // Prefer per-user configuration via appUserId; fallback defaults are provided
             Long appUserId = request.getUserId();
-            int maxAmtPerTrade;
-            int maxLossPerTrade;
+
+            // Check for option_stock_lot_size override
             try {
-                String amtStr = userConfigService.getConfig(appUserId, "max_amount_per_trade", "25000");
-                String lossStr = userConfigService.getConfig(appUserId, "max_loss_per_trade", "8000");
-                maxAmtPerTrade = Integer.parseInt(amtStr);
-                maxLossPerTrade = Integer.parseInt(lossStr);
-            } catch (Exception e) {
-                // In case of bad/missing config values, use safe defaults
-                maxAmtPerTrade = 25000;
-                maxLossPerTrade = 8000;
-            }
+                String lotSizeStr = userConfigService.getConfig(appUserId, "option_stock_lot_size", null);
+                if (lotSizeStr != null && !lotSizeStr.trim().isEmpty()) {
+                    int lotSize = Integer.parseInt(lotSizeStr.trim());
+                    if (lotSize > 0) {
+                        request.setQuantity(lotSize);
+                    }
+                }
+            } catch (Exception ignore) { }
 
-            Double stopLoss = request.getStopLoss();
-            if (stopLoss == null) {
-                // keep existing behavior: fallback stopLoss set to entryPrice (and keep trailing default marker)
-                stopLoss = request.getEntryPrice();
-                request.setStopLoss(0.05);
-            }
+            if (request.getQuantity() == null) {
+                int maxAmtPerTrade;
+                int maxLossPerTrade;
+                try {
+                    String amtStr = userConfigService.getConfig(appUserId, "max_amount_per_trade", "25000");
+                    String lossStr = userConfigService.getConfig(appUserId, "max_loss_per_trade", "8000");
+                    maxAmtPerTrade = Integer.parseInt(amtStr);
+                    maxLossPerTrade = Integer.parseInt(lossStr);
+                } catch (Exception e) {
+                    // In case of bad/missing config values, use safe defaults
+                    maxAmtPerTrade = 25000;
+                    maxLossPerTrade = 8000;
+                }
 
-            double lossPerShare = Math.abs(request.getEntryPrice() - stopLoss);
-            if (lossPerShare == 0) {
-                request.setQuantity(0);
-            } else {
-                // If this is a no-strike exchange (NC/BC) we compute quantity directly per-share (no lot-size)
-                if (isNoStrikeExchange) {
-                    int quantityAsPerLoss = (int) (maxLossPerTrade / lossPerShare);
-                    int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / request.getEntryPrice());
-                    int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
-                    if (quantity < 0) quantity = 0;
-                    request.setQuantity(quantity);
+                Double stopLoss = request.getStopLoss();
+                if (stopLoss == null) {
+                    // keep existing behavior: fallback stopLoss set to entryPrice (and keep trailing default marker)
+                    stopLoss = request.getEntryPrice();
+                    request.setStopLoss(0.05);
+                }
+
+                double lossPerShare = Math.abs(request.getEntryPrice() - stopLoss);
+                if (lossPerShare == 0) {
+                    request.setQuantity(0);
                 } else {
-                    int lotSizeForCalc = script.getLotSize() != null ? script.getLotSize() : 1;
-                    int lossPerLot = (int) (lossPerShare * lotSizeForCalc);
-                    if (lossPerLot == 0) {  // avoid division by zero
-                        request.setQuantity(0);
-                    } else {
-                        int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
-                        int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * lotSizeForCalc));
+                    // If this is a no-strike exchange (NC/BC) we compute quantity directly per-share (no lot-size)
+                    if (isNoStrikeExchange) {
+                        int quantityAsPerLoss = (int) (maxLossPerTrade / lossPerShare);
+                        int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / request.getEntryPrice());
                         int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
                         if (quantity < 0) quantity = 0;
                         request.setQuantity(quantity);
+                    } else {
+                        int lotSizeForCalc = script.getLotSize() != null ? script.getLotSize() : 1;
+                        int lossPerLot = (int) (lossPerShare * lotSizeForCalc);
+                        if (lossPerLot == 0) {  // avoid division by zero
+                            request.setQuantity(0);
+                        } else {
+                            int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
+                            int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * lotSizeForCalc));
+                            int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
+                            if (quantity < 0) quantity = 0;
+                            request.setQuantity(quantity);
+                        }
                     }
                 }
             }
@@ -432,41 +446,55 @@ public class TradeExecutionService {
             // Let's assume user provides quantity for manual entry or we use default logic.
             // Copying logic:
             Long appUserId = request.getUserId();
-            int maxAmtPerTrade = 25000;
-            int maxLossPerTrade = 8000;
-            try {
-                String amtStr = userConfigService.getConfig(appUserId, "max_amount_per_trade", "25000");
-                String lossStr = userConfigService.getConfig(appUserId, "max_loss_per_trade", "8000");
-                maxAmtPerTrade = Integer.parseInt(amtStr);
-                maxLossPerTrade = Integer.parseInt(lossStr);
-            } catch (Exception e) {}
 
-            Double stopLoss = request.getStopLoss();
-            if (stopLoss == null) {
-                stopLoss = request.getEntryPrice();
-                request.setStopLoss(0.05); // dummy SL? No, keep original logic
-            }
-            double lossPerShare = Math.abs(request.getEntryPrice() - stopLoss);
-            if (lossPerShare == 0) {
-                request.setQuantity(0);
-            } else {
-                if (isNoStrikeExchange) {
-                    int quantityAsPerLoss = (int) (maxLossPerTrade / lossPerShare);
-                    int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / request.getEntryPrice());
-                    int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
-                    if (quantity < 0) quantity = 0;
-                    request.setQuantity(quantity);
+            // Check for option_stock_lot_size override
+            try {
+                String lotSizeStr = userConfigService.getConfig(appUserId, "option_stock_lot_size", null);
+                if (lotSizeStr != null && !lotSizeStr.trim().isEmpty()) {
+                    int lotSize = Integer.parseInt(lotSizeStr.trim());
+                    if (lotSize > 0) {
+                        request.setQuantity(lotSize);
+                    }
+                }
+            } catch (Exception ignore) { }
+
+            if (request.getQuantity() == null) {
+                int maxAmtPerTrade = 25000;
+                int maxLossPerTrade = 8000;
+                try {
+                    String amtStr = userConfigService.getConfig(appUserId, "max_amount_per_trade", "25000");
+                    String lossStr = userConfigService.getConfig(appUserId, "max_loss_per_trade", "8000");
+                    maxAmtPerTrade = Integer.parseInt(amtStr);
+                    maxLossPerTrade = Integer.parseInt(lossStr);
+                } catch (Exception e) {}
+
+                Double stopLoss = request.getStopLoss();
+                if (stopLoss == null) {
+                    stopLoss = request.getEntryPrice();
+                    request.setStopLoss(0.05); // dummy SL? No, keep original logic
+                }
+                double lossPerShare = Math.abs(request.getEntryPrice() - stopLoss);
+                if (lossPerShare == 0) {
+                    request.setQuantity(0);
                 } else {
-                    int lotSizeForCalc = script.getLotSize() != null ? script.getLotSize() : 1;
-                    int lossPerLot = (int) (lossPerShare * lotSizeForCalc);
-                    if (lossPerLot == 0) {
-                        request.setQuantity(0);
-                    } else {
-                        int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
-                        int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * lotSizeForCalc));
+                    if (isNoStrikeExchange) {
+                        int quantityAsPerLoss = (int) (maxLossPerTrade / lossPerShare);
+                        int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / request.getEntryPrice());
                         int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
                         if (quantity < 0) quantity = 0;
                         request.setQuantity(quantity);
+                    } else {
+                        int lotSizeForCalc = script.getLotSize() != null ? script.getLotSize() : 1;
+                        int lossPerLot = (int) (lossPerShare * lotSizeForCalc);
+                        if (lossPerLot == 0) {
+                            request.setQuantity(0);
+                        } else {
+                            int quantityAsPerLoss = maxLossPerTrade / lossPerLot;
+                            int quantityAsPerMaxAmt = (int) (maxAmtPerTrade / (request.getEntryPrice() * lotSizeForCalc));
+                            int quantity = Math.min(quantityAsPerLoss, quantityAsPerMaxAmt);
+                            if (quantity < 0) quantity = 0;
+                            request.setQuantity(quantity);
+                        }
                     }
                 }
             }
