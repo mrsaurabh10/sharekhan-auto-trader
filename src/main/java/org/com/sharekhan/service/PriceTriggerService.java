@@ -181,34 +181,39 @@ public class PriceTriggerService {
                 if (persisted.getStatus() != TriggeredTradeStatus.EXECUTED) return 0;
 
                 // Determine effective prices for SL and Target
-                double slRefPrice = Boolean.TRUE.equals(persisted.getUseSpotForSl()) ? (spotLtp != null ? spotLtp : tradedLtp) : tradedLtp;
-                double targetRefPrice = Boolean.TRUE.equals(persisted.getUseSpotForTarget()) ? (spotLtp != null ? spotLtp : tradedLtp) : tradedLtp;
+                Double slRefPrice = Boolean.TRUE.equals(persisted.getUseSpotForSl()) ? spotLtp : tradedLtp;
+                Double targetRefPrice = Boolean.TRUE.equals(persisted.getUseSpotForTarget()) ? spotLtp : tradedLtp;
 
                 Double slVal = persisted.getStopLoss();
                 boolean hasValidSl = (slVal != null && slVal > 0d);
                 
                 // Check SL against effective reference price
-                boolean slHit = hasValidSl && (slRefPrice <= slVal);
+                boolean slHit = false;
+                if (slRefPrice != null) {
+                    slHit = hasValidSl && (slRefPrice <= slVal);
+                }
 
                 if (slHit) {
                     return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
                 }
 
                 // Check if any target hit and if we need to book lots
-                // Only perform partial booking logic if TSL is enabled
-                if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
-                    int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
-                    if (lotsToBook > 0) {
-                        return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
-                    }
-                } else {
-                    // Standard target hit logic (any target hit -> exit all)
-                    boolean targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice >= persisted.getTarget1()) ||
-                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice >= persisted.getTarget2()) ||
-                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice >= persisted.getTarget3());
-                    
-                    if (targetHit) {
-                         return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                if (targetRefPrice != null) {
+                    // Only perform partial booking logic if TSL is enabled
+                    if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
+                        int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
+                        if (lotsToBook > 0) {
+                            return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                        }
+                    } else {
+                        // Standard target hit logic (any target hit -> exit all)
+                        boolean targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice >= persisted.getTarget1()) ||
+                                            (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice >= persisted.getTarget2()) ||
+                                            (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice >= persisted.getTarget3());
+                        
+                        if (targetHit) {
+                             return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                        }
                     }
                 }
 
@@ -220,8 +225,8 @@ public class PriceTriggerService {
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
                 
                 // Re-determine effective prices for logging/logic
-                double slRefPrice = Boolean.TRUE.equals(reloaded.getUseSpotForSl()) ? (spotLtp != null ? spotLtp : tradedLtp) : tradedLtp;
-                double targetRefPrice = Boolean.TRUE.equals(reloaded.getUseSpotForTarget()) ? (spotLtp != null ? spotLtp : tradedLtp) : tradedLtp;
+                Double slRefPrice = Boolean.TRUE.equals(reloaded.getUseSpotForSl()) ? spotLtp : tradedLtp;
+                Double targetRefPrice = Boolean.TRUE.equals(reloaded.getUseSpotForTarget()) ? spotLtp : tradedLtp;
 
                 String exitReason = reloaded.getExitReason();
                 if ("STOP_LOSS_HIT".equals(exitReason)) {
