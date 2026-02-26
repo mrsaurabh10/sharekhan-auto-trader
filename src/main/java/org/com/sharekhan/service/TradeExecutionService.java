@@ -348,6 +348,7 @@ public class TradeExecutionService {
                 .useSpotForEntry(useSpotForEntry)
                 .useSpotForSl(useSpotForSl)
                 .useSpotForTarget(useSpotForTarget)
+                .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
                 .build();
 
@@ -568,6 +569,7 @@ public class TradeExecutionService {
         trade.setUseSpotForEntry(useSpotForEntry);
         trade.setUseSpotForSl(useSpotForSl);
         trade.setUseSpotForTarget(useSpotForTarget);
+        trade.setUseSpotPrice(request.getUseSpotPrice()); // Store legacy flag
         trade.setSpotScripCode(spotScripCode);
         // Set a dummy orderId to indicate manual entry, or leave null?
         // If null, polling service might be confused. Better to set a marker.
@@ -781,6 +783,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotForEntry(trigger.getUseSpotForEntry());
             triggeredTradeSetupEntity.setUseSpotForSl(trigger.getUseSpotForSl());
             triggeredTradeSetupEntity.setUseSpotForTarget(trigger.getUseSpotForTarget());
+            triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             
             triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
@@ -792,26 +795,36 @@ public class TradeExecutionService {
                 if (result.getExecutedPrice() != null) {
                     Double originalEntryPrice = triggeredTradeSetupEntity.getEntryPrice();
                     Double executedPrice = result.getExecutedPrice();
+                    
+                    triggeredTradeSetupEntity.setActualEntryPrice(executedPrice);
 
-                    if (originalEntryPrice != null && executedPrice != null) {
-                        double diff = executedPrice - originalEntryPrice;
-                        if (Math.abs(diff) > 0.0001) {
-                            log.info("Adjusting SL and Targets for trade {} due to immediate execution price difference: {}", triggeredTradeSetupEntity.getId(), diff);
-                            if (triggeredTradeSetupEntity.getStopLoss() != null) {
-                                triggeredTradeSetupEntity.setStopLoss(triggeredTradeSetupEntity.getStopLoss() + diff);
-                            }
-                            if (triggeredTradeSetupEntity.getTarget1() != null) {
-                                triggeredTradeSetupEntity.setTarget1(triggeredTradeSetupEntity.getTarget1() + diff);
-                            }
-                            if (triggeredTradeSetupEntity.getTarget2() != null) {
-                                triggeredTradeSetupEntity.setTarget2(triggeredTradeSetupEntity.getTarget2() + diff);
-                            }
-                            if (triggeredTradeSetupEntity.getTarget3() != null) {
-                                triggeredTradeSetupEntity.setTarget3(triggeredTradeSetupEntity.getTarget3() + diff);
+                    // Robust check for spot entry
+                    boolean isSpotEntry = Boolean.TRUE.equals(triggeredTradeSetupEntity.getUseSpotForEntry()) 
+                            || (triggeredTradeSetupEntity.getUseSpotForEntry() == null && Boolean.TRUE.equals(triggeredTradeSetupEntity.getUseSpotPrice()));
+
+                    // Only adjust SL/Targets and update entryPrice if NOT using spot for entry
+                    if (!isSpotEntry) {
+                        if (originalEntryPrice != null && executedPrice != null) {
+                            double diff = executedPrice - originalEntryPrice;
+                            if (Math.abs(diff) > 0.0001) {
+                                log.info("Adjusting SL and Targets for trade {} due to immediate execution price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}", 
+                                    triggeredTradeSetupEntity.getId(), diff, isSpotEntry, originalEntryPrice, executedPrice);
+                                if (triggeredTradeSetupEntity.getStopLoss() != null) {
+                                    triggeredTradeSetupEntity.setStopLoss(triggeredTradeSetupEntity.getStopLoss() + diff);
+                                }
+                                if (triggeredTradeSetupEntity.getTarget1() != null) {
+                                    triggeredTradeSetupEntity.setTarget1(triggeredTradeSetupEntity.getTarget1() + diff);
+                                }
+                                if (triggeredTradeSetupEntity.getTarget2() != null) {
+                                    triggeredTradeSetupEntity.setTarget2(triggeredTradeSetupEntity.getTarget2() + diff);
+                                }
+                                if (triggeredTradeSetupEntity.getTarget3() != null) {
+                                    triggeredTradeSetupEntity.setTarget3(triggeredTradeSetupEntity.getTarget3() + diff);
+                                }
                             }
                         }
+                        triggeredTradeSetupEntity.setEntryPrice(executedPrice);
                     }
-                    triggeredTradeSetupEntity.setEntryPrice(executedPrice);
                 }
                 triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
                 log.info("✅ Trade executed immediately. Skipping order status polling.");
@@ -1144,20 +1157,25 @@ public class TradeExecutionService {
                         tradeSetupEntity.setActualEntryPrice(price);
                         tradeSetupEntity.setEntryAt(LocalDateTime.now());
 
+                        // Robust check for spot entry
+                        boolean isSpotEntry = Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry()) 
+                                || (tradeSetupEntity.getUseSpotForEntry() == null && Boolean.TRUE.equals(tradeSetupEntity.getUseSpotPrice()));
+
                         // For non-spot trades, update entryPrice to executed price for consistency
                         // and to allow existing SL/TGT adjustment logic to work as-is.
                         // For spot trades, entryPrice remains the spot trigger price.
-                        if (!Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry())) {
+                        if (!isSpotEntry) {
                             tradeSetupEntity.setEntryPrice(price);
                         }
 
                         // New logic: Adjust SL and Targets based on actual entry price difference (slippage)
                         // This should only apply to non-spot trades where the trigger price was for the option itself.
-                        if (!Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry())) {
+                        if (!isSpotEntry) {
                             if (originalTriggerPrice != null && price != null) {
                                 double diff = price - originalTriggerPrice;
                                 if (Math.abs(diff) > 0.0001) { // if there is a significant difference
-                                    log.info("Adjusting SL and Targets for trade {} due to entry price difference: {}", tradeSetupEntity.getId(), diff);
+                                    log.info("Adjusting SL and Targets for trade {} due to entry price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}",
+                                            tradeSetupEntity.getId(), diff, isSpotEntry, originalTriggerPrice, price);
                                     
                                     if (tradeSetupEntity.getStopLoss() != null) {
                                         tradeSetupEntity.setStopLoss(tradeSetupEntity.getStopLoss() + diff);
@@ -1246,7 +1264,7 @@ public class TradeExecutionService {
         }
     }
 
-    public void subscribeForOpenTrades(){
+    public void subscribeForOpenTrades() {
         log.info("🚀 Starting to monitor trades...");
         // 1. Subscribe to LTP for all pending trade requests
         List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepo
@@ -1257,19 +1275,25 @@ public class TradeExecutionService {
             try {
                 Integer scripCode = request.getScripCode(); // Assuming you store this or convert symbol to code
                 String feedKey = request.getExchange() + scripCode;
-                boolean didSub = webSocketSubscriptionHelper.subscribeToScrip(feedKey);
+                boolean didSub = webSocketSubscriptionService.subscribeToScrip(feedKey);
                 if (didSub) {
                     log.info("🔁 Subscribed to LTP for scrip {}", scripCode);
                 } else {
                     log.debug("Already subscribed to LTP for scrip {} (ref++)", scripCode);
                 }
-                
+
                 // Also subscribe to spot scrip if needed
                 if ((Boolean.TRUE.equals(request.getUseSpotForEntry()) || Boolean.TRUE.equals(request.getUseSpotForSl()) || Boolean.TRUE.equals(request.getUseSpotForTarget())) && request.getSpotScripCode() != null) {
                     ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(request.getSpotScripCode());
                     if (spotScript != null) {
                         String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                        webSocketSubscriptionHelper.subscribeToScrip(spotKey);
+                        if (webSocketSubscriptionService.subscribeToScrip(spotKey)) {
+                            log.info("🔁 Subscribed to spot LTP for request {} on scrip {} with spot key {}", request.getId(), scripCode, spotKey);
+                        } else {
+                            log.debug("Already subscribed to spot LTP for request {} on scrip {} with spot key {}", request.getId(), scripCode, spotKey);
+                        }
+                    } else {
+                        log.warn("Could not find spot script master for scrip code {} on request {}", request.getSpotScripCode(), request.getId());
                     }
                 }
             } catch (Exception e) {
@@ -1280,25 +1304,31 @@ public class TradeExecutionService {
         // 2. Subscribe to ACK for all executed trades
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXECUTED);
 
-        if(!executedTrades.isEmpty()){
+        if (!executedTrades.isEmpty()) {
             log.info("📄 Found {} executed trades for ACK monitoring", executedTrades.size());
             for (TriggeredTradeSetupEntity tradeSetupEntity : executedTrades) {
                 try {
                     Integer scripCode = tradeSetupEntity.getScripCode(); // Assuming you store this or convert symbol to code
                     String feedKey = tradeSetupEntity.getExchange() + scripCode;
-                    boolean didSub = webSocketSubscriptionHelper.subscribeToScrip(feedKey);
+                    boolean didSub = webSocketSubscriptionService.subscribeToScrip(feedKey);
                     if (didSub) {
                         log.info("🔁 Subscribed to LTP for executed scrip {}", scripCode);
                     } else {
                         log.debug("Already subscribed to LTP for executed scrip {} (ref++)", scripCode);
                     }
-                    
+
                     // Also subscribe to spot scrip if needed
                     if ((Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry()) || Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForSl()) || Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForTarget())) && tradeSetupEntity.getSpotScripCode() != null) {
                         ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(tradeSetupEntity.getSpotScripCode());
                         if (spotScript != null) {
                             String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                            webSocketSubscriptionHelper.subscribeToScrip(spotKey);
+                            if (webSocketSubscriptionService.subscribeToScrip(spotKey)) {
+                                log.info("🔁 Subscribed to spot LTP for executed trade {} on scrip {} with spot key {}", tradeSetupEntity.getId(), scripCode, spotKey);
+                            } else {
+                                log.debug("Already subscribed to spot LTP for executed trade {} on scrip {} with spot key {}", tradeSetupEntity.getId(), scripCode, spotKey);
+                            }
+                        } else {
+                            log.warn("Could not find spot script master for scrip code {} on executed trade {}", tradeSetupEntity.getSpotScripCode(), tradeSetupEntity.getId());
                         }
                     }
                 } catch (Exception e) {
@@ -1396,6 +1426,16 @@ public class TradeExecutionService {
             ltp = requestEntity.getEntryPrice();
         }
 
+        // Resolve flags considering legacy useSpotPrice
+        boolean useSpotForEntry = Boolean.TRUE.equals(requestEntity.getUseSpotForEntry()) 
+                || (requestEntity.getUseSpotForEntry() == null && Boolean.TRUE.equals(requestEntity.getUseSpotPrice()));
+        
+        boolean useSpotForSl = Boolean.TRUE.equals(requestEntity.getUseSpotForSl()) 
+                || (requestEntity.getUseSpotForSl() == null && Boolean.TRUE.equals(requestEntity.getUseSpotPrice()));
+        
+        boolean useSpotForTarget = Boolean.TRUE.equals(requestEntity.getUseSpotForTarget()) 
+                || (requestEntity.getUseSpotForTarget() == null && Boolean.TRUE.equals(requestEntity.getUseSpotPrice()));
+
         // build a temporary TriggeredTradeSetupEntity from the saved request so we can reuse the execute(...) method
         TriggeredTradeSetupEntity temp = new TriggeredTradeSetupEntity();
         temp.setScripCode(requestEntity.getScripCode());
@@ -1420,9 +1460,12 @@ public class TradeExecutionService {
         temp.setTarget2(requestEntity.getTarget2());
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
-        temp.setUseSpotForEntry(requestEntity.getUseSpotForEntry());
-        temp.setUseSpotForSl(requestEntity.getUseSpotForSl());
-        temp.setUseSpotForTarget(requestEntity.getUseSpotForTarget());
+        
+        temp.setUseSpotForEntry(useSpotForEntry);
+        temp.setUseSpotForSl(useSpotForSl);
+        temp.setUseSpotForTarget(useSpotForTarget);
+        temp.setUseSpotPrice(requestEntity.getUseSpotPrice()); // Copy legacy flag
+
         temp.setSpotScripCode(requestEntity.getSpotScripCode());
 
         // run execution using the converted entity
