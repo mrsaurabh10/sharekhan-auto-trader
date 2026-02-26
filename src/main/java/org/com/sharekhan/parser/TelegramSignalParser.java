@@ -113,23 +113,40 @@ public class TelegramSignalParser implements TradingSignalParser {
     }
 
     private String parseExpiry(String rawExpiry, String symbolUpper) {
-        // Rules per requirement:
-        // - Output format: dd/MM/yyyy
-        // - STOCK (default): monthly last Tuesday
-        // - NIFTY: weekly Tuesday (next Tuesday when month not provided); if month provided → last Tuesday of that month
-        // - SENSEX: weekly Thursday (next Thursday when month not provided); if month provided → last Thursday of that month
-        // - BANKNIFTY: monthly last Tuesday (both default and when month provided)
-
         java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy");
-        String sym = (symbolUpper == null ? "" : symbolUpper.toUpperCase(Locale.ROOT));
-        boolean isNifty = "NIFTY".equals(sym);
-        boolean isSensex = "SENSEX".equals(sym);
-        boolean isBankNifty = "BANKNIFTY".equals(sym);
+        java.time.LocalDate today = java.time.LocalDate.now();
+        java.time.LocalDate expiry = null;
 
-        // Month token parsing (JAN/JANUARY etc.)
+        Integer dayFromText = null;
         Integer monthFromText = null;
+        Integer yearFromText = null;
+
         if (rawExpiry != null && !rawExpiry.isBlank()) {
             String upper = rawExpiry.trim().toUpperCase(Locale.ROOT);
+
+            // Try to parse day from strings like "30 MARCH"
+            Pattern dayPattern = Pattern.compile("(\\d{1,2})");
+            Matcher dayMatcher = dayPattern.matcher(upper);
+            if (dayMatcher.find()) {
+                try {
+                    dayFromText = Integer.parseInt(dayMatcher.group(1));
+                } catch (NumberFormatException e) {
+                    // Ignore if not a valid number
+                }
+            }
+
+            // Try to parse year from strings like "MARCH 2026"
+            Pattern yearPattern = Pattern.compile("(20\\d{2})");
+            Matcher yearMatcher = yearPattern.matcher(upper);
+            if (yearMatcher.find()) {
+                try {
+                    yearFromText = Integer.parseInt(yearMatcher.group(1));
+                } catch (NumberFormatException e) {
+                    // Ignore
+                }
+            }
+
+            // Month token parsing (JAN/JANUARY etc.)
             Map<String, Integer> monthMap = new HashMap<>();
             monthMap.put("JANUARY", 1); monthMap.put("JAN", 1);
             monthMap.put("FEBRUARY", 2); monthMap.put("FEB", 2);
@@ -150,52 +167,77 @@ public class TelegramSignalParser implements TradingSignalParser {
             }
         }
 
-        java.time.LocalDate today = java.time.LocalDate.now();
-        java.time.LocalDate expiry;
-
-        if (monthFromText != null) {
-            // When month specified, pick that month's last Tue/Thu as per instrument
-            int year = today.getYear();
-            if (isSensex) {
-                java.time.LocalDate cand = lastWeekdayOfMonth(year, monthFromText, java.time.DayOfWeek.THURSDAY);
-                if (!cand.isAfter(today) && (today.getMonthValue() == monthFromText)) {
-                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.THURSDAY);
-                } else if (today.getMonthValue() > monthFromText) {
-                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.THURSDAY);
-                }
-                expiry = cand;
+        if (dayFromText != null && monthFromText != null) {
+            int year;
+            if (yearFromText != null) {
+                year = yearFromText;
             } else {
-                // STOCK, NIFTY (monthly interpretation), BANKNIFTY → last Tuesday
-                java.time.LocalDate cand = lastWeekdayOfMonth(year, monthFromText, java.time.DayOfWeek.TUESDAY);
-                if (!cand.isAfter(today) && (today.getMonthValue() == monthFromText)) {
-                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.TUESDAY);
-                } else if (today.getMonthValue() > monthFromText) {
-                    cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.TUESDAY);
-                }
-                expiry = cand;
+                year = today.getYear();
             }
-        } else {
-            // No month specified: use default cycles per instrument
-            if (isSensex) {
-                expiry = nextOnOrAfter(today.plusDays(1), java.time.DayOfWeek.THURSDAY); // next Thursday (weekly)
-            } else if (isNifty) {
-                expiry = nextOnOrAfter(today.plusDays(1), java.time.DayOfWeek.TUESDAY); // next Tuesday (weekly)
-            } else if (isBankNifty) {
-                // monthly last Tuesday for current month if not passed, else next month's last Tuesday
-                java.time.LocalDate cand = lastWeekdayOfMonth(today.getYear(), today.getMonthValue(), java.time.DayOfWeek.TUESDAY);
-                if (!cand.isAfter(today)) {
-                    java.time.LocalDate nextMonth = today.plusMonths(1);
-                    cand = lastWeekdayOfMonth(nextMonth.getYear(), nextMonth.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+
+            try {
+                java.time.LocalDate candidateExpiry = java.time.LocalDate.of(year, monthFromText, dayFromText);
+                if (yearFromText == null && candidateExpiry.isBefore(today)) {
+                    candidateExpiry = candidateExpiry.withYear(year + 1);
                 }
-                expiry = cand;
+                expiry = candidateExpiry;
+            } catch (java.time.DateTimeException e) {
+                // Invalid date (e.g., 31 Feb), fall back to default logic
+                expiry = null;
+            }
+        }
+
+        if (expiry == null) {
+            // Fallback to original logic if explicit date parsing fails
+            String sym = (symbolUpper == null ? "" : symbolUpper.toUpperCase(Locale.ROOT));
+            boolean isNifty = "NIFTY".equals(sym);
+            boolean isSensex = "SENSEX".equals(sym);
+            boolean isBankNifty = "BANKNIFTY".equals(sym);
+
+            if (monthFromText != null) {
+                // When month specified, pick that month's last Tue/Thu as per instrument
+                int year = today.getYear();
+                if (isSensex) {
+                    java.time.LocalDate cand = lastWeekdayOfMonth(year, monthFromText, java.time.DayOfWeek.THURSDAY);
+                    if (!cand.isAfter(today) && (today.getMonthValue() == monthFromText)) {
+                        cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.THURSDAY);
+                    } else if (today.getMonthValue() > monthFromText) {
+                        cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.THURSDAY);
+                    }
+                    expiry = cand;
+                } else {
+                    // STOCK, NIFTY (monthly interpretation), BANKNIFTY → last Tuesday
+                    java.time.LocalDate cand = lastWeekdayOfMonth(year, monthFromText, java.time.DayOfWeek.TUESDAY);
+                    if (!cand.isAfter(today) && (today.getMonthValue() == monthFromText)) {
+                        cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.TUESDAY);
+                    } else if (today.getMonthValue() > monthFromText) {
+                        cand = lastWeekdayOfMonth(year + 1, monthFromText, java.time.DayOfWeek.TUESDAY);
+                    }
+                    expiry = cand;
+                }
             } else {
-                // STOCK default monthly last Tuesday
-                java.time.LocalDate cand = lastWeekdayOfMonth(today.getYear(), today.getMonthValue(), java.time.DayOfWeek.TUESDAY);
-                if (!cand.isAfter(today)) {
-                    java.time.LocalDate nextMonth = today.plusMonths(1);
-                    cand = lastWeekdayOfMonth(nextMonth.getYear(), nextMonth.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                // No month specified: use default cycles per instrument
+                if (isSensex) {
+                    expiry = nextOnOrAfter(today.plusDays(1), java.time.DayOfWeek.THURSDAY); // next Thursday (weekly)
+                } else if (isNifty) {
+                    expiry = nextOnOrAfter(today.plusDays(1), java.time.DayOfWeek.TUESDAY); // next Tuesday (weekly)
+                } else if (isBankNifty) {
+                    // monthly last Tuesday for current month if not passed, else next month's last Tuesday
+                    java.time.LocalDate cand = lastWeekdayOfMonth(today.getYear(), today.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                    if (!cand.isAfter(today)) {
+                        java.time.LocalDate nextMonth = today.plusMonths(1);
+                        cand = lastWeekdayOfMonth(nextMonth.getYear(), nextMonth.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                    }
+                    expiry = cand;
+                } else {
+                    // STOCK default monthly last Tuesday
+                    java.time.LocalDate cand = lastWeekdayOfMonth(today.getYear(), today.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                    if (!cand.isAfter(today)) {
+                        java.time.LocalDate nextMonth = today.plusMonths(1);
+                        cand = lastWeekdayOfMonth(nextMonth.getYear(), nextMonth.getMonthValue(), java.time.DayOfWeek.TUESDAY);
+                    }
+                    expiry = cand;
                 }
-                expiry = cand;
             }
         }
 
@@ -227,5 +269,3 @@ public class TelegramSignalParser implements TradingSignalParser {
         }
     }
 }
-
-
