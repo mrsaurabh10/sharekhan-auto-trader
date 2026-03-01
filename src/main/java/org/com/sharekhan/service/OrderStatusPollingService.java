@@ -332,39 +332,63 @@ public class OrderStatusPollingService {
                         Double candidatePrice = ltp;
                         boolean usedFallback = false;
 
-                        // If we don't have LTP, try to extract avgPrice/orderPrice from the orderHistory response as a fallback
-                        if (candidatePrice == null) {
-                            try {
-                                if (response != null && response.has("data") && response.get("data") instanceof JSONArray) {
-                                    JSONArray arr = response.getJSONArray("data");
-                                    if (!arr.isEmpty()) {
-                                        JSONObject last = arr.getJSONObject(arr.length() - 1);
+                        // Extract current order price from response to use as reference, and fallback for candidatePrice
+                        Double currentOrderPriceOnExchange = null;
+                        try {
+                            if (response != null && response.has("data") && response.get("data") instanceof JSONArray) {
+                                JSONArray arr = response.getJSONArray("data");
+                                if (!arr.isEmpty()) {
+                                    JSONObject last = arr.getJSONObject(arr.length() - 1);
+                                    
+                                    // 1. Get current price on exchange
+                                    String ordp = last.optString("orderPrice", "").trim();
+                                    if (!ordp.isBlank()) {
+                                        currentOrderPriceOnExchange = Double.parseDouble(ordp);
+                                    }
+
+                                    // 2. Fallback for candidatePrice if LTP is null
+                                    if (candidatePrice == null) {
                                         String avg = last.optString("avgPrice", "").trim();
-                                        String ordp = last.optString("orderPrice", "").trim();
-                                        String val = !avg.isBlank() ? avg : (!ordp.isBlank() ? ordp : null);
-                                        if (val != null) {
+                                        
+                                        // Try avgPrice first, but ensure it is > 0 (pending orders often have "0")
+                                        if (!avg.isBlank()) {
                                             try {
-                                                candidatePrice = Double.parseDouble(val);
-                                                usedFallback = true;
-                                                log.debug("Using orderHistory fallback price {} for order {}", candidatePrice, orderIdToMonitor);
-                                            } catch (Exception ignore) {
-                                                // ignore parse error, candidatePrice remains null
-                                            }
+                                                double d = Double.parseDouble(avg);
+                                                if (d > 0) candidatePrice = d;
+                                            } catch (NumberFormatException ignored) {}
+                                        }
+
+                                        // If avgPrice was invalid/zero, try orderPrice
+                                        if (candidatePrice == null && !ordp.isBlank()) {
+                                            try {
+                                                double d = Double.parseDouble(ordp);
+                                                if (d > 0) candidatePrice = d;
+                                            } catch (NumberFormatException ignored) {}
+                                        }
+
+                                        if (candidatePrice != null) {
+                                            usedFallback = true;
+                                            log.debug("Using orderHistory fallback price {} for order {}", candidatePrice, orderIdToMonitor);
                                         }
                                     }
                                 }
-                            } catch (Exception ex) {
-                                log.debug("Failed to extract fallback price from orderHistory for {}: {}", orderIdToMonitor, ex.getMessage());
                             }
+                        } catch (Exception ex) {
+                            log.debug("Failed to extract info from orderHistory for {}: {}", orderIdToMonitor, ex.getMessage());
                         }
 
                         if (candidatePrice == null) {
                             log.debug("No LTP or fallback price available to consider modifying pending order {}", orderIdToMonitor);
                         } else {
-                            // Choose a sensible reference price: for entry orders use entryPrice; for exit orders use exitPrice if available
-                            Double refPrice = trade.getEntryPrice();
-                            if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) && trade.getExitPrice() != null) {
-                                refPrice = trade.getExitPrice();
+                            // Choose a sensible reference price. Prefer the actual price on the exchange.
+                            // If unknown, fall back to DB entry/exit price.
+                            Double refPrice = currentOrderPriceOnExchange;
+                            
+                            if (refPrice == null) {
+                                refPrice = trade.getEntryPrice();
+                                if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) && trade.getExitPrice() != null) {
+                                    refPrice = trade.getExitPrice();
+                                }
                             }
 
                             double ref = refPrice != null ? refPrice : candidatePrice;
@@ -378,21 +402,39 @@ public class OrderStatusPollingService {
                             boolean priceChangedSinceLastAttempt = lastAttempt == null || Math.abs(candidatePrice - lastAttempt) > 1e-6;
 
                             if (diff >= pctThreshold && priceChangedSinceLastAttempt) {
-                                log.info("Pending order {} for trade {}: attempting MODIFY -> price={} (ltpUsed={} fallback={}) refPrice={} diff={} threshold={}", orderIdToMonitor, persisted.getId(), candidatePrice, ltp != null, usedFallback, ref, diff, pctThreshold);
-                                try {
-                                    JSONObject modResp = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, persisted, candidatePrice, ctx.getCustomerId(), ctx.getClientCode());
-                                    if (modResp != null) {
-                                        String msg = modResp.has("message") ? String.valueOf(modResp.opt("message")) : modResp.toString();
-                                        log.info("ModifyOrder response for order {}: {}", orderIdToMonitor, msg);
-                                        // record last attempted modify price on success
-                                        lastModifyPrice.put(orderIdToMonitor, candidatePrice);
-                                    } else {
-                                        log.info("ModifyOrder call returned null for order {}", orderIdToMonitor);
-                                        // still record attempt to avoid tight retry loops
-                                        lastModifyPrice.put(orderIdToMonitor, candidatePrice);
+                                // Safety Check: Limit how much we chase the price (e.g. max 3% deviation from original intent)
+                                boolean isBuy = !TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(persisted.getStatus());
+                                Double basePrice = isBuy ? persisted.getEntryPrice() : persisted.getExitPrice();
+                                double maxDeviation = 0.03; // 3% limit
+                                boolean isSafe = true;
+
+                                if (basePrice != null && basePrice > 0) {
+                                    if (isBuy && candidatePrice > basePrice * (1 + maxDeviation)) {
+                                        isSafe = false;
+                                        log.warn("⚠️ Skipping modify for Buy Order {}: Price {} exceeds limit ({} + {}%)", orderIdToMonitor, candidatePrice, basePrice, maxDeviation * 100);
+                                    } else if (!isBuy && candidatePrice < basePrice * (1 - maxDeviation)) {
+                                        isSafe = false;
+                                        log.warn("⚠️ Skipping modify for Sell Order {}: Price {} is below limit ({} - {}%)", orderIdToMonitor, candidatePrice, basePrice, maxDeviation * 100);
                                     }
-                                } catch (Exception ex) {
-                                    log.error("Failed to modify pending order {} for trade {}: {}", orderIdToMonitor, trade.getId(), ex.getMessage(), ex);
+                                }
+
+                                if (isSafe) {
+                                    log.info("Pending order {} for trade {}: attempting MODIFY -> price={} (ltpUsed={} fallback={}) refPrice={} diff={} threshold={}", orderIdToMonitor, persisted.getId(), candidatePrice, ltp != null, usedFallback, ref, diff, pctThreshold);
+                                    try {
+                                        JSONObject modResp = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, persisted, candidatePrice, ctx.getCustomerId(), ctx.getClientCode());
+                                        if (modResp != null) {
+                                            String msg = modResp.has("message") ? String.valueOf(modResp.opt("message")) : modResp.toString();
+                                            log.info("ModifyOrder response for order {}: {}", orderIdToMonitor, msg);
+                                            // record last attempted modify price on success
+                                            lastModifyPrice.put(orderIdToMonitor, candidatePrice);
+                                        } else {
+                                            log.info("ModifyOrder call returned null for order {}", orderIdToMonitor);
+                                            // still record attempt to avoid tight retry loops
+                                            lastModifyPrice.put(orderIdToMonitor, candidatePrice);
+                                        }
+                                    } catch (Exception ex) {
+                                        log.error("Failed to modify pending order {} for trade {}: {}", orderIdToMonitor, trade.getId(), ex.getMessage(), ex);
+                                    }
                                 }
                             } else {
                                 if (!priceChangedSinceLastAttempt) {
