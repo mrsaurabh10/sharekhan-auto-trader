@@ -72,10 +72,14 @@ public class PriceTriggerService {
                     log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
 
                     // convert request -> executed entity and run execution flow
-                    tradeExecutionService.executeTradeFromEntity(trigger);
-                    triggerRepo.deleteById(trigger.getId());
-
-                    log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());
+                    TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
+                    
+                    if (executed != null) {
+                        triggerRepo.deleteById(trigger.getId());
+                        log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());
+                    } else {
+                        log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
+                    }
                 }
             }
 
@@ -118,10 +122,14 @@ public class PriceTriggerService {
                     log.info("🚀 Spot Entry condition met for {} ({}) at SpotLTP: {}", trigger.getSymbol(), trigger.getOptionType(), ltp);
 
                     // convert request -> executed entity and run execution flow
-                    tradeExecutionService.executeTradeFromEntity(trigger);
-                    triggerRepo.deleteById(trigger.getId());
-
-                    log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());
+                    TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
+                    
+                    if (executed != null) {
+                        triggerRepo.deleteById(trigger.getId());
+                        log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());
+                    } else {
+                        log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
+                    }
                 }
             }
         } catch (Exception e) {

@@ -1421,9 +1421,10 @@ public class TradeExecutionService {
 
         // attempt to fetch current LTP for the scrip
         Double ltp = ltpCacheService.getLtp(requestEntity.getScripCode());
+
         if (ltp == null) {
-            // if LTP not available, fall back to entry price
-            ltp = requestEntity.getEntryPrice();
+            log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", requestEntity.getScripCode(), requestEntity.getId());
+            return null; // Signal to the caller to skip.
         }
 
         // Resolve flags considering legacy useSpotPrice
