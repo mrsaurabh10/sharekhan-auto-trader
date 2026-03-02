@@ -104,8 +104,18 @@ public class PriceTriggerService {
                     continue;
                 }
 
-                if (ltp >= trigger.getEntryPrice()) {
-                    log.info("🚀 Spot Entry condition met for {} at SpotLTP: {}", trigger.getSymbol(), ltp);
+                boolean isPE = "PE".equalsIgnoreCase(trigger.getOptionType());
+                boolean conditionMet;
+                if (isPE) {
+                    // For PE, trigger if spot price goes BELOW entry price
+                    conditionMet = ltp <= trigger.getEntryPrice();
+                } else {
+                    // For CE (or others), trigger if spot price goes ABOVE entry price
+                    conditionMet = ltp >= trigger.getEntryPrice();
+                }
+
+                if (conditionMet) {
+                    log.info("🚀 Spot Entry condition met for {} ({}) at SpotLTP: {}", trigger.getSymbol(), trigger.getOptionType(), ltp);
 
                     // convert request -> executed entity and run execution flow
                     tradeExecutionService.executeTradeFromEntity(trigger);
@@ -189,8 +199,17 @@ public class PriceTriggerService {
                 
                 // Check SL against effective reference price
                 boolean slHit = false;
-                if (slRefPrice != null) {
-                    slHit = hasValidSl && (slRefPrice <= slVal);
+                if (slRefPrice != null && hasValidSl) {
+                    boolean isSpotSl = Boolean.TRUE.equals(persisted.getUseSpotForSl());
+                    boolean isPE = "PE".equalsIgnoreCase(persisted.getOptionType());
+                    
+                    if (isSpotSl && isPE) {
+                        // For PE with Spot SL: Hit if Spot Price goes ABOVE SL
+                        slHit = slRefPrice >= slVal;
+                    } else {
+                        // For CE (or non-spot SL): Hit if Price goes BELOW SL
+                        slHit = slRefPrice <= slVal;
+                    }
                 }
 
                 if (slHit) {
@@ -207,9 +226,21 @@ public class PriceTriggerService {
                         }
                     } else {
                         // Standard target hit logic (any target hit -> exit all)
-                        boolean targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice >= persisted.getTarget1()) ||
-                                            (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice >= persisted.getTarget2()) ||
-                                            (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice >= persisted.getTarget3());
+                        boolean isSpotTarget = Boolean.TRUE.equals(persisted.getUseSpotForTarget());
+                        boolean isPE = "PE".equalsIgnoreCase(persisted.getOptionType());
+                        
+                        boolean targetHit;
+                        if (isSpotTarget && isPE) {
+                            // For PE with Spot Target: Hit if Spot Price goes BELOW Target
+                            targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice <= persisted.getTarget1()) ||
+                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice <= persisted.getTarget2()) ||
+                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice <= persisted.getTarget3());
+                        } else {
+                            // For CE (or non-spot Target): Hit if Price goes ABOVE Target
+                            targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice >= persisted.getTarget1()) ||
+                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice >= persisted.getTarget2()) ||
+                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice >= persisted.getTarget3());
+                        }
                         
                         if (targetHit) {
                              return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
@@ -260,9 +291,22 @@ public class PriceTriggerService {
     }
 
     private int calculateLotsToBook(TriggeredTradeSetupEntity trade, double ltp) {
-        boolean target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && ltp >= trade.getTarget1();
-        boolean target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && ltp >= trade.getTarget2();
-        boolean target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && ltp >= trade.getTarget3();
+        boolean isSpotTarget = Boolean.TRUE.equals(trade.getUseSpotForTarget());
+        boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
+        
+        boolean target1Hit, target2Hit, target3Hit;
+        
+        if (isSpotTarget && isPE) {
+            // For PE with Spot Target: Hit if Spot Price goes BELOW Target
+            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && ltp <= trade.getTarget1();
+            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && ltp <= trade.getTarget2();
+            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && ltp <= trade.getTarget3();
+        } else {
+            // For CE (or non-spot Target): Hit if Price goes ABOVE Target
+            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && ltp >= trade.getTarget1();
+            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && ltp >= trade.getTarget2();
+            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && ltp >= trade.getTarget3();
+        }
 
         if (!target1Hit && !target2Hit && !target3Hit) return 0;
 
@@ -333,9 +377,22 @@ public class PriceTriggerService {
         // Re-calculate lotsToBook to determine split and new SL
         // (Logic duplicated from calculateLotsToBook but needed for newStopLoss determination)
         
-        boolean target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && referenceLtp >= trade.getTarget1();
-        boolean target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && referenceLtp >= trade.getTarget2();
-        boolean target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && referenceLtp >= trade.getTarget3();
+        boolean isSpotTarget = Boolean.TRUE.equals(trade.getUseSpotForTarget());
+        boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
+        
+        boolean target1Hit, target2Hit, target3Hit;
+        
+        if (isSpotTarget && isPE) {
+            // For PE with Spot Target: Hit if Spot Price goes BELOW Target
+            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && referenceLtp <= trade.getTarget1();
+            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && referenceLtp <= trade.getTarget2();
+            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && referenceLtp <= trade.getTarget3();
+        } else {
+            // For CE (or non-spot Target): Hit if Price goes ABOVE Target
+            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && referenceLtp >= trade.getTarget1();
+            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && referenceLtp >= trade.getTarget2();
+            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && referenceLtp >= trade.getTarget3();
+        }
 
         int totalLots = trade.getOriginalLots() != null ? trade.getOriginalLots() : currentLots;
         if (trade.getOriginalLots() == null) {
