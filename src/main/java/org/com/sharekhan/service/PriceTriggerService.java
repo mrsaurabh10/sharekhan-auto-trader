@@ -113,6 +113,14 @@ public class PriceTriggerService {
                 if (isPE) {
                     // For PE, trigger if spot price goes BELOW entry price
                     conditionMet = ltp <= trigger.getEntryPrice();
+                    
+                    // Check for gap down with tolerance for PE
+                    double gapDownTolerance = 0.994; // 0.6% tolerance
+                    if (ltp < trigger.getEntryPrice() * gapDownTolerance) {
+                        log.warn("⚠️ Spot LTP {} is less than {}% below entry price {} for PE trigger {}. Skipping trade.", ltp, (1 - gapDownTolerance) * 100, trigger.getEntryPrice(), trigger.getId());
+                        triggerRepo.deleteById(trigger.getId());
+                        continue;
+                    }
                 } else {
                     // For CE (or others), trigger if spot price goes ABOVE entry price
                     conditionMet = ltp >= trigger.getEntryPrice();
