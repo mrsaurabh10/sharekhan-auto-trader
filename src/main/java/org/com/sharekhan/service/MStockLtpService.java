@@ -49,12 +49,24 @@ public class MStockLtpService {
     public Map<String, Map<String, Object>> fetchLtp(List<String> instruments) {
         if (instruments == null || instruments.isEmpty()) return Collections.emptyMap();
 
-        String storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK);
+        TokenStoreService.TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK);
+        String storedToken = null;
+        String effectiveApiKey = this.apiKey;
+
+        if (tokenInfo != null) {
+            storedToken = tokenInfo.getToken();
+            if (tokenInfo.getApiKey() != null) {
+                effectiveApiKey = tokenInfo.getApiKey();
+            }
+        } else {
+            storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK);
+        }
+
         if (storedToken == null) {
             throw new IllegalStateException("No MStock access token available. Please authenticate first.");
         }
 
-        if (apiKey == null || apiKey.isBlank()) {
+        if (effectiveApiKey == null || effectiveApiKey.isBlank()) {
             log.warn("MStock API key (app.mstock.api-key) is not configured");
         }
 
@@ -72,7 +84,7 @@ public class MStockLtpService {
             log.debug("MStock LTP URL: {}", urlStr);
 
             // Attempt request with the required Authorization format: 'token {apiKey}:{accessToken}'
-            HttpResult res = doRequestWithApiKey(urlStr, storedToken);
+            HttpResult res = doRequestWithApiKey(urlStr, storedToken, effectiveApiKey);
 
             // if token-related error, try refresh via provider and retry once
             if (res.code == 401 || indicatesTokenException(res.body)) {
@@ -85,7 +97,7 @@ public class MStockLtpService {
                             tokenStoreService.updateToken(Broker.MSTOCK, auth.token(), auth.expiresIn());
                             storedToken = auth.token();
                             // retry with refreshed token
-                            res = doRequestWithApiKey(urlStr, storedToken);
+                            res = doRequestWithApiKey(urlStr, storedToken, effectiveApiKey);
                         } else {
                             log.warn("Provider returned no token during refresh");
                         }
@@ -159,7 +171,7 @@ public class MStockLtpService {
         return map.get(instrument);
     }
 
-    private HttpResult doRequestWithApiKey(String urlStr, String accessToken) throws Exception {
+    private HttpResult doRequestWithApiKey(String urlStr, String accessToken, String apiKey) throws Exception {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");
@@ -192,6 +204,10 @@ public class MStockLtpService {
         }
         String resp = out.toString().trim();
         return new HttpResult(rc, resp);
+    }
+
+    private HttpResult doRequestWithApiKey(String urlStr, String accessToken) throws Exception {
+        return doRequestWithApiKey(urlStr, accessToken, this.apiKey);
     }
 
     private boolean indicatesTokenException(String body) {
