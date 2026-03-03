@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -32,6 +33,7 @@ public class PriceTriggerService {
     private final ScriptMasterRepository scriptMasterRepository;
     private final WebSocketSubscriptionService webSocketSubscriptionService;
     private final LtpCacheService ltpCacheService;
+    private final MStockLtpService mStockLtpService;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         // Check if current time is after 9:20 AM IST
@@ -178,6 +180,30 @@ public class PriceTriggerService {
                 try {
                      // We have the spot LTP (ltp argument). We need the traded instrument LTP for execution.
                      Double tradedLtp = ltpCacheService.getLtp(trade.getScripCode());
+                     
+                     if (tradedLtp == null) {
+                         // Try fetching from MStock if local cache is missing
+                         try {
+                             ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
+                             if (script != null) {
+                                 // Construct MStock instrument key, e.g., "NFO:BANKNIFTY23OCT44000CE"
+                                 // Assuming script.getExchange() gives "NFO", "NSE", etc. and script.getTradingSymbol() gives the symbol
+                                 // Adjust the format based on how MStock expects it. Usually "EXCHANGE:SYMBOL"
+                                 String mstockKey = script.getExchange() + ":" + script.getTradingSymbol();
+                                 Map<String, Object> mstockData = mStockLtpService.fetchLtpForInstrument(mstockKey);
+                                 if (mstockData != null && mstockData.get("last_price") != null) {
+                                     Object priceObj = mstockData.get("last_price");
+                                     if (priceObj instanceof Number) {
+                                         tradedLtp = ((Number) priceObj).doubleValue();
+                                         log.info("Fetched missing LTP from MStock for {}: {}", mstockKey, tradedLtp);
+                                     }
+                                 }
+                             }
+                         } catch (Exception ex) {
+                             log.warn("Failed to fetch fallback LTP from MStock for trade {}: {}", trade.getId(), ex.getMessage());
+                         }
+                     }
+
                      if (tradedLtp != null) {
                          handleTradeWithLock(trade.getId(), tradedLtp, ltp);
                      } else {
