@@ -56,7 +56,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
     <meta http-equiv="Pragma" content="no-cache"/>
     <meta http-equiv="Expires" content="0"/>
-    <script>/* cache-bust helper for static page */ window.__ASSET_VER__ = '3';</script>
+    <script>/* cache-bust helper for static page */ window.__ASSET_VER__ = '5';</script>
     
 </head>
 <body>
@@ -145,7 +145,7 @@
             <div style="margin-top:12px">
                 <h4>Trading Requests</h4>
                 <table id="user-requests-table" style="width:100%;border-collapse:collapse" border="1">
-                    <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th></tr></thead>
                     <tbody></tbody>
                 </table>
             </div>
@@ -165,7 +165,7 @@
                     </div>
                 </div>
                 <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
-                    <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>PNL</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>PNL</th></tr></thead>
                     <tbody></tbody>
                 </table>
                 <div id="executed-pagination" style="margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px;">
@@ -236,6 +236,6 @@
     </div>
 </div>
 
-<script src="/admin-dashboard.js?v=6"></script>
+<script src="/admin-dashboard.js?v=8"></script>
 </body>
 </html>
