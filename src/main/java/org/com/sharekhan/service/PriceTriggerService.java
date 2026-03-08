@@ -65,8 +65,9 @@ public class PriceTriggerService {
                 
                 // Check if LTP is more than tolerance % of the entry price
                 if (ltp > trigger.getEntryPrice() * tolerance) {
-                    log.warn("⚠️ LTP {} is more than {}% above entry price {} for trigger {}. Deleting request.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
-                    triggerRepo.deleteById(trigger.getId());
+                    log.warn("⚠️ LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
+                    trigger.setStatus(TriggeredTradeStatus.REJECTED);
+                    triggerRepo.save(trigger);
                     continue;
                 }
 
@@ -77,8 +78,9 @@ public class PriceTriggerService {
                     TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
                     
                     if (executed != null) {
-                        triggerRepo.deleteById(trigger.getId());
-                        log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());
+                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED);
+                        triggerRepo.save(trigger);
+                        log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
                     } else {
                         log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
                     }
@@ -105,8 +107,9 @@ public class PriceTriggerService {
                 double tolerance = 1.006;
 
                 if (ltp > trigger.getEntryPrice() * tolerance) {
-                    log.warn("⚠️ Spot LTP {} is more than {}% above entry price {} for trigger {}. Deleting request.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
-                    triggerRepo.deleteById(trigger.getId());
+                    log.warn("⚠️ Spot LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
+                    trigger.setStatus(TriggeredTradeStatus.REJECTED);
+                    triggerRepo.save(trigger);
                     continue;
                 }
 
@@ -119,8 +122,9 @@ public class PriceTriggerService {
                     // Check for gap down with tolerance for PE
                     double gapDownTolerance = 0.994; // 0.6% tolerance
                     if (ltp < trigger.getEntryPrice() * gapDownTolerance) {
-                        log.warn("⚠️ Spot LTP {} is less than {}% below entry price {} for PE trigger {}. Skipping trade.", ltp, (1 - gapDownTolerance) * 100, trigger.getEntryPrice(), trigger.getId());
-                        triggerRepo.deleteById(trigger.getId());
+                        log.warn("⚠️ Spot LTP {} is less than {}% below entry price {} for PE trigger {}. Marking as REJECTED.", ltp, (1 - gapDownTolerance) * 100, trigger.getEntryPrice(), trigger.getId());
+                        trigger.setStatus(TriggeredTradeStatus.REJECTED);
+                        triggerRepo.save(trigger);
                         continue;
                     }
                 } else {
@@ -135,8 +139,9 @@ public class PriceTriggerService {
                     TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
                     
                     if (executed != null) {
-                        triggerRepo.deleteById(trigger.getId());
-                        log.info("✅ Trigger {} converted to live trade and removed from request table", trigger.getId());
+                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED);
+                        triggerRepo.save(trigger);
+                        log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
                     } else {
                         log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
                     }
