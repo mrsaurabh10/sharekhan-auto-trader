@@ -593,10 +593,13 @@ public class PriceTriggerService {
 
             if (saved.getPnl() != null) return;
 
-            Double entryPrice = saved.getEntryPrice();
+            Double entryPriceForPnl = saved.getActualEntryPrice();
+            if (entryPriceForPnl == null) {
+                entryPriceForPnl = saved.getEntryPrice();
+            }
             Long quantity = saved.getQuantity();
 
-            if (entryPrice == null || quantity == null || quantity <= 0) {
+            if (entryPriceForPnl == null || quantity == null || quantity <= 0) {
                 log.debug("Cannot compute PnL for trade {} - missing entryPrice/quantity", saved.getId());
                 return;
             }
@@ -606,7 +609,7 @@ public class PriceTriggerService {
 
             try {
                 java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(exitPrice);
-                java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(entryPrice);
+                java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(entryPriceForPnl);
                 java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(quantity);
                 java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd).setScale(2, java.math.RoundingMode.HALF_UP);
                 saved.setPnl(rawPnlBd.doubleValue());

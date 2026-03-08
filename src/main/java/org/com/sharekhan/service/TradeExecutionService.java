@@ -1015,8 +1015,13 @@ public class TradeExecutionService {
                 double exitPriceVal = result.getExecutedPrice();
                 double pnlVal = result.getPnl() != null ? result.getPnl() : 0.0d;
                 
-                if (pnlVal == 0.0d && persisted.getEntryPrice() != null && persisted.getQuantity() != null) {
-                    pnlVal = java.math.BigDecimal.valueOf(exitPriceVal).subtract(java.math.BigDecimal.valueOf(persisted.getEntryPrice()))
+                Double entryPriceForPnl = persisted.getActualEntryPrice();
+                if (entryPriceForPnl == null) {
+                    entryPriceForPnl = persisted.getEntryPrice();
+                }
+
+                if (pnlVal == 0.0d && entryPriceForPnl != null && persisted.getQuantity() != null) {
+                    pnlVal = java.math.BigDecimal.valueOf(exitPriceVal).subtract(java.math.BigDecimal.valueOf(entryPriceForPnl))
                             .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
                             .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
                 }

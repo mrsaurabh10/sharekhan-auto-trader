@@ -515,6 +515,9 @@
         const status = t.status || '-';
         const statusUpper = String(status).toUpperCase();
 
+        // Determine effective entry price for PNL calculation (use actualEntryPrice if available, else entryPrice)
+        const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
+
         const actionCell = document.createElement('td');
         const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(String(status).toUpperCase())) {
@@ -549,7 +552,8 @@
         const pnlTd = document.createElement('td'); pnlTd.setAttribute('data-pnl', ''); pnlTd.innerText = '-'; tr.appendChild(pnlTd);
 
         // store entry and qty on the row for PNL computation
-        try { tr.setAttribute('data-entry', (entry != null && entry !== '-' ? String(entry) : '')); } catch (e) {}
+        // Use pnlEntry for data-entry attribute so PNL calculation uses correct price
+        try { tr.setAttribute('data-entry', (pnlEntry != null && pnlEntry !== '-' ? String(pnlEntry) : '')); } catch (e) {}
         try { tr.setAttribute('data-qty', (qty != null && qty !== '-' ? String(qty) : '')); } catch (e) {}
         try { tr.setAttribute('data-status', statusUpper); } catch (e) {}
 
@@ -558,7 +562,7 @@
           try {
             // Prefer explicit final/realized PNL sent by backend
             let finalPnl = (t.finalPnl != null ? t.finalPnl : (t.realizedPnl != null ? t.realizedPnl : (t.pnl != null ? t.pnl : null)));
-            const entryNum = (entry != null && entry !== '-' && !isNaN(entry)) ? Number(entry) : null;
+            const entryNum = (pnlEntry != null && pnlEntry !== '-' && !isNaN(pnlEntry)) ? Number(pnlEntry) : null;
             const qtyNum = (qty != null && qty !== '-' && !isNaN(qty)) ? Number(qty) : null;
             // Possible exit price fields from backend
             const exitRaw = (t.exitPrice != null ? t.exitPrice : (t.avgExitPrice != null ? t.avgExitPrice : (t.exit != null ? t.exit : (t.avg_exit_price != null ? t.avg_exit_price : null))));
@@ -591,7 +595,7 @@
         if (exchange) { const ex = String(exchange).toUpperCase(); candidates.push((underlyingMap[ex] || ex) + ':' + symbol); candidates.push((optionMap[ex] || ex) + ':' + symbol); } else { ['NSE','BSE','NFO','BFO'].forEach(function(p){ candidates.push(p + ':' + symbol); }); }
         if (strike && strike !== '') { const ex = exchange ? String(exchange).toUpperCase() : 'NF'; const mapped = (optionMap[ex] || ex); candidates.push(mapped + ':' + symbol + (t.expiry ? t.expiry : '') + strike + (t.optionType ? t.optionType : '')); }
         const primary = candidates.length > 0 ? candidates[0] : null; if (primary) { tr.setAttribute('data-ltp-key', primary); ltpTd.setAttribute('data-ltp', primary); }
-        tbody.appendChild(tr); candidates.forEach(function(k){ keySet.add(k); }); rows.push({ tr: tr, ltpTd: ltpTd, pnlTd: pnlTd, entry: (entry != null && entry !== '-' ? Number(entry) : null), qty: (qty != null && qty !== '-' ? Number(qty) : null), status: statusUpper, candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: t.expiry || null, optionType: t.optionType || null });
+        tbody.appendChild(tr); candidates.forEach(function(k){ keySet.add(k); }); rows.push({ tr: tr, ltpTd: ltpTd, pnlTd: pnlTd, entry: (pnlEntry != null && pnlEntry !== '-' ? Number(pnlEntry) : null), qty: (qty != null && qty !== '-' ? Number(qty) : null), status: statusUpper, candidates: candidates, exchange: exchange, symbol: symbol, strike: strike, expiry: t.expiry || null, optionType: t.optionType || null });
 
         // Check cache immediately for scripCode
         if (rowScripCode) {
@@ -600,8 +604,8 @@
                 const ltpNum = Number(ltpCache[sc].last_price);
                 ltpTd.innerText = ltpNum.toFixed(2);
                 // compute PNL only for EXECUTED
-                if ((statusUpper === 'EXECUTED' || statusUpper === 'EXIT_ORDER_PLACED') && pnlTd && entry != null && qty != null && !Number.isNaN(ltpNum)) {
-                    const pnl = qty * (ltpNum - Number(entry));
+                if ((statusUpper === 'EXECUTED' || statusUpper === 'EXIT_ORDER_PLACED') && pnlTd && pnlEntry != null && qty != null && !Number.isNaN(ltpNum)) {
+                    const pnl = qty * (ltpNum - Number(pnlEntry));
                     pnlTd.innerText = Number(pnl).toFixed(2);
                 }
             }
