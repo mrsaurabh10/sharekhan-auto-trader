@@ -758,6 +758,196 @@
     return null;
   }
 
+  // Helper to call backend MStock LTP endpoint for a qualified key like "NFO:CDSL25JAN2220CE"
+  function fetchMStockLtpForKey(qualifiedKey) {
+      if (!qualifiedKey) return Promise.resolve(null);
+      const url = '/api/mstock/ltp?i=' + encodeURIComponent(qualifiedKey);
+      return fetchJson(url)
+          .then(json => {
+              if (!json || json.status !== 'success' || !json.data) return null;
+              const entry = json.data[qualifiedKey];
+              if (!entry) return null;
+              // last_price may be integer or number string — return numeric value
+              return Number(entry.last_price);
+          })
+          .catch(err => {
+              console.error('Failed to fetch MStock LTP for', qualifiedKey, err);
+              return null;
+          });
+  }
+
+  function buildQualifiedOptionKey(exchange, symbol, expiryStr, strike, optionType) {
+      if (!exchange || !symbol || !expiryStr || !strike || !optionType) return null;
+
+      const exchangeMap = {
+          'NF': 'NFO',
+          'BF': 'BFO'
+      };
+      const mappedExchange = exchangeMap[exchange] || exchange;
+
+      // Custom month letter mapping based on your provided scheme
+      function monthNumToLetter(m) {
+          const monthLetterMap = {
+              1: 'J',  // JAN
+              2: 'F',  // FEB
+              3: 'M',  // MAR
+              4: 'A',  // APR
+              5: 'M',  // MAY
+              6: 'J',  // JUN
+              7: 'J',  // JUL
+              8: 'A',  // AUG
+              9: 'S',  // SEP
+              10: 'O', // OCT
+              11: 'N', // NOV
+              12: 'D'  // DEC
+          };
+          return monthLetterMap[m] || 'X';
+      }
+
+      // Parse expiry string to Date object
+      let expiryDate = null;
+      if (expiryStr.includes('/')) {
+          const parts = expiryStr.split('/').map(s => s.trim());
+          if (parts.length === 3) {
+              const day = Number(parts[0]);
+              const month = Number(parts[1]) - 1;
+              const year = Number(parts[2]);
+              expiryDate = new Date(year, month, day);
+          }
+      } else {
+          const norm = expiryStr.replace(/[^0-9]/g, '');
+          if (norm.length === 8) {
+              const year = Number(norm.substring(0,4));
+              const month = Number(norm.substring(4,6)) - 1;
+              const day = Number(norm.substring(6,8));
+              expiryDate = new Date(year, month, day);
+          }
+      }
+
+      if (!expiryDate || isNaN(expiryDate.getTime())) {
+          console.warn('Invalid expiry date format', expiryStr);
+          return null;
+      }
+
+      const year = expiryDate.getFullYear();
+      const month = expiryDate.getMonth();
+
+      // Find last expiry day in the month for a given weekday
+      function getLastExpiryDay(y, m, expiryWeekday) {
+          const lastDay = new Date(y, m + 1, 0);
+          const lastDate = lastDay.getDate();
+          for(let d = lastDate; d > lastDate - 7; d--) {
+              const date = new Date(y, m, d);
+              if (date.getDay() === expiryWeekday) return date;
+          }
+          return null;
+      }
+
+      // Weekly expiry weekday by symbol: Sunday=0 ... Tuesday=2, Thursday=4
+      let weeklyExpiryDay = null;
+      if(symbol === 'NIFTY') weeklyExpiryDay = 2; // Tuesday
+      else if(symbol === 'SENSEX') weeklyExpiryDay = 4; // Thursday
+      else weeklyExpiryDay = 4; // Default to Thursday
+
+      const lastExpiry = getLastExpiryDay(year, month, weeklyExpiryDay);
+
+      // Is weekly expiry if expiryDate is on weeklyExpiryDay AND not the last expiry of the month
+      const isWeekly = expiryDate.getDay() === weeklyExpiryDay &&
+          expiryDate.getDate() !== lastExpiry.getDate();
+
+      let expiryFormatted = '';
+      if (isWeekly) {
+          const yy = String(year).slice(-2);
+          const monLetter = monthNumToLetter(month + 1);
+          const dd = expiryDate.getDate().toString().padStart(2, '0');
+          expiryFormatted = `${yy}${monLetter}${dd}`;
+      } else {
+          const yy = String(year).slice(-2);
+          const monthNames = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+          expiryFormatted = `${yy}${monthNames[month]}`;
+      }
+
+      // Format strike, removing trailing decimal if whole number
+      const strikeNum = Number(strike);
+      const strikeStr = strikeNum % 1 === 0 ? `${strikeNum}` : strikeNum.toFixed(1);
+
+      return mappedExchange + ':' + symbol + expiryFormatted + strikeStr + optionType;
+  }
+
+  function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
+      if (!exchange || !instrument || !strikes || strikes.length === 0) return;
+
+      // Map UI exchange to MStock exchange for underlying (e.g. NF -> NSE)
+      const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
+      const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+      const qualifiedKey = mappedExchange + ':' + instrument;
+
+      fetchMStockLtpForKey(qualifiedKey).then(ltp => {
+          if (ltp == null) {
+              console.warn('Could not fetch underlying LTP for', qualifiedKey);
+              return;
+          }
+
+          // Find nearest strike
+          let nearestStrike = null;
+          let minDiff = Infinity;
+
+          for (const strike of strikes) {
+              const strikeVal = parseFloat(strike);
+              const diff = Math.abs(strikeVal - ltp);
+              if (diff < minDiff) {
+                  minDiff = diff;
+                  nearestStrike = strike;
+              }
+          }
+
+          if (nearestStrike) {
+              const strikeSelect = document.getElementById('strikePrice');
+              if (strikeSelect) {
+                  strikeSelect.value = nearestStrike;
+                  // Dispatch a change event to trigger expiry loading etc.
+                  strikeSelect.dispatchEvent(new Event('change'));
+              }
+          }
+      });
+  }
+
+  function fetchOptionLtpAndPopulateEntry() {
+      const exchange = document.getElementById('exchange').value;
+      const instrument = document.getElementById('instrument').value;
+      const strikePrice = document.getElementById('strikePrice').value;
+      const optionType = document.getElementById('optionType').value || 'CE';
+      const expiry = document.getElementById('expiry').value;
+
+      const noStrikeExchanges = new Set(['NC','BC']);
+      const isNoStrike = noStrikeExchanges.has((exchange || '').toUpperCase());
+
+      // For NC/BC exchanges, fetch underlying LTP directly
+      if (isNoStrike) {
+          if (!exchange || !instrument) return;
+          const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' };
+          const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+          const qualified = mappedExchange + ':' + instrument;
+          fetchMStockLtpForKey(qualified)
+              .then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; })
+              .catch(err => console.warn('Failed to fetch underlying LTP for instrument', err));
+          return;
+      }
+
+      if (!exchange || !instrument || !strikePrice || !expiry) return;
+
+      const qualifiedKey = buildQualifiedOptionKey(exchange, instrument, expiry, strikePrice, optionType);
+      if (!qualifiedKey) return;
+      fetchMStockLtpForKey(qualifiedKey)
+          .then(ltp => {
+              if (ltp != null) {
+                  const entryPriceInput = document.getElementById('entryPrice');
+                  if (entryPriceInput) entryPriceInput.value = ltp;
+              }
+          })
+          .catch(err => console.warn('Failed to fetch option LTP', err));
+  }
+
   let adminWs = null;
   let pollHandle = null;
   let ltpCache = {};
@@ -1213,13 +1403,26 @@
           if (strikeSel) { strikeSel.innerHTML = '<option value="">Select Strike</option>'; }
           if (expirySel) { expirySel.innerHTML = '<option value="">Select Expiry</option>'; }
           if (!instrument) return;
-          // for NC/BC no strikes
-          if (ex === 'NC' || ex === 'BC') return;
+
+          const isNCBC = (ex === 'NC' || ex === 'BC');
+          if (isNCBC) {
+              // For NC/BC, fetch underlying LTP directly
+              const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' };
+              const mappedExchange = underlyingExchangeMap[ex] || ex;
+              const qualified = mappedExchange + ':' + instrument;
+              fetchMStockLtpForKey(qualified)
+                  .then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; })
+                  .catch(err => console.warn('Failed to fetch underlying LTP for instrument', err));
+              return;
+          }
+
           try {
             const strikes = await fetchStrikes(ex, instrument);
             if (Array.isArray(strikes) && strikeSel) {
               strikeSel.innerHTML = '<option value="">Select Strike</option>' + strikes.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join('');
               strikeSel.disabled = false;
+              // after caching strikes, fetch underlying LTP and select nearest
+              fetchUnderlyingAndSelectNearestStrike(ex, instrument, strikes);
             }
           } catch (e) { console.debug('fetchStrikes failed', e); }
         });
@@ -1244,9 +1447,24 @@
             if (Array.isArray(expiries) && expirySel) {
               expirySel.innerHTML = '<option value="">Select Expiry</option>' + expiries.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join('');
               expirySel.disabled = false;
+              // After populating expiries and auto-selecting the first,
+              // trigger the function to fetch the option LTP.
+              fetchOptionLtpAndPopulateEntry();
             }
           } catch (e) { console.debug('fetchExpiries failed', e); }
         });
+      }
+
+      if (expirySel) {
+          expirySel.addEventListener('change', function () {
+              fetchOptionLtpAndPopulateEntry();
+          });
+      }
+
+      if (optionTypeSel) {
+          optionTypeSel.addEventListener('change', function () {
+              fetchOptionLtpAndPopulateEntry();
+          });
       }
 
     } catch (e) { console.debug('wireAdminForm failed', e); }

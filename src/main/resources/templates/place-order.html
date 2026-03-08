@@ -575,6 +575,43 @@
         return `${mappedExchange}:${symbol}${expiryFormatted}${strikeStr}${optionType}`;
     }
 
+    function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
+        if (!exchange || !instrument || !strikes || strikes.length === 0) return;
+
+        // Map UI exchange to MStock exchange for underlying (e.g. NF -> NSE)
+        const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
+        const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+        const qualifiedKey = `${mappedExchange}:${instrument}`;
+
+        fetchMStockLtpForKey(qualifiedKey).then(ltp => {
+            if (ltp == null) {
+                console.warn('Could not fetch underlying LTP for', qualifiedKey);
+                return;
+            }
+
+            // Find nearest strike
+            let nearestStrike = null;
+            let minDiff = Infinity;
+
+            for (const strike of strikes) {
+                const strikeVal = parseFloat(strike);
+                const diff = Math.abs(strikeVal - ltp);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    nearestStrike = strike;
+                }
+            }
+
+            if (nearestStrike) {
+                const strikeSelect = document.getElementById('strikePrice');
+                strikeSelect.value = nearestStrike;
+
+                // Dispatch a change event to trigger expiry loading etc.
+                strikeSelect.dispatchEvent(new Event('change'));
+            }
+        });
+    }
+
 
 
     // Load strikes and expiries when instrument is selected
@@ -669,22 +706,9 @@
                     expirySelect.innerHTML += `<option value="${expiry}" ${selected}>${expiry}</option>`;
                 });
 
-                // after expiry and optionType are set, resolve and fetch option LTP to populate entry price
-                const selectedExpiry = expirySelect.value;
-                const optionType = document.getElementById('optionType').value || 'CE';
-
-                if (selectedExpiry) {
-                    // Build qualified option key per requested format and fetch LTP directly
-                    const qualifiedKey = buildQualifiedOptionKey(exchange, instrument, selectedExpiry, strikePrice, optionType);
-                    if (qualifiedKey) {
-                        fetchMStockLtpForKey(qualifiedKey).then(ltp => {
-                            if (ltp != null) {
-                                document.getElementById('entryPrice').value = ltp;
-                            }
-                        });
-                    }
-                }
-
+                // After populating expiries and auto-selecting the first,
+                // trigger the function to fetch the option LTP.
+                fetchOptionLtpAndPopulateEntry();
             })
             .catch(err => {
                 console.error("Failed to load expiries:", err);
@@ -864,3 +888,6 @@
     } else {
         attachFormHandlers();
     }
+</script>
+</body>
+</html>
