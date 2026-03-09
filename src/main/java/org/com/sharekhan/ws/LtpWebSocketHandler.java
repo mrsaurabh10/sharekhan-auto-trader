@@ -33,7 +33,18 @@ public class LtpWebSocketHandler extends TextWebSocketHandler {
 
     /** Broadcast updated LTP to all clients */
     public void broadcastLtp(int scripCode, double ltp) {
-        String msg = String.format("{\"scripCode\":%d, \"ltp\":%.2f}", scripCode, ltp);
+        broadcastLtp(scripCode, ltp, null, null);
+    }
+
+    public void broadcastLtp(int scripCode, double ltp, String instrument, String exchange) {
+        String msg;
+        if (instrument != null && exchange != null) {
+            String qualifiedKey = exchange + ":" + instrument;
+            // Send both formats to be safe
+            msg = String.format("{\"scripCode\":%d, \"ltp\":%.2f, \"i\":\"%s\", \"last_price\":%.2f}", scripCode, ltp, qualifiedKey, ltp);
+        } else {
+            msg = String.format("{\"scripCode\":%d, \"ltp\":%.2f}", scripCode, ltp);
+        }
 
         for (WebSocketSession session : sessions) {
             if (session.isOpen()) {

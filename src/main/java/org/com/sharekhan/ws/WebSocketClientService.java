@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
@@ -22,6 +23,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,7 +50,11 @@ public class WebSocketClientService  {
     @Autowired
     private  ScripExecutorManager scripExecutorManager;
 
+    @Autowired
+    private org.com.sharekhan.repository.ScriptMasterRepository scriptMasterRepository;
 
+    // Cache for scripCode -> ScriptMasterEntity to avoid DB hits on every tick
+    private final Map<Integer, ScriptMasterEntity> scriptMasterCache = new ConcurrentHashMap<>();
 
     // 🧠 Cache to track active subscriptions (e.g., NC2885, NF42120, etc.)
     private final Set<String> activeLtpSubscriptions = ConcurrentHashMap.newKeySet();
@@ -223,7 +229,27 @@ public class WebSocketClientService  {
         }
 
         try {
-            ltpWebSocketHandler.broadcastLtp(sc, lv);
+            ScriptMasterEntity script = scriptMasterCache.get(sc);
+            if (script == null && !scriptMasterCache.containsKey(sc)) {
+                script = scriptMasterRepository.findByScripCode(sc);
+                if (script != null) {
+                    scriptMasterCache.put(sc, script);
+                }
+            }
+
+            String instrument = null;
+            String exchange = null;
+            if (script != null) {
+                instrument = script.getTradingSymbol();
+                exchange = script.getExchange();
+                
+                // Normalize for frontend compatibility
+                if ("NC".equalsIgnoreCase(exchange)) exchange = "NSE";
+                else if ("BC".equalsIgnoreCase(exchange)) exchange = "BSE";
+                else if ("NF".equalsIgnoreCase(exchange)) exchange = "NFO";
+                else if ("BF".equalsIgnoreCase(exchange)) exchange = "BFO";
+            }
+            ltpWebSocketHandler.broadcastLtp(sc, lv, instrument, exchange);
         } catch (Exception e) {
             log.warn("Failed to broadcast LTP to frontend for {}: {}", sc, e.getMessage());
         }
