@@ -574,7 +574,7 @@
                     ltpTd.innerText = val;
                 }
             });
-            return;
+            // Removed return to allow processing of 'i' key if present
           }
 
           if (js.i && js.last_price != null) { const m = {}; m[js.i] = { last_price: js.last_price }; applyLtpMap(m); return; }
