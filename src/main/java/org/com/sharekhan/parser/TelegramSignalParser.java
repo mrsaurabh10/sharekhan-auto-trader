@@ -52,13 +52,13 @@ public class TelegramSignalParser implements TradingSignalParser {
 
         if (targetLine.isPresent()) {
             String targetLineVal = targetLine.get();
-            String[] parts = targetLineVal.split("[-:]");
-            if (parts.length > 1) {
-                String targetsStr = parts[1].trim();
-                String[] targets = targetsStr.split("/");
-                target1 = targets.length > 0 ? targets[0].trim() : null;
-                target2 = targets.length > 1 ? targets[1].trim() : null;
-            }
+            // Replace TGT/TARGET prefix and separators like - or : with space
+            String targetsStr = targetLineVal.replaceAll("(?i)^TGT\\s*[-:]?\\s*", "")
+                                             .replaceAll("(?i)^TARGET\\s*[-:]?\\s*", "").trim();
+            
+            String[] targets = targetsStr.split("[/\\s]+"); // Split by slash or space
+            target1 = targets.length > 0 ? targets[0].trim() : null;
+            target2 = targets.length > 1 ? targets[1].trim() : null;
         }
 
         Optional<String> slLine = lines.stream()
@@ -69,10 +69,8 @@ public class TelegramSignalParser implements TradingSignalParser {
 
         if (slLine.isPresent()) {
             String slVal = slLine.get();
-            String[] parts = slVal.split("[-:]");
-            if (parts.length > 1) {
-                stopLossText = parts[1].trim();
-            }
+            // Replace SL prefix and separators
+            stopLossText = slVal.replaceAll("(?i)^SL\\s*[-:]?\\s*", "").trim();
         }
 
         String expiryRaw = lines.stream()
