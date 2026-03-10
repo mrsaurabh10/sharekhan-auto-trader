@@ -568,8 +568,8 @@ public class PriceTriggerService {
             String key = remainingTrade.getExchange() + remainingTrade.getScripCode();
             webSocketSubscriptionService.subscribeToScrip(key);
             
-            // Also subscribe to spot scrip if needed for the remaining trade
-            if ((Boolean.TRUE.equals(remainingTrade.getUseSpotForEntry()) || Boolean.TRUE.equals(remainingTrade.getUseSpotForSl()) || Boolean.TRUE.equals(remainingTrade.getUseSpotForTarget())) && remainingTrade.getSpotScripCode() != null) {
+            // Always subscribe to spot scrip if it exists for the remaining trade
+            if (remainingTrade.getSpotScripCode() != null) {
                 ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(remainingTrade.getSpotScripCode());
                 if (spotScript != null) {
                     String spotKey = spotScript.getExchange() + spotScript.getScripCode();

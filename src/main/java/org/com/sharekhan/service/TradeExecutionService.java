@@ -296,7 +296,8 @@ public class TradeExecutionService {
             useSpotForTarget = true;
         }
 
-        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && spotScripCode == null) {
+        // If it's an option (has an option type), always try to resolve spot scrip code.
+        if (request.getOptionType() != null && !request.getOptionType().isEmpty() && spotScripCode == null) {
             // Try to resolve spot scrip code from instrument name
             // Assuming instrument name is like "NIFTY", "BANKNIFTY", "FINNIFTY" etc.
             // We need to find the corresponding spot scrip in NC exchange.
@@ -357,8 +358,8 @@ public class TradeExecutionService {
         String key = entity.getExchange() + entity.getScripCode();
         webSocketSubscriptionService.subscribeToScrip(key);
         
-        // Also subscribe to spot scrip if needed
-        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && entity.getSpotScripCode() != null) {
+        // Always subscribe to spot scrip if it exists for an option trade
+        if (entity.getSpotScripCode() != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(entity.getSpotScripCode());
             if (spotScript != null) {
                 String spotKey = spotScript.getExchange() + spotScript.getScripCode();
@@ -526,7 +527,8 @@ public class TradeExecutionService {
             useSpotForTarget = true;
         }
 
-        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && spotScripCode == null) {
+        // If it's an option (has an option type), always try to resolve spot scrip code.
+        if (request.getOptionType() != null && !request.getOptionType().isEmpty() && spotScripCode == null) {
             try {
                 String instrumentName = request.getInstrument();
                 Optional<ScriptMasterEntity> spotOpt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("NC", instrumentName);
@@ -581,8 +583,8 @@ public class TradeExecutionService {
         String key = trade.getExchange() + trade.getScripCode();
         webSocketSubscriptionService.subscribeToScrip(key);
         
-        // Also subscribe to spot scrip if needed
-        if ((useSpotForEntry || useSpotForSl || useSpotForTarget) && trade.getSpotScripCode() != null) {
+        // Always subscribe to spot scrip if it exists for an option trade
+        if (trade.getSpotScripCode() != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(trade.getSpotScripCode());
             if (spotScript != null) {
                 String spotKey = spotScript.getExchange() + spotScript.getScripCode();
@@ -1194,7 +1196,7 @@ public class TradeExecutionService {
                                     if (tradeSetupEntity.getTarget3() != null) {
                                         tradeSetupEntity.setTarget3(tradeSetupEntity.getTarget3() + diff);
                                     }
-                                }
+                                 }
                             }
                         }
 
@@ -1287,8 +1289,8 @@ public class TradeExecutionService {
                     log.debug("Already subscribed to LTP for scrip {} (ref++)", scripCode);
                 }
 
-                // Also subscribe to spot scrip if needed
-                if ((Boolean.TRUE.equals(request.getUseSpotForEntry()) || Boolean.TRUE.equals(request.getUseSpotForSl()) || Boolean.TRUE.equals(request.getUseSpotForTarget())) && request.getSpotScripCode() != null) {
+                // Always subscribe to spot scrip if it exists
+                if (request.getSpotScripCode() != null) {
                     ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(request.getSpotScripCode());
                     if (spotScript != null) {
                         String spotKey = spotScript.getExchange() + spotScript.getScripCode();
@@ -1322,8 +1324,8 @@ public class TradeExecutionService {
                         log.debug("Already subscribed to LTP for executed scrip {} (ref++)", scripCode);
                     }
 
-                    // Also subscribe to spot scrip if needed
-                    if ((Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry()) || Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForSl()) || Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForTarget())) && tradeSetupEntity.getSpotScripCode() != null) {
+                    // Always subscribe to spot scrip if it exists
+                    if (tradeSetupEntity.getSpotScripCode() != null) {
                         ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(tradeSetupEntity.getSpotScripCode());
                         if (spotScript != null) {
                             String spotKey = spotScript.getExchange() + spotScript.getScripCode();
