@@ -48,8 +48,12 @@ public class TelegramSignalParser implements TradingSignalParser {
         // Group 4 is Entry Price
         Double entry = tryParseDouble(matcher.group(4));
 
+        // Updated filter to include lines starting with "TARGET" as well as "TGT"
         Optional<String> targetLine = lines.stream()
-                .filter(l -> l.toUpperCase().startsWith("TGT"))
+                .filter(l -> {
+                    String upper = l.toUpperCase();
+                    return upper.startsWith("TGT") || upper.startsWith("TARGET");
+                })
                 .findFirst();
 
         String target1 = null;
