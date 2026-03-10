@@ -22,7 +22,8 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .collect(Collectors.toList());
 
         // Find the first line that matches the trade regex
-        Pattern tradePattern = Pattern.compile("^([A-Z\\s]+?)\\s+(\\d+)\\s+(CE|PE)\\s+above\\s+([\\d\\.]+)", Pattern.CASE_INSENSITIVE);
+        // Updated regex to handle optional BUY/SELL prefix, capture symbol correctly, and handle decimal strike
+        Pattern tradePattern = Pattern.compile("^(?:BUY|SELL)?\\s*([A-Z0-9\\s]+?)\\s+([\\d\\.]+)\\s+(CE|PE)\\s+above\\s+([\\d\\.]+)", Pattern.CASE_INSENSITIVE);
         String tradeLine = lines.stream()
                 .filter(line -> tradePattern.matcher(line).find())
                 .findFirst()
@@ -38,9 +39,13 @@ public class TelegramSignalParser implements TradingSignalParser {
         }
 
         String action = "BUY";
+        // Group 1 is the symbol
         String symbol = matcher.group(1).toUpperCase().trim();
+        // Group 2 is the strike
         String strike = matcher.group(2);
+        // Group 3 is Option Type
         String optionType = matcher.group(3).toUpperCase();
+        // Group 4 is Entry Price
         Double entry = tryParseDouble(matcher.group(4));
 
         Optional<String> targetLine = lines.stream()
@@ -53,8 +58,9 @@ public class TelegramSignalParser implements TradingSignalParser {
         if (targetLine.isPresent()) {
             String targetLineVal = targetLine.get();
             // Replace TGT/TARGET prefix and separators like - or : with space
-            String targetsStr = targetLineVal.replaceAll("(?i)^TGT\\s*[-:]?\\s*", "")
-                                             .replaceAll("(?i)^TARGET\\s*[-:]?\\s*", "").trim();
+            // Updated to handle combinations like "TARGET :-"
+            String targetsStr = targetLineVal.replaceAll("(?i)^TGT[\\s:\\-]*", "")
+                                             .replaceAll("(?i)^TARGET[\\s:\\-]*", "").trim();
             
             String[] targets = targetsStr.split("[/\\s]+"); // Split by slash or space
             target1 = targets.length > 0 ? targets[0].trim() : null;
@@ -70,7 +76,8 @@ public class TelegramSignalParser implements TradingSignalParser {
         if (slLine.isPresent()) {
             String slVal = slLine.get();
             // Replace SL prefix and separators
-            stopLossText = slVal.replaceAll("(?i)^SL\\s*[-:]?\\s*", "").trim();
+            // Updated to handle combinations like "SL :-"
+            stopLossText = slVal.replaceAll("(?i)^SL[\\s:\\-]*", "").trim();
         }
 
         String expiryRaw = lines.stream()
