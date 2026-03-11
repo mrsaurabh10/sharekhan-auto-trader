@@ -2,6 +2,7 @@ package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.parser.*;
+import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -16,7 +17,7 @@ import java.util.stream.Collectors;
 public class TradingMessageService {
 
     @Autowired
-    private  TradeExecutionService tradingExecutorService;
+    private TradeExecutionService tradingExecutorService;
 
     @Autowired
     private BrokerCredentialsService brokerCredentialsService;
@@ -100,7 +101,7 @@ public class TradingMessageService {
 
     private void placeForAllSharekhanCustomers(TriggerRequest base) {
         // Fetch all broker credentials for SHAREKHAN
-        var creds = brokerCredentialsService.findAllForBroker("Sharekhan");
+        List<BrokerCredentialsEntity> creds = brokerCredentialsService.findAllForBroker("Sharekhan");
         creds.addAll(brokerCredentialsService.findAllForBroker("Simulator"));
         if (creds == null || creds.isEmpty()) return;
 
@@ -110,11 +111,12 @@ public class TradingMessageService {
             executor = createVirtualThreadExecutor();
             List<CompletableFuture<Void>> futures = new ArrayList<>();
 
-            for (var c : creds) {
+            for (BrokerCredentialsEntity c : creds) {
                 if (c == null) continue;
                 // Only active credentials
                 if (c.getActive() != null && !c.getActive()) continue;
 
+                // Clone the base request so we don't share mutable state across threads/users
                 TriggerRequest req = cloneRequest(base);
                 // Attach broker credential id and app user id so backend uses the right token/customer when placing
                 req.setBrokerCredentialsId(c.getId());
@@ -169,7 +171,7 @@ public class TradingMessageService {
         } catch (Exception e) {
             // If executor creation fails, fallback to sequential placement
             System.err.println("Executor failure - falling back to sequential placement: " + e.getMessage());
-            for (var c : creds) {
+            for (BrokerCredentialsEntity c : creds) {
                 try {
                     if (c == null) continue;
                     if (c.getActive() != null && !c.getActive()) continue;
@@ -263,7 +265,7 @@ public class TradingMessageService {
         TriggerRequest request = new TriggerRequest();
         //request.setAction((String) parsed.get("action"));
         request.setInstrument((String) parsed.get("symbol"));
-        request.setStrikePrice(parseDouble(parsed.get("strike")) );
+        request.setStrikePrice(parseDouble(parsed.get("strike")));
         request.setOptionType((String) parsed.get("optionType"));
         request.setEntryPrice(parseDouble(parsed.get("entry")));
         request.setTarget1(parseDouble(parsed.get("target1")));
@@ -287,6 +289,7 @@ public class TradingMessageService {
     private Double parseDouble(Object val) {
         if (val instanceof Number) return ((Number) val).doubleValue();
         try {
+            if (val == null) return null;
             return Double.parseDouble(val.toString());
         } catch (Exception e) {
             return null;
