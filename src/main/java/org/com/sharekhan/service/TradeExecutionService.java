@@ -175,11 +175,22 @@ public class TradeExecutionService {
             ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
         }
 
-
+        // Logic for Lot Size configuration
+        Long appUserId = request.getUserId();
+        
+        // 1. If explicit quantity provided, try to use it as number of lots if < 100 (assuming lots) or if "lots" field explicitly set?
+        // Wait, request.getQuantity() comes from parser. Parser puts lot count into quantity if "Lots X" is found.
+        // So if request.getQuantity() is small (e.g. 1, 2, 5), it is likely lots. If it's 50, 100, etc, it might be quantity.
+        // But for options, usually we trade in lots. Let's assume request.getQuantity() IS the number of lots if it comes from the parser as "Lots 2".
+        // However, existing logic treats request.getQuantity() as number of lots IF we multiply by lotSize later.
+        // Let's see: `finalQuantity = (long) request.getQuantity() * lotSize;`
+        // This implies request.getQuantity() IS ALREADY treated as number of LOTS for options (non-NC/BC).
+        // Correct.
+        
+        // So if "Lots 2" was parsed into request.quantity = 2, then `finalQuantity = 2 * lotSize`. This is correct.
+        
+        // But we have logic that OVERRIDES request.getQuantity() if it's null.
         if (request.getQuantity() == null) {
-            // Prefer per-user configuration via appUserId; fallback defaults are provided
-            Long appUserId = request.getUserId();
-
             // Check for option_stock_lot_size override
             try {
                 String lotSizeStr = userConfigService.getConfig(appUserId, "option_stock_lot_size", null);

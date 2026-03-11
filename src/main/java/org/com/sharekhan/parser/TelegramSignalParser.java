@@ -88,6 +88,23 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .filter(this::isExpiryLine)
                 .findFirst()
                 .orElse(null);
+        
+        // --- NEW: Parse Lots ---
+        Optional<String> lotsLine = lines.stream()
+                .filter(l -> l.toUpperCase().startsWith("LOTS"))
+                .findFirst();
+        
+        Integer quantity = null;
+        if (lotsLine.isPresent()) {
+            String lotsVal = lotsLine.get();
+            // e.g., "Lots 2" -> 2
+            String lotsStr = lotsVal.replaceAll("(?i)^LOTS[\\s:\\-]*", "").trim();
+            Double d = tryParseDouble(lotsStr);
+            if (d != null) {
+                quantity = d.intValue();
+            }
+        }
+        // -----------------------
 
         String expiryFormatted = parseExpiry(expiryRaw, symbol);
 
@@ -115,6 +132,11 @@ public class TelegramSignalParser implements TradingSignalParser {
         // Set intraday false if "BTST" present anywhere in original message
         boolean intraday = !text.toUpperCase().contains("BTST");
         result.put("intraday", intraday);
+        
+        // Pass quantity/lots in "quantity" field
+        if (quantity != null) {
+            result.put("quantity", quantity);
+        }
 
         return result;
     }
