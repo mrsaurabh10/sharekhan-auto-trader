@@ -90,6 +90,20 @@ public class TradeExecutionController {
                         trade.setSpotScripCode(update.getSpotScripCode());
                         changed = true;
                     }
+                    // Added granular spot flags
+                    if (update.getUseSpotForEntry() != null) {
+                        trade.setUseSpotForEntry(update.getUseSpotForEntry());
+                        changed = true;
+                    }
+                    if (update.getUseSpotForSl() != null) {
+                        trade.setUseSpotForSl(update.getUseSpotForSl());
+                        changed = true;
+                    }
+                    if (update.getUseSpotForTarget() != null) {
+                        trade.setUseSpotForTarget(update.getUseSpotForTarget());
+                        changed = true;
+                    }
+
                     if (changed) {
                         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
                         boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));

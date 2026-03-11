@@ -102,7 +102,7 @@ public class PriceTriggerService {
                     continue;
                 }
                 
-                if (trigger.getEntryPrice() == null) continue;
+                    if (trigger.getEntryPrice() == null) continue;
 
                 double tolerance = 1.006;
 

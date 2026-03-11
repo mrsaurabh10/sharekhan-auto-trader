@@ -158,6 +158,13 @@ public class AdminController {
         if (update.getTarget3() != null) { r.setTarget3(update.getTarget3()); changed = true; }
         if (update.getQuantity() != null) { r.setQuantity(update.getQuantity()); changed = true; }
         if (update.getIntraday() != null) { r.setIntraday(update.getIntraday()); changed = true; }
+
+        if (update.getUseSpotForEntry() != null) { r.setUseSpotForEntry(update.getUseSpotForEntry()); changed = true; }
+        if (update.getUseSpotForSl() != null) { r.setUseSpotForSl(update.getUseSpotForSl()); changed = true; }
+        if (update.getUseSpotForTarget() != null) { r.setUseSpotForTarget(update.getUseSpotForTarget()); changed = true; }
+        if (update.getUseSpotPrice() != null) { r.setUseSpotPrice(update.getUseSpotPrice()); changed = true; }
+        if (update.getSpotScripCode() != null) { r.setSpotScripCode(update.getSpotScripCode()); changed = true; }
+
         if (changed) {
             requestRepository.save(r);
             return ResponseEntity.ok(r);
@@ -176,6 +183,13 @@ public class AdminController {
         if (update.getTarget2() != null) { t.setTarget2(update.getTarget2()); changed = true; }
         if (update.getTarget3() != null) { t.setTarget3(update.getTarget3()); changed = true; }
         if (update.getIntraday() != null) { t.setIntraday(update.getIntraday()); changed = true; }
+        
+        if (update.getUseSpotForEntry() != null) { t.setUseSpotForEntry(update.getUseSpotForEntry()); changed = true; }
+        if (update.getUseSpotForSl() != null) { t.setUseSpotForSl(update.getUseSpotForSl()); changed = true; }
+        if (update.getUseSpotForTarget() != null) { t.setUseSpotForTarget(update.getUseSpotForTarget()); changed = true; }
+        if (update.getUseSpotPrice() != null) { t.setUseSpotPrice(update.getUseSpotPrice()); changed = true; }
+        if (update.getSpotScripCode() != null) { t.setSpotScripCode(update.getSpotScripCode()); changed = true; }
+
         if (changed) {
             setupRepository.save(t);
             return ResponseEntity.ok(t);
