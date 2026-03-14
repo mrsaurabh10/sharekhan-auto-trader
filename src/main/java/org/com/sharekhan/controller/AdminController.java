@@ -7,6 +7,7 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.TradeExecutionService;
+import org.com.sharekhan.service.TradingMessageService;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
@@ -54,6 +55,7 @@ public class AdminController {
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final AppUserRepository appUserRepository;
     private final PlatformTransactionManager transactionManager;
+    private final TradingMessageService tradingMessageService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -134,6 +136,18 @@ public class AdminController {
         }
         return ResponseEntity.ok("triggered");
     }
+
+    @PostMapping("/trigger-all")
+    @ResponseBody
+    public ResponseEntity<?> triggerForAllUsers(@RequestBody TriggerRequest request) {
+        try {
+            tradingMessageService.placeForAllSharekhanCustomers(request);
+            return ResponseEntity.ok(java.util.Map.of("status", "triggered", "message", "Request submitted for all active users."));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
 
     @PostMapping("/add-executed-trade")
     @ResponseBody

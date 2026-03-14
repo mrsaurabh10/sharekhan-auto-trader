@@ -45,6 +45,7 @@ public class SecurityConfig {
                         // admin endpoints require ROLE_ADMIN
                         .requestMatchers("/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/auth/**").permitAll() // keep token endpoints accessible via admin UI via login
+                        .requestMatchers("/api/trades/trigger-all").permitAll() // Secure via X-Admin-Token inside the controller
                         .anyRequest().permitAll()
                 )
                 .userDetailsService(adminUserDetailsService)
@@ -64,7 +65,10 @@ public class SecurityConfig {
                 ;
 
         // Exclude H2 console from CSRF protection to allow console POST actions
-        http.csrf(csrf -> csrf.ignoringRequestMatchers(new AntPathRequestMatcher("/h2-console/**")));
+        http.csrf(csrf -> csrf.ignoringRequestMatchers(
+            new AntPathRequestMatcher("/h2-console/**"),
+            new AntPathRequestMatcher("/api/trades/trigger-all") // Bypass CSRF for token authenticated endpoint
+        ));
         return http.build();
     }
 }

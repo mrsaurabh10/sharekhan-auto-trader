@@ -741,19 +741,34 @@
 
   function wirePlaceOrderForm() {
     const form = document.getElementById('adminPlaceOrderForm'); const resultDiv = document.getElementById('result'); const errDiv = document.getElementById('serverError'); const btn = document.getElementById('adminPlaceOrderBtn'); const resetBtn = document.getElementById('adminPlaceOrderReset');
+    const triggerAllBtn = document.getElementById('triggerForAllUsersBtn');
     if (!form) return;
     function readVal(id) { const el = document.getElementById(id); return el ? el.value : null; }
     function readNum(id) { const v = readVal(id); if (v == null || v === '') return null; const n = Number(v); return (Number.isNaN(n) ? null : n); }
-    async function buildPayload() {
+    async function buildPayload(userIdOverride) {
       const ex = readVal('exchange'); const instrument = readVal('instrument'); const strikeStr = readVal('strikePrice'); const expiry = readVal('expiry'); const optionType = readVal('optionType'); const isNCBC = (ex === 'NC' || ex === 'BC');
-      const payload = { exchange: ex || null, instrument: instrument || null, strikePrice: isNCBC ? null : (strikeStr ? Number(strikeStr) : null), expiry: isNCBC ? null : (expiry || null), optionType: isNCBC ? null : (optionType || null), entryPrice: readNum('entryPrice'), stopLoss: readNum('stopLoss'), target1: readNum('target1'), target2: readNum('target2'), target3: readNum('target3'), quantity: readNum('quantity'), intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked), tslEnabled: !!(document.getElementById('tslEnabled') && document.getElementById('tslEnabled').checked), useSpotPrice: !!(document.getElementById('useSpotPrice') && document.getElementById('useSpotPrice').checked), useSpotForEntry: !!(document.getElementById('useSpotForEntry') && document.getElementById('useSpotForEntry').checked), useSpotForSl: !!(document.getElementById('useSpotForSl') && document.getElementById('useSpotForSl').checked), useSpotForTarget: !!(document.getElementById('useSpotForTarget') && document.getElementById('useSpotForTarget').checked), spotScripCode: readNum('spotScripCode'), trailingSl: null, userId: window.selectedUserId || null, brokerCredentialsId: null };
-      if (window.selectedUserId) payload.brokerCredentialsId = await resolveBrokerForUser(window.selectedUserId);
+      const payload = { exchange: ex || null, instrument: instrument || null, strikePrice: isNCBC ? null : (strikeStr ? Number(strikeStr) : null), expiry: isNCBC ? null : (expiry || null), optionType: isNCBC ? null : (optionType || null), entryPrice: readNum('entryPrice'), stopLoss: readNum('stopLoss'), target1: readNum('target1'), target2: readNum('target2'), target3: readNum('target3'), quantity: readNum('quantity'), intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked), tslEnabled: !!(document.getElementById('tslEnabled') && document.getElementById('tslEnabled').checked), useSpotPrice: !!(document.getElementById('useSpotPrice') && document.getElementById('useSpotPrice').checked), useSpotForEntry: !!(document.getElementById('useSpotForEntry') && document.getElementById('useSpotForEntry').checked), useSpotForSl: !!(document.getElementById('useSpotForSl') && document.getElementById('useSpotForSl').checked), useSpotForTarget: !!(document.getElementById('useSpotForTarget') && document.getElementById('useSpotForTarget').checked), spotScripCode: readNum('spotScripCode'), trailingSl: null, userId: userIdOverride || window.selectedUserId || null, brokerCredentialsId: null, source: 'admin-ui' };
+      if (payload.userId) payload.brokerCredentialsId = await resolveBrokerForUser(payload.userId);
       return payload;
     }
+
+    if (triggerAllBtn) {
+        triggerAllBtn.addEventListener('click', async function(e) {
+            e.preventDefault();
+            if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; } if (resultDiv) { resultDiv.innerText = ''; }
+            try {
+                if (triggerAllBtn) triggerAllBtn.disabled = true; await ensureCsrf(); const body = await buildPayload(null);
+                if (!body.exchange) throw new Error('Exchange is required'); if (!body.instrument) throw new Error('Instrument is required'); if (body.entryPrice == null) throw new Error('Entry Price is required'); if (body.stopLoss == null) throw new Error('Stop Loss is required');
+                const resp = await fetchJson('/admin/trigger-all', { method: 'POST', body: JSON.stringify(body) });
+                if (resultDiv) resultDiv.innerText = 'Triggered for all users successfully.';
+            } catch (err) { const msg = (err && err.message) ? err.message : String(err); if (errDiv) { errDiv.style.display = 'block'; errDiv.innerText = msg; } else alert('Trigger All failed: ' + msg); } finally { if (triggerAllBtn) triggerAllBtn.disabled = false; }
+        });
+    }
+
     form.addEventListener('submit', async function (e) {
       e.preventDefault(); if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; } if (resultDiv) { resultDiv.innerText = ''; }
       try {
-        if (btn) btn.disabled = true; await ensureCsrf(); const body = await buildPayload();
+        if (btn) btn.disabled = true; await ensureCsrf(); const body = await buildPayload(window.selectedUserId);
         if (!body.exchange) throw new Error('Exchange is required'); if (!body.instrument) throw new Error('Instrument is required'); if (body.entryPrice == null) throw new Error('Entry Price is required'); if (body.stopLoss == null) throw new Error('Stop Loss is required');
         const alreadyExecuted = document.getElementById('alreadyExecuted') && document.getElementById('alreadyExecuted').checked;
         const url = alreadyExecuted ? '/api/trades/manual-execute' : '/api/trades/trigger-on-price';

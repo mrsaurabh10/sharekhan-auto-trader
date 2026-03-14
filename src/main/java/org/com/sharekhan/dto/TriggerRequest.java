@@ -33,4 +33,7 @@ public class TriggerRequest {
     private Boolean useSpotForTarget;
 
     private Integer spotScripCode; // Scrip code of the underlying spot
+
+    // optional source to identify where the request originated
+    private String source;
 }

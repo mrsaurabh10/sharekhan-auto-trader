@@ -26,6 +26,8 @@ server:
 logging:
   level:
     org:
+      com:
+        sharekhan: INFO
       hibernate:
         SQL: OFF
         type:
@@ -42,6 +44,8 @@ logging:
 
 # Application specific
 app:
+  admin:
+    token: "u7Hk9jN2vP4xM8yC5wQ1aR3fT6sZ0dE9bL4gJ2hK5mN8vX1zC4qW7eR9tY3a" # REPLACE THIS WITH A STRONG SECRET IN PRODUCTION
   default-broker: SHAREKHAN
   mstock:
     api-key: "MusnORunrjCcP+x8+Fw0YSaiELJKBT5OL3ipnUptoD4="
