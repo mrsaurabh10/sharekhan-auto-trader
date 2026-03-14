@@ -76,6 +76,8 @@ public class TriggeredTradeSetupEntity {
     @Column(name = "intraday")
     private Boolean intraday;  // default false
 
+    @Column(name = "source")
+    private String source;
 
     @Enumerated(EnumType.STRING)
     private TriggeredTradeStatus status;

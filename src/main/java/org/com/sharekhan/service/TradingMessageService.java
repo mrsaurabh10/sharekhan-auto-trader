@@ -31,7 +31,8 @@ public class TradingMessageService {
     private final TradingSignalParser parserChain = new ParserChain(
             new TelegramSignalParser(),
             new WhatsappSignalParser(),
-            new AartiSignalParser()
+            new AartiSignalParser(),
+            new SharekhanSignalParser()
     );
 
     // Simple in-memory dedupe store to prevent duplicate processing of the same Telegram message
@@ -99,7 +100,7 @@ public class TradingMessageService {
         }
     }
 
-    private void placeForAllSharekhanCustomers(TriggerRequest base) {
+    public void placeForAllSharekhanCustomers(TriggerRequest base) {
         // Fetch all broker credentials for SHAREKHAN
         List<BrokerCredentialsEntity> creds = brokerCredentialsService.findAllForBroker("Sharekhan");
         creds.addAll(brokerCredentialsService.findAllForBroker("Simulator"));
@@ -124,13 +125,15 @@ public class TradingMessageService {
 
                 // Per-user configuration: telegram_trade_enabled (default true)
                 boolean enabled = true;
-                try {
-                    String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
-                    if (v != null) {
-                        String s = v.trim().toLowerCase();
-                        enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
-                    }
-                } catch (Exception ignore) { enabled = true; }
+                if (!"admin-ui".equalsIgnoreCase(req.getSource())) {
+                    try {
+                        String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
+                        if (v != null) {
+                            String s = v.trim().toLowerCase();
+                            enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
+                        }
+                    } catch (Exception ignore) { enabled = true; }
+                }
 
                 if (!enabled) {
                     // Skip placing for this user; optionally notify/log
@@ -179,13 +182,15 @@ public class TradingMessageService {
                     req.setBrokerCredentialsId(c.getId());
                     req.setUserId(c.getAppUserId());
                     boolean enabled = true;
-                    try {
-                        String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
-                        if (v != null) {
-                            String s = v.trim().toLowerCase();
-                            enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
-                        }
-                    } catch (Exception ignore) { enabled = true; }
+                    if (!"admin-ui".equalsIgnoreCase(req.getSource())) {
+                        try {
+                            String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
+                            if (v != null) {
+                                String s = v.trim().toLowerCase();
+                                enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
+                            }
+                        } catch (Exception ignore) { enabled = true; }
+                    }
                     if (!enabled) {
                         System.out.println("⏭️ Skipping telegram trade for user #" + c.getAppUserId() + " due to telegram_trade_enabled=false");
                         try {
@@ -256,6 +261,7 @@ public class TradingMessageService {
         t.setIntraday(src.getIntraday());
         t.setTrailingSl(src.getTrailingSl());
         t.setQuantity(src.getQuantity());
+        t.setSource(src.getSource());
         // userId and brokerCredentialsId intentionally left null here; caller sets them
         return t;
     }

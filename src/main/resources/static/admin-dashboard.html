@@ -77,7 +77,10 @@
 
         <div id="userContent" style="display:none">
             <div id="placeOrderPanel">
-                <h4>Place Order (Admin)</h4>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h4>Place Order (Admin)</h4>
+                    <button class="btn primary" id="triggerForAllUsersBtn">Trigger For All Users</button>
+                </div>
                 <div class="subtle">Placing order for user: <b id="placeOrderSelectedUser">-</b></div>
                 <div id="serverError" aria-live="polite"></div>
                 <form id="adminPlaceOrderForm" style="margin-bottom:0.5rem">
@@ -236,6 +239,6 @@
     </div>
 </div>
 
-<script src="/admin-dashboard.js?v=8"></script>
+<script src="/admin-dashboard.js?v=9"></script>
 </body>
 </html>

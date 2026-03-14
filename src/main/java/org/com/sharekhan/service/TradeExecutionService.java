@@ -362,6 +362,7 @@ public class TradeExecutionService {
                 .useSpotForTarget(useSpotForTarget)
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
+                .source(request.getSource()) // store source
                 .build();
 
         // Persist request entity (no more storing legacy customerId on the request)
@@ -584,6 +585,7 @@ public class TradeExecutionService {
         trade.setUseSpotForTarget(useSpotForTarget);
         trade.setUseSpotPrice(request.getUseSpotPrice()); // Store legacy flag
         trade.setSpotScripCode(spotScripCode);
+        trade.setSource(request.getSource()); // Copy source
         // Set a dummy orderId to indicate manual entry, or leave null?
         // If null, polling service might be confused. Better to set a marker.
         trade.setOrderId("MANUAL-" + System.currentTimeMillis());
@@ -648,6 +650,7 @@ public class TradeExecutionService {
                 rejected.setEntryPrice(ltp);
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
+                rejected.setSource(trigger.getSource());
                 try { triggeredTradeRepo.save(rejected); } catch (Exception ignore) { }
                 try {
                     String title = "Order Rejected ❌";
@@ -743,6 +746,7 @@ public class TradeExecutionService {
                 rejected.setEntryPrice(ltp);
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
+                rejected.setSource(trigger.getSource());
                 try {
                     triggeredTradeRepo.save(rejected);
                     webSocketSubscriptionService.unsubscribeFromScrip(trigger.getExchange() + trigger.getScripCode());
@@ -798,6 +802,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotForTarget(trigger.getUseSpotForTarget());
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
+            triggeredTradeSetupEntity.setSource(trigger.getSource());
             
             triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
@@ -1479,6 +1484,7 @@ public class TradeExecutionService {
         temp.setTarget2(requestEntity.getTarget2());
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
+        temp.setSource(requestEntity.getSource());
         
         temp.setUseSpotForEntry(useSpotForEntry);
         temp.setUseSpotForSl(useSpotForSl);
