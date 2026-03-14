@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Admin Dashboard</string>
+    <string name="login_title">ShareKhan Admin</string>
+    <string name="login_username">Username</string>
+    <string name="login_password">Password</string>
+    <string name="login_base_url">Backend URL</string>
+    <string name="action_login">Sign In</string>
+    <string name="action_retry">Retry</string>
+    <string name="dashboard_title">Admin Dashboard</string>
+    <string name="users_list_title">Users</string>
+    <string name="tab_orders">Place Order</string>
+    <string name="tab_requests">Requests</string>
+    <string name="tab_executed">Executed</string>
+    <string name="tab_brokers">Brokers</string>
+</resources>
+
