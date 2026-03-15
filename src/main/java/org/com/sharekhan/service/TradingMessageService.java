@@ -3,9 +3,15 @@ package org.com.sharekhan.service;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.parser.*;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
+import org.com.sharekhan.entity.TriggerTradeRequestEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.repository.TriggerTradeRequestRepository;
+import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+
 import java.util.*;
 import java.util.concurrent.*;
 import java.lang.reflect.Method;
@@ -27,6 +33,12 @@ public class TradingMessageService {
 
     @Autowired(required = false)
     private TelegramNotificationService telegramNotificationService;
+
+    @Autowired
+    private TriggerTradeRequestRepository triggerTradeRequestRepository;
+
+    @Autowired
+    private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
 
     private final TradingSignalParser parserChain = new ParserChain(
             new TelegramSignalParser(),
@@ -103,6 +115,36 @@ public class TradingMessageService {
         }
     }
 
+    private boolean isDuplicateTrade(TriggerRequest req, Long appUserId) {
+        if (!"Sharekhan".equalsIgnoreCase(req.getSource())) {
+            return false;
+        }
+
+        List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepository
+                .findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(
+                        req.getInstrument(), 
+                        req.getStrikePrice(), 
+                        req.getOptionType(), 
+                        appUserId, 
+                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                );
+        
+        if (pendingRequests != null && !pendingRequests.isEmpty()) {
+            return true;
+        }
+
+        List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeSetupRepository
+                .findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(
+                        req.getInstrument(), 
+                        req.getStrikePrice(), 
+                        req.getOptionType(), 
+                        appUserId, 
+                        TriggeredTradeStatus.EXECUTED
+                );
+
+        return executedTrades != null && !executedTrades.isEmpty();
+    }
+
     public void placeForAllSharekhanCustomers(TriggerRequest base) {
         // Fetch all broker credentials for SHAREKHAN
         List<BrokerCredentialsEntity> creds = brokerCredentialsService.findAllForBroker("Sharekhan");
@@ -154,6 +196,21 @@ public class TradingMessageService {
                         if (telegramNotificationService != null) {
                             String title = "Trade Skipped";
                             String body = skipReason + "; Trade ignored for incoming signal.\n" +
+                                    "Instrument: " + (req.getInstrument()) +
+                                    (req.getStrikePrice()!=null?(" "+req.getStrikePrice()):"") +
+                                    (req.getOptionType()!=null?(" "+req.getOptionType()):"");
+                            telegramNotificationService.sendTradeMessageForUser(c.getAppUserId(), title, body);
+                        }
+                    } catch (Exception ignored) {}
+                    continue;
+                }
+
+                if (isDuplicateTrade(req, c.getAppUserId())) {
+                    System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId() + " and instrument " + req.getInstrument());
+                    try {
+                        if (telegramNotificationService != null) {
+                            String title = "Duplicate Trade Skipped";
+                            String body = "Trade ignored as a similar trade is already active.\n" +
                                     "Instrument: " + (req.getInstrument()) +
                                     (req.getStrikePrice()!=null?(" "+req.getStrikePrice()):"") +
                                     (req.getOptionType()!=null?(" "+req.getOptionType()):"");
@@ -226,6 +283,22 @@ public class TradingMessageService {
                         } catch (Exception ignored) {}
                         continue;
                     }
+
+                    if (isDuplicateTrade(req, c.getAppUserId())) {
+                        System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId() + " and instrument " + req.getInstrument());
+                        try {
+                            if (telegramNotificationService != null) {
+                                String title = "Duplicate Trade Skipped";
+                                String body = "Trade ignored as a similar trade is already active.\n" +
+                                        "Instrument: " + (req.getInstrument()) +
+                                        (req.getStrikePrice()!=null?(" "+req.getStrikePrice()):"") +
+                                        (req.getOptionType()!=null?(" "+req.getOptionType()):"");
+                                telegramNotificationService.sendTradeMessageForUser(c.getAppUserId(), title, body);
+                            }
+                        } catch (Exception ignored) {}
+                        continue;
+                    }
+
                     tradingExecutorService.executeTrade(req);
                 } catch (Exception ex) {
                     System.err.println("Failed to place order for broker credential id " + (c != null ? c.getId() : "null") + ": " + ex.getMessage());
