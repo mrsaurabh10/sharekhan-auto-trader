@@ -87,4 +87,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                           @Param("exitedAt") java.time.LocalDateTime exitedAt,
                           @Param("pnl")  Double pnl    );
 
+    List<TriggeredTradeSetupEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);
+    
+    List<TriggeredTradeSetupEntity> findBySymbolAndStrikePriceAndOptionTypeAndStatus(String symbol, Double strikePrice, String optionType, TriggeredTradeStatus status);
 }

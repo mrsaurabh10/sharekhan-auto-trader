@@ -24,4 +24,8 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
 
     @Query("select distinct t.appUserId from TriggerTradeRequestEntity t where t.appUserId is not null")
     List<Long> findDistinctAppUserIds();
+
+    List<TriggerTradeRequestEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);
+    
+    List<TriggerTradeRequestEntity> findBySymbolAndStrikePriceAndOptionTypeAndStatus(String symbol, Double strikePrice, String optionType, TriggeredTradeStatus status);
 }
