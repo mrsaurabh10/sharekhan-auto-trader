@@ -87,7 +87,7 @@ class DashboardViewModel(
     private val repository: AdminRepository
 ) : ViewModel() {
 
-    private val _usersState = MutableStateFlow<UiState<List<AppUser>>>(UiState.Loading)
+    private val _usersState = MutableStateFlow<UiState<List<AppUser>>>(UiState.Idle)
     val usersState: StateFlow<UiState<List<AppUser>>> = _usersState.asStateFlow()
 
     private val _selectedUser = MutableStateFlow<AppUser?>(null)
