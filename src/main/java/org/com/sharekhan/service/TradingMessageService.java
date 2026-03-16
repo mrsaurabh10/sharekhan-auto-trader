@@ -121,10 +121,8 @@ public class TradingMessageService {
         }
 
         List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepository
-                .findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(
+                .findBySymbolAndAppUserIdAndStatus(
                         req.getInstrument(), 
-                        req.getStrikePrice(), 
-                        req.getOptionType(), 
                         appUserId, 
                         TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
                 );
@@ -134,10 +132,8 @@ public class TradingMessageService {
         }
 
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeSetupRepository
-                .findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(
+                .findBySymbolAndAppUserIdAndStatus(
                         req.getInstrument(), 
-                        req.getStrikePrice(), 
-                        req.getOptionType(), 
                         appUserId, 
                         TriggeredTradeStatus.EXECUTED
                 );
