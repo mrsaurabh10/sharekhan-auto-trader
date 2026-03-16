@@ -88,4 +88,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                           @Param("pnl")  Double pnl    );
 
     List<TriggeredTradeSetupEntity> findBySymbolAndAppUserIdAndStatus(String symbol, Long appUserId, TriggeredTradeStatus status);
+
+    // Added for duplicate check
+    List<TriggeredTradeSetupEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);
 }

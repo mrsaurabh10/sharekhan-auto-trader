@@ -4,9 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
-import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
-import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.com.sharekhan.service.TradingMessageService;
 import org.springframework.http.HttpStatus;
@@ -23,7 +21,6 @@ import java.util.Map;
 public class TradeTriggerController {
 
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
-    private final TriggeredTradeSetupRepository triggeredTradeSetupRepository;
     private final TradeExecutionService tradeExecutionService;
     private final TradingMessageService tradingMessageService;
 
@@ -35,34 +32,6 @@ public class TradeTriggerController {
         return adminToken.equals(headerToken);
     }
 
-    private boolean isDuplicateTrade(TriggerRequest request) {
-        if (!"Sharekhan".equalsIgnoreCase(request.getSource())) {
-            return false;
-        }
-
-        List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepository
-                .findBySymbolAndStrikePriceAndOptionTypeAndStatus(
-                        request.getInstrument(), 
-                        request.getStrikePrice(), 
-                        request.getOptionType(), 
-                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
-                );
-        
-        if (pendingRequests != null && !pendingRequests.isEmpty()) {
-            return true;
-        }
-
-        List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeSetupRepository
-                .findBySymbolAndStrikePriceAndOptionTypeAndStatus(
-                        request.getInstrument(), 
-                        request.getStrikePrice(), 
-                        request.getOptionType(), 
-                        TriggeredTradeStatus.EXECUTED
-                );
-
-        return executedTrades != null && !executedTrades.isEmpty();
-    }
-
     @PostMapping("/trigger-all")
     public ResponseEntity<?> triggerForAllUsers(
             @RequestHeader(value = "X-Admin-Token", required = false) String token,
@@ -70,10 +39,6 @@ public class TradeTriggerController {
         
         if (!authorized(token)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "forbidden", "message", "Invalid or missing X-Admin-Token"));
-        }
-
-        if (isDuplicateTrade(request)) {
-            return ResponseEntity.ok(Map.of("status", "skipped", "message", "Duplicate trade found. Request ignored."));
         }
         
         try {
