@@ -168,7 +168,7 @@ public class TradingMessageService {
                 boolean enabled = true;
                 if ("Sharekhan".equalsIgnoreCase(req.getSource())) {
                     try {
-                        String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "true");
+                        String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "false");
                         if (v != null) {
                             String s = v.trim().toLowerCase();
                             enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
