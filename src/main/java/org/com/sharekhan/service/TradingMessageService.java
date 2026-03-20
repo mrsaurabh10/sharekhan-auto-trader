@@ -351,7 +351,16 @@ public class TradingMessageService {
         t.setIntraday(src.getIntraday());
         t.setTrailingSl(src.getTrailingSl());
         t.setQuantity(src.getQuantity());
+        t.setLots(src.getLots());
         t.setSource(src.getSource());
+        
+        t.setUseSpotPrice(src.getUseSpotPrice());
+        t.setUseSpotForEntry(src.getUseSpotForEntry());
+        t.setUseSpotForSl(src.getUseSpotForSl());
+        t.setUseSpotForTarget(src.getUseSpotForTarget());
+        t.setSpotScripCode(src.getSpotScripCode());
+        t.setTslEnabled(src.getTslEnabled());
+
         // userId and brokerCredentialsId intentionally left null here; caller sets them
         return t;
     }

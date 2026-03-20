@@ -748,7 +748,11 @@
     async function buildPayload(userIdOverride) {
       const ex = readVal('exchange'); const instrument = readVal('instrument'); const strikeStr = readVal('strikePrice'); const expiry = readVal('expiry'); const optionType = readVal('optionType'); const isNCBC = (ex === 'NC' || ex === 'BC');
       const payload = { exchange: ex || null, instrument: instrument || null, strikePrice: isNCBC ? null : (strikeStr ? Number(strikeStr) : null), expiry: isNCBC ? null : (expiry || null), optionType: isNCBC ? null : (optionType || null), entryPrice: readNum('entryPrice'), stopLoss: readNum('stopLoss'), target1: readNum('target1'), target2: readNum('target2'), target3: readNum('target3'), quantity: readNum('quantity'), intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked), tslEnabled: !!(document.getElementById('tslEnabled') && document.getElementById('tslEnabled').checked), useSpotPrice: !!(document.getElementById('useSpotPrice') && document.getElementById('useSpotPrice').checked), useSpotForEntry: !!(document.getElementById('useSpotForEntry') && document.getElementById('useSpotForEntry').checked), useSpotForSl: !!(document.getElementById('useSpotForSl') && document.getElementById('useSpotForSl').checked), useSpotForTarget: !!(document.getElementById('useSpotForTarget') && document.getElementById('useSpotForTarget').checked), spotScripCode: readNum('spotScripCode'), trailingSl: null, userId: userIdOverride || window.selectedUserId || null, brokerCredentialsId: null, source: 'admin-ui' };
-      if (payload.userId) payload.brokerCredentialsId = await resolveBrokerForUser(payload.userId);
+
+      // Admin trigger-all might pass a null userId, we don't resolve broker then
+      if (payload.userId) {
+          payload.brokerCredentialsId = await resolveBrokerForUser(payload.userId);
+      }
       return payload;
     }
 
@@ -759,7 +763,10 @@
             try {
                 if (triggerAllBtn) triggerAllBtn.disabled = true; await ensureCsrf(); const body = await buildPayload(null);
                 if (!body.exchange) throw new Error('Exchange is required'); if (!body.instrument) throw new Error('Instrument is required'); if (body.entryPrice == null) throw new Error('Entry Price is required'); if (body.stopLoss == null) throw new Error('Stop Loss is required');
-                const resp = await fetchJson('/admin/trigger-all', { method: 'POST', body: JSON.stringify(body) });
+                // The body might have empty userId and brokerCredentialsId, but we'll let trigger-all handle it
+                delete body.userId;
+                delete body.brokerCredentialsId;
+                const resp = await fetchJson('/api/trades/trigger-all', { method: 'POST', body: JSON.stringify(body) });
                 if (resultDiv) resultDiv.innerText = 'Triggered for all users successfully.';
             } catch (err) { const msg = (err && err.message) ? err.message : String(err); if (errDiv) { errDiv.style.display = 'block'; errDiv.innerText = msg; } else alert('Trigger All failed: ' + msg); } finally { if (triggerAllBtn) triggerAllBtn.disabled = false; }
         });

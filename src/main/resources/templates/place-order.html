@@ -108,6 +108,23 @@
         Enable TSL (Partial Booking)
     </label>
 
+    <label>
+        <input type="checkbox" id="useSpotPrice" name="useSpotPrice">
+        Use Spot Price (All)
+    </label>
+    <label>
+        <input type="checkbox" id="useSpotForEntry" name="useSpotForEntry">
+        Use Spot for Entry
+    </label>
+    <label>
+        <input type="checkbox" id="useSpotForSl" name="useSpotForSl">
+        Use Spot for SL
+    </label>
+    <label>
+        <input type="checkbox" id="useSpotForTarget" name="useSpotForTarget">
+        Use Spot for Target
+    </label>
+
     <button type="submit">Place Order</button>
 </form>
 
@@ -467,7 +484,7 @@
 
         return fetchWithTimeout(`/api/scripts/option?${params.toString()}`)
             .then(res => { if (!res.ok) return null; return res.json(); })
-             .then json => {
+             .then(json => {
                  // expected { tradingSymbol: '...', scripCode: 12345 }
                  return json;
              })
@@ -795,6 +812,10 @@
                 quantity: parseInt(formEl.quantity.value),
                 intraday: formEl.intraday.checked,
                 tslEnabled: formEl.tslEnabled.checked,
+                useSpotPrice: !!(formEl.useSpotPrice && formEl.useSpotPrice.checked),
+                useSpotForEntry: !!(formEl.useSpotForEntry && formEl.useSpotForEntry.checked),
+                useSpotForSl: !!(formEl.useSpotForSl && formEl.useSpotForSl.checked),
+                useSpotForTarget: !!(formEl.useSpotForTarget && formEl.useSpotForTarget.checked),
                 userId: formEl.userId && formEl.userId.value ? parseInt(formEl.userId.value) : null
             };
         }
@@ -844,7 +865,7 @@
                 loadRequestedOrders();
             } catch (err) {
                 console.error('submitPlaceOrder error', err);
-                const rEl = document.getElementById('result'); if (rEl) r.innerText = '❌ Failed to trigger order: ' + (err.message || err);
+                const rEl = document.getElementById('result'); if (rEl) rEl.innerText = '❌ Failed to trigger order: ' + (err.message || err);
             }
         }
 
