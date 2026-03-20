@@ -29,4 +29,6 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
 
     // Added for duplicate check
     List<TriggerTradeRequestEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);
+
+    List<TriggerTradeRequestEntity> findByScripCodeAndAppUserIdAndStatus(Integer scripCode, Long appUserId, TriggeredTradeStatus status);
 }
