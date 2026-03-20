@@ -173,7 +173,7 @@ public class TradingMessageService {
                             String s = v.trim().toLowerCase();
                             enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
                         }
-                    } catch (Exception ignore) { enabled = true; }
+                    } catch (Exception ignore) { enabled = false; }
                 } else if (!"admin-ui".equalsIgnoreCase(req.getSource())) {
                     try {
                         String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
@@ -181,7 +181,7 @@ public class TradingMessageService {
                             String s = v.trim().toLowerCase();
                             enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
                         }
-                    } catch (Exception ignore) { enabled = true; }
+                    } catch (Exception ignore) { enabled = false; }
                 }
 
                 if (!enabled) {

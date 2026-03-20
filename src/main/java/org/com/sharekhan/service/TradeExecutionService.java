@@ -177,6 +177,24 @@ public class TradeExecutionService {
 
         // Logic for Lot Size configuration
         Long appUserId = request.getUserId();
+
+        if ("Sharekhan".equalsIgnoreCase(request.getSource())) {
+            // Duplicate Check for Request Entity
+            List<TriggerTradeRequestEntity> duplicateRequests = triggerTradeRequestRepository
+                    .findByScripCodeAndAppUserIdAndStatus(script.getScripCode(), appUserId, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            
+            if (duplicateRequests != null && !duplicateRequests.isEmpty()) {
+                throw new RuntimeException("Duplicate Trade Request! A trade for " + request.getInstrument() + " is already in PLACED_PENDING_CONFIRMATION state.");
+            }
+
+            // Duplicate Check for Executed Trades
+            List<TriggeredTradeSetupEntity> duplicateExecutedTrades = triggeredTradeRepo
+                    .findByScripCodeAndAppUserIdAndStatus(script.getScripCode(), appUserId, TriggeredTradeStatus.EXECUTED);
+
+            if (duplicateExecutedTrades != null && !duplicateExecutedTrades.isEmpty()) {
+                throw new RuntimeException("Duplicate Trade Request! A trade for " + request.getInstrument() + " is already in EXECUTED state.");
+            }
+        }
         
         // 1. If explicit quantity provided, try to use it as number of lots if < 100 (assuming lots) or if "lots" field explicitly set?
         // Wait, request.getQuantity() comes from parser. Parser puts lot count into quantity if "Lots X" is found.
@@ -453,13 +471,24 @@ public class TradeExecutionService {
             ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
         }
 
+        Long appUserId = request.getUserId();
+
+        if ("Sharekhan".equalsIgnoreCase(request.getSource())) {
+            // Duplicate Check for Executed Trades manually
+            List<TriggeredTradeSetupEntity> duplicateExecutedTrades = triggeredTradeRepo
+                    .findByScripCodeAndAppUserIdAndStatus(script.getScripCode(), appUserId, TriggeredTradeStatus.EXECUTED);
+
+            if (duplicateExecutedTrades != null && !duplicateExecutedTrades.isEmpty()) {
+                throw new RuntimeException("Duplicate Trade Request! A trade for " + request.getInstrument() + " is already in EXECUTED state.");
+            }
+        }
+
         if (request.getQuantity() == null) {
             // ... (quantity calculation logic same as executeTrade) ...
             // For brevity, assuming quantity is provided or calculated same way.
             // If quantity is null here, we can default to 1 lot or throw error.
             // Let's assume user provides quantity for manual entry or we use default logic.
             // Copying logic:
-            Long appUserId = request.getUserId();
 
             // Check for option_stock_lot_size override
             try {
