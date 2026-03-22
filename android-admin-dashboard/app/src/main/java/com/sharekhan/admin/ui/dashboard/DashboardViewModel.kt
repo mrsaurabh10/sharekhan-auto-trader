@@ -4,22 +4,22 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.sharekhan.admin.data.model.AppUser
-import com.sharekhan.admin.data.model.BrokerDetails
 import com.sharekhan.admin.data.model.BrokerSummary
 import com.sharekhan.admin.data.model.PageResponse
 import com.sharekhan.admin.data.model.PlaceOrderPayload
 import com.sharekhan.admin.data.model.TradingRequest
 import com.sharekhan.admin.data.model.TriggeredTrade
-import com.sharekhan.admin.data.model.UpdateTargetsRequest
 import com.sharekhan.admin.data.repository.AdminRepository
 import com.sharekhan.admin.ui.state.UiState
 import com.sharekhan.admin.ui.state.getOrNull
 import java.text.DecimalFormat
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.retryWhen
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.buildJsonObject
@@ -121,6 +121,9 @@ class DashboardViewModel(
     private val _brokerDialog = MutableStateFlow<BrokerDialogState?>(null)
     val brokerDialog: StateFlow<BrokerDialogState?> = _brokerDialog.asStateFlow()
 
+    private val _ltpPrices = MutableStateFlow<Map<String, Double>>(emptyMap())
+    val ltpPrices: StateFlow<Map<String, Double>> = _ltpPrices.asStateFlow()
+
     private var instrumentJob: Job? = null
     private var strikeJob: Job? = null
     private var expiryJob: Job? = null
@@ -128,6 +131,11 @@ class DashboardViewModel(
     fun loadInitial() {
         if (_usersState.value is UiState.Loading || _usersState.value is UiState.Success) return
         refreshUsers()
+    }
+
+    init {
+        observeSessionChanges()
+        startLtpStream()
     }
 
     fun refreshUsers() {
@@ -172,8 +180,8 @@ class DashboardViewModel(
     fun selectUser(user: AppUser) {
         _selectedUser.value = user
         // Reset place order form user-specific data
-        _placeOrderState.update {
-            it.copy(
+        _placeOrderState.update { state ->
+            state.copy(
                 resultMessage = null,
                 formError = null
             )
@@ -242,6 +250,16 @@ class DashboardViewModel(
         refreshExecutedTrades(resetPage = true)
     }
 
+    fun selectAllStatuses() {
+        _statusFilter.value = EXECUTED_STATUSES.toSet()
+        refreshExecutedTrades(resetPage = true)
+    }
+
+    fun resetStatusFilter() {
+        _statusFilter.value = DEFAULT_STATUS_FILTER
+        refreshExecutedTrades(resetPage = true)
+    }
+
     fun refreshBrokers() {
         val userId = _selectedUser.value?.id ?: return
         _brokersState.value = UiState.Loading
@@ -276,8 +294,8 @@ class DashboardViewModel(
     }
 
     fun prefillFromRequest(request: TradingRequest) {
-        _placeOrderState.update {
-            it.copy(
+        _placeOrderState.update { state ->
+            state.copy(
                 exchange = request.exchange.orEmpty(),
                 instrument = request.symbol.orEmpty(),
                 strike = request.strikePrice?.let { strikeFormatter.format(it) } ?: "",
@@ -303,8 +321,8 @@ class DashboardViewModel(
     }
 
     fun onExchangeChanged(value: String) {
-        _placeOrderState.update {
-            it.copy(
+        _placeOrderState.update { state ->
+            state.copy(
                 exchange = value,
                 instrument = "",
                 instrumentOptions = emptyList(),
@@ -328,8 +346,8 @@ class DashboardViewModel(
                         }
                     }
                     .onFailure { ex ->
-                        _placeOrderState.update {
-                            it.copy(
+                        _placeOrderState.update { state ->
+                            state.copy(
                                 isFetchingInstruments = false,
                                 formError = ex.readableMessage()
                             )
@@ -340,14 +358,14 @@ class DashboardViewModel(
     }
 
     fun onInstrumentChanged(value: String) {
-        _placeOrderState.update {
-            it.copy(
+        _placeOrderState.update { state ->
+            state.copy(
                 instrument = value,
                 strike = "",
                 strikeOptions = emptyList(),
                 expiry = "",
                 expiryOptions = emptyList(),
-                isFetchingStrikes = value.isNotBlank() && requiresOptionFlow(it.exchange)
+                isFetchingStrikes = value.isNotBlank() && requiresOptionFlow(state.exchange)
             )
         }
         val exchange = _placeOrderState.value.exchange
@@ -365,8 +383,8 @@ class DashboardViewModel(
                         }
                     }
                     .onFailure { ex ->
-                        _placeOrderState.update {
-                            it.copy(
+                        _placeOrderState.update { state ->
+                            state.copy(
                                 isFetchingStrikes = false,
                                 formError = ex.readableMessage()
                             )
@@ -379,12 +397,12 @@ class DashboardViewModel(
     }
 
     fun onStrikeChanged(value: String) {
-        _placeOrderState.update {
-            it.copy(
+        _placeOrderState.update { state ->
+            state.copy(
                 strike = value,
                 expiry = "",
                 expiryOptions = emptyList(),
-                isFetchingExpiries = value.isNotBlank() && requiresOptionFlow(it.exchange)
+                isFetchingExpiries = value.isNotBlank() && requiresOptionFlow(state.exchange)
             )
         }
         val exchange = _placeOrderState.value.exchange
@@ -403,8 +421,8 @@ class DashboardViewModel(
                         }
                     }
                     .onFailure { ex ->
-                        _placeOrderState.update {
-                            it.copy(
+                        _placeOrderState.update { state ->
+                            state.copy(
                                 isFetchingExpiries = false,
                                 formError = ex.readableMessage()
                             )
@@ -475,8 +493,8 @@ class DashboardViewModel(
         viewModelScope.launch {
             runCatching { repository.placeOrder(payload, state.alreadyExecuted) }
                 .onSuccess {
-                    _placeOrderState.update {
-                        it.copy(
+                    _placeOrderState.update { s ->
+                        s.copy(
                             isSubmitting = false,
                             resultMessage = if (state.alreadyExecuted) "Executed trade recorded" else "Order submitted"
                         )
@@ -484,8 +502,8 @@ class DashboardViewModel(
                     refreshUserScopedData()
                 }
                 .onFailure { ex ->
-                    _placeOrderState.update {
-                        it.copy(
+                    _placeOrderState.update { s ->
+                        s.copy(
                             isSubmitting = false,
                             formError = ex.readableMessage()
                         )
@@ -520,21 +538,6 @@ class DashboardViewModel(
 
     fun openAddBrokerDialog() {
         _brokerDialog.value = BrokerDialogState()
-    }
-
-    fun openEditBrokerDialog(summary: BrokerSummary, details: BrokerDetails?) {
-        _brokerDialog.value = BrokerDialogState(
-            brokerId = summary.id,
-            brokerName = summary.brokerName.orEmpty(),
-            customerId = (details?.customerId ?: summary.customerId)?.toString() ?: "",
-            apiKey = details?.apiKey.orEmpty(),
-            brokerUsername = details?.brokerUsername.orEmpty(),
-            brokerPassword = details?.brokerPassword.orEmpty(),
-            clientCode = details?.clientCode.orEmpty(),
-            totpSecret = details?.totpSecret.orEmpty(),
-            secretKey = details?.secretKey.orEmpty(),
-            active = details?.active ?: summary.active
-        )
     }
 
     fun loadBrokerDetailsAndEdit(summary: BrokerSummary) {
@@ -620,6 +623,13 @@ class DashboardViewModel(
     }
 
     companion object {
+        val EXECUTED_STATUSES = listOf(
+            "EXECUTED",
+            "EXIT_ORDER_PLACED",
+            "EXITED_SUCCESS",
+            "EXIT_FAILED",
+            "REJECTED"
+        )
         private val DEFAULT_STATUS_FILTER = setOf(
             "EXECUTED",
             "EXIT_ORDER_PLACED",
@@ -637,6 +647,39 @@ class DashboardViewModel(
                 }
             }
     }
+
+    private fun observeSessionChanges() {
+        viewModelScope.launch {
+            repository.session.collect { session ->
+                if (session == null) {
+                    _ltpPrices.value = emptyMap()
+                }
+            }
+        }
+    }
+
+    private fun startLtpStream() {
+        viewModelScope.launch {
+            repository.observeLtp()
+                .retryWhen { _, attempt ->
+                    val delayMillis = (attempt + 1) * 2_000L
+                    delay(delayMillis.coerceAtMost(30_000L))
+                    true
+                }
+                .collect { snapshot ->
+                    val normalizedKey = snapshot.key.normalizeKey()
+                    val scripKey = snapshot.scripCode?.toString()
+                    val qualifiedKey = snapshot.qualifiedKey?.normalizeKey()
+                    _ltpPrices.update { current ->
+                        current.toMutableMap().apply {
+                            put(normalizedKey, snapshot.lastPrice)
+                            scripKey?.let { put(it, snapshot.lastPrice) }
+                            qualifiedKey?.let { put(it, snapshot.lastPrice) }
+                        }
+                    }
+                }
+        }
+    }
 }
 
 private fun Throwable.readableMessage(): String =
@@ -645,4 +688,18 @@ private fun Throwable.readableMessage(): String =
 private fun requiresOptionFlow(exchange: String): Boolean {
     val upper = exchange.uppercase()
     return upper != "NC" && upper != "BC"
+}
+
+private fun String.normalizeKey(): String = trim().uppercase()
+
+private fun buildQualifiedKey(exchange: String?, symbol: String?): String? {
+    if (exchange.isNullOrBlank() || symbol.isNullOrBlank()) return null
+    val normalizedExchange = when (exchange.uppercase()) {
+        "NF" -> "NFO"
+        "BF" -> "BFO"
+        "NC" -> "NSE"
+        "BC" -> "BSE"
+        else -> exchange.uppercase()
+    }
+    return "$normalizedExchange:${symbol.trim().uppercase()}"
 }

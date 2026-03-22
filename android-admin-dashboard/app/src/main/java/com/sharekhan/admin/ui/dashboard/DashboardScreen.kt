@@ -1,5 +1,6 @@
 package com.sharekhan.admin.ui.dashboard
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,17 +17,21 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.ShoppingCart
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -60,6 +65,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
@@ -70,9 +77,9 @@ import com.sharekhan.admin.data.model.PageResponse
 import com.sharekhan.admin.data.model.TradingRequest
 import com.sharekhan.admin.data.model.TriggeredTrade
 import com.sharekhan.admin.ui.state.UiState
-import com.sharekhan.admin.ui.state.getOrNull
 import kotlinx.coroutines.flow.consumeAsFlow
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,6 +96,7 @@ fun DashboardScreen(
     val pagination by viewModel.executedPagination.collectAsState()
     val statusFilter by viewModel.statusFilter.collectAsState()
     val brokerDialog by viewModel.brokerDialog.collectAsState()
+    val ltpPrices by viewModel.ltpPrices.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
@@ -145,12 +153,17 @@ fun DashboardScreen(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             bottomBar = {
                 NavigationBar {
-                    DashboardTab.values().forEach { tab ->
+                    DashboardTab.entries.forEach { tab ->
                         NavigationBarItem(
                             selected = tab == selectedTab,
                             onClick = { viewModel.selectTab(tab) },
                             label = { Text(tabLabel(tab)) },
-                            icon = {}
+                            icon = {
+                                Icon(
+                                    imageVector = tabIcon(tab),
+                                    contentDescription = tabLabel(tab)
+                                )
+                            }
                         )
                     }
                 }
@@ -174,6 +187,7 @@ fun DashboardScreen(
 
                     DashboardTab.REQUESTS -> RequestsScreen(
                         requestsState = requestsState,
+                        ltpPrices = ltpPrices,
                         onRefresh = viewModel::refreshTradingRequests,
                         onTrigger = { request -> viewModel.triggerRequest(request, null) },
                         onCancel = viewModel::cancelRequest,
@@ -183,11 +197,14 @@ fun DashboardScreen(
                     DashboardTab.EXECUTED -> ExecutedScreen(
                         executedState = executedState,
                         pagination = pagination,
+                        ltpPrices = ltpPrices,
                         onRefresh = { viewModel.refreshExecutedTrades(resetPage = true) },
                         onPrev = viewModel::loadPreviousExecutedPage,
                         onNext = viewModel::loadNextExecutedPage,
                         statusFilter = statusFilter,
-                        onStatusChanged = viewModel::updateStatusFilter
+                        onStatusChanged = viewModel::updateStatusFilter,
+                        onSelectAllStatuses = viewModel::selectAllStatuses,
+                        onResetStatuses = viewModel::resetStatusFilter
                     )
 
                     DashboardTab.BROKERS -> BrokersScreen(
@@ -231,9 +248,9 @@ private fun UserDrawerContent(
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )
-        Divider()
+        HorizontalDivider()
         AddUserForm(onCreateUser = onCreateUser)
-        Divider()
+        HorizontalDivider()
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -468,7 +485,7 @@ private fun PlaceOrderScreen(
                         strokeWidth = 2.dp
                     )
                 } else {
-                    Icon(Icons.Default.Send, contentDescription = null)
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                 }
                 Text(if (state.alreadyExecuted) "Record Execution" else "Place Order")
@@ -558,6 +575,7 @@ private fun CheckboxRow(
 @Composable
 private fun RequestsScreen(
     requestsState: UiState<List<TradingRequest>>,
+    ltpPrices: Map<String, Double>,
     onRefresh: () -> Unit,
     onTrigger: (TradingRequest) -> Unit,
     onCancel: (TradingRequest) -> Unit,
@@ -592,8 +610,14 @@ private fun RequestsScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(requests, key = { it.id }) { request ->
+                            val liveLtp = ltpPrices.ltpFor(
+                                scripCode = request.scripCode,
+                                exchange = request.exchange,
+                                symbol = request.symbol
+                            )
                             RequestCard(
                                 request = request,
+                                liveLtp = liveLtp,
                                 onTrigger = onTrigger,
                                 onCancel = onCancel,
                                 onPrefill = onPrefill
@@ -611,6 +635,7 @@ private fun RequestsScreen(
 @Composable
 private fun RequestCard(
     request: TradingRequest,
+    liveLtp: Double?,
     onTrigger: (TradingRequest) -> Unit,
     onCancel: (TradingRequest) -> Unit,
     onPrefill: (TradingRequest) -> Unit
@@ -630,6 +655,7 @@ private fun RequestCard(
             Text("Symbol: ${request.symbol ?: "-"} (${request.exchange ?: "-"})")
             Text("Entry: ${request.entryPrice ?: "-"}  SL: ${request.stopLoss ?: "-"}  Qty: ${request.quantity ?: "-"}")
             Text("Status: ${request.status ?: "-"}")
+            Text("Live LTP: ${formatPrice(liveLtp)}")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onTrigger(request) }) {
                     Text("Trigger")
@@ -651,11 +677,14 @@ private fun RequestCard(
 private fun ExecutedScreen(
     executedState: UiState<PageResponse<TriggeredTrade>>,
     pagination: PaginationState,
+    ltpPrices: Map<String, Double>,
     onRefresh: () -> Unit,
     onPrev: () -> Unit,
     onNext: () -> Unit,
     statusFilter: Set<String>,
-    onStatusChanged: (String, Boolean) -> Unit
+    onStatusChanged: (String, Boolean) -> Unit,
+    onSelectAllStatuses: () -> Unit,
+    onResetStatuses: () -> Unit
 ) {
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -667,9 +696,23 @@ private fun ExecutedScreen(
             AssistChip(onClick = onRefresh, label = { Text("Refresh") })
         }
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            val allSelected = statusFilter.containsAll(EXECUTED_STATUSES)
+            ElevatedFilterChip(
+                selected = allSelected,
+                onClick = {
+                    if (allSelected) {
+                        onResetStatuses()
+                    } else {
+                        onSelectAllStatuses()
+                    }
+                },
+                label = { Text("All") }
+            )
             EXECUTED_STATUSES.forEach { status ->
                 ElevatedFilterChip(
                     selected = statusFilter.contains(status),
@@ -698,7 +741,13 @@ private fun ExecutedScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         items(trades, key = { it.id }) { trade ->
-                            ExecutedTradeCard(trade)
+                            val liveLtp = ltpPrices.ltpFor(
+                                scripCode = trade.scripCode,
+                                exchange = trade.exchange,
+                                symbol = trade.symbol
+                            )
+                            val livePnl = computeLivePnl(trade, liveLtp)
+                            ExecutedTradeCard(trade, liveLtp, livePnl)
                         }
                     }
                 }
@@ -731,7 +780,7 @@ private val EXECUTED_STATUSES = listOf(
 )
 
 @Composable
-private fun ExecutedTradeCard(trade: TriggeredTrade) {
+private fun ExecutedTradeCard(trade: TriggeredTrade, liveLtp: Double?, livePnl: Double?) {
     ElevatedCard {
         Column(
             modifier = Modifier
@@ -746,7 +795,13 @@ private fun ExecutedTradeCard(trade: TriggeredTrade) {
             )
             Text("Exchange: ${trade.exchange ?: "-"}  Qty: ${trade.quantity ?: "-"}  Status: ${trade.status ?: "-"}")
             Text("Entry: ${trade.entryPrice ?: "-"}  Exit: ${trade.exitPrice ?: "-"}")
-            trade.pnl?.let { Text("PnL: $it") }
+            trade.pnl?.let { 
+                Text("PnL: $it", color = if (it >= 0) Color(0xFF4CAF50) else Color(0xFFF44336)) 
+            }
+            Text("Live LTP: ${formatPrice(liveLtp)}")
+            livePnl?.let { 
+                Text("Live PnL: ${formatPrice(it)}", color = if (it >= 0) Color(0xFF4CAF50) else Color(0xFFF44336)) 
+            }
             trade.triggeredAt?.let { Text("Triggered: $it") }
             trade.exitedAt?.let { Text("Exited: $it") }
         }
@@ -937,3 +992,47 @@ private fun tabLabel(tab: DashboardTab): String = when (tab) {
     DashboardTab.EXECUTED -> "Executed"
     DashboardTab.BROKERS -> "Brokers"
 }
+
+private fun tabIcon(tab: DashboardTab): ImageVector = when (tab) {
+    DashboardTab.ORDER -> Icons.Default.ShoppingCart
+    DashboardTab.REQUESTS -> Icons.AutoMirrored.Filled.List
+    DashboardTab.EXECUTED -> Icons.Default.History
+    DashboardTab.BROKERS -> Icons.Default.People
+}
+
+private fun Map<String, Double>.ltpFor(
+    scripCode: Int?,
+    exchange: String?,
+    symbol: String?
+): Double? {
+    scripCode?.let { code ->
+        val byCode = get(code.toString())
+        if (byCode != null) return byCode
+    }
+    val qualified = buildQualifiedKey(exchange, symbol)?.uppercase() ?: return null
+    return get(qualified)
+}
+
+private fun buildQualifiedKey(exchange: String?, symbol: String?): String? {
+    if (exchange.isNullOrBlank() || symbol.isNullOrBlank()) return null
+    val normalizedExchange = when (exchange.uppercase()) {
+        "NF" -> "NFO"
+        "BF" -> "BFO"
+        "NC" -> "NSE"
+        "BC" -> "BSE"
+        else -> exchange.uppercase()
+    }
+    return "$normalizedExchange:${symbol.trim().uppercase()}"
+}
+
+private fun computeLivePnl(trade: TriggeredTrade, liveLtp: Double?): Double? {
+    if (liveLtp == null) return null
+    val status = trade.status?.uppercase(Locale.US) ?: return null
+    if (status != "EXECUTED" && status != "EXIT_ORDER_PLACED") return null
+    val entryPrice = trade.actualEntryPrice ?: trade.entryPrice ?: return null
+    val quantity = trade.quantity?.toDouble() ?: return null
+    return quantity * (liveLtp - entryPrice)
+}
+
+private fun formatPrice(value: Double?): String =
+    value?.let { String.format(Locale.US, "%.2f", it) } ?: "-"

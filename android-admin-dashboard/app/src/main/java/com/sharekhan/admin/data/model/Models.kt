@@ -164,5 +164,7 @@ data class UpdateTargetsRequest(
 
 data class LtpSnapshot(
     val key: String,
-    val lastPrice: Double
+    val lastPrice: Double,
+    val scripCode: Int? = null,
+    val qualifiedKey: String? = null
 )

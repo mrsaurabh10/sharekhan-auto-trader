@@ -34,6 +34,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import okhttp3.logging.HttpLoggingInterceptor
 
 class AdminApiClient(
@@ -377,6 +379,18 @@ class AdminApiClient(
             else -> "$exchange:$instrument"
         }
         return fetchOptionLtp(qualified)
+    }
+
+    fun openLtpWebSocket(listener: WebSocketListener): WebSocket {
+        val httpUrl = buildUrl("ws/ltp")
+        val scheme = if (httpUrl.isHttps) "wss" else "ws"
+        val wsUrl = httpUrl.newBuilder()
+            .scheme(scheme)
+            .build()
+        val request = Request.Builder()
+            .url(wsUrl)
+            .build()
+        return client.newWebSocket(request, listener)
     }
 
     suspend fun dashboardPing(): Boolean {
