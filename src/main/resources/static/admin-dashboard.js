@@ -67,6 +67,18 @@
 
   function escapeHtml(v) { return (v == null) ? '' : String(v).replace(/[&<>'"`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;","`":"&#96;"})[c]); }
 
+  function updatePnlStyle(element, value) {
+    if (!element) return;
+    const num = Number(value);
+    if (!isNaN(num)) {
+      element.style.color = num >= 0 ? 'green' : 'red';
+      element.style.fontWeight = 'bold';
+    } else {
+      element.style.color = '';
+      element.style.fontWeight = 'normal';
+    }
+  }
+
   // --- Instruments / option helpers ---
   async function fetchInstrumentsForExchange(exchange) {
     if (!exchange) return [];
@@ -389,8 +401,12 @@
         // Final PNL logic
         let finalPnl = (t.finalPnl != null ? t.finalPnl : (t.realizedPnl != null ? t.realizedPnl : (t.pnl != null ? t.pnl : null)));
         if (statusUpper === 'EXITED_SUCCESS' || (statusUpper !== 'EXECUTED' && statusUpper !== 'EXIT_ORDER_PLACED' && finalPnl != null)) {
-             if (finalPnl != null && !isNaN(finalPnl)) pnlTd.innerText = Number(finalPnl).toFixed(2);
-             else if (finalPnl != null) pnlTd.innerText = String(finalPnl);
+             if (finalPnl != null && !isNaN(finalPnl)) {
+                 pnlTd.innerText = Number(finalPnl).toFixed(2);
+                 updatePnlStyle(pnlTd, finalPnl);
+             } else if (finalPnl != null) {
+                 pnlTd.innerText = String(finalPnl);
+             }
         }
 
         // Determine Keys
@@ -522,6 +538,7 @@
                     if (!Number.isNaN(entry) && !Number.isNaN(qty) && !Number.isNaN(ltpNum)) {
                         const pnl = qty * (ltpNum - entry);
                         el.innerText = Number(pnl).toFixed(2);
+                        updatePnlStyle(el, pnl);
                     }
                 }
             }
@@ -564,6 +581,7 @@
                         if (!Number.isNaN(entry) && !Number.isNaN(qty)) {
                             const pnl = qty * (ltpNum - entry);
                             pnlTd.innerText = Number(pnl).toFixed(2);
+                            updatePnlStyle(pnlTd, pnl);
                         }
                     }
                 }

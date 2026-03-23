@@ -58,14 +58,38 @@ public class SharekhanTokenFetcher {
             loginButton.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
             loginButton.click(new Locator.ClickOptions().setForce(true));
 
-            Locator totpLocator = page.locator("#totp");
-            totpLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.ATTACHED).setTimeout(30000));
-            totpLocator.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(30000));
+            // Both OTP and TOTP inputs might be present, wait for at least one to be visible
+            // The user must click "Switch to TOTP" link to see the TOTP page
+            try {
+                Locator switchTotpBtn = page.locator("#swh_totp");
+                switchTotpBtn.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(5000));
+                switchTotpBtn.click(new Locator.ClickOptions().setForce(true));
+                log.info("Clicked Switch to TOTP");
+            } catch (Exception e) {
+                log.info("Switch to TOTP button not found or not visible, proceeding...");
+            }
+            
+            Locator totpInput = page.locator(".totp_div #totp");
+            Locator otpInput = page.locator(".otp_div #otp");
+            
+            // Wait for one of the inputs to become visible
+            page.waitForCondition(() -> totpInput.isVisible() || otpInput.isVisible(), 
+                new Page.WaitForConditionOptions().setTimeout(30000));
 
             Totp totp = new Totp(totpSecret);
             String otpCode = totp.now();
-            totpLocator.fill(otpCode, new Locator.FillOptions().setForce(true));
-            page.locator("button[onclick=\"submitOTP('TOTP')\"]").click();
+            
+            if (totpInput.isVisible()) {
+                totpInput.fill(otpCode, new Locator.FillOptions().setForce(true));
+                Locator submitTotpBtn = page.locator(".totp_div #sb_totp_btn");
+                submitTotpBtn.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(10000));
+                submitTotpBtn.click(new Locator.ClickOptions().setForce(true));
+            } else {
+                otpInput.fill(otpCode, new Locator.FillOptions().setForce(true));
+                Locator submitOtpBtn = page.locator(".otp_div #sb_otp_btn");
+                submitOtpBtn.waitFor(new Locator.WaitForOptions().setState(WaitForSelectorState.VISIBLE).setTimeout(10000));
+                submitOtpBtn.click(new Locator.ClickOptions().setForce(true));
+            }
 
             // Wait for redirection to a URL containing "request_token" (or similar indicator of success)
             // The original code waited for "test" but also extracted tokens. Let's be robust.
