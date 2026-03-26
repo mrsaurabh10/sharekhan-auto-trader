@@ -8,7 +8,6 @@ import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.enums.Broker;
 import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -27,10 +26,6 @@ public class MStockLtpService {
     private static final String LTP_URL = "https://api.mstock.trade/openapi/typea/instruments/quote/ltp";
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
-
-    // Injected API key from application properties: app.mstock.api-key
-    @Value("${app.mstock.api-key:}")
-    private String apiKey;
 
     private static class HttpResult {
         int code;
@@ -54,6 +49,13 @@ public class MStockLtpService {
             throw new IllegalStateException("No MStock access token available. Please authenticate first.");
         }
 
+        // Get the API key from the MStockAuthProvider
+        BrokerAuthProvider mstockProvider = providerRegistry.getProvider(Broker.MSTOCK);
+        if (mstockProvider == null) {
+            throw new IllegalStateException("MStockAuthProvider not found in registry.");
+        }
+        String apiKey = mstockProvider.getApiKey();
+
         if (apiKey == null || apiKey.isBlank()) {
             log.warn("MStock API key (app.mstock.api-key) is not configured");
         }
@@ -72,7 +74,7 @@ public class MStockLtpService {
             log.debug("MStock LTP URL: {}", urlStr);
 
             // Attempt request with the required Authorization format: 'token {apiKey}:{accessToken}'
-            HttpResult res = doRequestWithApiKey(urlStr, storedToken);
+            HttpResult res = doRequestWithApiKey(urlStr, storedToken, apiKey);
 
             // if token-related error, try refresh via provider and retry once
             if (res.code == 401 || indicatesTokenException(res.body)) {
@@ -85,7 +87,7 @@ public class MStockLtpService {
                             tokenStoreService.updateToken(Broker.MSTOCK, auth.token(), auth.expiresIn());
                             storedToken = auth.token();
                             // retry with refreshed token
-                            res = doRequestWithApiKey(urlStr, storedToken);
+                            res = doRequestWithApiKey(urlStr, storedToken, apiKey);
                         } else {
                             log.warn("Provider returned no token during refresh");
                         }
@@ -159,7 +161,7 @@ public class MStockLtpService {
         return map.get(instrument);
     }
 
-    private HttpResult doRequestWithApiKey(String urlStr, String accessToken) throws Exception {
+    private HttpResult doRequestWithApiKey(String urlStr, String accessToken, String apiKey) throws Exception {
         URL url = new URL(urlStr);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("GET");

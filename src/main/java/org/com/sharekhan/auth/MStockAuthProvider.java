@@ -31,6 +31,11 @@ public class MStockAuthProvider implements BrokerAuthProvider {
     }
 
     @Override
+    public String getApiKey() {
+        return props.getApiKey();
+    }
+
+    @Override
     public AuthTokenResult loginAndFetchToken() {
         try {
             String apiKey = props.getApiKey();

@@ -21,6 +21,12 @@ public class SharekhanAuthProvider implements BrokerAuthProvider {
     }
 
     @Override
+    public String getApiKey() {
+        // Sharekhan provider might not have a direct api key in props, returning null or empty
+        return null;
+    }
+
+    @Override
     public AuthTokenResult loginAndFetchToken() {
         try {
             String clientCode = props.getClientCode();

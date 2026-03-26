@@ -105,6 +105,11 @@ public class TokenLoginAutomationService implements BrokerAuthProvider {
         return org.com.sharekhan.enums.Broker.SHAREKHAN;
     }
 
+    @Override
+    public String getApiKey() {
+        return apiKey;
+    }
+
     private Map<String, String> extractTokensFromUrl(String url) {
         Map<String, String> result = new HashMap<>();
         try {
