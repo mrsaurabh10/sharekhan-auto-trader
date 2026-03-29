@@ -168,12 +168,12 @@ public class TradingMessageService {
                 boolean enabled = true;
                 if ("Sharekhan".equalsIgnoreCase(req.getSource())) {
                     try {
-                        String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "true");
+                        String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "false");
                         if (v != null) {
                             String s = v.trim().toLowerCase();
                             enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
                         }
-                    } catch (Exception ignore) { enabled = true; }
+                    } catch (Exception ignore) { enabled = false; }
                 } else if (!"admin-ui".equalsIgnoreCase(req.getSource())) {
                     try {
                         String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
@@ -181,7 +181,7 @@ public class TradingMessageService {
                             String s = v.trim().toLowerCase();
                             enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
                         }
-                    } catch (Exception ignore) { enabled = true; }
+                    } catch (Exception ignore) { enabled = false; }
                 }
 
                 if (!enabled) {
@@ -249,20 +249,20 @@ public class TradingMessageService {
                     boolean enabled = true;
                     if ("Sharekhan".equalsIgnoreCase(req.getSource())) {
                         try {
-                            String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "false");
+                            String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "true");
                             if (v != null) {
                                 String s = v.trim().toLowerCase();
                                 enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
                             }
-                        } catch (Exception ignore) { enabled = false; }
+                        } catch (Exception ignore) { enabled = true; }
                     } else if (!"admin-ui".equalsIgnoreCase(req.getSource())) {
                         try {
-                            String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "false");
+                            String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
                             if (v != null) {
                                 String s = v.trim().toLowerCase();
                                 enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
                             }
-                        } catch (Exception ignore) { enabled = false; }
+                        } catch (Exception ignore) { enabled = true; }
                     }
                     if (!enabled) {
                         String skipReason = "Sharekhan".equalsIgnoreCase(req.getSource()) ? "allow_sharekhan_research=false" : "telegram_trade_enabled=false";
@@ -351,14 +351,16 @@ public class TradingMessageService {
         t.setIntraday(src.getIntraday());
         t.setTrailingSl(src.getTrailingSl());
         t.setQuantity(src.getQuantity());
+        t.setLots(src.getLots());
         t.setSource(src.getSource());
+        
         t.setUseSpotPrice(src.getUseSpotPrice());
         t.setUseSpotForEntry(src.getUseSpotForEntry());
         t.setUseSpotForSl(src.getUseSpotForSl());
         t.setUseSpotForTarget(src.getUseSpotForTarget());
         t.setSpotScripCode(src.getSpotScripCode());
         t.setTslEnabled(src.getTslEnabled());
-        t.setLots(src.getLots());
+
         // userId and brokerCredentialsId intentionally left null here; caller sets them
         return t;
     }
