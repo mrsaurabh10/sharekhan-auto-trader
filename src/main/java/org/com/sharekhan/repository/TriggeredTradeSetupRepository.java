@@ -89,6 +89,8 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findBySymbolAndAppUserIdAndStatus(String symbol, Long appUserId, TriggeredTradeStatus status);
 
+    List<TriggeredTradeSetupEntity> findBySymbolAndAppUserIdAndStatusIn(String symbol, Long appUserId, List<TriggeredTradeStatus> statuses);
+
     // Added for duplicate check
     List<TriggeredTradeSetupEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);
 }

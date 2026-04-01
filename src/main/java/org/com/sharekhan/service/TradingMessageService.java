@@ -121,21 +121,21 @@ public class TradingMessageService {
         }
 
         List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepository
-                .findBySymbolAndAppUserIdAndStatus(
-                        req.getInstrument(), 
-                        appUserId, 
-                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                .findBySymbolAndAppUserIdAndStatusIn(
+                        req.getInstrument(),
+                        appUserId,
+                        List.of(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION, TriggeredTradeStatus.TRIGGERED)
                 );
-        
+
         if (pendingRequests != null && !pendingRequests.isEmpty()) {
             return true;
         }
 
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeSetupRepository
-                .findBySymbolAndAppUserIdAndStatus(
-                        req.getInstrument(), 
-                        appUserId, 
-                        TriggeredTradeStatus.EXECUTED
+                .findBySymbolAndAppUserIdAndStatusIn(
+                        req.getInstrument(),
+                        appUserId,
+                        List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 );
 
         return executedTrades != null && !executedTrades.isEmpty();
