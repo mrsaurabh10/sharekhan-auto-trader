@@ -7,6 +7,7 @@ import org.com.sharekhan.auth.BrokerAuthProvider;
 import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.enums.Broker;
+import org.com.sharekhan.util.CryptoService;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ public class MStockLtpService {
     private static final String LTP_URL = "https://api.mstock.trade/openapi/typea/instruments/quote/ltp";
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
+    private final CryptoService cryptoService;
 
     // Injected API key from application properties: app.mstock.api-key
     @Value("${app.mstock.api-key:}")
@@ -56,7 +58,11 @@ public class MStockLtpService {
         if (tokenInfo != null) {
             storedToken = tokenInfo.getToken();
             if (tokenInfo.getApiKey() != null) {
-                effectiveApiKey = tokenInfo.getApiKey();
+                try {
+                    effectiveApiKey = cryptoService.decrypt(tokenInfo.getApiKey());
+                } catch (Exception e) {
+                    effectiveApiKey = tokenInfo.getApiKey();
+                }
             }
         } else {
             storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK);
@@ -67,7 +73,7 @@ public class MStockLtpService {
         }
 
         if (effectiveApiKey == null || effectiveApiKey.isBlank()) {
-            log.warn("MStock API key (app.mstock.api-key) is not configured");
+            log.warn("MStock API key is not configured or resolved");
         }
 
         try {
@@ -237,6 +243,17 @@ public class MStockLtpService {
             throw new IllegalStateException("No MStock access token available. Please authenticate first.");
         }
 
+        // We also need the customer-specific API key
+        String effectiveApiKey = this.apiKey;
+        TokenStoreService.TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK);
+        if (tokenInfo != null && tokenInfo.getApiKey() != null) {
+            try {
+                effectiveApiKey = cryptoService.decrypt(tokenInfo.getApiKey());
+            } catch (Exception e) {
+                effectiveApiKey = tokenInfo.getApiKey();
+            }
+        }
+
         // delegate to existing implementation by temporarily using the storedToken path
         // To avoid duplicating logic, we will copy the implementation but using storedToken variable
         try {
@@ -252,7 +269,7 @@ public class MStockLtpService {
             String urlStr = sb.toString();
             log.debug("MStock LTP URL: {}", urlStr);
 
-            HttpResult res = doRequestWithApiKey(urlStr, storedToken);
+            HttpResult res = doRequestWithApiKey(urlStr, storedToken, effectiveApiKey);
 
             if (res.code == 401 || indicatesTokenException(res.body)) {
                 log.warn("MStock LTP returned token error (http {}), attempting refresh via provider", res.code);
@@ -263,7 +280,7 @@ public class MStockLtpService {
                         if (auth != null && auth.token() != null) {
                             tokenStoreService.updateToken(Broker.MSTOCK, auth.token(), auth.expiresIn());
                             storedToken = auth.token();
-                            res = doRequestWithApiKey(urlStr, storedToken);
+                            res = doRequestWithApiKey(urlStr, storedToken, effectiveApiKey);
                         } else {
                             log.warn("Provider returned no token during refresh");
                         }
