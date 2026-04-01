@@ -50,16 +50,7 @@ public class SharekhanBrokerService implements BrokerService {
             order.exchange = trade.getExchange();
             order.transactionType = transactionType;
             order.quantity = trade.getQuantity();
-            
-            // For some broad-market indices/equity feeds we send price=0.0 to indicate a market order
-            String sym = trade.getSymbol() != null ? trade.getSymbol().toUpperCase() : "";
-            final Set<String> MARKET_SYMBOLS = Set.of("SENSEX", "NIFTY", "BANKNIFTY", "BANKEX", "FINNIFTY");
-            if (MARKET_SYMBOLS.contains(sym)) {
-                order.price = "0.0";
-            } else {
-                order.price = String.valueOf(price);
-            }
-            
+            order.price = String.valueOf(price);
             order.orderType = "NORMAL";
             order.productType = "INVESTMENT";
             order.instrumentType = trade.getInstrumentType();
