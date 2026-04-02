@@ -126,8 +126,11 @@ public class SharekhanBrokerService implements BrokerService {
                     }
                     
                     // Calculate PnL if it's a sell order and we have entry price
-                    if ("S".equals(transactionType) && executedPrice != null && trade.getEntryPrice() != null) {
-                        pnl = (executedPrice - trade.getEntryPrice()) * trade.getQuantity();
+                    if ("S".equals(transactionType) && executedPrice != null) {
+                        Double entryPriceForPnl = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+                        if (entryPriceForPnl != null) {
+                            pnl = (executedPrice - entryPriceForPnl) * trade.getQuantity();
+                        }
                     }
                 }
             }
