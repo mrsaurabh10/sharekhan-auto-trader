@@ -65,24 +65,29 @@ public class PriceTriggerService {
                 
                 // Check if LTP is more than tolerance % of the entry price
                 if (ltp > trigger.getEntryPrice() * tolerance) {
-                    log.warn("⚠️ LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
-                    trigger.setStatus(TriggeredTradeStatus.REJECTED);
-                    triggerRepo.save(trigger);
+                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+                    if (claimed == 1) {
+                        log.warn("⚠️ LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
+                    }
                     continue;
                 }
 
                 if (ltp >= trigger.getEntryPrice()) {
-                    log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
+                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                    if (claimed == 1) {
+                        log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
 
-                    // convert request -> executed entity and run execution flow
-                    TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
-                    
-                    if (executed != null) {
-                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED);
-                        triggerRepo.save(trigger);
-                        log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
-                    } else {
-                        log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
+                        // convert request -> executed entity and run execution flow
+                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED); // Update entity status reference
+                        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
+                        
+                        if (executed != null) {
+                            log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
+                        } else {
+                            // rollback claim
+                            triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
+                            log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
+                        }
                     }
                 }
             }
@@ -102,14 +107,15 @@ public class PriceTriggerService {
                     continue;
                 }
                 
-                    if (trigger.getEntryPrice() == null) continue;
+                if (trigger.getEntryPrice() == null) continue;
 
                 double tolerance = 1.006;
 
                 if (ltp > trigger.getEntryPrice() * tolerance) {
-                    log.warn("⚠️ Spot LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
-                    trigger.setStatus(TriggeredTradeStatus.REJECTED);
-                    triggerRepo.save(trigger);
+                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+                    if (claimed == 1) {
+                        log.warn("⚠️ Spot LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
+                    }
                     continue;
                 }
 
@@ -122,9 +128,10 @@ public class PriceTriggerService {
                     // Check for gap down with tolerance for PE
                     double gapDownTolerance = 0.994; // 0.6% tolerance
                     if (ltp < trigger.getEntryPrice() * gapDownTolerance) {
-                        log.warn("⚠️ Spot LTP {} is less than {}% below entry price {} for PE trigger {}. Marking as REJECTED.", ltp, (1 - gapDownTolerance) * 100, trigger.getEntryPrice(), trigger.getId());
-                        trigger.setStatus(TriggeredTradeStatus.REJECTED);
-                        triggerRepo.save(trigger);
+                        int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+                        if (claimed == 1) {
+                            log.warn("⚠️ Spot LTP {} is less than {}% below entry price {} for PE trigger {}. Marking as REJECTED.", ltp, (1 - gapDownTolerance) * 100, trigger.getEntryPrice(), trigger.getId());
+                        }
                         continue;
                     }
                 } else {
@@ -133,17 +140,20 @@ public class PriceTriggerService {
                 }
 
                 if (conditionMet) {
-                    log.info("🚀 Spot Entry condition met for {} ({}) at SpotLTP: {}", trigger.getSymbol(), trigger.getOptionType(), ltp);
+                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                    if (claimed == 1) {
+                        log.info("🚀 Spot Entry condition met for {} ({}) at SpotLTP: {}", trigger.getSymbol(), trigger.getOptionType(), ltp);
 
-                    // convert request -> executed entity and run execution flow
-                    TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
-                    
-                    if (executed != null) {
-                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED);
-                        triggerRepo.save(trigger);
-                        log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
-                    } else {
-                        log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
+                        // convert request -> executed entity and run execution flow
+                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED); // Update entity status reference
+                        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
+                        
+                        if (executed != null) {
+                            log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
+                        } else {
+                            triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
+                            log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
+                        }
                     }
                 }
             }

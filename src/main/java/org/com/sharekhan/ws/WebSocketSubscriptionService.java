@@ -1,5 +1,7 @@
 package org.com.sharekhan.ws;
 
+import java.util.Set;
+
 public interface WebSocketSubscriptionService {
     /**
      * Subscribe to LTP for a given scrip key.
@@ -17,4 +19,9 @@ public interface WebSocketSubscriptionService {
     boolean unsubscribeFromScrip(String scripCode);
 
     void subscribeToAck(String customerId);
+
+    /**
+     * Get all currently active scrip keys.
+     */
+    Set<String> getActiveScripKeys();
 }
