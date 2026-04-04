@@ -35,8 +35,9 @@ public class SimulatorBrokerService implements BrokerService {
         String orderId = "SIM-EXIT-" + System.currentTimeMillis();
         
         double pnl = 0.0;
-        if (trade.getEntryPrice() != null && trade.getQuantity() != null) {
-            pnl = (exitPrice - trade.getEntryPrice()) * trade.getQuantity();
+        Double entryPriceForPnl = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+        if (entryPriceForPnl != null && trade.getQuantity() != null) {
+            pnl = (exitPrice - entryPriceForPnl) * trade.getQuantity();
         }
 
         return OrderPlacementResult.builder()

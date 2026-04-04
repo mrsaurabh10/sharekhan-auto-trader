@@ -167,8 +167,9 @@ public class PriceTriggerService {
             log.debug("Invoked monitorOpenTrades for scripCode={} with ltp={}", scripCode, ltp);
             
             // 1. Find trades where this scripCode is the TRADED instrument
-            List<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatus(
-                    scripCode, TriggeredTradeStatus.EXECUTED
+            List<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatusIn(
+                    scripCode,
+                    java.util.List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED)
             );
 
             for (TriggeredTradeSetupEntity trade : trades) {
@@ -190,7 +191,10 @@ public class PriceTriggerService {
             }
             
             // 2. Find trades where this scripCode is the SPOT instrument (if any)
-            List<TriggeredTradeSetupEntity> spotTrades = triggeredRepo.findBySpotScripCodeAndStatus(scripCode, TriggeredTradeStatus.EXECUTED);
+            List<TriggeredTradeSetupEntity> spotTrades = triggeredRepo.findBySpotScripCodeAndStatusIn(
+                    scripCode,
+                    java.util.List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED)
+            );
              for (TriggeredTradeSetupEntity trade : spotTrades) {
                 try {
                      // We have the spot LTP (ltp argument). We need the traded instrument LTP for execution.
@@ -270,7 +274,11 @@ public class PriceTriggerService {
                 }
 
                 if (slHit) {
-                    return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
+                    int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
+                    if (updated == 0) {
+                        updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
+                    }
+                    return updated;
                 }
 
                 // Check if any target hit and if we need to book lots
@@ -279,7 +287,11 @@ public class PriceTriggerService {
                     if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
                         int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
                         if (lotsToBook > 0) {
-                            return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            if (updated == 0) {
+                                updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            }
+                            return updated;
                         }
                     } else {
                         // Standard target hit logic (any target hit -> exit all)
@@ -300,7 +312,11 @@ public class PriceTriggerService {
                         }
                         
                         if (targetHit) {
-                             return triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            if (updated == 0) {
+                                updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            }
+                            return updated;
                         }
                     }
                 }
@@ -317,12 +333,34 @@ public class PriceTriggerService {
                 Double targetRefPrice = Boolean.TRUE.equals(reloaded.getUseSpotForTarget()) ? spotLtp : tradedLtp;
 
                 String exitReason = reloaded.getExitReason();
+                boolean exitOrderAlreadyPresent = reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank();
                 if ("STOP_LOSS_HIT".equals(exitReason)) {
-                    log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, tradedLtp);
-                    tradeExecutionService.squareOff(reloaded, tradedLtp, "STOP_LOSS_HIT");
+                    Double stopPriceOption = reloaded.getStopLoss();
+                    boolean usesSpotSl = Boolean.TRUE.equals(reloaded.getUseSpotForSl()) ||
+                            (reloaded.getUseSpotForSl() == null && Boolean.TRUE.equals(reloaded.getUseSpotPrice()));
+
+                    boolean modified = false;
+                    if (exitOrderAlreadyPresent && !usesSpotSl && stopPriceOption != null && stopPriceOption > 0) {
+                        modified = tradeExecutionService.modifyExitOrderForStop(reloaded, stopPriceOption);
+                    }
+
+                    if (modified) {
+                        log.warn("📉 SL hit for trade {} - modified existing exit order {} to price {}", tradeId, reloaded.getExitOrderId(), stopPriceOption);
+                    } else {
+                        log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, tradedLtp);
+                        tradeExecutionService.squareOff(reloaded, tradedLtp, "STOP_LOSS_HIT");
+                    }
                 } else {
                     // TARGET_HIT
-                    if (Boolean.TRUE.equals(reloaded.getTslEnabled())) {
+                    if (exitOrderAlreadyPresent) {
+                        log.info("🎯 Target hit for trade {} - existing exit order {} already placed. Maintaining TARGET_ORDER_PLACED state.", tradeId, reloaded.getExitOrderId());
+                        try {
+                            reloaded.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+                            triggeredRepo.save(reloaded);
+                        } catch (Exception e) {
+                            log.debug("Failed to persist TARGET_ORDER_PLACED status for trade {}: {}", tradeId, e.getMessage());
+                        }
+                    } else if (Boolean.TRUE.equals(reloaded.getTslEnabled())) {
                         Integer lots = reloaded.getLots();
                         // If lots info is missing, assume single lot / full exit
                         if (lots == null || lots <= 1) {
