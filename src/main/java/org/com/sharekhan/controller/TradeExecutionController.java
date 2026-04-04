@@ -1,5 +1,6 @@
 package org.com.sharekhan.controller;
 
+import org.com.sharekhan.dto.ModifyOrderRequest;
 import org.com.sharekhan.dto.UpdateTargetsRequest;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
@@ -46,6 +47,24 @@ public class TradeExecutionController {
             return ResponseEntity.ok("Stop Loss moved to cost.");
         } else {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Failed to update stop loss.");
+        }
+    }
+
+    @PostMapping("/exit-order/{id}/modify")
+    public ResponseEntity<?> modifyExitOrder(@PathVariable Long id, @RequestBody ModifyOrderRequest request) {
+        if (request == null || request.getPrice() == null || request.getPrice() <= 0) {
+            return ResponseEntity.badRequest().body("Invalid price supplied for exit order modification.");
+        }
+        try {
+            boolean modified = tradeExecutionService.modifyExitOrderPrice(id, request.getPrice(), "MANUAL_MODIFY");
+            if (modified) {
+                return ResponseEntity.ok("Exit order updated.");
+            }
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Unable to modify exit order. Verify order exists and try again.");
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body("Failed to modify exit order: " + e.getMessage());
         }
     }
 

@@ -13,11 +13,9 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
-import org.com.sharekhan.util.ShareKhanOrderUtil;
 import org.com.sharekhan.ws.WebSocketClientService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.json.JSONObject;
-import org.json.JSONArray;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -78,11 +76,19 @@ public class OrderStatusPollingService {
         try {
             // Find trades in states where we expect an order to be open/pending
             List<TriggeredTradeSetupEntity> pendingExitOrders = tradeRepo.findByStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+            List<TriggeredTradeSetupEntity> pendingTargetOrders = tradeRepo.findByStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
             List<TriggeredTradeSetupEntity> pendingEntryOrders = tradeRepo.findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
             
             int resumedCount = 0;
             
             for (TriggeredTradeSetupEntity trade : pendingExitOrders) {
+                if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
+                    monitorOrderStatus(trade);
+                    resumedCount++;
+                }
+            }
+
+            for (TriggeredTradeSetupEntity trade : pendingTargetOrders) {
                 if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
                     monitorOrderStatus(trade);
                     resumedCount++;
@@ -194,7 +200,13 @@ public class OrderStatusPollingService {
             if (!isMarketOpen(trade.getExchange())) {
                 return;
             }
-            String orderIdToMonitor = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ? trade.getExitOrderId() : trade.getOrderId();
+            String orderIdToMonitor;
+            if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ||
+                    TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(trade.getStatus())) {
+                orderIdToMonitor = trade.getExitOrderId();
+            } else {
+                orderIdToMonitor = trade.getOrderId();
+            }
             try {
 
                 // Resolve broker context (apiKey, customerId, clientCode)
@@ -215,6 +227,7 @@ public class OrderStatusPollingService {
                 if (TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                     // Determine if this was an exit order or entry order based on which orderId we monitored
                     boolean wasExitOrder = TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus())
+                            || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(currentTrade.getStatus())
                             || (orderIdToMonitor != null && orderIdToMonitor.equals(currentTrade.getExitOrderId()));
                     if (wasExitOrder) {
                         currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
@@ -227,6 +240,7 @@ public class OrderStatusPollingService {
                     log.info("Saving tradeId={} before save: status={} orderId={} exitOrderId={} entryPrice={} exitPrice={} pnl={}",
                             currentTrade.getId(), currentTrade.getStatus(), currentTrade.getOrderId(), currentTrade.getExitOrderId(), currentTrade.getEntryPrice(), currentTrade.getExitPrice(), currentTrade.getPnl());
 
+                    TriggeredTradeSetupEntity reloaded = null;
                     try {
                         // If this was an exit order, prefer an atomic repository update to avoid lost-update concurrency
                         if (wasExitOrder && currentTrade.getExitPrice() != null) {
@@ -241,7 +255,7 @@ public class OrderStatusPollingService {
                             tradeRepo.save(currentTrade);
                         }
                         // Read back from DB to confirm persistence
-                        var reloaded = tradeRepo.findById(currentTrade.getId()).orElse(null);
+                        reloaded = tradeRepo.findById(currentTrade.getId()).orElse(null);
                         if (reloaded == null) {
                             log.error("❌ Trade {} not found after save!", currentTrade.getId());
                         } else {
@@ -252,6 +266,12 @@ public class OrderStatusPollingService {
                         log.error("❌ Failed saving trade {} after marking final status {}: {}", currentTrade.getId(), currentTrade.getStatus(), e.getMessage(), e);
                         // rethrow to bubble up so scheduled task doesn't silently ignore the failure
                         throw e;
+                    }
+
+                    // After persisting, trigger post-execution hooks for entry orders
+                    if (!wasExitOrder) {
+                        TriggeredTradeSetupEntity executedTrade = reloaded != null ? reloaded : currentTrade;
+                        tradeExecutionService.handleEntryOrderExecution(executedTrade);
                     }
 
                     // Send telegram notification for executed/exit
@@ -324,135 +344,8 @@ public class OrderStatusPollingService {
                     webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
                     return;
                 } else if (TradeStatus.PENDING.equals(tradeStatus)) {
-                    // Try to improve chances of execution by modifying the pending order to current LTP
-                    try {
-                        // Reload persisted trade to ensure we have latest orderId/exitOrderId/quantity/status
-                        TriggeredTradeSetupEntity persisted = tradeRepo.findById(trade.getId()).orElse(trade);
-                        Double ltp = ltpCacheService.getLtp(persisted.getScripCode());
-                        Double candidatePrice = ltp;
-                        boolean usedFallback = false;
-
-                        // Extract current order price from response to use as reference, and fallback for candidatePrice
-                        Double currentOrderPriceOnExchange = null;
-                        try {
-                            if (response != null && response.has("data") && response.get("data") instanceof JSONArray) {
-                                JSONArray arr = response.getJSONArray("data");
-                                if (!arr.isEmpty()) {
-                                    JSONObject last = arr.getJSONObject(arr.length() - 1);
-                                    
-                                    // 1. Get current price on exchange
-                                    String ordp = last.optString("orderPrice", "").trim();
-                                    if (!ordp.isBlank()) {
-                                        currentOrderPriceOnExchange = Double.parseDouble(ordp);
-                                    }
-
-                                    // 2. Fallback for candidatePrice if LTP is null
-                                    if (candidatePrice == null) {
-                                        String avg = last.optString("avgPrice", "").trim();
-                                        
-                                        // Try avgPrice first, but ensure it is > 0 (pending orders often have "0")
-                                        if (!avg.isBlank()) {
-                                            try {
-                                                double d = Double.parseDouble(avg);
-                                                if (d > 0) candidatePrice = d;
-                                            } catch (NumberFormatException ignored) {}
-                                        }
-
-                                        // If avgPrice was invalid/zero, try orderPrice
-                                        if (candidatePrice == null && !ordp.isBlank()) {
-                                            try {
-                                                double d = Double.parseDouble(ordp);
-                                                if (d > 0) candidatePrice = d;
-                                            } catch (NumberFormatException ignored) {}
-                                        }
-
-                                        if (candidatePrice != null) {
-                                            usedFallback = true;
-                                            log.debug("Using orderHistory fallback price {} for order {}", candidatePrice, orderIdToMonitor);
-                                        }
-                                    }
-                                }
-                            }
-                        } catch (Exception ex) {
-                            log.debug("Failed to extract info from orderHistory for {}: {}", orderIdToMonitor, ex.getMessage());
-                        }
-
-                        if (candidatePrice == null) {
-                            log.debug("No LTP or fallback price available to consider modifying pending order {}", orderIdToMonitor);
-                        } else {
-                            // Choose a sensible reference price. Prefer the actual price on the exchange.
-                            // If unknown, fall back to DB entry/exit price.
-                            Double refPrice = currentOrderPriceOnExchange;
-                            
-                            if (refPrice == null) {
-                                refPrice = trade.getEntryPrice();
-                                if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) && trade.getExitPrice() != null) {
-                                    refPrice = trade.getExitPrice();
-                                }
-                            }
-
-                            double ref = refPrice != null ? refPrice : candidatePrice;
-                            double diff = Math.abs(candidatePrice - ref);
-
-                            // Threshold: modify only if price moved by at least 0.5 INR or 0.2% (whichever is larger)
-                            double pctThreshold = Math.max(0.002 * (ref > 0 ? ref : candidatePrice), 0.5);
-
-                            // don't re-send the same modify if we've already attempted the same price recently
-                            Double lastAttempt = lastModifyPrice.get(orderIdToMonitor);
-                            boolean priceChangedSinceLastAttempt = lastAttempt == null || Math.abs(candidatePrice - lastAttempt) > 1e-6;
-
-                            if (diff >= pctThreshold && priceChangedSinceLastAttempt) {
-                                // Safety Check: Limit how much we chase the price (e.g. max 3% deviation from original intent)
-                                boolean isBuy = !TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(persisted.getStatus());
-                                Double basePrice = isBuy ? persisted.getEntryPrice() : persisted.getExitPrice();
-                                double maxDeviation = 0.03; // 3% limit
-                                boolean isSafe = true;
-
-                                if (basePrice != null && basePrice > 0) {
-                                    if (isBuy && candidatePrice > basePrice * (1 + maxDeviation)) {
-                                        isSafe = false;
-                                        log.warn("⚠️ Skipping modify for Buy Order {}: Price {} exceeds limit ({} + {}%)", orderIdToMonitor, candidatePrice, basePrice, maxDeviation * 100);
-                                    } else if (!isBuy && candidatePrice < basePrice * (1 - maxDeviation)) {
-                                        isSafe = false;
-                                        log.warn("⚠️ Skipping modify for Sell Order {}: Price {} is below limit ({} - {}%)", orderIdToMonitor, candidatePrice, basePrice, maxDeviation * 100);
-                                    }
-                                }
-
-                                if (isSafe) {
-                                    log.info("Pending order {} for trade {}: attempting MODIFY -> price={} (ltpUsed={} fallback={}) refPrice={} diff={} threshold={}", orderIdToMonitor, persisted.getId(), candidatePrice, ltp != null, usedFallback, ref, diff, pctThreshold);
-                                    try {
-                                        JSONObject modResp = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, persisted, candidatePrice, ctx.getCustomerId(), ctx.getClientCode());
-                                        if (modResp != null) {
-                                            String msg = modResp.has("message") ? String.valueOf(modResp.opt("message")) : modResp.toString();
-                                            log.info("ModifyOrder response for order {}: {}", orderIdToMonitor, msg);
-                                            // record last attempted modify price on success
-                                            lastModifyPrice.put(orderIdToMonitor, candidatePrice);
-                                        } else {
-                                            log.info("ModifyOrder call returned null for order {}", orderIdToMonitor);
-                                            // still record attempt to avoid tight retry loops
-                                            lastModifyPrice.put(orderIdToMonitor, candidatePrice);
-                                        }
-                                    } catch (Exception ex) {
-                                        log.error("Failed to modify pending order {} for trade {}: {}", orderIdToMonitor, trade.getId(), ex.getMessage(), ex);
-                                    }
-                                }
-                            } else {
-                                if (!priceChangedSinceLastAttempt) {
-                                    log.debug("Skipping modify for order {} because price equals last attempted {}", orderIdToMonitor, lastAttempt);
-                                } else {
-                                    log.debug("No modify required for pending order {} (price={}, ref={}, diff={}, threshold={})", orderIdToMonitor, candidatePrice, ref, diff, pctThreshold);
-                                }
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.error("Error while attempting modify for pending order {}: {}", orderIdToMonitor, e.getMessage(), e);
-                    }
+                    log.debug("Order {} pending on exchange; auto modification disabled", orderIdToMonitor);
                 }
-
-                log.info("⌛ Order still pending: {}",orderIdToMonitor);
-            } catch (SharekhanAPIException e) {
-                // SDK-level error (HTTP/Sharekhan error shape). Treat as transient and keep polling.
-                log.warn("❌ Error polling order status for {}: {}", orderIdToMonitor, e.getMessage());
             } catch (NullPointerException npe) {
                 // Defensive guard: upstream SDK sometimes assumes a non-null Content-Type header and NPEs
                 // Make this non-fatal so our scheduled task keeps running until the endpoint stabilizes

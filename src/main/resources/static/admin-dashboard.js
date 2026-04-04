@@ -375,6 +375,26 @@
           editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginLeft = '4px'; moveBtn.innerText = 'Move SL to Cost';
           moveBtn.addEventListener('click', async function () { await ensureCsrf(); try { await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); } catch(e) { alert('Failed to move SL to cost: ' + (e && e.message ? e.message : e)); } }); actionCell.appendChild(moveBtn);
+          const modifyExitBtn = document.createElement('button'); modifyExitBtn.className = 'btn small'; modifyExitBtn.style.marginLeft = '4px'; modifyExitBtn.innerText = 'Modify Exit';
+          modifyExitBtn.addEventListener('click', async function () {
+            const price = prompt('Enter new exit price for trade ' + id + ':');
+            if (price === null) return;
+            const trimmed = String(price).trim();
+            if (!trimmed) { alert('Price is required.'); return; }
+            const parsed = Number(trimmed);
+            if (!isFinite(parsed) || parsed <= 0) { alert('Please enter a valid positive number.'); return; }
+            await ensureCsrf();
+            try {
+              await fetchJson('/api/trades/exit-order/' + id + '/modify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ price: parsed })
+              });
+              setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800);
+            } catch (e) {
+              alert('Failed to modify exit order: ' + (e && e.message ? e.message : e));
+            }
+          }); actionCell.appendChild(modifyExitBtn);
           const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.style.marginLeft = '4px'; closeBtn.innerText = 'Close';
           closeBtn.addEventListener('click', async function () { const price = prompt('Enter price to close trade ' + id + ' (optional):'); if (price === null) return; await ensureCsrf(); let url = '/api/trades/square-off/' + id; if (price && price.trim() !== '') url += '?price=' + encodeURIComponent(price.trim()); await fetchJson(url, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); }); actionCell.appendChild(closeBtn);
         } else { actionCell.innerText = '-'; }

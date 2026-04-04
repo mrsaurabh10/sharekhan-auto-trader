@@ -1,5 +1,6 @@
 package org.com.sharekhan.service;
 
+import com.sharekhan.http.exceptions.SharekhanAPIException;
 import com.sharekhan.model.OrderParams;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +24,7 @@ import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.service.broker.BrokerService;
 import org.com.sharekhan.service.broker.BrokerServiceFactory;
 import org.com.sharekhan.util.CryptoService;
+import org.com.sharekhan.util.ShareKhanOrderUtil;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
@@ -846,6 +848,7 @@ public class TradeExecutionService {
                 }
                 triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
                 log.info("✅ Trade executed immediately. Skipping order status polling.");
+                handleEntryOrderExecution(triggeredTradeSetupEntity);
                 return triggeredTradeSetupEntity;
             }
 
@@ -962,21 +965,11 @@ public class TradeExecutionService {
                 .orElseThrow(() -> new RuntimeException("Trade not found after claim: " + trade.getId()));
 
         // Resolve customerId from broker credentials if available; fallback to default
-        BrokerContext exitCtx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
-    
-        if (exitCtx == null || exitCtx.getCustomerId() == null) {
-            throw new IllegalStateException("No active broker configured for this user (exit)");
-        }
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, exitPrice, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
 
-        BrokerService brokerService = brokerServiceFactory.getService(exitCtx.getBrokerName());
-        if (brokerService == null) {
-            throw new IllegalStateException("No broker service found for: " + exitCtx.getBrokerName());
-        }
-
-        OrderPlacementResult result = brokerService.placeExitOrder(persisted, exitCtx, exitPrice);
-
-        if (!result.isSuccess()) {
-            log.error("❌ Exit place order failed for trade {}. Reason: {}", persisted.getId(), result.getRejectionReason());
+        if (result == null || !result.isSuccess()) {
+            String rejectionReason = result != null ? result.getRejectionReason() : "Unknown error";
+            log.error("❌ Exit place order failed for trade {}. Reason: {}", persisted.getId(), rejectionReason);
             try {
                 persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                 triggeredTradeRepo.save(persisted);
@@ -993,7 +986,7 @@ public class TradeExecutionService {
                 body.append("Attempted Qty: ").append(persisted.getQuantity()).append("\n");
                 body.append("Attempted Price: ").append(exitPrice).append("\n");
                 body.append("TradeId: ").append(persisted.getId()).append("\n");
-                body.append("Reason: ").append(result.getRejectionReason());
+                body.append("Reason: ").append(rejectionReason);
                 telegramNotificationService.sendTradeMessageForUser(persisted.getAppUserId(), title, body.toString());
             } catch (Exception e) {
                 log.warn("Failed sending telegram notification for exit placeOrder failure: {}", e.getMessage());
@@ -1001,8 +994,34 @@ public class TradeExecutionService {
 
             return;
         }
+        return;
+    }
 
-        // Order placed successfully - persist exitOrderId in DB (native update) first
+
+    public void squareOffTrade(Long id) {
+        squareOffTrade(id, null);
+    }
+
+    private OrderPlacementResult placeExitOrderAndPersist(TriggeredTradeSetupEntity persisted,
+                                                          double exitPrice,
+                                                          String exitReason,
+                                                          TriggeredTradeStatus placedStatus) {
+        BrokerContext exitCtx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
+        if (exitCtx == null || exitCtx.getBrokerName() == null) {
+            throw new IllegalStateException("No active broker configured for this user (exit)");
+        }
+
+        BrokerService brokerService = brokerServiceFactory.getService(exitCtx.getBrokerName());
+        if (brokerService == null) {
+            throw new IllegalStateException("No broker service found for: " + exitCtx.getBrokerName());
+        }
+
+        OrderPlacementResult result = brokerService.placeExitOrder(persisted, exitCtx, exitPrice);
+        if (!result.isSuccess()) {
+            return result;
+        }
+
+        // Persist exitOrderId using a native update first to avoid concurrency issues
         triggeredTradeRepo.setExitOrderId(persisted.getId(), result.getOrderId());
 
         // Evict caches and clear persistence context so subsequent reads see the native update
@@ -1015,39 +1034,36 @@ public class TradeExecutionService {
             log.debug("Failed to evict/clear JPA caches for trade {}: {}", persisted.getId(), ex.getMessage());
         }
 
-        // Now update the in-memory entity and mark status EXIT_ORDER_PLACED (we have an exitOrderId now)
         try {
             persisted.setExitOrderId(result.getOrderId());
-            persisted.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+            persisted.setStatus(placedStatus);
             persisted.setExitReason(exitReason);
             triggeredTradeRepo.save(persisted);
         } catch (Exception e) {
-            log.debug("Failed to persist exitOrderId/EXIT_ORDER_PLACED for trade {}: {}", persisted.getId(), e.getMessage());
+            log.debug("Failed to persist exitOrderId/status {} for trade {}: {}", placedStatus, persisted.getId(), e.getMessage());
         }
 
-
-        // If the broker response already indicates the exit order was fully executed and provides a price,
-        // we can mark the trade EXITED_SUCCESS immediately to avoid waiting on the poller.
+        // If the broker response indicates the exit order was fully executed, mark trade exited immediately
         if ("Fully Executed".equalsIgnoreCase(result.getStatus()) && result.getExecutedPrice() != null) {
             try {
                 double exitPriceVal = result.getExecutedPrice();
                 double pnlVal = result.getPnl() != null ? result.getPnl() : 0.0d;
-                
-                Double entryPriceForPnl = persisted.getActualEntryPrice();
-                if (entryPriceForPnl == null) {
-                    entryPriceForPnl = persisted.getEntryPrice();
+
+                Double entryPriceForPnl = persisted.getActualEntryPrice() != null ? persisted.getActualEntryPrice() : persisted.getEntryPrice();
+                if (pnlVal == 0.0d && entryPriceForPnl != null && persisted.getQuantity() != null) {
+                    pnlVal = java.math.BigDecimal.valueOf(exitPriceVal)
+                            .subtract(java.math.BigDecimal.valueOf(entryPriceForPnl))
+                            .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
+                            .setScale(2, java.math.RoundingMode.HALF_UP)
+                            .doubleValue();
                 }
 
-                if (pnlVal == 0.0d && entryPriceForPnl != null && persisted.getQuantity() != null) {
-                    pnlVal = java.math.BigDecimal.valueOf(exitPriceVal).subtract(java.math.BigDecimal.valueOf(entryPriceForPnl))
-                            .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
-                            .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue();
-                }
-                
-                int updated = triggeredTradeRepo.markExitedWithPNL(persisted.getId(), TriggeredTradeStatus.EXITED_SUCCESS, exitPriceVal, java.time.LocalDateTime.now(), pnlVal);
+                int updated = triggeredTradeRepo.markExitedWithPNL(persisted.getId(),
+                        TriggeredTradeStatus.EXITED_SUCCESS,
+                        exitPriceVal,
+                        java.time.LocalDateTime.now(),
+                        pnlVal);
                 if (updated == 1) {
-                    log.info("✅ placeOrder response indicated fully executed - markExited updated trade {} to EXITED_SUCCESS", persisted.getId());
-                    // evict 2nd-level cache and clear persistence context so other threads see the terminal state
                     try {
                         if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
                             entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
@@ -1056,16 +1072,19 @@ public class TradeExecutionService {
                     } catch (Exception ignore) {
                         log.debug("Failed to evict/clear JPA cache after markExited for {}: {}", persisted.getId(), ignore.getMessage());
                     }
-                    // ensure we unsubscribe and don't leave poller active
-                    try { webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode()); } catch (Exception ignored) {}
+                    try {
+                        webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode());
+                    } catch (Exception ignored) {
+                        log.debug("Failed to unsubscribe from scrip after immediate exit for {}: {}", persisted.getId(), ignored.getMessage());
+                    }
+                    return result;
                 }
-                return;
             } catch (Exception ex) {
-                log.debug("Failed to parse candidate exit price from placeOrder response for trade {}: {}", persisted.getId(), ex.getMessage());
+                log.debug("Failed to process immediate exit response for trade {}: {}", persisted.getId(), ex.getMessage());
             }
         }
 
-        // If we didn't mark the trade as EXITED_SUCCESS immediately (below), start the order-status poller to watch exitOrderId
+        // Otherwise start order status polling so we know when this exit order completes
         try {
             final Long persistedIdForPoll = persisted.getId();
             if (TransactionSynchronizationManager.isSynchronizationActive()) {
@@ -1085,17 +1104,183 @@ public class TradeExecutionService {
                     }
                 });
             } else {
-                // No transaction active (unlikely) - call directly
-                eventPublisher.publishEvent(new OrderPlacedEvent(persisted) );
+                eventPublisher.publishEvent(new OrderPlacedEvent(persisted));
             }
         } catch (Exception e) {
             log.warn("Failed to schedule order status polling for trade {}: {}", persisted.getId(), e.getMessage());
         }
+
+        return result;
     }
 
+    public void handleEntryOrderExecution(TriggeredTradeSetupEntity trade) {
+        try {
+            maybePlaceTargetOrder(trade);
+        } catch (Exception e) {
+            log.warn("Failed to place target order for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
+        }
+    }
 
-    public void squareOffTrade(Long id) {
-        squareOffTrade(id, null);
+    private void maybePlaceTargetOrder(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getId() == null) {
+            return;
+        }
+
+        // Skip when TSL logic is enabled or when target is based on spot price
+        if (Boolean.TRUE.equals(trade.getTslEnabled()) || isSpotTarget(trade)) {
+            return;
+        }
+
+        if (trade.getQuantity() == null || trade.getQuantity() <= 0) {
+            return;
+        }
+
+        if (trade.getExitOrderId() != null) {
+            return;
+        }
+
+        if (isSimulatorBroker(trade)) {
+            log.debug("Skipping auto target order for simulator trade {}", trade.getId());
+            return;
+        }
+
+        Double targetPrice = pickTargetPrice(trade);
+        if (targetPrice == null || targetPrice <= 0) {
+            return;
+        }
+
+        TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId()).orElse(null);
+        if (persisted == null) {
+            return;
+        }
+
+        if (persisted.getExitOrderId() != null) {
+            log.debug("Exit order already exists for trade {}. Skipping auto target order.", persisted.getId());
+            return;
+        }
+
+        // Ensure the status is still EXECUTED before attempting target placement
+        if (!TriggeredTradeStatus.EXECUTED.equals(persisted.getStatus())) {
+            return;
+        }
+
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AUTO", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+
+        if (result == null || !result.isSuccess()) {
+            log.warn("Failed to auto-place target order for trade {}: {}", persisted.getId(),
+                    result != null ? result.getRejectionReason() : "Unknown error");
+            // Keep trade in EXECUTED state so monitoring logic can continue to manage exits
+            try {
+                persisted.setStatus(TriggeredTradeStatus.EXECUTED);
+                persisted.setExitOrderId(null);
+                triggeredTradeRepo.save(persisted);
+            } catch (Exception e) {
+                log.debug("Failed to reset trade {} status after target order failure: {}", persisted.getId(), e.getMessage());
+            }
+        } else {
+            log.info("✅ Auto target order placed for trade {} at price {}", persisted.getId(), targetPrice);
+        }
+    }
+
+    private Double pickTargetPrice(TriggeredTradeSetupEntity trade) {
+        if (trade == null) return null;
+        if (trade.getTarget1() != null && trade.getTarget1() > 0) return trade.getTarget1();
+        if (trade.getTarget2() != null && trade.getTarget2() > 0) return trade.getTarget2();
+        if (trade.getTarget3() != null && trade.getTarget3() > 0) return trade.getTarget3();
+        return null;
+    }
+
+    private boolean isSpotTarget(TriggeredTradeSetupEntity trade) {
+        if (trade == null) return false;
+        if (Boolean.TRUE.equals(trade.getUseSpotForTarget())) {
+            return true;
+        }
+        return trade.getUseSpotForTarget() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
+    }
+
+    private boolean isSimulatorBroker(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getBrokerCredentialsId() == null) {
+            return false;
+        }
+        return brokerCredentialsRepository.findById(trade.getBrokerCredentialsId())
+                .map(creds -> creds.getBrokerName() != null &&
+                        creds.getBrokerName().equalsIgnoreCase(Broker.SIMULATOR.getDisplayName()))
+                .orElse(false);
+    }
+
+    private boolean modifyExistingExitOrder(TriggeredTradeSetupEntity trade,
+                                            double newPrice,
+                                            String exitReason,
+                                            TriggeredTradeStatus postStatus) {
+        if (trade == null || trade.getExitOrderId() == null || trade.getExitOrderId().isBlank()) {
+            log.debug("Modify exit order skipped - no exitOrderId for trade {}", trade != null ? trade.getId() : null);
+            return false;
+        }
+
+        BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+        if (ctx == null || ctx.getBrokerName() == null) {
+            log.warn("Unable to resolve broker context for modifying exit order of trade {}", trade.getId());
+            return false;
+        }
+
+        Broker broker;
+        try {
+            broker = Broker.fromDisplayName(ctx.getBrokerName());
+        } catch (Exception e) {
+            log.warn("Unsupported broker {} for exit order modify on trade {}", ctx.getBrokerName(), trade.getId());
+            return false;
+        }
+
+        if (broker != Broker.SHAREKHAN) {
+            log.debug("Modify exit order currently supported only for Sharekhan broker. Trade {}", trade.getId());
+            return false;
+        }
+
+        try {
+            String accessToken = tokenStoreService.getAccessToken(broker, ctx.getCustomerId());
+            if (accessToken == null) {
+                accessToken = tokenStoreService.getAccessToken(broker);
+            }
+
+            if (accessToken == null || ctx.getApiKey() == null) {
+                log.warn("Missing access token/api key for modifying exit order of trade {}", trade.getId());
+                return false;
+            }
+
+            com.sharekhan.SharekhanConnect sharekhanConnect = new com.sharekhan.SharekhanConnect(null, ctx.getApiKey(), accessToken);
+            JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, newPrice, ctx.getCustomerId(), ctx.getClientCode());
+
+            if (response == null) {
+                log.warn("Modify order returned null for trade {}", trade.getId());
+                return false;
+            }
+
+            trade.setExitReason(exitReason);
+            if (postStatus != null) {
+                trade.setStatus(postStatus);
+            }
+            triggeredTradeRepo.save(trade);
+            log.info("✏️ Modified exit order {} for trade {} to price {}", trade.getExitOrderId(), trade.getId(), newPrice);
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to modify exit order for trade {}: {}", trade.getId(), e.getMessage(), e);
+            return false;
+        } catch (SharekhanAPIException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public boolean modifyExitOrderPrice(Long tradeId, double newPrice, String reason) {
+        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(tradeId)
+                .orElseThrow(() -> new RuntimeException("Trade not found: " + tradeId));
+        return modifyExistingExitOrder(trade, newPrice, reason, trade.getStatus());
+    }
+
+    public boolean modifyExitOrderForStop(TriggeredTradeSetupEntity trade, double newPrice) {
+        if (trade == null) {
+            return false;
+        }
+        return modifyExistingExitOrder(trade, newPrice, "STOP_LOSS_HIT", TriggeredTradeStatus.EXIT_ORDER_PLACED);
     }
 
     public void squareOffTrade(Long id, Double price) {

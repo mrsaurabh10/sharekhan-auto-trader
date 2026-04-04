@@ -30,7 +30,8 @@ public class ShareKhanOrderUtil {
                                          Long customerId,
                                          String channelUser) throws SharekhanAPIException, IOException {
         OrderParams orderParams = new OrderParams();
-        if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus()) ){
+        if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())
+                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(tradeSetupEntity.getStatus()) ){
             orderParams.orderId = tradeSetupEntity.getExitOrderId();
         }else{
             orderParams.orderId = tradeSetupEntity.getOrderId();
@@ -46,7 +47,8 @@ public class ShareKhanOrderUtil {
         orderParams.tradingSymbol = tradeSetupEntity.getSymbol();
         orderParams.productType = "INVESTMENT"; //(INVESTMENT or (INV), BIGTRADE or (BT), BIGTRADEPLUS or (BT+))
         // Transaction type should match the intent: entry orders are Buys (B), exit modifications must be Sell (S)
-        if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
+        if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())
+                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
             orderParams.transactionType = "S";
         } else {
             orderParams.transactionType = "B";

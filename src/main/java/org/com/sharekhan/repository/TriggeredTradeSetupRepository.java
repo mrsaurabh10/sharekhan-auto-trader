@@ -20,8 +20,12 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     List<TriggeredTradeSetupEntity> findByStatus(TriggeredTradeStatus status);
 
     List<TriggeredTradeSetupEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
-    
+
+    List<TriggeredTradeSetupEntity> findByScripCodeAndStatusIn(Integer scripCode, List<TriggeredTradeStatus> statuses);
+
     List<TriggeredTradeSetupEntity> findBySpotScripCodeAndStatus(Integer spotScripCode, TriggeredTradeStatus status);
+
+    List<TriggeredTradeSetupEntity> findBySpotScripCodeAndStatusIn(Integer spotScripCode, List<TriggeredTradeStatus> statuses);
 
     Optional<TriggeredTradeSetupEntity> findByOrderId(String orderId);
 
