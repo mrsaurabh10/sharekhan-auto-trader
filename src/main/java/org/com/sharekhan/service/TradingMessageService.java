@@ -142,6 +142,13 @@ public class TradingMessageService {
     }
 
     public void placeForAllSharekhanCustomers(TriggerRequest base) {
+        if (base != null && "Sharekhan".equalsIgnoreCase(base.getSource())) {
+            Double sl = base.getStopLoss();
+            if (sl != null && sl < 1.0d) {
+                System.out.println("⏭️ Skipping Sharekhan trade due to stop loss < 1.0: SL=" + sl);
+                return;
+            }
+        }
         // Fetch all broker credentials for SHAREKHAN
         List<BrokerCredentialsEntity> creds = brokerCredentialsService.findAllForBroker("Sharekhan");
         creds.addAll(brokerCredentialsService.findAllForBroker("Simulator"));
