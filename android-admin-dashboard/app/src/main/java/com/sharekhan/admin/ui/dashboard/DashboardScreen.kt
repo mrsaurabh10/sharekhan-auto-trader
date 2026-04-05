@@ -615,9 +615,11 @@ private fun RequestsScreen(
                                 exchange = request.exchange,
                                 symbol = request.symbol
                             )
+                            val livePnl = computeLivePnl(request, liveLtp)
                             RequestCard(
                                 request = request,
                                 liveLtp = liveLtp,
+                                livePnl = livePnl,
                                 onTrigger = onTrigger,
                                 onCancel = onCancel,
                                 onPrefill = onPrefill
@@ -636,6 +638,7 @@ private fun RequestsScreen(
 private fun RequestCard(
     request: TradingRequest,
     liveLtp: Double?,
+    livePnl: Double?,
     onTrigger: (TradingRequest) -> Unit,
     onCancel: (TradingRequest) -> Unit,
     onPrefill: (TradingRequest) -> Unit
@@ -656,6 +659,9 @@ private fun RequestCard(
             Text("Entry: ${request.entryPrice ?: "-"}  SL: ${request.stopLoss ?: "-"}  Qty: ${request.quantity ?: "-"}")
             Text("Status: ${request.status ?: "-"}")
             Text("Live LTP: ${formatPrice(liveLtp)}")
+            livePnl?.let { 
+                Text("Live PnL: ${formatPrice(it)}", color = if (it >= 0) Color(0xFF4CAF50) else Color(0xFFF44336)) 
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { onTrigger(request) }) {
                     Text("Trigger")
@@ -773,6 +779,7 @@ private fun ExecutedScreen(
 
 private val EXECUTED_STATUSES = listOf(
     "EXECUTED",
+    "TARGET_ORDER_PLACED",
     "EXIT_ORDER_PLACED",
     "EXITED_SUCCESS",
     "EXIT_FAILED",
@@ -1028,9 +1035,18 @@ private fun buildQualifiedKey(exchange: String?, symbol: String?): String? {
 private fun computeLivePnl(trade: TriggeredTrade, liveLtp: Double?): Double? {
     if (liveLtp == null) return null
     val status = trade.status?.uppercase(Locale.US) ?: return null
-    if (status != "EXECUTED" && status != "EXIT_ORDER_PLACED") return null
+    if (status != "EXECUTED" && status != "EXIT_ORDER_PLACED" && status != "TARGET_ORDER_PLACED") return null
     val entryPrice = trade.actualEntryPrice ?: trade.entryPrice ?: return null
     val quantity = trade.quantity?.toDouble() ?: return null
+    return quantity * (liveLtp - entryPrice)
+}
+
+private fun computeLivePnl(request: TradingRequest, liveLtp: Double?): Double? {
+    if (liveLtp == null) return null
+    val status = request.status?.uppercase(Locale.US) ?: return null
+    if (status != "EXECUTED" && status != "TARGET_ORDER_PLACED" && status != "EXIT_ORDER_PLACED") return null
+    val entryPrice = request.entryPrice ?: return null
+    val quantity = request.quantity?.toDouble() ?: return null
     return quantity * (liveLtp - entryPrice)
 }
 

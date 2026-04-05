@@ -625,6 +625,7 @@ class DashboardViewModel(
     companion object {
         val EXECUTED_STATUSES = listOf(
             "EXECUTED",
+            "TARGET_ORDER_PLACED",
             "EXIT_ORDER_PLACED",
             "EXITED_SUCCESS",
             "EXIT_FAILED",
@@ -632,6 +633,7 @@ class DashboardViewModel(
         )
         private val DEFAULT_STATUS_FILTER = setOf(
             "EXECUTED",
+            "TARGET_ORDER_PLACED",
             "EXIT_ORDER_PLACED",
             "EXITED_SUCCESS"
         )
