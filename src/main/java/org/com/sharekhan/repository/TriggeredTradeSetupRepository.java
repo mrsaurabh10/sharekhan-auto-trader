@@ -20,8 +20,12 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     List<TriggeredTradeSetupEntity> findByStatus(TriggeredTradeStatus status);
 
     List<TriggeredTradeSetupEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
-    
+
+    List<TriggeredTradeSetupEntity> findByScripCodeAndStatusIn(Integer scripCode, List<TriggeredTradeStatus> statuses);
+
     List<TriggeredTradeSetupEntity> findBySpotScripCodeAndStatus(Integer spotScripCode, TriggeredTradeStatus status);
+
+    List<TriggeredTradeSetupEntity> findBySpotScripCodeAndStatusIn(Integer spotScripCode, List<TriggeredTradeStatus> statuses);
 
     Optional<TriggeredTradeSetupEntity> findByOrderId(String orderId);
 
@@ -88,6 +92,8 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                           @Param("pnl")  Double pnl    );
 
     List<TriggeredTradeSetupEntity> findBySymbolAndAppUserIdAndStatus(String symbol, Long appUserId, TriggeredTradeStatus status);
+
+    List<TriggeredTradeSetupEntity> findBySymbolAndAppUserIdAndStatusIn(String symbol, Long appUserId, List<TriggeredTradeStatus> statuses);
 
     // Added for duplicate check
     List<TriggeredTradeSetupEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);

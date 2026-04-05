@@ -121,27 +121,34 @@ public class TradingMessageService {
         }
 
         List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepository
-                .findBySymbolAndAppUserIdAndStatus(
-                        req.getInstrument(), 
-                        appUserId, 
-                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                .findBySymbolAndAppUserIdAndStatusIn(
+                        req.getInstrument(),
+                        appUserId,
+                        List.of(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION, TriggeredTradeStatus.TRIGGERED)
                 );
-        
+
         if (pendingRequests != null && !pendingRequests.isEmpty()) {
             return true;
         }
 
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeSetupRepository
-                .findBySymbolAndAppUserIdAndStatus(
-                        req.getInstrument(), 
-                        appUserId, 
-                        TriggeredTradeStatus.EXECUTED
+                .findBySymbolAndAppUserIdAndStatusIn(
+                        req.getInstrument(),
+                        appUserId,
+                        List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 );
 
         return executedTrades != null && !executedTrades.isEmpty();
     }
 
     public void placeForAllSharekhanCustomers(TriggerRequest base) {
+        if (base != null && "Sharekhan".equalsIgnoreCase(base.getSource())) {
+            Double sl = base.getStopLoss();
+            if (sl != null && sl < 1.0d) {
+                System.out.println("⏭️ Skipping Sharekhan trade due to stop loss < 1.0: SL=" + sl);
+                return;
+            }
+        }
         // Fetch all broker credentials for SHAREKHAN
         List<BrokerCredentialsEntity> creds = brokerCredentialsService.findAllForBroker("Sharekhan");
         creds.addAll(brokerCredentialsService.findAllForBroker("Simulator"));
