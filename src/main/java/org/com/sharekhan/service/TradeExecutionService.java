@@ -1331,6 +1331,17 @@ public class TradeExecutionService {
         return result.isSuccess();
     }
 
+    public boolean modifyExitOrderForIntradayClose(TriggeredTradeSetupEntity trade, double newPrice) {
+        if (trade == null) {
+            return false;
+        }
+        ModifyExitOrderResult result = modifyExistingExitOrder(trade, newPrice, "INTRADAY_CLOSE", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        if (!result.isSuccess()) {
+            log.warn("Intraday close modify failed for trade {}: {}", trade.getId(), result.getMessage());
+        }
+        return result.isSuccess();
+    }
+
     public void squareOffTrade(Long id, Double price) {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Trade not found"));

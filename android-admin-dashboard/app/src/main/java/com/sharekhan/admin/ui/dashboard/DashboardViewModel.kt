@@ -626,6 +626,7 @@ class DashboardViewModel(
         val EXECUTED_STATUSES = listOf(
             "EXECUTED",
             "EXIT_ORDER_PLACED",
+            "TARGET_ORDER_PLACED",
             "EXITED_SUCCESS",
             "EXIT_FAILED",
             "REJECTED"
@@ -633,6 +634,7 @@ class DashboardViewModel(
         private val DEFAULT_STATUS_FILTER = setOf(
             "EXECUTED",
             "EXIT_ORDER_PLACED",
+            "TARGET_ORDER_PLACED",
             "EXITED_SUCCESS"
         )
         private const val EXEC_PAGE_SIZE = 10

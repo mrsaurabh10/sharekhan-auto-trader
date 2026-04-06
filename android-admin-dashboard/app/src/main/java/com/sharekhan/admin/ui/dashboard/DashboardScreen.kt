@@ -774,6 +774,7 @@ private fun ExecutedScreen(
 private val EXECUTED_STATUSES = listOf(
     "EXECUTED",
     "EXIT_ORDER_PLACED",
+    "TARGET_ORDER_PLACED",
     "EXITED_SUCCESS",
     "EXIT_FAILED",
     "REJECTED"
@@ -1028,7 +1029,7 @@ private fun buildQualifiedKey(exchange: String?, symbol: String?): String? {
 private fun computeLivePnl(trade: TriggeredTrade, liveLtp: Double?): Double? {
     if (liveLtp == null) return null
     val status = trade.status?.uppercase(Locale.US) ?: return null
-    if (status != "EXECUTED" && status != "EXIT_ORDER_PLACED") return null
+    if (status !in setOf("EXECUTED", "EXIT_ORDER_PLACED", "TARGET_ORDER_PLACED")) return null
     val entryPrice = trade.actualEntryPrice ?: trade.entryPrice ?: return null
     val quantity = trade.quantity?.toDouble() ?: return null
     return quantity * (liveLtp - entryPrice)
