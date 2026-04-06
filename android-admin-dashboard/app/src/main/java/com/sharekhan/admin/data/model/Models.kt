@@ -71,6 +71,7 @@ data class TriggeredTrade(
     val spotScripCode: Int? = null,
     val orderId: String? = null,
     val exitOrderId: String? = null,
+    val exitOrderPlacedAt: LocalDateTime? = null,
     val exitReason: String? = null,
     val intraday: Boolean? = null,
     val status: String? = null,

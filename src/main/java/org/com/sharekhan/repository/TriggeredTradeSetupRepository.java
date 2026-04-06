@@ -69,8 +69,10 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     @Modifying
     @Transactional
-    @Query(value = "UPDATE triggered_trade_setups SET exit_order_id = :exitOrderId WHERE id = :id", nativeQuery = true)
-    int setExitOrderId(@Param("id") Long id, @Param("exitOrderId") String exitOrderId);
+    @Query(value = "UPDATE triggered_trade_setups SET exit_order_id = :exitOrderId, exit_order_placed_at = :placedAt WHERE id = :id", nativeQuery = true)
+    int setExitOrderId(@Param("id") Long id,
+                       @Param("exitOrderId") String exitOrderId,
+                       @Param("placedAt") java.time.LocalDateTime placedAt);
 
     // Atomically mark trade as exited with exitPrice, exitedAt and pnl to avoid lost-update concurrency
     @Modifying

@@ -1041,7 +1041,8 @@ public class TradeExecutionService {
         }
 
         // Persist exitOrderId using a native update first to avoid concurrency issues
-        triggeredTradeRepo.setExitOrderId(persisted.getId(), result.getOrderId());
+        java.time.LocalDateTime placedAt = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+        triggeredTradeRepo.setExitOrderId(persisted.getId(), result.getOrderId(), placedAt);
 
         // Evict caches and clear persistence context so subsequent reads see the native update
         try {
@@ -1057,6 +1058,7 @@ public class TradeExecutionService {
             persisted.setExitOrderId(result.getOrderId());
             persisted.setStatus(placedStatus);
             persisted.setExitReason(exitReason);
+            persisted.setExitOrderPlacedAt(placedAt);
             triggeredTradeRepo.save(persisted);
         } catch (Exception e) {
             log.debug("Failed to persist exitOrderId/status {} for trade {}: {}", placedStatus, persisted.getId(), e.getMessage());
@@ -1207,6 +1209,74 @@ public class TradeExecutionService {
         if (trade.getTarget2() != null && trade.getTarget2() > 0) return trade.getTarget2();
         if (trade.getTarget3() != null && trade.getTarget3() > 0) return trade.getTarget3();
         return null;
+    }
+
+    public boolean rescheduleTargetOrderAfterHours(Long tradeId) {
+        if (tradeId == null) return false;
+
+        TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(tradeId).orElse(null);
+        if (persisted == null) {
+            log.debug("Skipping after-hours reschedule — trade {} not found", tradeId);
+            return false;
+        }
+
+        if (!TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(persisted.getStatus())) {
+            log.debug("Skipping after-hours reschedule — trade {} in status {}", tradeId, persisted.getStatus());
+            return false;
+        }
+
+        if (Boolean.TRUE.equals(persisted.getIntraday())) {
+            log.debug("Skipping after-hours reschedule — trade {} is intraday", tradeId);
+            return false;
+        }
+
+        BrokerContext ctx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
+        if (ctx == null || ctx.getBrokerName() == null) {
+            log.warn("Unable to resolve broker context for trade {} while scheduling after-hours target", tradeId);
+            return false;
+        }
+
+        Broker broker;
+        try {
+            broker = Broker.fromDisplayName(ctx.getBrokerName());
+        } catch (Exception ex) {
+            log.debug("Skipping after-hours reschedule — unsupported broker {} for trade {}", ctx.getBrokerName(), tradeId);
+            return false;
+        }
+
+        if (broker != Broker.SHAREKHAN) {
+            log.debug("Skipping after-hours reschedule — trade {} uses broker {}", tradeId, broker.getDisplayName());
+            return false;
+        }
+
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        LocalDateTime lastPlaced = persisted.getExitOrderPlacedAt();
+        if (lastPlaced != null) {
+            LocalDate today = LocalDate.now(zone);
+            LocalDateTime cutoff = LocalDateTime.of(today, LocalTime.of(16, 0));
+            if (!lastPlaced.isBefore(cutoff)) {
+                log.debug("Skipping after-hours reschedule — trade {} exit order refreshed at {}", tradeId, lastPlaced);
+                return false;
+            }
+        }
+
+        Double targetPrice = pickTargetPrice(persisted);
+        if (targetPrice == null || targetPrice <= 0) {
+            log.warn("Unable to determine target price for after-hours reschedule on trade {}", tradeId);
+            return false;
+        }
+
+        String previousOrderId = persisted.getExitOrderId();
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        if (result == null || !result.isSuccess()) {
+            log.warn("Failed to place after-hours target exit for trade {}: {}", tradeId,
+                    result != null ? result.getRejectionReason() : "No response");
+            return false;
+        }
+
+        log.info("🌙 After-hours target exit order placed for trade {} (oldOrderId={}, newOrderId={})",
+                tradeId, previousOrderId, result.getOrderId());
+        return true;
     }
 
     private boolean isSpotTarget(TriggeredTradeSetupEntity trade) {
@@ -1570,10 +1640,24 @@ public class TradeExecutionService {
 
         // 2. Subscribe to ACK for all executed trades
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXECUTED);
+        List<TriggeredTradeSetupEntity> targetOrders = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        java.util.Set<Long> seenTradeIds = new java.util.HashSet<>();
+        List<TriggeredTradeSetupEntity> activeTrades = new java.util.ArrayList<>();
 
-        if (!executedTrades.isEmpty()) {
-            log.info("📄 Found {} executed trades for ACK monitoring", executedTrades.size());
-            for (TriggeredTradeSetupEntity tradeSetupEntity : executedTrades) {
+        for (TriggeredTradeSetupEntity trade : executedTrades) {
+            if (trade != null && trade.getId() != null && seenTradeIds.add(trade.getId())) {
+                activeTrades.add(trade);
+            }
+        }
+        for (TriggeredTradeSetupEntity trade : targetOrders) {
+            if (trade != null && trade.getId() != null && seenTradeIds.add(trade.getId())) {
+                activeTrades.add(trade);
+            }
+        }
+
+        if (!activeTrades.isEmpty()) {
+            log.info("📄 Found {} active trades (EXECUTED/TARGET_ORDER_PLACED) for ACK monitoring", activeTrades.size());
+            for (TriggeredTradeSetupEntity tradeSetupEntity : activeTrades) {
                 try {
                     Integer scripCode = tradeSetupEntity.getScripCode(); // Assuming you store this or convert symbol to code
                     String feedKey = tradeSetupEntity.getExchange() + scripCode;

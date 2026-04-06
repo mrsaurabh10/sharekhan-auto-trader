@@ -143,6 +143,7 @@ public class OrderExitService {
 
 
             trade.setExitOrderId(exitOrderId);
+            trade.setExitOrderPlacedAt(java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
             // update status to reflect that an exit order was placed
             trade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
             trade.setExitReason(exitReason);
