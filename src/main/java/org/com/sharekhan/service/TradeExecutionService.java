@@ -1,7 +1,7 @@
 package org.com.sharekhan.service;
 
-import com.sharekhan.http.exceptions.SharekhanAPIException;
 import com.sharekhan.model.OrderParams;
+import com.sharekhan.http.exceptions.SharekhanAPIException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
@@ -42,6 +42,7 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.io.IOException;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.EntityManager;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -52,6 +53,24 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @RequiredArgsConstructor
 @Slf4j
 public class TradeExecutionService {
+
+    public static class ModifyExitOrderResult {
+        private final boolean success;
+        private final String message;
+
+        public ModifyExitOrderResult(boolean success, String message) {
+            this.success = success;
+            this.message = message;
+        }
+
+        public boolean isSuccess() {
+            return success;
+        }
+
+        public String getMessage() {
+            return message;
+        }
+    }
 
     private final TriggeredTradeSetupRepository triggeredTradeRepo;
     private final TriggerTradeRequestRepository triggerTradeRequestRepo;
@@ -1022,7 +1041,8 @@ public class TradeExecutionService {
         }
 
         // Persist exitOrderId using a native update first to avoid concurrency issues
-        triggeredTradeRepo.setExitOrderId(persisted.getId(), result.getOrderId());
+        java.time.LocalDateTime placedAt = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+        triggeredTradeRepo.setExitOrderId(persisted.getId(), result.getOrderId(), placedAt);
 
         // Evict caches and clear persistence context so subsequent reads see the native update
         try {
@@ -1038,6 +1058,7 @@ public class TradeExecutionService {
             persisted.setExitOrderId(result.getOrderId());
             persisted.setStatus(placedStatus);
             persisted.setExitReason(exitReason);
+            persisted.setExitOrderPlacedAt(placedAt);
             triggeredTradeRepo.save(persisted);
         } catch (Exception e) {
             log.debug("Failed to persist exitOrderId/status {} for trade {}: {}", placedStatus, persisted.getId(), e.getMessage());
@@ -1190,6 +1211,74 @@ public class TradeExecutionService {
         return null;
     }
 
+    public boolean rescheduleTargetOrderAfterHours(Long tradeId) {
+        if (tradeId == null) return false;
+
+        TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(tradeId).orElse(null);
+        if (persisted == null) {
+            log.debug("Skipping after-hours reschedule — trade {} not found", tradeId);
+            return false;
+        }
+
+        if (!TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(persisted.getStatus())) {
+            log.debug("Skipping after-hours reschedule — trade {} in status {}", tradeId, persisted.getStatus());
+            return false;
+        }
+
+        if (Boolean.TRUE.equals(persisted.getIntraday())) {
+            log.debug("Skipping after-hours reschedule — trade {} is intraday", tradeId);
+            return false;
+        }
+
+        BrokerContext ctx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
+        if (ctx == null || ctx.getBrokerName() == null) {
+            log.warn("Unable to resolve broker context for trade {} while scheduling after-hours target", tradeId);
+            return false;
+        }
+
+        Broker broker;
+        try {
+            broker = Broker.fromDisplayName(ctx.getBrokerName());
+        } catch (Exception ex) {
+            log.debug("Skipping after-hours reschedule — unsupported broker {} for trade {}", ctx.getBrokerName(), tradeId);
+            return false;
+        }
+
+        if (broker != Broker.SHAREKHAN) {
+            log.debug("Skipping after-hours reschedule — trade {} uses broker {}", tradeId, broker.getDisplayName());
+            return false;
+        }
+
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        LocalDateTime lastPlaced = persisted.getExitOrderPlacedAt();
+        if (lastPlaced != null) {
+            LocalDate today = LocalDate.now(zone);
+            LocalDateTime cutoff = LocalDateTime.of(today, LocalTime.of(16, 0));
+            if (!lastPlaced.isBefore(cutoff)) {
+                log.debug("Skipping after-hours reschedule — trade {} exit order refreshed at {}", tradeId, lastPlaced);
+                return false;
+            }
+        }
+
+        Double targetPrice = pickTargetPrice(persisted);
+        if (targetPrice == null || targetPrice <= 0) {
+            log.warn("Unable to determine target price for after-hours reschedule on trade {}", tradeId);
+            return false;
+        }
+
+        String previousOrderId = persisted.getExitOrderId();
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        if (result == null || !result.isSuccess()) {
+            log.warn("Failed to place after-hours target exit for trade {}: {}", tradeId,
+                    result != null ? result.getRejectionReason() : "No response");
+            return false;
+        }
+
+        log.info("🌙 After-hours target exit order placed for trade {} (oldOrderId={}, newOrderId={})",
+                tradeId, previousOrderId, result.getOrderId());
+        return true;
+    }
+
     private boolean isSpotTarget(TriggeredTradeSetupEntity trade) {
         if (trade == null) return false;
         if (Boolean.TRUE.equals(trade.getUseSpotForTarget())) {
@@ -1208,32 +1297,51 @@ public class TradeExecutionService {
                 .orElse(false);
     }
 
-    private boolean modifyExistingExitOrder(TriggeredTradeSetupEntity trade,
-                                            double newPrice,
-                                            String exitReason,
-                                            TriggeredTradeStatus postStatus) {
+    private ModifyExitOrderResult modifyExistingExitOrder(TriggeredTradeSetupEntity trade,
+                                                          double newPrice,
+                                                          String exitReason,
+                                                          TriggeredTradeStatus postStatus) {
         if (trade == null || trade.getExitOrderId() == null || trade.getExitOrderId().isBlank()) {
-            log.debug("Modify exit order skipped - no exitOrderId for trade {}", trade != null ? trade.getId() : null);
-            return false;
+            String msg = String.format("Modify exit order skipped - no exitOrderId for trade %s", trade != null ? trade.getId() : null);
+            log.warn(msg);
+            return new ModifyExitOrderResult(false, "No exit order is currently active for this trade.");
         }
 
         BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
         if (ctx == null || ctx.getBrokerName() == null) {
-            log.warn("Unable to resolve broker context for modifying exit order of trade {}", trade.getId());
-            return false;
+            String msg = String.format("Unable to resolve broker context for modifying exit order of trade %s", trade.getId());
+            log.warn(msg);
+            return new ModifyExitOrderResult(false, "Broker credentials not available for this trade.");
         }
 
         Broker broker;
         try {
             broker = Broker.fromDisplayName(ctx.getBrokerName());
         } catch (Exception e) {
-            log.warn("Unsupported broker {} for exit order modify on trade {}", ctx.getBrokerName(), trade.getId());
-            return false;
+            String msg = String.format("Unsupported broker %s for exit order modify on trade %s", ctx.getBrokerName(), trade.getId());
+            log.warn(msg);
+            return new ModifyExitOrderResult(false, "Broker " + ctx.getBrokerName() + " is not supported for exit order modification.");
+        }
+
+        if (broker == Broker.SIMULATOR) {
+            trade.setExitReason(exitReason);
+            if (postStatus != null) {
+                trade.setStatus(postStatus);
+            }
+            try {
+                triggeredTradeRepo.save(trade);
+            } catch (Exception e) {
+                String msg = String.format("Failed to persist simulator exit modification for trade %s: %s", trade.getId(), e.getMessage());
+                log.warn(msg);
+                return new ModifyExitOrderResult(false, "Simulator exit modification failed to persist.");
+            }
+            log.info("✏️ Simulator exit order {} updated locally for trade {} to price {}", trade.getExitOrderId(), trade.getId(), newPrice);
+            return new ModifyExitOrderResult(true, "Simulator exit order price updated.");
         }
 
         if (broker != Broker.SHAREKHAN) {
-            log.debug("Modify exit order currently supported only for Sharekhan broker. Trade {}", trade.getId());
-            return false;
+            log.warn("Modify exit order currently supported only for Sharekhan broker. Trade {}", trade.getId());
+            return new ModifyExitOrderResult(false, "Exit order modification is not yet supported for broker " + broker.getDisplayName() + ".");
         }
 
         try {
@@ -1243,16 +1351,18 @@ public class TradeExecutionService {
             }
 
             if (accessToken == null || ctx.getApiKey() == null) {
-                log.warn("Missing access token/api key for modifying exit order of trade {}", trade.getId());
-                return false;
+                String msg = String.format("Missing access token/api key for modifying exit order of trade %s", trade.getId());
+                log.warn(msg);
+                return new ModifyExitOrderResult(false, "Sharekhan token unavailable. Please re-authenticate and retry.");
             }
 
             com.sharekhan.SharekhanConnect sharekhanConnect = new com.sharekhan.SharekhanConnect(null, ctx.getApiKey(), accessToken);
             JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, newPrice, ctx.getCustomerId(), ctx.getClientCode());
 
             if (response == null) {
-                log.warn("Modify order returned null for trade {}", trade.getId());
-                return false;
+                String msg = String.format("Modify order returned null for trade %s", trade.getId());
+                log.warn(msg);
+                return new ModifyExitOrderResult(false, "Sharekhan returned an empty response while modifying the order.");
             }
 
             trade.setExitReason(exitReason);
@@ -1261,16 +1371,20 @@ public class TradeExecutionService {
             }
             triggeredTradeRepo.save(trade);
             log.info("✏️ Modified exit order {} for trade {} to price {}", trade.getExitOrderId(), trade.getId(), newPrice);
-            return true;
+            return new ModifyExitOrderResult(true, "Sharekhan modify submitted successfully.");
+        } catch (SharekhanAPIException e) {
+            log.warn("Sharekhan modify rejected for trade {}: {}", trade.getId(), e.getMessage());
+            return new ModifyExitOrderResult(false, "Sharekhan rejected modify request: " + e.getMessage());
+        } catch (IOException e) {
+            log.warn("I/O error while modifying exit order for trade {}: {}", trade.getId(), e.getMessage());
+            return new ModifyExitOrderResult(false, "Network issue while talking to Sharekhan: " + e.getMessage());
         } catch (Exception e) {
             log.error("Failed to modify exit order for trade {}: {}", trade.getId(), e.getMessage(), e);
-            return false;
-        } catch (SharekhanAPIException e) {
-            throw new RuntimeException(e);
+            return new ModifyExitOrderResult(false, "Sharekhan modify request failed: " + e.getMessage());
         }
     }
 
-    public boolean modifyExitOrderPrice(Long tradeId, double newPrice, String reason) {
+    public ModifyExitOrderResult modifyExitOrderPrice(Long tradeId, double newPrice, String reason) {
         TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(tradeId)
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + tradeId));
         return modifyExistingExitOrder(trade, newPrice, reason, trade.getStatus());
@@ -1280,7 +1394,22 @@ public class TradeExecutionService {
         if (trade == null) {
             return false;
         }
-        return modifyExistingExitOrder(trade, newPrice, "STOP_LOSS_HIT", TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        ModifyExitOrderResult result = modifyExistingExitOrder(trade, newPrice, "STOP_LOSS_HIT", TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        if (!result.isSuccess()) {
+            log.warn("Stop-loss modify failed for trade {}: {}", trade.getId(), result.getMessage());
+        }
+        return result.isSuccess();
+    }
+
+    public boolean modifyExitOrderForIntradayClose(TriggeredTradeSetupEntity trade, double newPrice) {
+        if (trade == null) {
+            return false;
+        }
+        ModifyExitOrderResult result = modifyExistingExitOrder(trade, newPrice, "INTRADAY_CLOSE", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        if (!result.isSuccess()) {
+            log.warn("Intraday close modify failed for trade {}: {}", trade.getId(), result.getMessage());
+        }
+        return result.isSuccess();
     }
 
     public void squareOffTrade(Long id, Double price) {
@@ -1511,10 +1640,24 @@ public class TradeExecutionService {
 
         // 2. Subscribe to ACK for all executed trades
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXECUTED);
+        List<TriggeredTradeSetupEntity> targetOrders = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        java.util.Set<Long> seenTradeIds = new java.util.HashSet<>();
+        List<TriggeredTradeSetupEntity> activeTrades = new java.util.ArrayList<>();
 
-        if (!executedTrades.isEmpty()) {
-            log.info("📄 Found {} executed trades for ACK monitoring", executedTrades.size());
-            for (TriggeredTradeSetupEntity tradeSetupEntity : executedTrades) {
+        for (TriggeredTradeSetupEntity trade : executedTrades) {
+            if (trade != null && trade.getId() != null && seenTradeIds.add(trade.getId())) {
+                activeTrades.add(trade);
+            }
+        }
+        for (TriggeredTradeSetupEntity trade : targetOrders) {
+            if (trade != null && trade.getId() != null && seenTradeIds.add(trade.getId())) {
+                activeTrades.add(trade);
+            }
+        }
+
+        if (!activeTrades.isEmpty()) {
+            log.info("📄 Found {} active trades (EXECUTED/TARGET_ORDER_PLACED) for ACK monitoring", activeTrades.size());
+            for (TriggeredTradeSetupEntity tradeSetupEntity : activeTrades) {
                 try {
                     Integer scripCode = tradeSetupEntity.getScripCode(); // Assuming you store this or convert symbol to code
                     String feedKey = tradeSetupEntity.getExchange() + scripCode;

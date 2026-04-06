@@ -627,6 +627,7 @@ class DashboardViewModel(
             "EXECUTED",
             "TARGET_ORDER_PLACED",
             "EXIT_ORDER_PLACED",
+            "TARGET_ORDER_PLACED",
             "EXITED_SUCCESS",
             "EXIT_FAILED",
             "REJECTED"
@@ -635,6 +636,7 @@ class DashboardViewModel(
             "EXECUTED",
             "TARGET_ORDER_PLACED",
             "EXIT_ORDER_PLACED",
+            "TARGET_ORDER_PLACED",
             "EXITED_SUCCESS"
         )
         private const val EXEC_PAGE_SIZE = 10

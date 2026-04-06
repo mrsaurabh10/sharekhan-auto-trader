@@ -68,8 +68,12 @@ public class ShareKhanOrderUtil {
         }
         orderParams.optionType = (tradeSetupEntity.getOptionType() != null && !tradeSetupEntity.getOptionType().isBlank()) ? tradeSetupEntity.getOptionType() : null;
         orderParams.expiry = (tradeSetupEntity.getExpiry() != null && !tradeSetupEntity.getExpiry().isBlank()) ? tradeSetupEntity.getExpiry() : null;
-        JSONObject order = sharekhanConnect.modifyorder(orderParams);
-        return order;
-
+        try {
+            return SharekhanConsoleSilencer.call(() -> sharekhanConnect.modifyorder(orderParams));
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Sharekhan modifyorder interrupted: " + e.getMessage(), e);
+        }
     }
 }

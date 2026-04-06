@@ -3,6 +3,8 @@
 (function () {
   'use strict';
 
+  const LIVE_PNL_STATUSES = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED']);
+
   let currentExecPage = 0;
   const execPageSize = 10;
 
@@ -422,7 +424,7 @@
 
         // Final PNL logic
         let finalPnl = (t.finalPnl != null ? t.finalPnl : (t.realizedPnl != null ? t.realizedPnl : (t.pnl != null ? t.pnl : null)));
-        if (statusUpper === 'EXITED_SUCCESS' || (statusUpper !== 'EXECUTED' && statusUpper !== 'EXIT_ORDER_PLACED' && finalPnl != null)) {
+        if (statusUpper === 'EXITED_SUCCESS' || (!LIVE_PNL_STATUSES.has(statusUpper) && finalPnl != null)) {
              if (finalPnl != null && !isNaN(finalPnl)) {
                  pnlTd.innerText = Number(finalPnl).toFixed(2);
                  updatePnlStyle(pnlTd, finalPnl);
@@ -494,6 +496,19 @@
     return Array.from(sel.selectedOptions).map(o => o.value);
   }
 
+  function ensureDefaultStatusSelection() {
+    const sel = document.getElementById('statusFilter');
+    if (!sel) return;
+    const anySelected = Array.from(sel.options).some(opt => opt.selected);
+    if (anySelected) return;
+    const defaults = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED']);
+    Array.from(sel.options).forEach(opt => {
+      if (defaults.has(opt.value)) {
+        opt.selected = true;
+      }
+    });
+  }
+
   function wireStatusFilter() {
     const btn = document.getElementById('applyStatusFilterBtn');
     if (btn) btn.addEventListener('click', function() { if (window.selectedUserId) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0); });
@@ -554,7 +569,7 @@
             const tr = el.closest('tr');
             if (tr) {
                 const status = (tr.getAttribute('data-status') || '').toUpperCase();
-                if (status === 'EXECUTED' || status === 'EXIT_ORDER_PLACED') {
+                if (LIVE_PNL_STATUSES.has(status)) {
                     const entry = parseFloat(tr.getAttribute('data-entry') || '');
                     const qty = parseFloat(tr.getAttribute('data-qty') || '');
                     if (!Number.isNaN(entry) && !Number.isNaN(qty) && !Number.isNaN(ltpNum)) {
@@ -597,7 +612,7 @@
                 const pnlTd = tr.querySelector('[data-pnl-key]');
                 if (pnlTd) {
                     const status = (tr.getAttribute('data-status') || '').toUpperCase();
-                    if (status === 'EXECUTED' || status === 'EXIT_ORDER_PLACED') {
+                    if (LIVE_PNL_STATUSES.has(status)) {
                         const entry = parseFloat(tr.getAttribute('data-entry') || '');
                         const qty = parseFloat(tr.getAttribute('data-qty') || '');
                         if (!Number.isNaN(entry) && !Number.isNaN(qty)) {
@@ -896,6 +911,17 @@
       fetchMStockLtpForKey(qualifiedKey).then(ltp => { if (ltp != null) { const entryPriceInput = document.getElementById('entryPrice'); if (entryPriceInput) entryPriceInput.value = ltp; } }).catch(err => {});
   }
 
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); wireStatusFilter(); wireExecutedPagination(); wireUserCreation(); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){
+    ensureCsrf();
+    ensureDefaultStatusSelection();
+    loadUsers().catch(function(){});
+    wireAdminForm();
+    wireBrokersUI();
+    wirePlaceOrderForm();
+    wireStatusFilter();
+    wireExecutedPagination();
+    wireUserCreation();
+    startAdminWs();
+  });
 
 })();
