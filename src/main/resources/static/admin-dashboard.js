@@ -3,6 +3,8 @@
 (function () {
   'use strict';
 
+  const LIVE_PNL_STATUSES = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED']);
+
   let currentExecPage = 0;
   const execPageSize = 10;
 
@@ -422,7 +424,7 @@
 
         // Final PNL logic
         let finalPnl = (t.finalPnl != null ? t.finalPnl : (t.realizedPnl != null ? t.realizedPnl : (t.pnl != null ? t.pnl : null)));
-        if (statusUpper === 'EXITED_SUCCESS' || (statusUpper !== 'EXECUTED' && statusUpper !== 'EXIT_ORDER_PLACED' && finalPnl != null)) {
+        if (statusUpper === 'EXITED_SUCCESS' || (!LIVE_PNL_STATUSES.has(statusUpper) && finalPnl != null)) {
              if (finalPnl != null && !isNaN(finalPnl)) {
                  pnlTd.innerText = Number(finalPnl).toFixed(2);
                  updatePnlStyle(pnlTd, finalPnl);
@@ -554,7 +556,7 @@
             const tr = el.closest('tr');
             if (tr) {
                 const status = (tr.getAttribute('data-status') || '').toUpperCase();
-                if (status === 'EXECUTED' || status === 'EXIT_ORDER_PLACED') {
+                if (LIVE_PNL_STATUSES.has(status)) {
                     const entry = parseFloat(tr.getAttribute('data-entry') || '');
                     const qty = parseFloat(tr.getAttribute('data-qty') || '');
                     if (!Number.isNaN(entry) && !Number.isNaN(qty) && !Number.isNaN(ltpNum)) {
@@ -597,7 +599,7 @@
                 const pnlTd = tr.querySelector('[data-pnl-key]');
                 if (pnlTd) {
                     const status = (tr.getAttribute('data-status') || '').toUpperCase();
-                    if (status === 'EXECUTED' || status === 'EXIT_ORDER_PLACED') {
+                    if (LIVE_PNL_STATUSES.has(status)) {
                         const entry = parseFloat(tr.getAttribute('data-entry') || '');
                         const qty = parseFloat(tr.getAttribute('data-qty') || '');
                         if (!Number.isNaN(entry) && !Number.isNaN(qty)) {

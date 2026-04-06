@@ -11,7 +11,6 @@ import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -31,6 +30,8 @@ public class IntradayTradeCloser {
 
         List<TriggeredTradeSetupEntity> intradayTrades = setupRepository
             .findByIntradayTrueAndStatus(TriggeredTradeStatus.EXECUTED);
+        List<TriggeredTradeSetupEntity> intradayTargetOrders = setupRepository
+            .findByIntradayTrueAndStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
 
         for (TriggeredTradeSetupEntity trade : intradayTrades) {
             try {
@@ -44,6 +45,22 @@ public class IntradayTradeCloser {
                 log.info("💼 Closed intraday trade for {}", trade.getSymbol());
             } catch (Exception e) {
                 log.error("❌ Failed to close intraday trade {}: {}", trade.getId(), e.getMessage(), e);
+            }
+        }
+
+        for (TriggeredTradeSetupEntity trade : intradayTargetOrders) {
+            try {
+                Double ltp = ltpCacheService.getLtp(trade.getScripCode());
+                if (ltp == null || ltp <= 0) {
+                    log.warn("⚠️ Intraday target trade {} missing LTP; skipping modify for existing exit order {}", trade.getId(), trade.getExitOrderId());
+                    continue;
+                }
+                boolean modified = tradeExecutionService.modifyExitOrderForIntradayClose(trade, ltp);
+                if (modified) {
+                    log.info("✏️ Updated intraday target exit order {} for trade {} to LTP {}", trade.getExitOrderId(), trade.getId(), ltp);
+                }
+            } catch (Exception e) {
+                log.error("❌ Failed to update intraday target trade {}: {}", trade.getId(), e.getMessage(), e);
             }
         }
 
