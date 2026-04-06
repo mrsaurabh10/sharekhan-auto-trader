@@ -56,12 +56,13 @@ public class TradeExecutionController {
             return ResponseEntity.badRequest().body("Invalid price supplied for exit order modification.");
         }
         try {
-            boolean modified = tradeExecutionService.modifyExitOrderPrice(id, request.getPrice(), "MANUAL_MODIFY");
-            if (modified) {
-                return ResponseEntity.ok("Exit order updated.");
+            TradeExecutionService.ModifyExitOrderResult result =
+                    tradeExecutionService.modifyExitOrderPrice(id, request.getPrice(), "MANUAL_MODIFY");
+            if (result.isSuccess()) {
+                return ResponseEntity.ok(result.getMessage());
             }
             return ResponseEntity.status(HttpStatus.CONFLICT)
-                    .body("Unable to modify exit order. Verify order exists and try again.");
+                    .body(result.getMessage());
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body("Failed to modify exit order: " + e.getMessage());
