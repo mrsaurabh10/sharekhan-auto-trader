@@ -13,6 +13,7 @@ import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
+import org.com.sharekhan.util.SharekhanConsoleSilencer;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
@@ -122,7 +123,12 @@ public class OrderExitService {
         if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
         SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx != null ? ctx.getApiKey() : null, accessToken);
 
-        JSONObject response = sharekhanConnect.placeOrder(exitOrder);
+        JSONObject response;
+        try {
+            response = SharekhanConsoleSilencer.call(() -> sharekhanConnect.placeOrder(exitOrder));
+        } catch (Exception e) {
+            throw new RuntimeException("Sharekhan placeOrder failed: " + e.getMessage(), e);
+        }
 
         if (response == null ) {
             log.error("❌ Sharekhan order failed or returned null for trigger {}", trade.getScripCode());

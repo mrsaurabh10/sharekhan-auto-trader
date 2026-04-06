@@ -10,6 +10,7 @@ import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
+import org.com.sharekhan.util.SharekhanConsoleSilencer;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
 
@@ -78,7 +79,7 @@ public class SharekhanBrokerService implements BrokerService {
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
-                    response = sharekhanConnect.placeOrder(order);
+                    response = SharekhanConsoleSilencer.call(() -> sharekhanConnect.placeOrder(order));
                 } catch (Exception e) {
                     log.warn("Attempt {}: placeOrder threw exception for trade {}: {}", attempt, trade.getId(), e.getMessage());
                 }

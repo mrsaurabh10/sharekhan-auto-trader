@@ -1,7 +1,8 @@
 package org.com.sharekhan.service;
 
-import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
+import com.sharekhan.SharekhanConnect;
+import org.com.sharekhan.util.SharekhanConsoleSilencer;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -220,7 +221,9 @@ public class OrderStatusPollingService {
                 }
                 SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx.getApiKey(), accessToken);
 
-                JSONObject response = sharekhanConnect.orderHistory(trade.getExchange(), ctx.getCustomerId(), orderIdToMonitor);
+                JSONObject response = SharekhanConsoleSilencer.call(() ->
+                        sharekhanConnect.orderHistory(trade.getExchange(), ctx.getCustomerId(), orderIdToMonitor)
+                );
                 // Always operate on the latest persisted trade state
                 TriggeredTradeSetupEntity currentTrade = tradeRepo.findById(trade.getId()).orElse(trade);
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
@@ -346,13 +349,17 @@ public class OrderStatusPollingService {
                 } else if (TradeStatus.PENDING.equals(tradeStatus)) {
                     log.debug("Order {} pending on exchange; auto modification disabled", orderIdToMonitor);
                 }
-            } catch (NullPointerException npe) {
+            }  catch (NullPointerException npe) {
                 // Defensive guard: upstream SDK sometimes assumes a non-null Content-Type header and NPEs
                 // Make this non-fatal so our scheduled task keeps running until the endpoint stabilizes
                 log.warn("⚠️ Transient NPE from SDK while polling order {} — likely missing Content-Type on response; will retry", orderIdToMonitor, npe);
             } catch (Exception e) {
                 // Do NOT rethrow — uncaught exceptions cancel ScheduledFuture. Log and continue so we keep polling.
-                log.warn("⚠️ Unexpected error while polling order {}: {} — continuing", orderIdToMonitor, e.toString(), e);
+                String sanitized = sanitizeThrowable(e);
+                log.warn("⚠️ Unexpected error while polling order {}: {} — continuing", orderIdToMonitor, sanitized);
+                if (log.isDebugEnabled()) {
+                    log.debug("Unexpected error while polling order {}", orderIdToMonitor, e);
+                }
             }
         };
         // Poll every 0.5 seconds, up to 2 minutes
@@ -369,6 +376,21 @@ public class OrderStatusPollingService {
     }
 
 
+
+    private String sanitizeThrowable(Throwable throwable) {
+        if (throwable == null) {
+            return "unknown";
+        }
+        String message = throwable.getMessage();
+        if (message == null || message.isBlank()) {
+            return throwable.getClass().getSimpleName();
+        }
+        String flattened = message.replace('\n', ' ').replaceAll("\\s+", " ").trim();
+        if (flattened.length() > 300) {
+            return flattened.substring(0, 300) + "...";
+        }
+        return flattened;
+    }
 
     /*
     Example Response from Sharekhan
@@ -726,7 +748,6 @@ public class OrderStatusPollingService {
     "status": 200,
     "timestamp": "2025-10-28T14:52:32+05:30"
 }
-
 
      */
 }

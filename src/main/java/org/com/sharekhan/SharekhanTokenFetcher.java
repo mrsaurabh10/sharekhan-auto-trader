@@ -8,6 +8,7 @@ import org.jboss.aerogear.security.otp.Totp;
 import org.json.JSONObject;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.com.sharekhan.util.SharekhanConsoleSilencer;
 
 import java.net.URI;
 import java.net.URLDecoder;
@@ -25,7 +26,12 @@ public class SharekhanTokenFetcher {
         SharekhanConnect sharekhanConnect = new SharekhanConnect();
         // Note: clientCode is not used in getLoginURL but might be needed if the flow changes.
         // The original TokenLoginAutomationService used apiKey, null, "1234", 1234L
-        String loginUrl = sharekhanConnect.getLoginURL(apiKey, null, "1234", 1234L);
+        String loginUrl;
+        try {
+            loginUrl = SharekhanConsoleSilencer.call(() -> sharekhanConnect.getLoginURL(apiKey, null, "1234", 1234L));
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to construct Sharekhan login URL: " + e.getMessage(), e);
+        }
         
         try (Playwright playwright = Playwright.create();
              Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions()
@@ -109,7 +115,14 @@ public class SharekhanTokenFetcher {
 
             // Exchange request_token for access_token
             // The original code used: sharekhanConnect.generateSession(apiKeyToUse, encodedToken, null, 12345L, secretToUse, 1005L);
-            JSONObject response = sharekhanConnect.generateSession(apiKey, encodedToken, null, 12345L, secretKey, 1005L);
+            JSONObject response;
+            try {
+                response = SharekhanConsoleSilencer.call(
+                        () -> sharekhanConnect.generateSession(apiKey, encodedToken, null, 12345L, secretKey, 1005L)
+                );
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to generate Sharekhan session: " + e.getMessage(), e);
+            }
             
             if (response.has("data")) {
                 return response.getJSONObject("data").getString("token");
