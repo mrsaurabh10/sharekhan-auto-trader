@@ -496,6 +496,19 @@
     return Array.from(sel.selectedOptions).map(o => o.value);
   }
 
+  function ensureDefaultStatusSelection() {
+    const sel = document.getElementById('statusFilter');
+    if (!sel) return;
+    const anySelected = Array.from(sel.options).some(opt => opt.selected);
+    if (anySelected) return;
+    const defaults = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED']);
+    Array.from(sel.options).forEach(opt => {
+      if (defaults.has(opt.value)) {
+        opt.selected = true;
+      }
+    });
+  }
+
   function wireStatusFilter() {
     const btn = document.getElementById('applyStatusFilterBtn');
     if (btn) btn.addEventListener('click', function() { if (window.selectedUserId) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0); });
@@ -898,6 +911,17 @@
       fetchMStockLtpForKey(qualifiedKey).then(ltp => { if (ltp != null) { const entryPriceInput = document.getElementById('entryPrice'); if (entryPriceInput) entryPriceInput.value = ltp; } }).catch(err => {});
   }
 
-  document.addEventListener('DOMContentLoaded', function(){ ensureCsrf(); loadUsers().catch(function(){}); wireAdminForm(); wireBrokersUI(); wirePlaceOrderForm(); wireStatusFilter(); wireExecutedPagination(); wireUserCreation(); startAdminWs(); });
+  document.addEventListener('DOMContentLoaded', function(){
+    ensureCsrf();
+    ensureDefaultStatusSelection();
+    loadUsers().catch(function(){});
+    wireAdminForm();
+    wireBrokersUI();
+    wirePlaceOrderForm();
+    wireStatusFilter();
+    wireExecutedPagination();
+    wireUserCreation();
+    startAdminWs();
+  });
 
 })();

@@ -91,4 +91,6 @@ public class TriggeredTradeSetupEntity {
 
     private Double exitPrice;
     private Double pnl;
+
+    private LocalDateTime exitOrderPlacedAt;
 }
