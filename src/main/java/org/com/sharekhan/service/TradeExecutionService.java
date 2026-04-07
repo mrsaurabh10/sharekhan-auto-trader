@@ -39,6 +39,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
@@ -53,6 +54,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @RequiredArgsConstructor
 @Slf4j
 public class TradeExecutionService {
+
+    private static final Duration ORDER_LOCK_TIMEOUT = Duration.ofSeconds(8);
 
     public static class ModifyExitOrderResult {
         private final boolean success;
@@ -86,6 +89,7 @@ public class TradeExecutionService {
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final BrokerServiceFactory brokerServiceFactory;
+    private final OrderPlacementGuard orderPlacementGuard;
 
     @Autowired
     private UserConfigService userConfigService;
@@ -646,6 +650,20 @@ public class TradeExecutionService {
 
     // New overload: allow caller to pass exact triggeredAt (time when entry condition met)
     public TriggeredTradeSetupEntity execute(TriggeredTradeSetupEntity trigger, double ltp, java.time.LocalDateTime triggeredAt) {
+        String lockKey = buildEntryLockKey(trigger);
+        try {
+            return orderPlacementGuard.withLock(lockKey, ORDER_LOCK_TIMEOUT,
+                    () -> executeWithoutLock(trigger, ltp, triggeredAt));
+        } catch (OrderPlacementGuard.LockAcquisitionException e) {
+            log.warn("⚠️ Duplicate entry placement prevented for triggerId={}, symbol={}: {}",
+                    trigger != null ? trigger.getId() : null,
+                    trigger != null ? trigger.getSymbol() : "N/A",
+                    e.getMessage());
+            return null;
+        }
+    }
+
+    private TriggeredTradeSetupEntity executeWithoutLock(TriggeredTradeSetupEntity trigger, double ltp, java.time.LocalDateTime triggeredAt) {
         try {
             // Safety guard: do not attempt broker placement if quantity is null/zero
             if (trigger.getQuantity() == null || trigger.getQuantity() <= 0L) {
@@ -1025,6 +1043,27 @@ public class TradeExecutionService {
                                                           double exitPrice,
                                                           String exitReason,
                                                           TriggeredTradeStatus placedStatus) {
+        String lockKey = buildExitLockKey(persisted);
+        try {
+            return orderPlacementGuard.withLock(lockKey, ORDER_LOCK_TIMEOUT,
+                    () -> placeExitOrderAndPersistWithoutLock(persisted, exitPrice, exitReason, placedStatus));
+        } catch (OrderPlacementGuard.LockAcquisitionException e) {
+            log.warn("⚠️ Duplicate exit placement prevented for trade {} (exitOrderId={}): {}",
+                    persisted != null ? persisted.getId() : null,
+                    persisted != null ? persisted.getExitOrderId() : "N/A",
+                    e.getMessage());
+            return OrderPlacementResult.builder()
+                    .success(false)
+                    .status("Rejected")
+                    .rejectionReason("Another exit placement is in progress")
+                    .build();
+        }
+    }
+
+    private OrderPlacementResult placeExitOrderAndPersistWithoutLock(TriggeredTradeSetupEntity persisted,
+                                                                     double exitPrice,
+                                                                     String exitReason,
+                                                                     TriggeredTradeStatus placedStatus) {
         BrokerContext exitCtx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
         if (exitCtx == null || exitCtx.getBrokerName() == null) {
             throw new IllegalStateException("No active broker configured for this user (exit)");
@@ -1839,7 +1878,65 @@ public class TradeExecutionService {
         temp.setSpotScripCode(requestEntity.getSpotScripCode());
 
         // run execution using the converted entity
-        return execute(temp, ltp);
+        String requestLockKey = buildEntryLockKey(requestEntity);
+        try {
+            return orderPlacementGuard.withLock(requestLockKey, ORDER_LOCK_TIMEOUT,
+                    () -> execute(temp, ltp));
+        } catch (OrderPlacementGuard.LockAcquisitionException e) {
+            log.warn("⚠️ Duplicate entry placement prevented for request {} (symbol={}): {}",
+                    requestEntity != null ? requestEntity.getId() : null,
+                    requestEntity != null ? requestEntity.getSymbol() : "N/A",
+                    e.getMessage());
+            return null;
+        }
+    }
+
+    private String buildEntryLockKey(TriggerTradeRequestEntity request) {
+        if (request == null) {
+            return "ENTRY:REQ:NULL";
+        }
+        if (request.getId() != null) {
+            return "ENTRY:REQ:" + request.getId();
+        }
+        return "ENTRY:REQ:" +
+                Objects.toString(request.getAppUserId(), "NA") + ":" +
+                Objects.toString(request.getSymbol(), "NA") + ":" +
+                Objects.toString(request.getStrikePrice(), "NA") + ":" +
+                Objects.toString(request.getOptionType(), "NA");
+    }
+
+    private String buildEntryLockKey(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return "ENTRY:TRADE:NULL";
+        }
+        if (trade.getId() != null) {
+            return "ENTRY:TRADE:" + trade.getId();
+        }
+        if (trade.getOrderId() != null && !trade.getOrderId().isBlank()) {
+            return "ENTRY:ORDER:" + trade.getOrderId();
+        }
+        return "ENTRY:TRADE:" +
+                Objects.toString(trade.getAppUserId(), "NA") + ":" +
+                Objects.toString(trade.getSymbol(), "NA") + ":" +
+                Objects.toString(trade.getStrikePrice(), "NA") + ":" +
+                Objects.toString(trade.getOptionType(), "NA");
+    }
+
+    private String buildExitLockKey(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return "EXIT:TRADE:NULL";
+        }
+        if (trade.getId() != null) {
+            return "EXIT:TRADE:" + trade.getId();
+        }
+        if (trade.getExitOrderId() != null && !trade.getExitOrderId().isBlank()) {
+            return "EXIT:ORDER:" + trade.getExitOrderId();
+        }
+        return "EXIT:TRADE:" +
+                Objects.toString(trade.getAppUserId(), "NA") + ":" +
+                Objects.toString(trade.getSymbol(), "NA") + ":" +
+                Objects.toString(trade.getStrikePrice(), "NA") + ":" +
+                Objects.toString(trade.getOptionType(), "NA");
     }
 
     // ---------------- Broker context resolution ----------------
