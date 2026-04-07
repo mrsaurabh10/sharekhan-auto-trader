@@ -252,18 +252,28 @@ public class PriceTriggerService {
                 if (persisted.getStatus() != TriggeredTradeStatus.EXECUTED) return 0;
 
                 // Determine effective prices for SL and Target
-                Double slRefPrice = Boolean.TRUE.equals(persisted.getUseSpotForSl()) ? spotLtp : tradedLtp;
-                Double targetRefPrice = Boolean.TRUE.equals(persisted.getUseSpotForTarget()) ? spotLtp : tradedLtp;
+                boolean usesSpotSl = usesSpotForSl(persisted);
+                boolean usesSpotTarget = usesSpotForTarget(persisted);
+
+                Double slRefPrice = usesSpotSl ? spotLtp : tradedLtp;
+                Double targetRefPrice = usesSpotTarget ? spotLtp : tradedLtp;
+
+                if (usesSpotSl && slRefPrice == null) {
+                    log.debug("Spot SL requested for trade {} but spot LTP unavailable; skipping SL evaluation", tradeId);
+                }
+                if (usesSpotTarget && targetRefPrice == null) {
+                    log.debug("Spot target requested for trade {} but spot LTP unavailable; skipping target evaluation", tradeId);
+                }
 
                 Double slVal = persisted.getStopLoss();
                 boolean hasValidSl = (slVal != null && slVal > 0d);
-                
+
                 // Check SL against effective reference price
                 boolean slHit = false;
                 if (slRefPrice != null && hasValidSl) {
-                    boolean isSpotSl = Boolean.TRUE.equals(persisted.getUseSpotForSl());
+                    boolean isSpotSl = usesSpotSl;
                     boolean isPE = "PE".equalsIgnoreCase(persisted.getOptionType());
-                    
+
                     if (isSpotSl && isPE) {
                         // For PE with Spot SL: Hit if Spot Price goes ABOVE SL
                         slHit = slRefPrice >= slVal;
@@ -295,9 +305,9 @@ public class PriceTriggerService {
                         }
                     } else {
                         // Standard target hit logic (any target hit -> exit all)
-                        boolean isSpotTarget = Boolean.TRUE.equals(persisted.getUseSpotForTarget());
+                        boolean isSpotTarget = usesSpotTarget;
                         boolean isPE = "PE".equalsIgnoreCase(persisted.getOptionType());
-                        
+
                         boolean targetHit;
                         if (isSpotTarget && isPE) {
                             // For PE with Spot Target: Hit if Spot Price goes BELOW Target
@@ -329,15 +339,14 @@ public class PriceTriggerService {
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
                 
                 // Re-determine effective prices for logging/logic
-                Double slRefPrice = Boolean.TRUE.equals(reloaded.getUseSpotForSl()) ? spotLtp : tradedLtp;
-                Double targetRefPrice = Boolean.TRUE.equals(reloaded.getUseSpotForTarget()) ? spotLtp : tradedLtp;
+                Double slRefPrice = usesSpotForSl(reloaded) ? spotLtp : tradedLtp;
+                Double targetRefPrice = usesSpotForTarget(reloaded) ? spotLtp : tradedLtp;
 
                 String exitReason = reloaded.getExitReason();
                 boolean exitOrderAlreadyPresent = reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank();
                 if ("STOP_LOSS_HIT".equals(exitReason)) {
                     Double stopPriceOption = reloaded.getStopLoss();
-                    boolean usesSpotSl = Boolean.TRUE.equals(reloaded.getUseSpotForSl()) ||
-                            (reloaded.getUseSpotForSl() == null && Boolean.TRUE.equals(reloaded.getUseSpotPrice()));
+                    boolean usesSpotSl = usesSpotForSl(reloaded);
 
                     boolean modified = false;
                     if (exitOrderAlreadyPresent && !usesSpotSl && stopPriceOption != null && stopPriceOption > 0) {
@@ -386,7 +395,7 @@ public class PriceTriggerService {
     }
 
     private int calculateLotsToBook(TriggeredTradeSetupEntity trade, double ltp) {
-        boolean isSpotTarget = Boolean.TRUE.equals(trade.getUseSpotForTarget());
+        boolean isSpotTarget = usesSpotForTarget(trade);
         boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
         
         boolean target1Hit, target2Hit, target3Hit;
@@ -472,7 +481,7 @@ public class PriceTriggerService {
         // Re-calculate lotsToBook to determine split and new SL
         // (Logic duplicated from calculateLotsToBook but needed for newStopLoss determination)
         
-        boolean isSpotTarget = Boolean.TRUE.equals(trade.getUseSpotForTarget());
+        boolean isSpotTarget = usesSpotForTarget(trade);
         boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
         
         boolean target1Hit, target2Hit, target3Hit;
@@ -680,5 +689,25 @@ public class PriceTriggerService {
         } catch (Exception e) {
             log.error("❌ Error saving PnL for trade {}: {}", originalTrade == null ? "null" : originalTrade.getId(), e.getMessage(), e);
         }
+    }
+
+    private boolean usesSpotForTarget(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(trade.getUseSpotForTarget())) {
+            return true;
+        }
+        return trade.getUseSpotForTarget() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
+    }
+
+    private boolean usesSpotForSl(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(trade.getUseSpotForSl())) {
+            return true;
+        }
+        return trade.getUseSpotForSl() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
     }
 }
