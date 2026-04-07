@@ -1686,17 +1686,34 @@ public class TradeExecutionService {
                     log.error("❌ Failed to subscribe LTP for trade request {}", tradeSetupEntity.getId(), e);
                 }
             }
-            // subscribe to ACK for this customer's feed
-            BrokerContext subCtx = resolveBrokerContext(executedTrades.get(0).getBrokerCredentialsId(), executedTrades.get(0).getAppUserId());
-            if (subCtx != null && subCtx.getCustomerId() != null) {
-                webSocketSubscriptionService.subscribeToAck(String.valueOf(subCtx.getCustomerId()));
-            } else {
-                // For simulator, we don't need to subscribe to ACK
-                if (subCtx != null && "Simulator".equalsIgnoreCase(subCtx.getBrokerName())) {
-                    log.info("Skipping ACK subscription for Simulator broker");
-                } else {
-                    throw new IllegalStateException("No active Sharekhan broker configured for ACK subscribe");
+            java.util.Set<Long> ackCustomers = new java.util.HashSet<>();
+            for (TriggeredTradeSetupEntity tradeSetupEntity : activeTrades) {
+                try {
+                    BrokerContext subCtx = resolveBrokerContext(tradeSetupEntity.getBrokerCredentialsId(), tradeSetupEntity.getAppUserId());
+                    if (subCtx == null) {
+                        continue;
+                    }
+                    if ("Simulator".equalsIgnoreCase(subCtx.getBrokerName())) {
+                        continue;
+                    }
+                    try {
+                        Broker broker = Broker.fromDisplayName(subCtx.getBrokerName());
+                        if (broker != Broker.SHAREKHAN) {
+                            continue;
+                        }
+                    } catch (Exception ignore) {
+                        continue;
+                    }
+                    if (subCtx.getCustomerId() != null && ackCustomers.add(subCtx.getCustomerId())) {
+                        webSocketSubscriptionService.subscribeToAck(String.valueOf(subCtx.getCustomerId()));
+                        log.info("🔔 Subscribed to ACK feed for customer {}", subCtx.getCustomerId());
+                    }
+                } catch (Exception ackEx) {
+                    log.warn("Failed subscribing to ACK for trade {}: {}", tradeSetupEntity.getId(), ackEx.getMessage());
                 }
+            }
+            if (ackCustomers.isEmpty()) {
+                log.debug("No eligible Sharekhan customers found for ACK subscription among {} active trades", activeTrades.size());
             }
         }
 
