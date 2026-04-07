@@ -29,9 +29,12 @@ public class AfterHoursTargetOrderScheduler {
 
         int attempted = 0;
         int placed = 0;
+        int intradaySkipped = 0;
 
         for (TriggeredTradeSetupEntity trade : targetOrders) {
             if (Boolean.TRUE.equals(trade.getIntraday())) {
+                intradaySkipped++;
+                log.debug("Skipping after-hours target refresh for intraday trade {}", trade.getId());
                 continue;
             }
             attempted++;
@@ -44,6 +47,7 @@ public class AfterHoursTargetOrderScheduler {
             }
         }
 
-        log.info("After-hours target refresh complete. Candidates={}, placed={}", attempted, placed);
+        log.info("After-hours target refresh complete. Candidates={}, placed={}, intradaySkipped={}",
+                attempted, placed, intradaySkipped);
     }
 }

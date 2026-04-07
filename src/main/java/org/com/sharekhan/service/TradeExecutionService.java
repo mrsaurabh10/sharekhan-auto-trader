@@ -1292,10 +1292,15 @@ public class TradeExecutionService {
         LocalDateTime lastPlaced = persisted.getExitOrderPlacedAt();
         if (lastPlaced != null) {
             LocalDate today = LocalDate.now(zone);
-            LocalDateTime cutoff = LocalDateTime.of(today, LocalTime.of(16, 0));
-            if (!lastPlaced.isBefore(cutoff)) {
-                log.debug("Skipping after-hours reschedule — trade {} exit order refreshed at {}", tradeId, lastPlaced);
-                return false;
+            if (today.equals(lastPlaced.toLocalDate())) {
+                LocalTime afterHoursWindowStart = LocalTime.of(17, 0);
+                if (!lastPlaced.toLocalTime().isBefore(afterHoursWindowStart)) {
+                    log.debug("Skipping after-hours reschedule — trade {} exit order already refreshed after {}", tradeId, afterHoursWindowStart);
+                    return false;
+                }
+                if (!lastPlaced.toLocalTime().isBefore(LocalTime.of(16, 0))) {
+                    log.info("Reissuing after-hours target for trade {} (existing exit from {} placed post market close)", tradeId, lastPlaced);
+                }
             }
         }
 
