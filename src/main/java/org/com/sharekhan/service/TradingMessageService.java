@@ -120,25 +120,58 @@ public class TradingMessageService {
             return false;
         }
 
-        List<TriggerTradeRequestEntity> pendingRequests = triggerTradeRequestRepository
-                .findBySymbolAndAppUserIdAndStatusIn(
+        Double requestedStrike = req.getStrikePrice();
+        String requestedOptionType = normalizeOption(req.getOptionType());
+
+        List<TriggerTradeRequestEntity> pendingRequests =
+                triggerTradeRequestRepository.findBySymbolAndAppUserIdAndStatus(
                         req.getInstrument(),
                         appUserId,
-                        List.of(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION, TriggeredTradeStatus.TRIGGERED)
+                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
                 );
 
-        if (pendingRequests != null && !pendingRequests.isEmpty()) {
+        if (pendingRequests != null && pendingRequests.stream()
+                .anyMatch(p -> matchesContract(requestedStrike, requestedOptionType,
+                        p.getStrikePrice(), p.getOptionType()))) {
             return true;
         }
 
-        List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeSetupRepository
+        List<TriggeredTradeSetupEntity> activeTrades = triggeredTradeSetupRepository
                 .findBySymbolAndAppUserIdAndStatusIn(
                         req.getInstrument(),
                         appUserId,
-                        List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                        List.of(
+                                TriggeredTradeStatus.EXECUTED,
+                                TriggeredTradeStatus.TARGET_ORDER_PLACED,
+                                TriggeredTradeStatus.EXIT_ORDER_PLACED
+                        )
                 );
 
-        return executedTrades != null && !executedTrades.isEmpty();
+        return activeTrades != null && activeTrades.stream()
+                .anyMatch(t -> matchesContract(requestedStrike, requestedOptionType,
+                        t.getStrikePrice(), t.getOptionType()));
+    }
+
+    private boolean matchesContract(Double reqStrike, String reqOptionType,
+                                    Double entityStrike, String entityOptionType) {
+        if (reqStrike == null && reqOptionType == null) {
+            // For equities/indices without option legs, symbol match is enough
+            return true;
+        }
+
+        if (!Objects.equals(reqStrike, entityStrike)) {
+            return false;
+        }
+
+        return Objects.equals(reqOptionType, normalizeOption(entityOptionType));
+    }
+
+    private String normalizeOption(String optionType) {
+        if (optionType == null) {
+            return null;
+        }
+        String trimmed = optionType.trim();
+        return trimmed.isEmpty() ? null : trimmed.toUpperCase(Locale.ROOT);
     }
 
     public void placeForAllSharekhanCustomers(TriggerRequest base) {
