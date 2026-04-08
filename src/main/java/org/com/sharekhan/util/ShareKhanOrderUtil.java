@@ -30,10 +30,12 @@ public class ShareKhanOrderUtil {
                                          Long customerId,
                                          String channelUser) throws SharekhanAPIException, IOException {
         OrderParams orderParams = new OrderParams();
-        if(TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())
-                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(tradeSetupEntity.getStatus()) ){
+        if ((TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())
+                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(tradeSetupEntity.getStatus())
+                || TriggeredTradeStatus.EXIT_TRIGGERED.equals(tradeSetupEntity.getStatus()))
+                && tradeSetupEntity.getExitOrderId() != null && !tradeSetupEntity.getExitOrderId().isBlank()) {
             orderParams.orderId = tradeSetupEntity.getExitOrderId();
-        }else{
+        } else {
             orderParams.orderId = tradeSetupEntity.getOrderId();
         }
         orderParams.customerId = customerId;
