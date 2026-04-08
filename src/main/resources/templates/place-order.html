@@ -215,21 +215,27 @@
         updateExecutedTradeLTP(scripCode, ltp);
     };
 
-    // Helper to call backend MStock LTP endpoint for a qualified key like "NFO:CDSL25JAN2220CE"
-    function fetchMStockLtpForKey(qualifiedKey) {
-        if (!qualifiedKey) return Promise.resolve(null);
-        const url = `/api/mstock/ltp?i=${encodeURIComponent(qualifiedKey)}`;
-        return fetchWithTimeout(url)
+    // Helper to call backend MStock LTP endpoint for a script selection
+    function fetchMStockLtp(params) {
+        if (!params || typeof params !== 'object') return Promise.resolve(null);
+        const url = new URL('/api/mstock/ltp/by-script', window.location.origin);
+        if (params.scripCode != null) url.searchParams.set('scripCode', params.scripCode);
+        if (params.exchange) url.searchParams.set('exchange', params.exchange);
+        if (params.instrument) url.searchParams.set('instrument', params.instrument);
+        if (params.strikePrice != null && params.strikePrice !== '') url.searchParams.set('strikePrice', params.strikePrice);
+        if (params.optionType) url.searchParams.set('optionType', params.optionType);
+        if (params.expiry) url.searchParams.set('expiry', params.expiry);
+
+        return fetchWithTimeout(url.toString())
             .then(res => res.json())
             .then(json => {
-                if (!json || json.status !== 'success' || !json.data) return null;
-                const entry = json.data[qualifiedKey];
-                if (!entry) return null;
-                // last_price may be integer or number string — return numeric value
-                return Number(entry.last_price);
+                if (!json || json.status !== 'success') return null;
+                if (json.last_price != null) return Number(json.last_price);
+                if (json.data && json.data.last_price != null) return Number(json.data.last_price);
+                return null;
             })
             .catch(err => {
-                console.error('Failed to fetch MStock LTP for', qualifiedKey, err);
+                console.error('Failed to fetch MStock LTP', err);
                 return null;
             });
     }
@@ -477,34 +483,6 @@
             });
     }
 
-    function buildQualifiedOptionKey(exchange, symbol, expiryStr, strike, optionType) {
-        if (!exchange || !symbol || !expiryStr || !strike || !optionType) return null;
-
-        const exchangeMap = {
-            'NF': 'NFO',
-            'BF': 'BFO'
-        };
-        const mappedExchange = exchangeMap[exchange] || exchange;
-
-        // Custom month letter mapping based on your provided scheme
-        function monthNumToLetter(m) {
-            const monthLetterMap = {
-                1: 'J',  // JAN
-                2: 'F',  // FEB
-                3: 'M',  // MAR
-                4: 'A',  // APR
-                5: 'M',  // MAY
-                6: 'J',  // JUN
-                7: 'J',  // JUL
-                8: 'A',  // AUG
-                9: 'S',  // SEP
-                10: 'O', // OCT
-                11: 'N', // NOV
-                12: 'D'  // DEC
-            };
-            return monthLetterMap[m] || 'X';
-        }
-
         // Parse expiry string to Date object
         let expiryDate = null;
         if (expiryStr.includes('/')) {
@@ -578,18 +556,15 @@
     function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
         if (!exchange || !instrument || !strikes || strikes.length === 0) return;
 
-        // Map UI exchange to MStock exchange for underlying (e.g. NF -> NSE)
         const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
         const mappedExchange = underlyingExchangeMap[exchange] || exchange;
-        const qualifiedKey = `${mappedExchange}:${instrument}`;
 
-        fetchMStockLtpForKey(qualifiedKey).then(ltp => {
+        fetchMStockLtp({ exchange: mappedExchange, instrument }).then(ltp => {
             if (ltp == null) {
-                console.warn('Could not fetch underlying LTP for', qualifiedKey);
+                console.warn('Could not fetch underlying LTP for', mappedExchange, instrument);
                 return;
             }
 
-            // Find nearest strike
             let nearestStrike = null;
             let minDiff = Infinity;
 
@@ -605,11 +580,9 @@
             if (nearestStrike) {
                 const strikeSelect = document.getElementById('strikePrice');
                 strikeSelect.value = nearestStrike;
-
-                // Dispatch a change event to trigger expiry loading etc.
                 strikeSelect.dispatchEvent(new Event('change'));
             }
-        });
+        }).catch(() => {});
     }
 
 
@@ -640,10 +613,9 @@
             // fetch underlying LTP and set as entry price (map NF->NSE, BF->BSE as before)
             const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' };
             const mappedExchange = underlyingExchangeMap[exchange] || exchange;
-            const qualified = `${mappedExchange}:${instrument}`;
-            fetchMStockLtpForKey(qualified).then(ltp => {
-                if (ltp != null) document.getElementById('entryPrice').value = ltp;
-            }).catch(err => console.warn('Failed to fetch underlying LTP for instrument', err));
+            fetchMStockLtp({ exchange: mappedExchange, instrument })
+                .then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; })
+                .catch(err => console.warn('Failed to fetch underlying LTP for instrument', err));
             return;
         }
 
@@ -731,8 +703,7 @@
             if (!exchange || !instrument) return;
             const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' };
             const mappedExchange = underlyingExchangeMap[exchange] || exchange;
-            const qualified = `${mappedExchange}:${instrument}`;
-            fetchMStockLtpForKey(qualified)
+            fetchMStockLtp({ exchange: mappedExchange, instrument })
                 .then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; })
                 .catch(err => console.warn('Failed to fetch underlying LTP for instrument', err));
             return;
@@ -740,9 +711,7 @@
 
         if (!exchange || !instrument || !strikePrice || !expiry) return;
 
-        const qualifiedKey = buildQualifiedOptionKey(exchange, instrument, expiry, strikePrice, optionType);
-        if (!qualifiedKey) return;
-        fetchMStockLtpForKey(qualifiedKey)
+        fetchMStockLtp({ exchange, instrument, strikePrice, optionType, expiry })
             .then(ltp => {
                 if (ltp != null) {
                     document.getElementById('entryPrice').value = ltp;

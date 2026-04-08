@@ -6,9 +6,12 @@ import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
 import org.com.sharekhan.auth.BrokerAuthProvider;
 import org.com.sharekhan.auth.AuthTokenResult;
 import org.com.sharekhan.auth.TokenStoreService;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.enums.Broker;
+import org.com.sharekhan.service.MStockInstrumentResolver;
 import org.com.sharekhan.service.MStockLtpService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -22,6 +25,7 @@ public class MStockController {
     private final MStockLtpService mStockLtpService;
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
+    private final MStockInstrumentResolver instrumentResolver;
 
     @GetMapping("/ltp")
     public ResponseEntity<Map<String, Object>> getLtp(@RequestParam(name = "i") List<String> instruments) {
@@ -40,6 +44,68 @@ public class MStockController {
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             log.error("Failed to fetch MStock LTP", e);
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "error");
+            err.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(err);
+        }
+    }
+
+    @GetMapping("/ltp/by-script")
+    public ResponseEntity<Map<String, Object>> getLtpByScript(
+            @RequestParam(name = "scripCode", required = false) Integer scripCode,
+            @RequestParam(name = "exchange", required = false) String exchange,
+            @RequestParam(name = "instrument", required = false) String instrument,
+            @RequestParam(name = "strikePrice", required = false) Double strikePrice,
+            @RequestParam(name = "optionType", required = false) String optionType,
+            @RequestParam(name = "expiry", required = false) String expiry) {
+
+        if (scripCode == null && (!StringUtils.hasText(exchange) || !StringUtils.hasText(instrument))) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "error");
+            err.put("message", "Provide either scripCode or exchange + instrument to resolve the script.");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        try {
+            Optional<ScriptMasterEntity> scriptOpt = instrumentResolver.resolveScript(
+                    scripCode, exchange, instrument, strikePrice, optionType, expiry);
+
+            if (scriptOpt.isEmpty()) {
+                Map<String, Object> err = new HashMap<>();
+                err.put("status", "error");
+                err.put("message", "Unable to locate script in cache.");
+                return ResponseEntity.status(404).body(err);
+            }
+
+            ScriptMasterEntity script = scriptOpt.get();
+            Optional<String> instrumentKeyOpt = instrumentResolver.resolveInstrumentKey(script);
+            if (instrumentKeyOpt.isEmpty()) {
+                Map<String, Object> err = new HashMap<>();
+                err.put("status", "error");
+                err.put("message", "Unable to resolve MStock instrument key for provided script.");
+                return ResponseEntity.status(422).body(err);
+            }
+
+            String instrumentKey = instrumentKeyOpt.get();
+            Map<String, Object> ltpData = mStockLtpService.fetchLtpForInstrument(instrumentKey);
+            Double lastPrice = null;
+            if (ltpData != null) {
+                Object lastPriceObj = ltpData.get("last_price");
+                if (lastPriceObj instanceof Number) {
+                    lastPrice = ((Number) lastPriceObj).doubleValue();
+                }
+            }
+
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("status", "success");
+            resp.put("instrument", instrumentKey);
+            resp.put("scripCode", script.getScripCode());
+            resp.put("last_price", lastPrice);
+            resp.put("data", ltpData);
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            log.error("Failed to fetch MStock LTP by script", e);
             Map<String, Object> err = new HashMap<>();
             err.put("status", "error");
             err.put("message", e.getMessage());
