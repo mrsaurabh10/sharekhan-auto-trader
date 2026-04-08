@@ -357,8 +357,17 @@ public class PriceTriggerService {
                     boolean usesSpotSl = usesSpotForSl(reloaded);
 
                     boolean modified = false;
-                    if (exitOrderAlreadyPresent && !usesSpotSl && stopPriceOption != null && stopPriceOption > 0) {
-                        modified = tradeExecutionService.modifyExitOrderForStop(reloaded, stopPriceOption);
+                    if (exitOrderAlreadyPresent) {
+                        // Prefer the latest traded LTP so the broker order executes immediately; fall back to a configured SL.
+                        Double modifyPrice = null;
+                        if (Double.isFinite(tradedLtp) && tradedLtp > 0d) {
+                            modifyPrice = tradedLtp;
+                        } else if (stopPriceOption != null && stopPriceOption > 0d) {
+                            modifyPrice = stopPriceOption;
+                        }
+                        if (modifyPrice != null) {
+                            modified = tradeExecutionService.modifyExitOrderForStop(reloaded, modifyPrice);
+                        }
                     }
 
                     if (modified) {
