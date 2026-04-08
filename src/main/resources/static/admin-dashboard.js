@@ -537,14 +537,22 @@
     return null;
   }
 
-  function fetchMStockLtpForKey(qualifiedKey) {
-      if (!qualifiedKey) return Promise.resolve(null);
-      const url = '/api/mstock/ltp?i=' + encodeURIComponent(qualifiedKey);
-      return fetchJson(url).then(json => {
-          if (!json || json.status !== 'success' || !json.data) return null;
-          const entry = json.data[qualifiedKey];
-          return entry ? Number(entry.last_price) : null;
-      }).catch(err => null);
+  function fetchMStockLtp(params) {
+      if (!params || typeof params !== 'object') return Promise.resolve(null);
+      const url = new URL('/api/mstock/ltp/by-script', window.location.origin);
+      if (params.scripCode != null) url.searchParams.set('scripCode', params.scripCode);
+      if (params.exchange) url.searchParams.set('exchange', params.exchange);
+      if (params.instrument) url.searchParams.set('instrument', params.instrument);
+      if (params.strikePrice != null && params.strikePrice !== '') url.searchParams.set('strikePrice', params.strikePrice);
+      if (params.optionType) url.searchParams.set('optionType', params.optionType);
+      if (params.expiry) url.searchParams.set('expiry', params.expiry);
+
+      return fetchJson(url.toString()).then(json => {
+          if (!json || json.status !== 'success') return null;
+          if (json.last_price != null) return Number(json.last_price);
+          if (json.data && json.data.last_price != null) return Number(json.data.last_price);
+          return null;
+      }).catch(() => null);
   }
 
   function applyLtpMap(map) {
@@ -770,8 +778,8 @@
         if (!instrument) return;
         const isNCBC = (ex === 'NC' || ex === 'BC');
         if (isNCBC) {
-            const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' }; const mappedExchange = underlyingExchangeMap[ex] || ex; const qualified = mappedExchange + ':' + instrument;
-            fetchMStockLtpForKey(qualified).then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; }).catch(err => {});
+            const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' }; const mappedExchange = underlyingExchangeMap[ex] || ex;
+            fetchMStockLtp({ exchange: mappedExchange, instrument }).then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; }).catch(() => {});
             return;
         }
         try { const strikes = await fetchStrikes(ex, instrument); if (Array.isArray(strikes) && strikeSel) { strikeSel.innerHTML = '<option value="">Select Strike</option>' + strikes.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join(''); strikeSel.disabled = false; fetchUnderlyingAndSelectNearestStrike(ex, instrument, strikes); } } catch (e) { }
@@ -869,46 +877,28 @@
   // Expose functions
   window.loadUsers = loadUsers; window.loadRequestedOrdersForUser = loadRequestedOrdersForUser; window.loadExecutedForUser = loadExecutedForUser; window.loadBrokers = loadBrokers; window.selectUser = selectUser; window.fetchInstrumentsForExchange = fetchInstrumentsForExchange; window.populateInstruments = populateInstruments; window.fetchStrikes = fetchStrikes; window.fetchExpiries = fetchExpiries;
   // Build qualified key helper needed by fetchOptionLtpAndPopulateEntry
-  function buildQualifiedOptionKey(exchange, symbol, expiryStr, strike, optionType) {
-      if (!exchange || !symbol || !expiryStr || !strike || !optionType) return null;
-      const exchangeMap = { 'NF': 'NFO', 'BF': 'BFO' }; const mappedExchange = exchangeMap[exchange] || exchange;
-      function monthNumToLetter(m) { const monthLetterMap = { 1: 'J', 2: 'F', 3: 'M', 4: 'A', 5: 'M', 6: 'J', 7: 'J', 8: 'A', 9: 'S', 10: 'O', 11: 'N', 12: 'D' }; return monthLetterMap[m] || 'X'; }
-      let expiryDate = null;
-      if (expiryStr.includes('/')) { const parts = expiryStr.split('/').map(s => s.trim()); if (parts.length === 3) { const day = Number(parts[0]); const month = Number(parts[1]) - 1; const year = Number(parts[2]); expiryDate = new Date(year, month, day); } } else { const norm = expiryStr.replace(/[^0-9]/g, ''); if (norm.length === 8) { const year = Number(norm.substring(0,4)); const month = Number(norm.substring(4,6)) - 1; const day = Number(norm.substring(6,8)); expiryDate = new Date(year, month, day); } }
-      if (!expiryDate || isNaN(expiryDate.getTime())) return null;
-      const year = expiryDate.getFullYear(); const month = expiryDate.getMonth();
-      function getLastExpiryDay(y, m, expiryWeekday) { const lastDay = new Date(y, m + 1, 0); const lastDate = lastDay.getDate(); for(let d = lastDate; d > lastDate - 7; d--) { const date = new Date(y, m, d); if (date.getDay() === expiryWeekday) return date; } return null; }
-      let weeklyExpiryDay = null; if(symbol === 'NIFTY') weeklyExpiryDay = 2; else if(symbol === 'SENSEX') weeklyExpiryDay = 4; else weeklyExpiryDay = 4;
-      const lastExpiry = getLastExpiryDay(year, month, weeklyExpiryDay);
-      const isWeekly = expiryDate.getDay() === weeklyExpiryDay && expiryDate.getDate() !== lastExpiry.getDate();
-      let expiryFormatted = '';
-      if (isWeekly) { const yy = String(year).slice(-2); const monLetter = monthNumToLetter(month + 1); const dd = expiryDate.getDate().toString().padStart(2, '0'); expiryFormatted = `${yy}${monLetter}${dd}`; } else { const yy = String(year).slice(-2); const monthNames = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC']; expiryFormatted = `${yy}${monthNames[month]}`; }
-      const strikeNum = Number(strike); const strikeStr = strikeNum % 1 === 0 ? `${strikeNum}` : strikeNum.toFixed(1);
-      return mappedExchange + ':' + symbol + expiryFormatted + strikeStr + optionType;
-  }
   function fetchUnderlyingAndSelectNearestStrike(exchange, instrument, strikes) {
       if (!exchange || !instrument || !strikes || strikes.length === 0) return;
-      const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' }; const mappedExchange = underlyingExchangeMap[exchange] || exchange; const qualifiedKey = mappedExchange + ':' + instrument;
-      fetchMStockLtpForKey(qualifiedKey).then(ltp => {
+      const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
+      const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+      fetchMStockLtp({ exchange: mappedExchange, instrument }).then(ltp => {
           if (ltp == null) return;
           let nearestStrike = null; let minDiff = Infinity;
           for (const strike of strikes) { const strikeVal = parseFloat(strike); const diff = Math.abs(strikeVal - ltp); if (diff < minDiff) { minDiff = diff; nearestStrike = strike; } }
           if (nearestStrike) { const strikeSelect = document.getElementById('strikePrice'); if (strikeSelect) { strikeSelect.value = nearestStrike; strikeSelect.dispatchEvent(new Event('change')); } }
-      });
+      }).catch(() => {});
   }
   function fetchOptionLtpAndPopulateEntry() {
       const exchange = document.getElementById('exchange').value; const instrument = document.getElementById('instrument').value; const strikePrice = document.getElementById('strikePrice').value; const optionType = document.getElementById('optionType').value || 'CE'; const expiry = document.getElementById('expiry').value;
       const noStrikeExchanges = new Set(['NC','BC']); const isNoStrike = noStrikeExchanges.has((exchange || '').toUpperCase());
       if (isNoStrike) {
           if (!exchange || !instrument) return;
-          const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' }; const mappedExchange = underlyingExchangeMap[exchange] || exchange; const qualified = mappedExchange + ':' + instrument;
-          fetchMStockLtpForKey(qualified).then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; }).catch(err => {});
+          const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE', 'NC': 'NSE', 'BC': 'BSE' }; const mappedExchange = underlyingExchangeMap[exchange] || exchange;
+          fetchMStockLtp({ exchange: mappedExchange, instrument }).then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; }).catch(() => {});
           return;
       }
       if (!exchange || !instrument || !strikePrice || !expiry) return;
-      const qualifiedKey = buildQualifiedOptionKey(exchange, instrument, expiry, strikePrice, optionType);
-      if (!qualifiedKey) return;
-      fetchMStockLtpForKey(qualifiedKey).then(ltp => { if (ltp != null) { const entryPriceInput = document.getElementById('entryPrice'); if (entryPriceInput) entryPriceInput.value = ltp; } }).catch(err => {});
+      fetchMStockLtp({ exchange, instrument, strikePrice, optionType, expiry }).then(ltp => { if (ltp != null) { const entryPriceInput = document.getElementById('entryPrice'); if (entryPriceInput) entryPriceInput.value = ltp; } }).catch(() => {});
   }
 
   document.addEventListener('DOMContentLoaded', function(){

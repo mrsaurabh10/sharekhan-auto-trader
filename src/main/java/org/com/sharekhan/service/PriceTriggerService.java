@@ -20,6 +20,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 @Slf4j
 @Service
@@ -34,6 +35,7 @@ public class PriceTriggerService {
     private final WebSocketSubscriptionService webSocketSubscriptionService;
     private final LtpCacheService ltpCacheService;
     private final MStockLtpService mStockLtpService;
+    private final MStockInstrumentResolver instrumentResolver;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         // Check if current time is after 9:20 AM IST
@@ -205,17 +207,23 @@ public class PriceTriggerService {
                          try {
                              ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
                              if (script != null) {
-                                 // Construct MStock instrument key, e.g., "NFO:BANKNIFTY23OCT44000CE"
-                                 // Assuming script.getExchange() gives "NFO", "NSE", etc. and script.getTradingSymbol() gives the symbol
-                                 // Adjust the format based on how MStock expects it. Usually "EXCHANGE:SYMBOL"
-                                 String mstockKey = script.getExchange() + ":" + script.getTradingSymbol();
-                                 Map<String, Object> mstockData = mStockLtpService.fetchLtpForInstrument(mstockKey);
-                                 if (mstockData != null && mstockData.get("last_price") != null) {
-                                     Object priceObj = mstockData.get("last_price");
-                                     if (priceObj instanceof Number) {
-                                         tradedLtp = ((Number) priceObj).doubleValue();
-                                         log.info("Fetched missing LTP from MStock for {}: {}", mstockKey, tradedLtp);
+                                 Optional<String> mstockKeyOpt = instrumentResolver.resolveInstrumentKey(script);
+                                 if (mstockKeyOpt.isPresent()) {
+                                     String mstockKey = mstockKeyOpt.get();
+                                     try {
+                                         Map<String, Object> mstockData = mStockLtpService.fetchLtpForInstrument(mstockKey);
+                                         if (mstockData != null) {
+                                             Object priceObj2 = mstockData.get("last_price");
+                                             if (priceObj2 instanceof Number) {
+                                                 tradedLtp = ((Number) priceObj2).doubleValue();
+                                                 log.info("Fetched missing LTP from MStock for {}: {}", mstockKey, tradedLtp);
+                                             }
+                                         }
+                                     } catch (Exception inner) {
+                                         log.warn("Failed to fetch fallback LTP from MStock for trade {} via {}: {}", trade.getId(), mstockKey, inner.getMessage());
                                      }
+                                 } else {
+                                     log.debug("Unable to resolve MStock instrument for scrip {} while fetching fallback LTP", trade.getScripCode());
                                  }
                              }
                          } catch (Exception ex) {
