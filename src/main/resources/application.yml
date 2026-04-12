@@ -22,7 +22,14 @@ spring:
   jackson:
     time-zone: Asia/Kolkata
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
+  forward-headers-strategy: framework
+  ssl:
+    enabled: ${SERVER_SSL_ENABLED:false}
+    key-store: ${SERVER_SSL_KEY_STORE:}
+    key-store-password: ${SERVER_SSL_KEY_STORE_PASSWORD:}
+    key-store-type: ${SERVER_SSL_KEY_STORE_TYPE:PKCS12}
+    key-alias: ${SERVER_SSL_KEY_ALIAS:spring-boot}
 logging:
   level:
     org:
@@ -60,3 +67,4 @@ app:
   telegram:
     TELEGRAM_BOT_TOKEN: "8330200742:AAEinZnYlgatRTRcLrPH7r_MWIvJ0MBX_wY" # set to your bot token, e.g. 12345:ABCdef...
     TELEGRAM_CHAT_ID: "376501162"   # set to target chat id (group or user)
+    webhook-secret: ""              # optional: set and keep in sync with Telegram setWebhook secret_token
