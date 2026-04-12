@@ -67,7 +67,8 @@ public class SecurityConfig {
         // Exclude H2 console from CSRF protection to allow console POST actions
         http.csrf(csrf -> csrf.ignoringRequestMatchers(
             new AntPathRequestMatcher("/h2-console/**"),
-            new AntPathRequestMatcher("/api/trades/trigger-all") // Bypass CSRF for token authenticated endpoint
+            new AntPathRequestMatcher("/api/trades/trigger-all"),
+            new AntPathRequestMatcher("/telegram/webhook") // Telegram supplies its own shared secret header
         ));
         return http.build();
     }
