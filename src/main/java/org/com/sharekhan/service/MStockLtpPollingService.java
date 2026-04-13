@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -37,7 +38,10 @@ public class MStockLtpPollingService {
     private final Map<String, Integer> mStockKeyToScripCodeCache = new ConcurrentHashMap<>();
     private final AtomicBoolean afterHoursLogged = new AtomicBoolean(false);
 
-    @Scheduled(fixedDelay = 500)
+    @Value("${app.mstock.poll-delay-ms:1500}")
+    private long mstockPollDelayMs;
+
+    @Scheduled(fixedDelayString = "${app.mstock.poll-delay-ms:1500}")
     public void pollMStockLtp() {
         try {
             ZonedDateTime now = ZonedDateTime.now(MARKET_ZONE);
