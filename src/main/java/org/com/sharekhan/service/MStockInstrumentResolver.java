@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
@@ -16,6 +17,7 @@ public class MStockInstrumentResolver {
 
     private final ScriptMasterRepository scriptMasterRepository;
     private final ScriptMasterService scriptMasterService;
+    private final Map<Integer, String> instrumentKeyCache = new ConcurrentHashMap<>();
 
     private static final Map<String, String> API_EXCHANGE_CODES = Map.of(
             "NC", "NSE",
@@ -33,8 +35,14 @@ public class MStockInstrumentResolver {
 
     public Optional<String> resolveInstrumentKey(Integer scripCode) {
         if (scripCode == null) return Optional.empty();
+        String cached = instrumentKeyCache.get(scripCode);
+        if (StringUtils.hasText(cached)) {
+            return Optional.of(cached);
+        }
         ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
-        return resolveInstrumentKey(script);
+        Optional<String> resolved = resolveInstrumentKey(script);
+        resolved.ifPresent(key -> instrumentKeyCache.put(scripCode, key));
+        return resolved;
     }
 
     public Optional<String> resolveInstrumentKey(ScriptMasterEntity script) {
@@ -51,13 +59,23 @@ public class MStockInstrumentResolver {
             if ("BSE".equals(normalizedExchange) && isSpotInstrument(script)) {
                 Optional<ScriptMasterEntity> alternate = findAlternateSpotScript(script.getTradingSymbol(), "NC");
                 if (alternate.isPresent()) {
-                    return resolveInstrumentKey(alternate.get());
+                    Optional<String> alternateKey = resolveInstrumentKey(alternate.get());
+                    alternateKey.ifPresent(key -> {
+                        if (script.getScripCode() != null) {
+                            instrumentKeyCache.put(script.getScripCode(), key);
+                        }
+                    });
+                    return alternateKey;
                 }
             }
             return Optional.empty();
         }
 
-        return Optional.of(normalizedExchange + ":" + symbol);
+        String key = normalizedExchange + ":" + symbol;
+        if (script.getScripCode() != null) {
+            instrumentKeyCache.put(script.getScripCode(), key);
+        }
+        return Optional.of(key);
     }
 
     public Optional<ScriptMasterEntity> resolveScript(Integer scripCode,
@@ -125,6 +143,9 @@ public class MStockInstrumentResolver {
         }
         if ("NSE".equals(normalizedExchange)) {
             return "EQ";
+        }
+        if ("BSE".equals(normalizedExchange)) {
+            return "A";
         }
         return null;
     }

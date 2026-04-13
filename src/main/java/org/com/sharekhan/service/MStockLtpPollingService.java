@@ -118,19 +118,22 @@ public class MStockLtpPollingService {
     }
 
     private String getMStockKey(Integer scripCode) {
-        String cached = scripCodeToMStockKeyCache.get(scripCode);
-        if (StringUtils.hasText(cached)) {
-            return cached;
-        }
-
         Optional<String> resolved = instrumentResolver.resolveInstrumentKey(scripCode);
         if (resolved.isPresent()) {
-            String key = resolved.get();
-            scripCodeToMStockKeyCache.put(scripCode, key);
-            mStockKeyToScripCodeCache.put(key, scripCode);
-            return key;
+            String resolvedKey = resolved.get();
+            String previous = scripCodeToMStockKeyCache.put(scripCode, resolvedKey);
+            if (!resolvedKey.equals(previous)) {
+                if (StringUtils.hasText(previous)) {
+                    mStockKeyToScripCodeCache.remove(previous);
+                }
+                mStockKeyToScripCodeCache.put(resolvedKey, scripCode);
+            } else if (!StringUtils.hasText(previous)) {
+                mStockKeyToScripCodeCache.put(resolvedKey, scripCode);
+            }
+            return resolvedKey;
         }
 
-        return null;
+        String cached = scripCodeToMStockKeyCache.get(scripCode);
+        return StringUtils.hasText(cached) ? cached : null;
     }
 }
