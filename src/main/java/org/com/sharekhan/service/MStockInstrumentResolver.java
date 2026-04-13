@@ -33,6 +33,11 @@ public class MStockInstrumentResolver {
             "BFO", "BF"
     );
 
+    private static final Map<String, String> SPOT_EXCHANGE_OVERRIDES = Map.of(
+            "NFO", "NSE",
+            "BFO", "BSE"
+    );
+
     public Optional<String> resolveInstrumentKey(Integer scripCode) {
         if (scripCode == null) return Optional.empty();
         String cached = instrumentKeyCache.get(scripCode);
@@ -49,6 +54,9 @@ public class MStockInstrumentResolver {
         if (script == null) return Optional.empty();
 
         String normalizedExchange = normalizeExchangeForApi(script.getExchange());
+        if (isSpotInstrument(script)) {
+            normalizedExchange = SPOT_EXCHANGE_OVERRIDES.getOrDefault(normalizedExchange, normalizedExchange);
+        }
         if (!StringUtils.hasText(normalizedExchange)) {
             log.debug("Unable to normalize exchange '{}' for scrip {}", script.getExchange(), script.getScripCode());
             return Optional.empty();
