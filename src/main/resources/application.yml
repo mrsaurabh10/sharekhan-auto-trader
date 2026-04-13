@@ -57,6 +57,7 @@ app:
   mstock:
     api-key: "MusnORunrjCcP+x8+Fw0YSaiELJKBT5OL3ipnUptoD4="
     totp-secret: "3TWOBV56LA63H7JLWEY57K6DFIXOR5ED"
+    poll-delay-ms: 5000
   sharekhan:
     client-code: "SGUPTA78"
     password: "Anvi@2023"
