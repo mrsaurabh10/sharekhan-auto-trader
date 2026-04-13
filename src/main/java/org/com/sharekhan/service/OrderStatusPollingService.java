@@ -18,6 +18,7 @@ import org.com.sharekhan.ws.WebSocketClientService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.DayOfWeek;
@@ -26,6 +27,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.*;
 
 import static org.com.sharekhan.service.TradeExecutionService.*;
@@ -40,6 +42,7 @@ public class OrderStatusPollingService {
     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
      // Track last modify price attempted per orderId to avoid spamming identical modify requests
      private final Map<String, Double> lastModifyPrice = new ConcurrentHashMap<>();
+    private final ConcurrentMap<SharekhanClientKey, SharekhanClientHolder> sharekhanClientCache = new ConcurrentHashMap<>();
     private final WebSocketClientService webSocketClientService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
@@ -52,6 +55,21 @@ public class OrderStatusPollingService {
 
     @Autowired
     private TelegramNotificationService telegramNotificationService;
+
+    @Value("${app.order.poll-delay-ms:2000}")
+    private long orderPollDelayMs;
+
+    private record SharekhanClientKey(Long customerId, String apiKey) { }
+
+    private static final class SharekhanClientHolder {
+        private final SharekhanConnect client;
+        private final String accessToken;
+
+        private SharekhanClientHolder(SharekhanConnect client, String accessToken) {
+            this.client = client;
+            this.accessToken = accessToken;
+        }
+    }
 
     // ---- Helper types and resolution for broker context (local copy) ----
     @lombok.Data
@@ -219,7 +237,7 @@ public class OrderStatusPollingService {
                 if (accessToken == null) {
                     accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
                 }
-                SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx.getApiKey(), accessToken);
+                SharekhanConnect sharekhanConnect = getSharekhanClient(ctx, accessToken);
 
                 JSONObject response = SharekhanConsoleSilencer.call(() ->
                         sharekhanConnect.orderHistory(trade.getExchange(), ctx.getCustomerId(), orderIdToMonitor)
@@ -365,14 +383,26 @@ public class OrderStatusPollingService {
         // Poll every 0.5 seconds, up to 2 minutes
         // Use the DB trade id as the key for active polls so we can always cancel the poll
         // even if the broker orderId/exitOrderId changes during the lifecycle.
+        long delay = Math.max(orderPollDelayMs, 200L);
         String tradeKey1 = String.valueOf(trade.getId());
-        ScheduledFuture<?> future = executor.scheduleAtFixedRate(pollTask, 0, 500, TimeUnit.MILLISECONDS);
+        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(pollTask, 0, delay, TimeUnit.MILLISECONDS);
         activePolls.put(tradeKey1, future);
 
         // Optional: Cancel polling after 2 minutes
 //        executor.schedule(() -> {
 //            log.warn("⚠️ Stopping polling after timeout for order {}", orderIdToMonitor);
 //        }, 2, TimeUnit.MINUTES);
+    }
+
+    private SharekhanConnect getSharekhanClient(BrokerCtx ctx, String accessToken) {
+        SharekhanClientKey key = new SharekhanClientKey(ctx.getCustomerId(), ctx.getApiKey());
+        SharekhanClientHolder holder = sharekhanClientCache.compute(key, (k, existing) -> {
+            if (existing == null || !Objects.equals(existing.accessToken, accessToken)) {
+                return new SharekhanClientHolder(new SharekhanConnect(null, ctx.getApiKey(), accessToken), accessToken);
+            }
+            return existing;
+        });
+        return holder.client;
     }
 
 
