@@ -21,6 +21,7 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalDouble;
 
 @Slf4j
 @Service
@@ -36,6 +37,7 @@ public class PriceTriggerService {
     private final LtpCacheService ltpCacheService;
     private final MStockLtpService mStockLtpService;
     private final MStockInstrumentResolver instrumentResolver;
+    private final SharekhanHistoricalService sharekhanHistoricalService;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         // Check if current time is after 9:20 AM IST
@@ -111,12 +113,34 @@ public class PriceTriggerService {
                 
                 if (trigger.getEntryPrice() == null) continue;
 
+                double entryPrice = trigger.getEntryPrice();
                 double tolerance = 1.006;
 
-                if (ltp > trigger.getEntryPrice() * tolerance) {
+                Integer referenceScrip = trigger.getSpotScripCode() != null ? trigger.getSpotScripCode() : trigger.getScripCode();
+                Double openingPrice = ltpCacheService.getTodayOpeningPrice(referenceScrip);
+                String gapComparisonLabel;
+                double gapComparisonPrice;
+
+                if (openingPrice != null) {
+                    gapComparisonPrice = openingPrice;
+                    gapComparisonLabel = "captured open";
+                } else {
+                    OptionalDouble openPriceOpt = sharekhanHistoricalService.getTodayOpenPrice(referenceScrip);
+                    if (openPriceOpt.isPresent()) {
+                        openingPrice = openPriceOpt.getAsDouble();
+                        gapComparisonPrice = openingPrice;
+                        gapComparisonLabel = "historical open";
+                    } else {
+                        gapComparisonPrice = ltp;
+                        gapComparisonLabel = "spot LTP";
+                    }
+                }
+
+                if (gapComparisonPrice > entryPrice * tolerance) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
                     if (claimed == 1) {
-                        log.warn("⚠️ Spot LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
+                        log.warn("⚠️ Spot {} {} exceeds {}% above entry price {} for trigger {}. Marking as REJECTED.",
+                                gapComparisonLabel, gapComparisonPrice, (tolerance - 1) * 100, entryPrice, trigger.getId());
                     }
                     continue;
                 }
@@ -125,20 +149,21 @@ public class PriceTriggerService {
                 boolean conditionMet;
                 if (isPE) {
                     // For PE, trigger if spot price goes BELOW entry price
-                    conditionMet = ltp <= trigger.getEntryPrice();
+                    conditionMet = ltp <= entryPrice;
                     
                     // Check for gap down with tolerance for PE
                     double gapDownTolerance = 0.994; // 0.6% tolerance
-                    if (ltp < trigger.getEntryPrice() * gapDownTolerance) {
+                    if (gapComparisonPrice < entryPrice * gapDownTolerance) {
                         int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
                         if (claimed == 1) {
-                            log.warn("⚠️ Spot LTP {} is less than {}% below entry price {} for PE trigger {}. Marking as REJECTED.", ltp, (1 - gapDownTolerance) * 100, trigger.getEntryPrice(), trigger.getId());
+                            log.warn("⚠️ Spot {} {} breaches {}% below entry price {} for PE trigger {}. Marking as REJECTED.",
+                                    gapComparisonLabel, gapComparisonPrice, (1 - gapDownTolerance) * 100, entryPrice, trigger.getId());
                         }
                         continue;
                     }
                 } else {
                     // For CE (or others), trigger if spot price goes ABOVE entry price
-                    conditionMet = ltp >= trigger.getEntryPrice();
+                    conditionMet = ltp >= entryPrice;
                 }
 
                 if (conditionMet) {

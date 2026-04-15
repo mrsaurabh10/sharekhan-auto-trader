@@ -35,8 +35,9 @@ class SharekhanLoginIntegrationTest {
         String token = fetcher.fetchAccessToken(clientCode, password, totpSecret, apiKey, secretKey);
 
         assertNotNull(token, "Token should not be null");
-        assertFalse(token.isBlank(), "Token should not be blank");
-        assertTrue(token.length() > 100, "Token looks unexpectedly short");
+       assertFalse(token.isBlank(), "Token should not be blank");
+       assertTrue(token.length() > 100, "Token looks unexpectedly short");
+        System.out.println("🔐 Sharekhan access token: " + token);
         System.out.println("✅ Sharekhan access token fetched successfully.");
     }
 }
