@@ -973,11 +973,24 @@ public class TradeExecutionService {
         // Otherwise (e.g., forceClose) allow transition from EXECUTED -> EXIT_ORDER_PLACED.
         int claimed = 0;
         try {
-            // Try the normal flow: EXIT_TRIGGERED -> EXIT_ORDER_PLACED
-            claimed = triggeredTradeRepo.claimIfStatusEquals(persisted.getId(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), exitReason);
-            if (claimed == 0) {
-                // fallback: try EXECUTED -> EXIT_ORDER_PLACED (handles force-close and edge cases)
-                claimed = triggeredTradeRepo.claimIfStatusEquals(persisted.getId(), TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_ORDER_PLACED.name(), exitReason);
+            // Try each claimable status in order, so TARGET_ORDER_PLACED trades can transition into EXIT_ORDER_PLACED.
+            TriggeredTradeStatus[] claimableStatuses = new TriggeredTradeStatus[] {
+                    TriggeredTradeStatus.EXIT_TRIGGERED,
+                    TriggeredTradeStatus.EXECUTED,
+                    TriggeredTradeStatus.TARGET_ORDER_PLACED
+            };
+
+            for (TriggeredTradeStatus fromStatus : claimableStatuses) {
+                if (claimed > 0) {
+                    break;
+                }
+
+                claimed = triggeredTradeRepo.claimIfStatusEquals(
+                        persisted.getId(),
+                        fromStatus.name(),
+                        TriggeredTradeStatus.EXIT_ORDER_PLACED.name(),
+                        exitReason
+                );
             }
         } catch (Exception e) {
             log.warn("Failed to claim exit for trade {}: {}", persisted.getId(), e.getMessage());

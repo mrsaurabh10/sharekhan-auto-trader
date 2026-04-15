@@ -1,16 +1,12 @@
 package org.com.sharekhan.login;
 
-import com.sharekhan.SharekhanConnect;
-import com.sharekhan.http.exceptions.SharekhanAPIException;
-import org.com.sharekhan.service.ScriptMasterCacheService;
-import org.json.JSONObject;
-import org.junit.jupiter.api.Disabled;
+import org.com.sharekhan.SharekhanTokenFetcher;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
-import java.io.IOException;
-import java.util.Map;
-
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * WARNING: This is a real integration test.
@@ -21,35 +17,26 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class SharekhanLoginIntegrationTest {
 
-    //@Test
-//    @Disabled("Enable only for live integration testing")
-//    void testFetchAccessTokenLive() {
-//        try {
-//            String token = SharekhanLoginAutomation.fetchAccessToken();
-//            assertNotNull(token);
-//            assertTrue(token.length() > 100, "Access token looks too short");
-//            System.out.println("✅ Fetched live token: " + token);
-//        } catch (IOException | SharekhanAPIException e) {
-//            fail("Exception during fetchAccessToken: " + e.getMessage());
-//        }
-//    }
+    @Test
+    void fetchAccessTokenWithPlaywright() {
+        String clientCode = System.getenv("SHAREKHAN_CLIENT_CODE");
+        String password = System.getenv("SHAREKHAN_PASSWORD");
+        String totpSecret = System.getenv("SHAREKHAN_TOTP_SECRET");
+        String apiKey = System.getenv("SHAREKHAN_API_KEY");
+        String secretKey = System.getenv("SHAREKHAN_SECRET_KEY");
 
-//    @Test
-//    @Disabled("Enable only for live integration testing")
-//    void testFetchAccessTokenLiveAndFetchScripts() {
-//        try {
-//            // Integration with ScriptMasterCacheService
-//            SharekhanConnect sdk = new SharekhanConnect();
-//            ScriptMasterCacheService service = new ScriptMasterCacheService(sdk);
-//
-//            Map<String, JSONObject> scriptMap = service.getScriptCache("NC");
-//            assertFalse(scriptMap.isEmpty(), "Script cache should not be empty");
-//
-//            scriptMap.entrySet().stream().limit(5).forEach(e ->
-//                    System.out.println(e.getKey() + " => " + e.getValue().toString(2)));
-//
-//        } catch (IOException | SharekhanAPIException e) {
-//            fail("Exception during integration test: " + e.getMessage());
-//        }
-//    }
+        Assumptions.assumeTrue(clientCode != null && !clientCode.isBlank(), "Set SHAREKHAN_CLIENT_CODE");
+        Assumptions.assumeTrue(password != null && !password.isBlank(), "Set SHAREKHAN_PASSWORD");
+        Assumptions.assumeTrue(totpSecret != null && !totpSecret.isBlank(), "Set SHAREKHAN_TOTP_SECRET");
+        Assumptions.assumeTrue(apiKey != null && !apiKey.isBlank(), "Set SHAREKHAN_API_KEY");
+        Assumptions.assumeTrue(secretKey != null && !secretKey.isBlank(), "Set SHAREKHAN_SECRET_KEY");
+
+        SharekhanTokenFetcher fetcher = new SharekhanTokenFetcher();
+        String token = fetcher.fetchAccessToken(clientCode, password, totpSecret, apiKey, secretKey);
+
+        assertNotNull(token, "Token should not be null");
+        assertFalse(token.isBlank(), "Token should not be blank");
+        assertTrue(token.length() > 100, "Token looks unexpectedly short");
+        System.out.println("✅ Sharekhan access token fetched successfully.");
+    }
 }
