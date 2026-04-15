@@ -38,6 +38,15 @@ public class MStockInstrumentResolver {
             "BFO", "BSE"
     );
 
+    private static final Map<String, String> DERIVATIVE_TO_SPOT_LOOKUP = Map.of(
+            "NFO", "NC",
+            "BFO", "BC"
+    );
+
+    private static final Map<String, String> BSE_FALLBACK_LOOKUP = Map.of(
+            "BSE", "NC"
+    );
+
     public Optional<String> resolveInstrumentKey(Integer scripCode) {
         if (scripCode == null) return Optional.empty();
         String cached = instrumentKeyCache.get(scripCode);
@@ -64,18 +73,15 @@ public class MStockInstrumentResolver {
 
         String symbol = buildSymbol(script, normalizedExchange);
         if (!StringUtils.hasText(symbol)) {
-            if ("BSE".equals(normalizedExchange) && isSpotInstrument(script)) {
-                Optional<ScriptMasterEntity> alternate = findAlternateSpotScript(script.getTradingSymbol(), "NC");
-                if (alternate.isPresent()) {
-                    Optional<String> alternateKey = resolveInstrumentKey(alternate.get());
-                    alternateKey.ifPresent(key -> {
-                        if (script.getScripCode() != null) {
-                            instrumentKeyCache.put(script.getScripCode(), key);
-                        }
-                    });
-                    return alternateKey;
-                }
+            return tryResolveViaSpotFallback(script, normalizedExchange);
+        }
+
+        if (isDerivativeExchange(normalizedExchange) && !looksLikeDerivativeSymbol(symbol)) {
+            Optional<String> spotKey = tryResolveViaSpotFallback(script, normalizedExchange);
+            if (spotKey.isPresent()) {
+                return spotKey;
             }
+            log.debug("Skipping derivative instrument {} due to missing expiry/series data", script.getTradingSymbol());
             return Optional.empty();
         }
 
@@ -168,6 +174,39 @@ public class MStockInstrumentResolver {
         return matches.stream()
                 .filter(this::isSpotInstrument)
                 .findFirst();
+    }
+
+    private Optional<String> tryResolveViaSpotFallback(ScriptMasterEntity script, String normalizedExchange) {
+        String candidateExchange = DERIVATIVE_TO_SPOT_LOOKUP.get(normalizedExchange);
+        if (!StringUtils.hasText(candidateExchange)) {
+            candidateExchange = BSE_FALLBACK_LOOKUP.get(normalizedExchange);
+        }
+        if (!StringUtils.hasText(candidateExchange)) {
+            return Optional.empty();
+        }
+        Optional<ScriptMasterEntity> alternate = findAlternateSpotScript(script.getTradingSymbol(), candidateExchange);
+        if (alternate.isPresent()) {
+            Optional<String> alternateKey = resolveInstrumentKey(alternate.get());
+            alternateKey.ifPresent(key -> {
+                if (script.getScripCode() != null) {
+                    instrumentKeyCache.put(script.getScripCode(), key);
+                }
+            });
+            return alternateKey;
+        }
+        return Optional.empty();
+    }
+
+    private boolean isDerivativeExchange(String exchange) {
+        return exchange != null && (exchange.equalsIgnoreCase("NFO") || exchange.equalsIgnoreCase("BFO"));
+    }
+
+    private boolean looksLikeDerivativeSymbol(String symbol) {
+        if (!StringUtils.hasText(symbol)) return false;
+        boolean hasDigits = symbol.chars().anyMatch(Character::isDigit);
+        if (!hasDigits) return false;
+        String upper = symbol.toUpperCase(Locale.ROOT);
+        return upper.contains("CE") || upper.contains("PE") || upper.contains("FUT");
     }
 
     private String normalizeExchangeForApi(String exchange) {
