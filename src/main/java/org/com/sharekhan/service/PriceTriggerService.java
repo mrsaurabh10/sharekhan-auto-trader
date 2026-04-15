@@ -256,8 +256,11 @@ public class PriceTriggerService {
                 if (opt.isEmpty()) return 0;
                 TriggeredTradeSetupEntity persisted = opt.get();
 
-                // Only act if still in EXECUTED
-                if (persisted.getStatus() != TriggeredTradeStatus.EXECUTED) return 0;
+                // Only act if still in EXECUTED or TARGET_ORDER_PLACED
+                TriggeredTradeStatus currentStatus = persisted.getStatus();
+                if (currentStatus != TriggeredTradeStatus.EXECUTED && currentStatus != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
+                    return 0;
+                }
 
                 // Determine effective prices for SL and Target
                 boolean usesSpotSl = usesSpotForSl(persisted);
