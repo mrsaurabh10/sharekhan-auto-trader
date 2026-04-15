@@ -60,22 +60,22 @@ public class MStockLtpPollingService {
                 return;
             }
 
-            List<String> mstockInstruments = new ArrayList<>();
+            java.util.LinkedHashSet<String> instrumentSet = new java.util.LinkedHashSet<>();
             for (String scripKey : activeScripKeys) {
                 Integer scripCode = extractScripCode(scripKey);
                 if (scripCode == null) continue;
 
                 String mstockKey = getMStockKey(scripCode);
                 if (StringUtils.hasText(mstockKey)) {
-                    mstockInstruments.add(mstockKey);
+                    instrumentSet.add(mstockKey);
                 }
             }
 
-            if (mstockInstruments.isEmpty()) {
+            if (instrumentSet.isEmpty()) {
                 return;
             }
 
-            Map<String, Map<String, Object>> ltpData = mStockLtpService.fetchLtp(mstockInstruments);
+            Map<String, Map<String, Object>> ltpData = mStockLtpService.fetchLtp(new ArrayList<>(instrumentSet));
             if (ltpData == null || ltpData.isEmpty()) {
                 return;
             }
@@ -133,7 +133,10 @@ public class MStockLtpPollingService {
             return resolvedKey;
         }
 
-        String cached = scripCodeToMStockKeyCache.get(scripCode);
-        return StringUtils.hasText(cached) ? cached : null;
+        String previous = scripCodeToMStockKeyCache.remove(scripCode);
+        if (StringUtils.hasText(previous)) {
+            mStockKeyToScripCodeCache.remove(previous);
+        }
+        return null;
     }
 }
