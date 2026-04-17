@@ -15,6 +15,7 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.exception.InvalidTradeRequestException;
+import org.com.sharekhan.logging.TradeEventLogger;
 import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
@@ -700,6 +701,7 @@ public class TradeExecutionService {
                     body.append("\nReason: Quantity must be greater than zero");
                     telegramNotificationService.sendTradeMessageForUser(trigger.getAppUserId(), title, body.toString());
                 } catch (Exception e) { log.warn("Failed to send telegram for zero-qty rejection: {}", e.getMessage()); }
+                TradeEventLogger.logOrderRejected("ENTRY", trigger, "Quantity must be greater than zero", ltp);
                 return rejected;
             }
 
@@ -763,6 +765,7 @@ public class TradeExecutionService {
             OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, ltp);
 
             if (!result.isSuccess()) {
+                TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp);
                 log.error("❌ Place order failed for trigger {}. Reason: {}", trigger.getId(), result.getRejectionReason());
                 TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
                 rejected.setStatus(TriggeredTradeStatus.REJECTED);
@@ -811,6 +814,7 @@ public class TradeExecutionService {
             }
 
             // Order placed successfully
+            TradeEventLogger.logOrderAccepted("ENTRY", trigger, result, ltp);
             log.info("✅ Order placed successfully: orderId={}", result.getOrderId());
 
             TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
@@ -884,6 +888,7 @@ public class TradeExecutionService {
                     }
                 }
                 triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
+                TradeEventLogger.logOrderExecuted("ENTRY", triggeredTradeSetupEntity, result.getExecutedPrice(), result.getStatus());
                 log.info("✅ Trade executed immediately. Skipping order status polling.");
                 handleEntryOrderExecution(triggeredTradeSetupEntity);
                 return triggeredTradeSetupEntity;
@@ -1019,6 +1024,9 @@ public class TradeExecutionService {
 
         if (result == null || !result.isSuccess()) {
             String rejectionReason = result != null ? result.getRejectionReason() : "Unknown error";
+            if (result == null) {
+                TradeEventLogger.logOrderRejected("EXIT", persisted, rejectionReason, exitPrice);
+            }
             log.error("❌ Exit place order failed for trade {}. Reason: {}", persisted.getId(), rejectionReason);
             try {
                 persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
@@ -1089,8 +1097,11 @@ public class TradeExecutionService {
 
         OrderPlacementResult result = brokerService.placeExitOrder(persisted, exitCtx, exitPrice);
         if (!result.isSuccess()) {
+            TradeEventLogger.logOrderRejected("EXIT", persisted, result.getRejectionReason(), exitPrice);
             return result;
         }
+
+        TradeEventLogger.logOrderAccepted("EXIT", persisted, result, exitPrice);
 
         // Persist exitOrderId using a native update first to avoid concurrency issues
         java.time.LocalDateTime placedAt = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
@@ -1137,6 +1148,7 @@ public class TradeExecutionService {
                         java.time.LocalDateTime.now(),
                         pnlVal);
                 if (updated == 1) {
+                    TradeEventLogger.logOrderExecuted("EXIT", persisted, exitPriceVal, result.getStatus());
                     try {
                         if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
                             entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
