@@ -7,6 +7,7 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.logging.TradeEventLogger;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
@@ -71,6 +72,13 @@ public class PriceTriggerService {
                 if (ltp > trigger.getEntryPrice() * tolerance) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
                     if (claimed == 1) {
+                        TradeEventLogger.logGapRejection(
+                                trigger,
+                                "option LTP",
+                                ltp,
+                                trigger.getEntryPrice(),
+                                (tolerance - 1) * 100
+                        );
                         log.warn("⚠️ LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
                     }
                     continue;
@@ -79,6 +87,8 @@ public class PriceTriggerService {
                 if (ltp >= trigger.getEntryPrice()) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
                     if (claimed == 1) {
+                        String conditionSummary = String.format("option LTP %.2f >= entry %.2f", ltp, trigger.getEntryPrice());
+                        TradeEventLogger.logEntryTriggered(trigger, ltp, "OPTION_LTP", conditionSummary);
                         log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
 
                         // convert request -> executed entity and run execution flow
@@ -139,6 +149,13 @@ public class PriceTriggerService {
                 if (gapComparisonPrice > entryPrice * tolerance) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
                     if (claimed == 1) {
+                        TradeEventLogger.logGapRejection(
+                                trigger,
+                                gapComparisonLabel,
+                                gapComparisonPrice,
+                                entryPrice,
+                                (tolerance - 1) * 100
+                        );
                         log.warn("⚠️ Spot {} {} exceeds {}% above entry price {} for trigger {}. Marking as REJECTED.",
                                 gapComparisonLabel, gapComparisonPrice, (tolerance - 1) * 100, entryPrice, trigger.getId());
                     }
@@ -156,6 +173,14 @@ public class PriceTriggerService {
                     if (gapComparisonPrice < entryPrice * gapDownTolerance) {
                         int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
                         if (claimed == 1) {
+                            double tolerancePercent = (1 - gapDownTolerance) * 100;
+                            TradeEventLogger.logGapRejection(
+                                    trigger,
+                                    gapComparisonLabel,
+                                    gapComparisonPrice,
+                                    entryPrice,
+                                    tolerancePercent
+                            );
                             log.warn("⚠️ Spot {} {} breaches {}% below entry price {} for PE trigger {}. Marking as REJECTED.",
                                     gapComparisonLabel, gapComparisonPrice, (1 - gapDownTolerance) * 100, entryPrice, trigger.getId());
                         }
@@ -169,6 +194,10 @@ public class PriceTriggerService {
                 if (conditionMet) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
                     if (claimed == 1) {
+                        String conditionSummary = isPE
+                                ? String.format("spot LTP %.2f <= entry %.2f", ltp, entryPrice)
+                                : String.format("spot LTP %.2f >= entry %.2f", ltp, entryPrice);
+                        TradeEventLogger.logEntryTriggered(trigger, ltp, "SPOT_LTP", conditionSummary);
                         log.info("🚀 Spot Entry condition met for {} ({}) at SpotLTP: {}", trigger.getSymbol(), trigger.getOptionType(), ltp);
 
                         // convert request -> executed entity and run execution flow
@@ -397,6 +426,9 @@ public class PriceTriggerService {
                             modified = tradeExecutionService.modifyExitOrderForStop(reloaded, modifyPrice);
                         }
                     }
+
+                    Double triggerPriceForLog = stopPriceOption != null ? stopPriceOption : slRefPrice;
+                    TradeEventLogger.logStopLossTriggered(reloaded, triggerPriceForLog, tradedLtp, spotLtp);
 
                     if (modified) {
                         log.warn("📉 SL hit for trade {} - modified existing exit order {} to price {}", tradeId, reloaded.getExitOrderId(), stopPriceOption);
