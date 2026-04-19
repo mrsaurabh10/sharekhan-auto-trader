@@ -57,6 +57,19 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class TradeExecutionService {
 
     private static final Duration ORDER_LOCK_TIMEOUT = Duration.ofSeconds(8);
+    private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final Map<String, String> INDEX_FUTURE_EXCHANGES = Map.of(
+            "NIFTY", "NF",
+            "BANKNIFTY", "NF",
+            "FINNIFTY", "NF",
+            "MIDCPNIFTY", "NF",
+            "SENSEX", "BF"
+    );
+    private static final List<DateTimeFormatter> FUTURE_EXPIRY_FORMATS = List.of(
+            DateTimeFormatter.ofPattern("dd/MM/uuuu"),
+            DateTimeFormatter.ISO_LOCAL_DATE,
+            DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
+    );
 
     public static class ModifyExitOrderResult {
         private final boolean success;
@@ -334,31 +347,8 @@ public class TradeExecutionService {
         }
 
         // If it's an option (has an option type), always try to resolve spot scrip code.
-        if (request.getOptionType() != null && !request.getOptionType().isEmpty() && spotScripCode == null) {
-            // Try to resolve spot scrip code from instrument name
-            // Assuming instrument name is like "NIFTY", "BANKNIFTY", "FINNIFTY" etc.
-            // We need to find the corresponding spot scrip in NC exchange.
-            try {
-                String instrumentName = request.getInstrument();
-                // Common indices mapping or lookup
-                // Try exact match in NC exchange first
-                Optional<ScriptMasterEntity> spotOpt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("NC", instrumentName);
-                if (spotOpt.isPresent()) {
-                    spotScripCode = spotOpt.get().getScripCode();
-                } else {
-                    // Try BSE (BC) if not found in NSE (NC)
-                     Optional<ScriptMasterEntity> spotOptBc = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("BC", instrumentName);
-                     if (spotOptBc.isPresent()) {
-                         spotScripCode = spotOptBc.get().getScripCode();
-                     }
-                }
-                
-                if (spotScripCode == null) {
-                    log.warn("Could not resolve spot scrip code for instrument: {}", instrumentName);
-                }
-            } catch (Exception e) {
-                log.warn("Error resolving spot scrip code: {}", e.getMessage());
-            }
+        if (hasOptionType(request.getOptionType()) && spotScripCode == null) {
+            spotScripCode = resolveSpotScripCodeForOption(request.getInstrument());
         }
 
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
@@ -566,21 +556,8 @@ public class TradeExecutionService {
         }
 
         // If it's an option (has an option type), always try to resolve spot scrip code.
-        if (request.getOptionType() != null && !request.getOptionType().isEmpty() && spotScripCode == null) {
-            try {
-                String instrumentName = request.getInstrument();
-                Optional<ScriptMasterEntity> spotOpt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("NC", instrumentName);
-                if (spotOpt.isPresent()) {
-                    spotScripCode = spotOpt.get().getScripCode();
-                } else {
-                     Optional<ScriptMasterEntity> spotOptBc = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("BC", instrumentName);
-                     if (spotOptBc.isPresent()) {
-                         spotScripCode = spotOptBc.get().getScripCode();
-                     }
-                }
-            } catch (Exception e) {
-                log.warn("Error resolving spot scrip code: {}", e.getMessage());
-            }
+        if (hasOptionType(request.getOptionType()) && spotScripCode == null) {
+            spotScripCode = resolveSpotScripCodeForOption(request.getInstrument());
         }
 
         TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
@@ -1058,6 +1035,124 @@ public class TradeExecutionService {
 
     public void squareOffTrade(Long id) {
         squareOffTrade(id, null);
+    }
+
+    private boolean hasOptionType(String optionType) {
+        return optionType != null && !optionType.trim().isEmpty();
+    }
+
+    private Integer resolveSpotScripCodeForOption(String instrumentName) {
+        if (instrumentName == null || instrumentName.isBlank()) {
+            return null;
+        }
+        String trimmed = instrumentName.trim();
+
+        Integer spot = resolveSpotScripFromExchange(trimmed, "NC");
+        if (spot != null) {
+            return spot;
+        }
+        spot = resolveSpotScripFromExchange(trimmed, "BC");
+        if (spot != null) {
+            return spot;
+        }
+
+        Integer futureSpot = resolveIndexFutureScripCode(trimmed);
+        if (futureSpot != null) {
+            return futureSpot;
+        }
+
+        log.warn("Could not resolve spot scrip code for instrument: {}", trimmed);
+        return null;
+    }
+
+    private Integer resolveSpotScripFromExchange(String instrumentName, String exchange) {
+        try {
+            Optional<ScriptMasterEntity> spotOpt =
+                    scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull(exchange, instrumentName);
+            return spotOpt.map(ScriptMasterEntity::getScripCode).orElse(null);
+        } catch (Exception e) {
+            log.warn("Error resolving spot scrip code for instrument {} on {}: {}", instrumentName, exchange, e.getMessage());
+            return null;
+        }
+    }
+
+    private Integer resolveIndexFutureScripCode(String instrumentName) {
+        String normalized = instrumentName.trim().toUpperCase(Locale.ROOT);
+        String exchange = INDEX_FUTURE_EXCHANGES.get(normalized);
+        if (exchange == null) {
+            return null;
+        }
+
+        List<ScriptMasterEntity> futures =
+                scriptMasterRepository.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange, normalized);
+        if (futures == null || futures.isEmpty()) {
+            return null;
+        }
+
+        LocalDate today = LocalDate.now(MARKET_ZONE);
+        ScriptMasterEntity best = null;
+        LocalDate bestExpiry = null;
+
+        for (ScriptMasterEntity future : futures) {
+            if (future == null ||
+                    future.getOptionType() == null ||
+                    !future.getOptionType().equalsIgnoreCase("FUT")) {
+                continue;
+            }
+            String instType = future.getInstrumentType();
+            if (instType == null ||
+                    !(instType.equalsIgnoreCase("FI") || instType.equalsIgnoreCase("FS"))) {
+                continue;
+            }
+
+            LocalDate expiryDate = parseFutureExpiry(future.getExpiry());
+            if (expiryDate == null) {
+                continue;
+            }
+
+            if (best == null) {
+                best = future;
+                bestExpiry = expiryDate;
+                continue;
+            }
+
+            boolean bestExpired = bestExpiry.isBefore(today);
+            boolean currentExpired = expiryDate.isBefore(today);
+
+            if (bestExpired && !currentExpired) {
+                best = future;
+                bestExpiry = expiryDate;
+                continue;
+            }
+
+            if (bestExpired == currentExpired && expiryDate.isBefore(bestExpiry)) {
+                best = future;
+                bestExpiry = expiryDate;
+            }
+        }
+
+        return best != null ? best.getScripCode() : null;
+    }
+
+    private LocalDate parseFutureExpiry(String expiry) {
+        if (expiry == null || expiry.isBlank()) {
+            return null;
+        }
+        String trimmed = expiry.trim();
+        for (DateTimeFormatter formatter : FUTURE_EXPIRY_FORMATS) {
+            try {
+                return LocalDate.parse(trimmed, formatter);
+            } catch (DateTimeParseException ignored) {
+            }
+        }
+        if (trimmed.length() >= 10) {
+            try {
+                return LocalDate.parse(trimmed.substring(0, 10), DateTimeFormatter.ISO_LOCAL_DATE);
+            } catch (DateTimeParseException ignored) {
+            }
+        }
+        log.debug("Unable to parse future expiry '{}' for instrument", expiry);
+        return null;
     }
 
     private OrderPlacementResult placeExitOrderAndPersist(TriggeredTradeSetupEntity persisted,
