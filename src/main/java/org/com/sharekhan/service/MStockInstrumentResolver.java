@@ -2,7 +2,9 @@ package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.repository.MStockInstrumentRepository;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -22,7 +24,9 @@ public class MStockInstrumentResolver {
 
     private final ScriptMasterRepository scriptMasterRepository;
     private final ScriptMasterService scriptMasterService;
+    private final MStockInstrumentRepository mStockInstrumentRepository;
     private final Map<Integer, String> instrumentKeyCache = new ConcurrentHashMap<>();
+    private volatile Boolean instrumentMasterPopulated;
 
     private static final Map<String, String> API_EXCHANGE_CODES = Map.of(
             "NC", "NSE",
@@ -79,6 +83,14 @@ public class MStockInstrumentResolver {
         if (script == null || !StringUtils.hasText(cachedKey)) {
             return false;
         }
+
+        if (Boolean.TRUE.equals(instrumentMasterPopulated)) {
+            Optional<MStockInstrumentEntity> existing = mStockInstrumentRepository.findByInstrumentKey(cachedKey);
+            if (existing.isEmpty()) {
+                return true;
+            }
+        }
+
         String normalizedExchange = normalizeExchangeForApi(script.getExchange());
         boolean derivativeInstrument = isDerivativeInstrument(script, normalizedExchange);
         if (!derivativeInstrument || !StringUtils.hasText(normalizedExchange)) {
@@ -108,8 +120,8 @@ public class MStockInstrumentResolver {
             return Optional.empty();
         }
 
-        String symbol = buildSymbol(script, normalizedExchange, derivativeInstrument);
-        if (!StringUtils.hasText(symbol)) {
+        List<String> candidateSymbols = buildCandidateSymbols(script, normalizedExchange, derivativeInstrument);
+        if (candidateSymbols.isEmpty()) {
             if (derivativeInstrument) {
                 log.warn("Unable to build derivative symbol for scripCode={} ({})", script.getScripCode(), script.getTradingSymbol());
                 return Optional.empty();
@@ -117,16 +129,32 @@ public class MStockInstrumentResolver {
             return tryResolveViaSpotFallback(script, normalizedExchange);
         }
 
-        if (derivativeInstrument && !looksLikeDerivativeSymbol(symbol)) {
-            log.warn("Resolved symbol {} for derivative scripCode={} does not resemble a derivative symbol; skipping spot fallback.", symbol, script.getScripCode());
+        for (String symbol : candidateSymbols) {
+            Optional<String> key = lookupInstrumentKey(normalizedExchange, symbol);
+            if (key.isPresent()) {
+                return cacheAndReturn(script, key.get(), true);
+            }
+        }
+
+        if (!isInstrumentMasterPopulated() && !candidateSymbols.isEmpty()) {
+            String fallbackSymbol = candidateSymbols.get(0);
+            String fallbackKey = buildNormalizedKey(normalizedExchange, fallbackSymbol);
+            if (StringUtils.hasText(fallbackKey)) {
+                log.warn("MStock instrument master not populated; using heuristic fallback {}", fallbackKey);
+                return cacheAndReturn(script, fallbackKey, false);
+            }
+        }
+
+        if (derivativeInstrument) {
+            Optional<String> patternMatch = lookupDerivativeByPattern(normalizedExchange, script.getTradingSymbol());
+            if (patternMatch.isPresent()) {
+                return cacheAndReturn(script, patternMatch.get(), true);
+            }
+            log.warn("Unable to resolve derivative instrument for scripCode={} ({}) via MStock master.", script.getScripCode(), script.getTradingSymbol());
             return Optional.empty();
         }
 
-        String key = normalizedExchange + ":" + symbol;
-        if (script.getScripCode() != null) {
-            instrumentKeyCache.put(script.getScripCode(), key);
-        }
-        return Optional.of(key);
+        return tryResolveViaSpotFallback(script, normalizedExchange);
     }
 
     public Optional<ScriptMasterEntity> resolveScript(Integer scripCode,
@@ -177,6 +205,120 @@ public class MStockInstrumentResolver {
         }
 
         return symbol;
+    }
+
+    private List<String> buildCandidateSymbols(ScriptMasterEntity script,
+                                               String normalizedExchange,
+                                               boolean derivativeInstrument) {
+        List<String> candidates = new ArrayList<>();
+        String built = buildSymbol(script, normalizedExchange, derivativeInstrument);
+
+        if (derivativeInstrument) {
+            if (StringUtils.hasText(built)) {
+                if (!looksLikeDerivativeSymbol(built)) {
+                    log.warn("Resolved symbol {} for derivative scripCode={} does not resemble a derivative symbol; skipping.", built, script.getScripCode());
+                } else {
+                    candidates.add(built);
+                }
+            }
+            return candidates;
+        }
+
+        String baseSymbol = script.getTradingSymbol() != null
+                ? script.getTradingSymbol().trim().toUpperCase(Locale.ROOT)
+                : null;
+
+        if (StringUtils.hasText(built)) {
+            candidates.add(built);
+        }
+        if (StringUtils.hasText(baseSymbol) && !candidates.contains(baseSymbol)) {
+            candidates.add(baseSymbol);
+        }
+
+        // For spot symbols, also consider variants without hyphen.
+        if (StringUtils.hasText(built) && built.contains("-")) {
+            String withoutHyphen = built.replace("-", "");
+            if (!candidates.contains(withoutHyphen)) {
+                candidates.add(withoutHyphen);
+            }
+        }
+
+        return candidates;
+    }
+
+    private Optional<String> lookupInstrumentKey(String exchange, String symbol) {
+        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(symbol)) {
+            return Optional.empty();
+        }
+        String candidateKey = buildNormalizedKey(exchange, symbol);
+        if (!StringUtils.hasText(candidateKey)) {
+            return Optional.empty();
+        }
+
+        Optional<MStockInstrumentEntity> direct = mStockInstrumentRepository.findByInstrumentKey(candidateKey);
+        if (direct.isPresent()) {
+            return Optional.of(direct.get().getInstrumentKey());
+        }
+
+        int colon = candidateKey.indexOf(':');
+        String normalizedExchange = candidateKey.substring(0, colon);
+        String normalizedSymbol = candidateKey.substring(colon + 1);
+        Optional<MStockInstrumentEntity> bySymbol = mStockInstrumentRepository
+                .findByExchangeAndTradingSymbol(normalizedExchange, normalizedSymbol);
+        return bySymbol.map(MStockInstrumentEntity::getInstrumentKey);
+    }
+
+    private Optional<String> lookupDerivativeByPattern(String exchange, String tradingSymbol) {
+        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(tradingSymbol)) {
+            return Optional.empty();
+        }
+        String normalizedExchange = exchange.trim().toUpperCase(Locale.ROOT);
+        String base = tradingSymbol.trim().toUpperCase(Locale.ROOT);
+        List<String> patterns = new ArrayList<>();
+        patterns.add(base + "%");
+        String collapsed = base.replaceAll("[^A-Z0-9]", "");
+        if (!collapsed.equals(base)) {
+            patterns.add(collapsed + "%");
+        }
+
+        for (String pattern : patterns) {
+            List<MStockInstrumentEntity> matches = mStockInstrumentRepository
+                    .findByExchangeAndTradingSymbolPattern(normalizedExchange, pattern);
+            Optional<String> first = matches.stream()
+                    .map(MStockInstrumentEntity::getInstrumentKey)
+                    .findFirst();
+            if (first.isPresent()) {
+                return first;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private String buildNormalizedKey(String exchange, String symbol) {
+        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(symbol)) {
+            return null;
+        }
+        return exchange.trim().toUpperCase(Locale.ROOT) + ":" + symbol.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private boolean isInstrumentMasterPopulated() {
+        if (Boolean.TRUE.equals(instrumentMasterPopulated)) {
+            return true;
+        }
+        long count = mStockInstrumentRepository.count();
+        boolean populated = count > 0;
+        instrumentMasterPopulated = populated;
+        return populated;
+    }
+
+    private Optional<String> cacheAndReturn(ScriptMasterEntity script, String key, boolean fromMaster) {
+        if (fromMaster) {
+            instrumentMasterPopulated = true;
+        }
+        if (script != null && script.getScripCode() != null && StringUtils.hasText(key)) {
+            instrumentKeyCache.put(script.getScripCode(), key);
+        }
+        return Optional.ofNullable(key);
     }
     
     private String buildDerivativeSymbol(ScriptMasterEntity script, String baseSymbol) {
