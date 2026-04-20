@@ -23,8 +23,11 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
@@ -201,7 +204,7 @@ public class MStockInstrumentCacheService {
     }
 
     private List<MStockInstrumentEntity> parseCsv(BufferedReader reader) throws IOException {
-        List<MStockInstrumentEntity> result = new ArrayList<>();
+        Map<String, MStockInstrumentEntity> deduped = new LinkedHashMap<>();
         String line;
         boolean headerSkipped = false;
         LocalDateTime fetchedAt = LocalDateTime.now();
@@ -220,11 +223,19 @@ public class MStockInstrumentCacheService {
                 continue;
             }
             MStockInstrumentEntity entity = convertRow(fields, fetchedAt);
-            if (entity != null) {
-                result.add(entity);
+            if (entity == null || !StringUtils.hasText(entity.getInstrumentKey())) {
+                continue;
+            }
+
+            MStockInstrumentEntity existing = deduped.get(entity.getInstrumentKey());
+            if (existing == null) {
+                deduped.put(entity.getInstrumentKey(), entity);
+            } else {
+                MStockInstrumentEntity preferred = choosePreferred(existing, entity);
+                deduped.put(entity.getInstrumentKey(), preferred);
             }
         }
-        return result;
+        return new ArrayList<>(deduped.values());
     }
 
     private String stripBom(String line) {
@@ -295,6 +306,37 @@ public class MStockInstrumentCacheService {
             return null;
         }
         return exchange.trim().toUpperCase(Locale.ROOT) + ":" + tradingSymbol.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private MStockInstrumentEntity choosePreferred(MStockInstrumentEntity existing, MStockInstrumentEntity candidate) {
+        if (existing == null) return candidate;
+        if (candidate == null) return existing;
+        if (Objects.equals(existing.getInstrumentToken(), candidate.getInstrumentToken())) {
+            return existing;
+        }
+
+        int existingScore = score(existing);
+        int candidateScore = score(candidate);
+        if (candidateScore > existingScore) {
+            log.debug("Replacing duplicate instrument {} (token {} -> {}) with richer metadata.",
+                    existing.getInstrumentKey(), existing.getInstrumentToken(), candidate.getInstrumentToken());
+            return candidate;
+        }
+        return existing;
+    }
+
+    private int score(MStockInstrumentEntity entity) {
+        int score = 0;
+        if (StringUtils.hasText(entity.getInstrumentType())) score += 2;
+        if (StringUtils.hasText(entity.getSegment())) score += 2;
+        if (StringUtils.hasText(entity.getExpiry())) score += 3;
+        if (entity.getStrike() != null) score += 2;
+        if (entity.getLotSize() != null) score += 1;
+        if (entity.getTickSize() != null) score += 1;
+        if (entity.getLastPrice() != null) score += 1;
+        if (StringUtils.hasText(entity.getName())) score += 1;
+        if (StringUtils.hasText(entity.getExchangeToken())) score += 1;
+        return score;
     }
 
     private Double parseDouble(String value) {
