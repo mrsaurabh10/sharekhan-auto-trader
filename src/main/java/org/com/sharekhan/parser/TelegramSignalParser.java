@@ -21,6 +21,38 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());
 
+        String normalizedForQuick = cleanedText.replace("\n", " ").replaceAll("\\s+", " ").trim();
+        if (!normalizedForQuick.isEmpty() && !normalizedForQuick.toLowerCase(Locale.ROOT).contains("above")) {
+            Pattern quickPattern = Pattern.compile("^(?:(BUY|SELL)\\s+)?([A-Z0-9]+)\\s+([\\d\\.]+)\\s+(CE|PE|FUT|CALL|PUT)\\b.*$", Pattern.CASE_INSENSITIVE);
+            Matcher quickMatcher = quickPattern.matcher(normalizedForQuick);
+            if (quickMatcher.matches()) {
+                String actionQuick = quickMatcher.group(1);
+                if (actionQuick == null || actionQuick.isBlank()) {
+                    actionQuick = "BUY";
+                } else {
+                    actionQuick = actionQuick.toUpperCase(Locale.ROOT);
+                }
+                String symbolQuick = quickMatcher.group(2).toUpperCase(Locale.ROOT);
+                String strikeQuick = quickMatcher.group(3);
+                String optionTypeQuick = quickMatcher.group(4).toUpperCase(Locale.ROOT);
+                if ("CALL".equals(optionTypeQuick)) {
+                    optionTypeQuick = "CE";
+                } else if ("PUT".equals(optionTypeQuick)) {
+                    optionTypeQuick = "PE";
+                }
+
+                Map<String, Object> quickResult = new LinkedHashMap<>();
+                quickResult.put("source", "telegram");
+                quickResult.put("action", actionQuick);
+                quickResult.put("symbol", symbolQuick);
+                quickResult.put("strike", strikeQuick);
+                quickResult.put("optionType", optionTypeQuick);
+                quickResult.put("quickTrade", true);
+                quickResult.put("intraday", true);
+                return quickResult;
+            }
+        }
+
         // Find the first line that matches the trade regex
         // Updated regex to handle optional BUY/SELL prefix, capture symbol correctly, and handle decimal strike
         Pattern tradePattern = Pattern.compile("^(?:BUY|SELL)?\\s*([A-Z0-9\\s]+?)\\s+([\\d\\.]+)\\s+(CE|PE)\\s+above\\s+([\\d\\.]+)", Pattern.CASE_INSENSITIVE);

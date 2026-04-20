@@ -126,93 +126,11 @@ public class TradeExecutionService {
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request, boolean requireQuantity) {
 
 
-        // Initialize formatter for expiry date parsing
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
-        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
-        LocalDateTime now = LocalDateTime.now(zoneId);
-        LocalTime cutoff = LocalTime.of(15, 30); // 3:30 PM IST
-
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
         final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
 
-        // Handle null expiry: for regular option trades (NOT NC/BC and strikePrice != 0.0) attempt to select nearest valid expiry
-        if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
-            List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
-                    request.getInstrument(),
-                    request.getStrikePrice(),
-                    request.getOptionType()
-            );
-
-            // Parse expiry strings to LocalDate objects and pick the nearest valid one
-            Optional<LocalDate> latestExpiryOpt = allExpiryStrings.stream()
-                    .map(s -> {
-                        try {
-                            return LocalDate.parse(s, formatter);
-                        } catch (DateTimeParseException e) {
-                            return null;
-                        }
-                    })
-                    .filter(Objects::nonNull)
-                    .filter(expiryDate -> {
-                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
-                        // Keep only expiry dates that are today but before cutoff or future dates
-                        return expiryDate.isAfter(now.toLocalDate()) ||
-                                (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
-                    })
-                    .min(Comparator.naturalOrder());  // Pick nearest valid expiry instead of max
-
-
-            if (latestExpiryOpt.isPresent()) {
-                // Set expiry in request as string in dd/MM/yyyy format
-                String latestExpiryStr = latestExpiryOpt.get().format(formatter);
-                request.setExpiry(latestExpiryStr);
-            } else {
-                throw new RuntimeException("No valid expiry found for the given instrument and strike price");
-            }
-        }
-
-        ScriptMasterEntity script;
-        // If exchange is NC or BC, treat this as an equity/no-strike instrument and lookup by exchange + tradingSymbol
-        if (isNoStrikeExchange) {
-            // Try exact match first
-            Optional<ScriptMasterEntity> opt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull(
-                    exch, request.getInstrument()
-            );
-            if (opt.isPresent()) {
-                script = opt.get();
-            } else {
-                // Fallback: try case-insensitive fetch of all rows for the exchange and match tradingSymbol ignoring case
-                List<ScriptMasterEntity> allForExchange = scriptMasterRepository.findByExchangeIgnoreCase(exch);
-                if (allForExchange == null) allForExchange = List.of();
-                Optional<ScriptMasterEntity> match = allForExchange.stream()
-                        .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(request.getInstrument()))
-                        .filter(s -> (s.getStrikePrice() == null || Double.compare(s.getStrikePrice(), 0.0) == 0)
-                                && (s.getExpiry() == null || s.getExpiry().isBlank()))
-                        .findFirst();
-                if (match.isPresent()) {
-                    script = match.get();
-                } else {
-                    // Last effort: try any tradingSymbol match for the exchange (ignore strike/expiry) and accept if instrument matches
-                    Optional<ScriptMasterEntity> anyMatch = allForExchange.stream()
-                            .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(request.getInstrument()))
-                            .findFirst();
-                    if (anyMatch.isPresent()) {
-                        script = anyMatch.get();
-                    } else {
-                        throw new RuntimeException("Script not found in master DB for instrument on exchange " + exch + " (strike & expiry null)");
-                    }
-                }
-            }
-        } else {
-            // Regular option/future lookup (strike and expiry expected)
-            script = scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
-                    request.getInstrument(),
-                    request.getStrikePrice(),
-                    request.getOptionType(),
-                    request.getExpiry()
-            ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
-        }
+        ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
         // Logic for Lot Size configuration
         Long appUserId = request.getUserId();
@@ -396,6 +314,219 @@ public class TradeExecutionService {
         }
         
         return saved;
+    }
+
+    private ScriptMasterEntity resolveScriptForRequest(TriggerRequest request, boolean isNoStrikeExchange) {
+        if (request == null) {
+            throw new InvalidTradeRequestException("Trade request cannot be null");
+        }
+
+        String instrument = request.getInstrument();
+        if (instrument == null || instrument.isBlank()) {
+            throw new InvalidTradeRequestException("Instrument is required");
+        }
+
+        final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
+
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+        ZoneId zoneId = ZoneId.of("Asia/Kolkata");
+        LocalDateTime now = LocalDateTime.now(zoneId);
+        LocalTime cutoff = LocalTime.of(15, 30);
+
+        if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
+            List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
+                    request.getInstrument(),
+                    request.getStrikePrice(),
+                    request.getOptionType()
+            );
+
+            Optional<LocalDate> latestExpiryOpt = allExpiryStrings.stream()
+                    .map(s -> {
+                        try {
+                            return LocalDate.parse(s, formatter);
+                        } catch (DateTimeParseException e) {
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .filter(expiryDate -> {
+                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
+                        return expiryDate.isAfter(now.toLocalDate()) ||
+                                (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+                    })
+                    .min(Comparator.naturalOrder());
+
+            if (latestExpiryOpt.isPresent()) {
+                request.setExpiry(latestExpiryOpt.get().format(formatter));
+            } else {
+                throw new RuntimeException("No valid expiry found for the given instrument and strike price");
+            }
+        }
+
+        if (isNoStrikeExchange) {
+            if (exch == null) {
+                throw new RuntimeException("Exchange is required for equity instruments");
+            }
+            Optional<ScriptMasterEntity> opt = scriptMasterRepository.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull(
+                    exch, instrument
+            );
+            if (opt.isPresent()) {
+                return opt.get();
+            }
+
+            List<ScriptMasterEntity> allForExchange = scriptMasterRepository.findByExchangeIgnoreCase(exch);
+            if (allForExchange == null) {
+                allForExchange = List.of();
+            }
+            Optional<ScriptMasterEntity> match = allForExchange.stream()
+                    .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(instrument))
+                    .filter(s -> (s.getStrikePrice() == null || Double.compare(s.getStrikePrice(), 0.0) == 0)
+                            && (s.getExpiry() == null || s.getExpiry().isBlank()))
+                    .findFirst();
+            if (match.isPresent()) {
+                return match.get();
+            }
+
+            // Fallback: try any tradingSymbol match irrespective of strike/expiry
+            return allForExchange.stream()
+                    .filter(s -> s.getTradingSymbol() != null && s.getTradingSymbol().equalsIgnoreCase(instrument))
+                    .findFirst()
+                    .orElseThrow(() -> new RuntimeException("Script not found in master DB for instrument on exchange " + exch + " (strike & expiry null)"));
+        }
+
+        return scriptMasterRepository.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
+                instrument,
+                request.getStrikePrice(),
+                request.getOptionType(),
+                request.getExpiry()
+        ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+    }
+
+    public TriggeredTradeSetupEntity executeQuickTrade(TriggerRequest request) {
+        if (request == null) {
+            throw new InvalidTradeRequestException("Quick trade request cannot be null");
+        }
+
+        if (request.getAction() != null && !"BUY".equalsIgnoreCase(request.getAction())) {
+            throw new InvalidTradeRequestException("Quick trades currently support BUY instructions only");
+        }
+
+        final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
+        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+
+        ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
+
+        if (request.getQuantity() == null || request.getQuantity() <= 0) {
+            request.setQuantity(resolveQuickDefaultLots(request.getUserId()));
+        }
+
+        if (request.getQuantity() == null || request.getQuantity() <= 0) {
+            throw new InvalidTradeRequestException("Quick trade quantity must be greater than zero");
+        }
+
+        Double ltp = ltpCacheService.getLtp(script.getScripCode());
+        if (ltp == null) {
+            throw new InvalidTradeRequestException("Live price unavailable for quick trade; please retry shortly");
+        }
+
+        double entryPrice = roundPrice(ltp);
+        double slPercent = resolvePercentageConfig(request.getUserId(), "quick_trade_sl_percent", 20.0);
+        double targetPercent = resolvePercentageConfig(request.getUserId(), "quick_trade_target_percent", 40.0);
+        double target2Percent = resolvePercentageConfig(request.getUserId(), "quick_trade_target2_percent", 0.0);
+
+        Double stopLoss = slPercent > 0 ? roundPrice(entryPrice * (1 - slPercent / 100.0)) : null;
+        Double target1 = targetPercent > 0 ? roundPrice(entryPrice * (1 + targetPercent / 100.0)) : null;
+        Double target2 = target2Percent > 0 ? roundPrice(entryPrice * (1 + target2Percent / 100.0)) : null;
+
+        request.setEntryPrice(entryPrice);
+        request.setStopLoss(stopLoss);
+        request.setTarget1(target1);
+        request.setTarget2(target2);
+        request.setTarget3(null);
+
+        int lotSize = script.getLotSize() != null ? script.getLotSize() : 1;
+        long finalQuantity = isNoStrikeExchange
+                ? request.getQuantity().longValue()
+                : (long) request.getQuantity() * lotSize;
+
+        if (finalQuantity <= 0L) {
+            throw new InvalidTradeRequestException("Computed quantity is not positive for quick trade");
+        }
+
+        Integer spotScripCode = request.getSpotScripCode();
+        boolean useSpotForEntry = Boolean.TRUE.equals(request.getUseSpotForEntry());
+        boolean useSpotForSl = Boolean.TRUE.equals(request.getUseSpotForSl());
+        boolean useSpotForTarget = Boolean.TRUE.equals(request.getUseSpotForTarget());
+
+        if (Boolean.TRUE.equals(request.getUseSpotPrice())) {
+            useSpotForEntry = true;
+            useSpotForSl = true;
+            useSpotForTarget = true;
+        }
+
+        if (hasOptionType(request.getOptionType()) && spotScripCode == null) {
+            spotScripCode = resolveSpotScripCodeForOption(request.getInstrument());
+        }
+
+        TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
+                .symbol(request.getInstrument())
+                .scripCode(script.getScripCode())
+                .exchange(script.getExchange())
+                .instrumentType(script.getInstrumentType())
+                .strikePrice(request.getStrikePrice())
+                .optionType(request.getOptionType())
+                .expiry(request.getExpiry())
+                .entryPrice(entryPrice)
+                .stopLoss(stopLoss)
+                .target1(target1)
+                .target2(target2)
+                .target3(request.getTarget3())
+                .trailingSl(request.getTrailingSl())
+                .quantity(finalQuantity)
+                .lots(request.getQuantity())
+                .tslEnabled(request.getTslEnabled())
+                .status(TriggeredTradeStatus.TRIGGERED)
+                .createdAt(LocalDateTime.now())
+                .intraday(request.getIntraday())
+                .brokerCredentialsId(request.getBrokerCredentialsId())
+                .appUserId(request.getUserId())
+                .useSpotForEntry(useSpotForEntry)
+                .useSpotForSl(useSpotForSl)
+                .useSpotForTarget(useSpotForTarget)
+                .useSpotPrice(request.getUseSpotPrice())
+                .spotScripCode(spotScripCode)
+                .source(request.getSource())
+                .build();
+
+        TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
+        String key = entity.getExchange() + entity.getScripCode();
+        webSocketSubscriptionService.subscribeToScrip(key);
+
+        if (spotScripCode != null) {
+            ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(spotScripCode);
+            if (spotScript != null) {
+                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
+                webSocketSubscriptionService.subscribeToScrip(spotKey);
+            }
+        }
+
+        TriggeredTradeSetupEntity executed = executeTradeFromEntity(saved);
+        if (executed == null) {
+            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
+            saved.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            triggerTradeRequestRepository.save(saved);
+            throw new InvalidTradeRequestException("Quick trade could not be executed immediately; it has been queued instead.");
+        }
+
+        triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                TriggeredTradeStatus.TRIGGERED.name(),
+                TriggeredTradeStatus.EXECUTED.name());
+        saved.setStatus(TriggeredTradeStatus.EXECUTED);
+        triggerTradeRequestRepository.save(saved);
+
+        return executed;
     }
 
     public TriggeredTradeSetupEntity createExecutedTrade(TriggerRequest request) {
@@ -1039,6 +1170,48 @@ public class TradeExecutionService {
 
     private boolean hasOptionType(String optionType) {
         return optionType != null && !optionType.trim().isEmpty();
+    }
+
+    private int resolveQuickDefaultLots(Long appUserId) {
+        int configuredLots = readIntConfig(appUserId, "quick_trade_default_lots");
+        if (configuredLots > 0) {
+            return configuredLots;
+        }
+        configuredLots = readIntConfig(appUserId, "option_stock_lot_size");
+        if (configuredLots > 0) {
+            return configuredLots;
+        }
+        return 1;
+    }
+
+    private int readIntConfig(Long appUserId, String key) {
+        try {
+            String raw = userConfigService.getConfig(appUserId, key, null);
+            if (raw != null && !raw.isBlank()) {
+                int value = Integer.parseInt(raw.trim());
+                if (value > 0) {
+                    return value;
+                }
+            }
+        } catch (Exception ignored) { }
+        return -1;
+    }
+
+    private double resolvePercentageConfig(Long appUserId, String key, double defaultValue) {
+        try {
+            String raw = userConfigService.getConfig(appUserId, key, null);
+            if (raw != null && !raw.isBlank()) {
+                double value = Double.parseDouble(raw.trim());
+                if (value >= 0) {
+                    return value;
+                }
+            }
+        } catch (Exception ignored) { }
+        return defaultValue;
+    }
+
+    private double roundPrice(double price) {
+        return Math.round(price * 100.0d) / 100.0d;
     }
 
     private Integer resolveSpotScripCodeForOption(String instrumentName) {

@@ -36,4 +36,8 @@ public class TriggerRequest {
 
     // optional source to identify where the request originated
     private String source;
+
+    private Boolean quickTrade;
+
+    private String action;
 }

@@ -259,7 +259,11 @@ public class TradingMessageService {
                 // Submit placement concurrently
                 CompletableFuture<Void> f = CompletableFuture.runAsync(() -> {
                     try {
-                        tradingExecutorService.executeTrade(req);
+                        if (Boolean.TRUE.equals(req.getQuickTrade())) {
+                            tradingExecutorService.executeQuickTrade(req);
+                        } else {
+                            tradingExecutorService.executeTrade(req);
+                        }
                     } catch (Exception ex) {
                         System.err.println("Failed to place order for broker credential id " + (c != null ? c.getId() : "null") + ": " + ex.getMessage());
                     }
@@ -335,7 +339,11 @@ public class TradingMessageService {
                         continue;
                     }
 
-                    tradingExecutorService.executeTrade(req);
+                    if (Boolean.TRUE.equals(req.getQuickTrade())) {
+                        tradingExecutorService.executeQuickTrade(req);
+                    } else {
+                        tradingExecutorService.executeTrade(req);
+                    }
                 } catch (Exception ex) {
                     System.err.println("Failed to place order for broker credential id " + (c != null ? c.getId() : "null") + ": " + ex.getMessage());
                 }
@@ -399,6 +407,8 @@ public class TradingMessageService {
         t.setSpotScripCode(src.getSpotScripCode());
         t.setTslEnabled(src.getTslEnabled());
         t.setLots(src.getLots());
+        t.setQuickTrade(src.getQuickTrade());
+        t.setAction(src.getAction());
         // userId and brokerCredentialsId intentionally left null here; caller sets them
         return t;
     }
@@ -417,6 +427,16 @@ public class TradingMessageService {
         request.setExpiry((String) parsed.get("expiry"));
         request.setExchange((String) parsed.get("exchange"));
         request.setIntraday(true);
+        Object action = parsed.get("action");
+        if (action != null) {
+            request.setAction(action.toString().trim().toUpperCase(Locale.ROOT));
+        }
+        Object quick = parsed.get("quickTrade");
+        if (quick instanceof Boolean) {
+            request.setQuickTrade((Boolean) quick);
+        } else if (quick != null) {
+            request.setQuickTrade(Boolean.parseBoolean(quick.toString()));
+        }
         // Quantity may be present in parsed map as 'quantity' or 'qty'
         Integer q = null;
         try {
