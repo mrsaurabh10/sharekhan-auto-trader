@@ -274,6 +274,7 @@ public class MStockInstrumentCacheService {
 
         String tradingSymbol = tradingSymbolRaw.trim().toUpperCase(Locale.ROOT);
         String normalizedExchange = exchange.trim().toUpperCase(Locale.ROOT);
+        tradingSymbol = normalizeSpotTradingSymbol(normalizedExchange, tradingSymbol, instrumentType, segment, strikeText, expiry);
         String instrumentKey = buildInstrumentKey(normalizedExchange, tradingSymbol);
         if (instrumentKey == null) {
             return null;
@@ -306,6 +307,68 @@ public class MStockInstrumentCacheService {
             return null;
         }
         return exchange.trim().toUpperCase(Locale.ROOT) + ":" + tradingSymbol.trim().toUpperCase(Locale.ROOT);
+    }
+
+    private String normalizeSpotTradingSymbol(String exchange,
+                                              String tradingSymbol,
+                                              String instrumentType,
+                                              String segment,
+                                              String strikeText,
+                                              String expiry) {
+        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(tradingSymbol)) {
+            return tradingSymbol;
+        }
+
+        String normalizedExchange = exchange.trim().toUpperCase(Locale.ROOT);
+        if (!(normalizedExchange.equals("NSE") || normalizedExchange.equals("BSE"))) {
+            return tradingSymbol;
+        }
+
+        if (!isLikelySpotEquity(instrumentType, segment, strikeText, expiry)) {
+            return tradingSymbol;
+        }
+
+        if (normalizedExchange.equals("NSE") && !tradingSymbol.endsWith("-EQ")) {
+            return tradingSymbol + "-EQ";
+        }
+        if (normalizedExchange.equals("BSE") && !tradingSymbol.endsWith("-A")) {
+            return tradingSymbol + "-A";
+        }
+        return tradingSymbol;
+    }
+
+    private boolean isLikelySpotEquity(String instrumentType,
+                                       String segment,
+                                       String strikeText,
+                                       String expiry) {
+        boolean hasStrike = StringUtils.hasText(strikeText);
+        boolean hasExpiry = StringUtils.hasText(expiry);
+        if (hasStrike || hasExpiry) {
+            return false;
+        }
+
+        if (StringUtils.hasText(instrumentType)) {
+            String normalized = instrumentType.trim().toUpperCase(Locale.ROOT);
+            if (normalized.contains("FUT") || normalized.contains("OPT") || normalized.contains("PE") || normalized.contains("CE")) {
+                return false;
+            }
+            if (normalized.equals("EQ") || normalized.equals("EQUITY")) {
+                return true;
+            }
+        }
+
+        if (StringUtils.hasText(segment)) {
+            String normalizedSegment = segment.trim().toUpperCase(Locale.ROOT);
+            if (normalizedSegment.contains("DERIV")) {
+                return false;
+            }
+            if (normalizedSegment.contains("CASH")) {
+                return true;
+            }
+        }
+
+        // Default to true when we cannot confidently classify it as derivative.
+        return true;
     }
 
     private MStockInstrumentEntity choosePreferred(MStockInstrumentEntity existing, MStockInstrumentEntity candidate) {

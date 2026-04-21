@@ -416,7 +416,24 @@ public class MStockInstrumentResolver {
             return true;
         }
         String upperKey = key.toUpperCase(Locale.ROOT);
-        return upperKey.startsWith("NSE:") || upperKey.startsWith("BSE:");
+        if (!(upperKey.startsWith("NSE:") || upperKey.startsWith("BSE:"))) {
+            return false;
+        }
+
+        String normalizedExchange = normalizeExchangeForApi(script.getExchange());
+        int colonIndex = upperKey.indexOf(':');
+        if (colonIndex < 0 || colonIndex + 1 >= upperKey.length()) {
+            return false;
+        }
+        String symbol = upperKey.substring(colonIndex + 1);
+
+        if ("NSE".equals(normalizedExchange)) {
+            return symbol.endsWith("-EQ");
+        }
+        if ("BSE".equals(normalizedExchange)) {
+            return symbol.endsWith("-A");
+        }
+        return true;
     }
 
     private String buildNormalizedKey(String exchange, String symbol) {
