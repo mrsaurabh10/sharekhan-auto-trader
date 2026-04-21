@@ -2182,10 +2182,11 @@ public class TradeExecutionService {
         temp.setSpotScripCode(requestEntity.getSpotScripCode());
 
         // run execution using the converted entity
+        final double executionLtp = ltp;
         String requestLockKey = buildEntryLockKey(requestEntity);
         try {
             return orderPlacementGuard.withLock(requestLockKey, ORDER_LOCK_TIMEOUT,
-                    () -> execute(temp, ltp));
+                    () -> execute(temp, executionLtp));
         } catch (OrderPlacementGuard.LockAcquisitionException e) {
             log.warn("⚠️ Duplicate entry placement prevented for request {} (symbol={}): {}",
                     requestEntity != null ? requestEntity.getId() : null,
