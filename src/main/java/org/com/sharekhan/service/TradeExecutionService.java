@@ -100,6 +100,8 @@ public class TradeExecutionService {
 
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
     private final ScriptMasterRepository scriptMasterRepository;
+    private final MStockInstrumentResolver mStockInstrumentResolver;
+    private final MStockLtpService mStockLtpService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final BrokerServiceFactory brokerServiceFactory;
@@ -2128,6 +2130,10 @@ public class TradeExecutionService {
         Double ltp = ltpCacheService.getLtp(requestEntity.getScripCode());
 
         if (ltp == null) {
+            ltp = fetchLtpViaMStockFallback(requestEntity);
+        }
+
+        if (ltp == null) {
             log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", requestEntity.getScripCode(), requestEntity.getId());
             return null; // Signal to the caller to skip.
         }
@@ -2187,6 +2193,43 @@ public class TradeExecutionService {
                     e.getMessage());
             return null;
         }
+    }
+
+    private Double fetchLtpViaMStockFallback(TriggerTradeRequestEntity requestEntity) {
+        if (requestEntity == null || requestEntity.getScripCode() == null) {
+            return null;
+        }
+        Integer scripCode = requestEntity.getScripCode();
+        try {
+            ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
+            if (script == null) {
+                log.debug("No script master row found for scrip {} while attempting MStock LTP fallback.", scripCode);
+                return null;
+            }
+            Optional<String> instrumentKeyOpt = mStockInstrumentResolver.resolveInstrumentKey(script);
+            if (instrumentKeyOpt.isEmpty()) {
+                log.warn("Unable to resolve MStock instrument key for scrip {} during fallback LTP fetch.", scripCode);
+                return null;
+            }
+            String instrumentKey = instrumentKeyOpt.get();
+            Map<String, Object> payload = mStockLtpService.fetchLtpForInstrument(instrumentKey);
+            if (payload == null) {
+                log.warn("MStock LTP API returned null data for instrument {} (scrip {}).", instrumentKey, scripCode);
+                return null;
+            }
+            Object lastPriceObj = payload.get("last_price");
+            if (lastPriceObj instanceof Number number) {
+                double fetchedLtp = number.doubleValue();
+                ltpCacheService.updateLtp(scripCode, fetchedLtp);
+                log.info("Fetched LTP {} via MStock for scrip {} (instrument {}).", fetchedLtp, scripCode, instrumentKey);
+                return fetchedLtp;
+            }
+            log.warn("MStock LTP API returned missing last_price for instrument {} (scrip {}).", instrumentKey, scripCode);
+        } catch (Exception ex) {
+            log.warn("Failed to fetch fallback LTP from MStock for scrip {}: {}", requestEntity.getScripCode(), ex.getMessage());
+            log.debug("MStock fallback stacktrace", ex);
+        }
+        return null;
     }
 
     private String buildEntryLockKey(TriggerTradeRequestEntity request) {
