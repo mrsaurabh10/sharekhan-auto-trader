@@ -49,6 +49,16 @@ public class TelegramSignalParser implements TradingSignalParser {
                 quickResult.put("optionType", optionTypeQuick);
                 quickResult.put("quickTrade", true);
                 quickResult.put("intraday", true);
+
+                Pattern qtyPattern = Pattern.compile("\\b(\\d+)\\s*(LOTS?|LOT|QTY|QUANTITY)\\b", Pattern.CASE_INSENSITIVE);
+                Matcher qtyMatcher = qtyPattern.matcher(normalizedForQuick);
+                if (qtyMatcher.find()) {
+                    try {
+                        int qty = Integer.parseInt(qtyMatcher.group(1));
+                        quickResult.put("quantity", qty);
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
                 return quickResult;
             }
         }

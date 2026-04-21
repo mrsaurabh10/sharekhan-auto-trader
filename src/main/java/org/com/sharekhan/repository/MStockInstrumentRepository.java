@@ -25,5 +25,7 @@ public interface MStockInstrumentRepository extends JpaRepository<MStockInstrume
             @Param("pattern") String tradingSymbolPattern
     );
 
+    List<MStockInstrumentEntity> findByExchangeIgnoreCaseAndNameIgnoreCase(String exchange, String name);
+
     boolean existsByInstrumentKey(String instrumentKey);
 }

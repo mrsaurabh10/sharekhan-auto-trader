@@ -120,6 +120,14 @@ public class MStockInstrumentResolver {
             return Optional.empty();
         }
 
+        Optional<String> attributeMatch = lookupByAttributes(script, normalizedExchange);
+        if (attributeMatch.isPresent()) {
+            String key = attributeMatch.get();
+            if (isValidSpotKey(script, key)) {
+                return cacheAndReturn(script, key, true);
+            }
+        }
+
         List<String> candidateSymbols = buildCandidateSymbols(script, normalizedExchange, derivativeInstrument);
         if (candidateSymbols.isEmpty()) {
             if (derivativeInstrument) {
@@ -132,14 +140,18 @@ public class MStockInstrumentResolver {
         for (String symbol : candidateSymbols) {
             Optional<String> key = lookupInstrumentKey(normalizedExchange, symbol);
             if (key.isPresent()) {
-                return cacheAndReturn(script, key.get(), true);
+                String resolvedKey = key.get();
+                if (!isValidSpotKey(script, resolvedKey)) {
+                    continue;
+                }
+                return cacheAndReturn(script, resolvedKey, true);
             }
         }
 
         if (!isInstrumentMasterPopulated() && !candidateSymbols.isEmpty()) {
             String fallbackSymbol = candidateSymbols.get(0);
             String fallbackKey = buildNormalizedKey(normalizedExchange, fallbackSymbol);
-            if (StringUtils.hasText(fallbackKey)) {
+            if (StringUtils.hasText(fallbackKey) && isValidSpotKey(script, fallbackKey)) {
                 log.warn("MStock instrument master not populated; using heuristic fallback {}", fallbackKey);
                 return cacheAndReturn(script, fallbackKey, false);
             }
@@ -148,7 +160,10 @@ public class MStockInstrumentResolver {
         if (derivativeInstrument) {
             Optional<String> patternMatch = lookupDerivativeByPattern(normalizedExchange, script.getTradingSymbol());
             if (patternMatch.isPresent()) {
-                return cacheAndReturn(script, patternMatch.get(), true);
+                String key = patternMatch.get();
+                if (isValidSpotKey(script, key)) {
+                    return cacheAndReturn(script, key, true);
+                }
             }
             log.warn("Unable to resolve derivative instrument for scripCode={} ({}) via MStock master.", script.getScripCode(), script.getTradingSymbol());
             return Optional.empty();
@@ -292,6 +307,116 @@ public class MStockInstrumentResolver {
             }
         }
         return Optional.empty();
+    }
+
+    private Optional<String> lookupByAttributes(ScriptMasterEntity script, String normalizedExchange) {
+        if (script == null || !StringUtils.hasText(script.getTradingSymbol())) {
+            return Optional.empty();
+        }
+
+        List<MStockInstrumentEntity> matches = mStockInstrumentRepository
+                .findByExchangeIgnoreCaseAndNameIgnoreCase(normalizedExchange, script.getTradingSymbol());
+        if (matches == null || matches.isEmpty()) {
+            return Optional.empty();
+        }
+
+        List<MStockInstrumentEntity> filtered = applyAttributeFilters(matches, script);
+        if (filtered.isEmpty()) {
+            return Optional.empty();
+        }
+
+        MStockInstrumentEntity chosen = chooseBestCandidate(filtered, script);
+        return chosen != null && StringUtils.hasText(chosen.getInstrumentKey())
+                ? Optional.of(chosen.getInstrumentKey())
+                : Optional.empty();
+    }
+
+    private List<MStockInstrumentEntity> applyAttributeFilters(List<MStockInstrumentEntity> candidates,
+                                                               ScriptMasterEntity script) {
+        List<MStockInstrumentEntity> current = new ArrayList<>(candidates);
+
+        if (script.getStrikePrice() != null) {
+            List<MStockInstrumentEntity> strikeMatches = current.stream()
+                    .filter(i -> i.getStrike() != null && Math.abs(i.getStrike() - script.getStrikePrice()) < 0.001)
+                    .toList();
+            if (!strikeMatches.isEmpty()) {
+                current = strikeMatches;
+            }
+        }
+
+        if (StringUtils.hasText(script.getExpiry())) {
+            List<MStockInstrumentEntity> expiryMatches = current.stream()
+                    .filter(i -> StringUtils.hasText(i.getExpiry()) &&
+                            i.getExpiry().trim().equalsIgnoreCase(script.getExpiry().trim()))
+                    .toList();
+            if (!expiryMatches.isEmpty()) {
+                current = expiryMatches;
+            }
+        }
+
+        if (StringUtils.hasText(script.getInstrumentType())) {
+            List<MStockInstrumentEntity> typeMatches = current.stream()
+                    .filter(i -> StringUtils.hasText(i.getInstrumentType()) &&
+                            i.getInstrumentType().equalsIgnoreCase(script.getInstrumentType()))
+                    .toList();
+            if (!typeMatches.isEmpty()) {
+                current = typeMatches;
+            }
+        }
+
+        if (StringUtils.hasText(script.getOptionType())) {
+            List<MStockInstrumentEntity> seriesMatches = current.stream()
+                    .filter(i -> StringUtils.hasText(i.getInstrumentType()) &&
+                            i.getInstrumentType().toUpperCase(Locale.ROOT).contains(script.getOptionType().toUpperCase(Locale.ROOT)))
+                    .toList();
+            if (!seriesMatches.isEmpty()) {
+                current = seriesMatches;
+            }
+        }
+
+        return current;
+    }
+
+    private MStockInstrumentEntity chooseBestCandidate(List<MStockInstrumentEntity> candidates,
+                                                       ScriptMasterEntity script) {
+        return candidates.stream()
+                .max(Comparator.comparingInt(c -> scoreCandidate(c, script)))
+                .orElse(null);
+    }
+
+    private int scoreCandidate(MStockInstrumentEntity entity, ScriptMasterEntity script) {
+        int score = 0;
+        if (entity.getStrike() != null && script.getStrikePrice() != null &&
+                Math.abs(entity.getStrike() - script.getStrikePrice()) < 0.001) {
+            score += 4;
+        }
+        if (StringUtils.hasText(entity.getExpiry()) && StringUtils.hasText(script.getExpiry()) &&
+                entity.getExpiry().trim().equalsIgnoreCase(script.getExpiry().trim())) {
+            score += 3;
+        }
+        if (StringUtils.hasText(entity.getInstrumentType()) && StringUtils.hasText(script.getInstrumentType()) &&
+                entity.getInstrumentType().equalsIgnoreCase(script.getInstrumentType())) {
+            score += 2;
+        }
+        if (StringUtils.hasText(entity.getInstrumentType()) && StringUtils.hasText(script.getOptionType()) &&
+                entity.getInstrumentType().toUpperCase(Locale.ROOT).contains(script.getOptionType().toUpperCase(Locale.ROOT))) {
+            score += 1;
+        }
+        if (entity.getLotSize() != null && entity.getLotSize() > 0) {
+            score += 1;
+        }
+        return score;
+    }
+
+    private boolean isValidSpotKey(ScriptMasterEntity script, String key) {
+        if (!StringUtils.hasText(key)) {
+            return false;
+        }
+        if (script == null || !isSpotInstrument(script)) {
+            return true;
+        }
+        String upperKey = key.toUpperCase(Locale.ROOT);
+        return upperKey.startsWith("NSE:") || upperKey.startsWith("BSE:");
     }
 
     private String buildNormalizedKey(String exchange, String symbol) {
