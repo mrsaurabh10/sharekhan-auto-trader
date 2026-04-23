@@ -1,16 +1,12 @@
 package org.com.sharekhan.service;
 
-import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.sharekhan.SharekhanConnect;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
-import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -22,34 +18,70 @@ import java.net.URL;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 @Service
 @Slf4j
 public class ScriptMasterCacheService {
 
-    private final Map<String, JSONObject> scriptCache = new HashMap<>();
+    private final Map<String, Map<String, JSONObject>> scriptCacheByExchange = new HashMap<>();
     private final ScriptMasterRepository repository;
-    private final TokenStoreService tokenStoreService;
 
-
-    private static final String apiKey = "M57X7RqA9C43IOq8iJSySWv8LAD2DzkM";
 
     @Autowired
-    public ScriptMasterCacheService(ScriptMasterRepository repository,
-                                    TokenStoreService tokenStoreService) {
+    public ScriptMasterCacheService(ScriptMasterRepository repository) {
         this.repository = repository;
-        this.tokenStoreService = tokenStoreService;
     }
 
-    public Map<String, JSONObject> getScriptCache(String exchange) throws IOException, SharekhanAPIException {
-        if (!scriptCache.isEmpty()) {
-            log.info("Script cache already filled. Returning cached data.");
-            return scriptCache;
+    public synchronized Map<String, JSONObject> getScriptCache(String exchange) throws IOException, SharekhanAPIException {
+        if (exchange == null || exchange.isBlank()) {
+            return Map.of();
+        }
+        String normalizedExchange = exchange.trim().toUpperCase(Locale.ROOT);
+        Map<String, JSONObject> cached = scriptCacheByExchange.get(normalizedExchange);
+        if (cached != null && !cached.isEmpty()) {
+            log.debug("Script cache for {} already populated ({} entries).", normalizedExchange, cached.size());
+            return cached;
         }
 
-        log.info("Fetching script cache for exchange: {}", exchange);
+        Map<String, JSONObject> fetched = fetchScriptsForExchange(normalizedExchange);
+        scriptCacheByExchange.put(normalizedExchange, fetched);
+        return fetched;
+    }
+
+
+    public JSONObject getScriptBySymbol(String tradingSymbol) {
+        if (tradingSymbol == null) {
+            return null;
+        }
+        for (Map<String, JSONObject> cache : scriptCacheByExchange.values()) {
+            JSONObject obj = cache.get(tradingSymbol);
+            if (obj != null) {
+                return obj;
+            }
+        }
+        return null;
+    }
+
+    public void clearCache() {
+        scriptCacheByExchange.clear();
+        repository.deleteAll();
+    }
+
+    public synchronized void refreshExchange(String exchange) throws IOException, SharekhanAPIException {
+        if (exchange == null || exchange.isBlank()) {
+            return;
+        }
+        String normalizedExchange = exchange.trim().toUpperCase(Locale.ROOT);
+        log.info("Refreshing script master cache for exchange {}", normalizedExchange);
+        scriptCacheByExchange.remove(normalizedExchange);
+        Map<String, JSONObject> refreshed = fetchScriptsForExchange(normalizedExchange);
+        scriptCacheByExchange.put(normalizedExchange, refreshed);
+    }
+
+    private Map<String, JSONObject> fetchScriptsForExchange(String exchange) throws IOException, SharekhanAPIException {
+        log.info("Fetching script master for exchange {}", exchange);
         String urlStr = "https://api.sharekhan.com/skapi/services/master/" + exchange;
 
         URL url = new URL(urlStr);
@@ -65,11 +97,13 @@ public class ScriptMasterCacheService {
         }
 
         ObjectMapper mapper = new ObjectMapper();
+        Map<String, JSONObject> exchangeMap = new HashMap<>();
+
         try (InputStream inputStream = conn.getInputStream();
              JsonParser parser = mapper.getFactory().createParser(inputStream)) {
 
             List<ScriptMasterEntity> batchList = new ArrayList<>();
-            int batchSize = 100;
+            int batchSize = 200;
             int totalProcessed = 0;
 
             if (parser.nextToken() != JsonToken.START_OBJECT) {
@@ -79,54 +113,43 @@ public class ScriptMasterCacheService {
             while (parser.nextToken() != JsonToken.END_OBJECT) {
                 String fieldName = parser.getCurrentName();
                 if ("data".equals(fieldName)) {
-                    parser.nextToken(); // move to START_ARRAY
+                    parser.nextToken();
                     if (parser.currentToken() != JsonToken.START_ARRAY) {
                         throw new IOException("'data' field is not an array");
                     }
-                    log.info("Parsing 'data' array of scripts");
+                    log.info("Parsing script data array for exchange {}", exchange);
                     while (parser.nextToken() != JsonToken.END_ARRAY) {
                         JSONObject scriptJson = new JSONObject(parser.readValueAsTree().toString());
                         ScriptMasterEntity entity = convertToEntity(scriptJson, exchange);
                         batchList.add(entity);
+                        exchangeMap.put(entity.getTradingSymbol(), scriptJson);
                         totalProcessed++;
 
                         if (batchList.size() == batchSize) {
-                            log.info("Saving batch of {} scripts", batchSize);
                             repository.saveAll(batchList);
                             repository.flush();
                             batchList.clear();
-                            log.info("Batch saved successfully. Total processed so far: {}", totalProcessed);
+                            log.debug("Persisted {} scripts for {} so far", totalProcessed, exchange);
                         }
                     }
                 } else {
                     parser.skipChildren();
                 }
             }
+
             if (!batchList.isEmpty()) {
-                log.info("Saving final batch of {} scripts", batchList.size());
                 repository.saveAll(batchList);
                 repository.flush();
+                log.debug("Persisted final batch of {} scripts for {}", batchList.size(), exchange);
                 batchList.clear();
-                log.info("Final batch saved");
             }
-            log.info("Completed processing total {} scripts for exchange {}", totalProcessed, exchange);
-
+            log.info("Stored {} scripts for exchange {}", totalProcessed, exchange);
         } finally {
             conn.disconnect();
-            log.info("Disconnected from HTTP connection");
+            log.debug("Disconnected HTTP connection for exchange {}", exchange);
         }
 
-        return scriptCache;
-    }
-
-
-    public JSONObject getScriptBySymbol(String tradingSymbol) {
-        return scriptCache.get(tradingSymbol);
-    }
-
-    public void clearCache() {
-        scriptCache.clear();
-        repository.deleteAll();
+        return exchangeMap;
     }
 
     public ScriptMasterEntity convertToEntity(JSONObject json, String exchange) throws SharekhanAPIException {

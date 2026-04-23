@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
@@ -40,6 +41,8 @@ public class WebSocketClientService  {
     private final WebSocketConnector webSocketConnector;
     private final LtpWebSocketHandler ltpWebSocketHandler;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
+    @Autowired
+    private final QuoteCacheService quoteCacheService;
     private Session session;
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private final Set<String> subscribedScrips = ConcurrentHashMap.newKeySet();
@@ -141,6 +144,8 @@ public class WebSocketClientService  {
                     // Try various common field names for scripCode and ltp
                     Integer scripCode = null;
                     Double ltp = null;
+                    Double bestBid = null;
+                    Double bestAsk = null;
 
                     // scripCode may be number or string field named scripCode, scrip, ScripCode
                     if (data.has("scripCode") && data.get("scripCode").canConvertToInt()) scripCode = data.get("scripCode").asInt();
@@ -151,16 +156,18 @@ public class WebSocketClientService  {
                     }
 
                     // ltp may be number or string under 'ltp' or 'last_price' or 'lastPrice'
-                    if (data.has("ltp") && data.get("ltp").isNumber()) ltp = data.get("ltp").asDouble();
-                    else if (data.has("ltp") && data.get("ltp").isTextual()) {
-                        try { ltp = Double.parseDouble(data.get("ltp").asText()); } catch (NumberFormatException ignored) {}
-                    } else if (data.has("last_price") && data.get("last_price").isNumber()) ltp = data.get("last_price").asDouble();
-                    else if (data.has("lastPrice") && data.get("lastPrice").isNumber()) ltp = data.get("lastPrice").asDouble();
+                    ltp = extractDouble(data, "ltp", "last_price", "lastPrice");
+                    bestBid = extractDouble(data,
+                            "bestBidPrice", "bestBid", "bidPrice", "bid", "buyPrice", "buyOnePrice");
+                    bestAsk = extractDouble(data,
+                            "bestAskPrice", "bestOfferPrice", "askPrice", "ask", "sellPrice", "sellOnePrice");
 
-                    if (scripCode == null || ltp == null || scripCode == 0) {
-                        log.debug("Feed message missing scripCode or ltp");
+                    if (scripCode == null || scripCode == 0) {
+                        log.debug("Feed message missing scripCode");
+                    } else if (ltp == null && bestBid == null && bestAsk == null) {
+                        log.debug("Feed message for {} missing price payloads", scripCode);
                     } else {
-                        processLtpUpdate(scripCode, ltp);
+                        processLtpUpdate(scripCode, ltp, bestBid, bestAsk);
                     }
                 }
             } else if (json.has("message")  && "ack".equalsIgnoreCase(json.get("message").asText()) ) {
@@ -203,27 +210,64 @@ public class WebSocketClientService  {
          }
     }
 
+    private Double extractDouble(JsonNode data, String... fieldNames) {
+        for (String field : fieldNames) {
+            if (!data.has(field)) {
+                continue;
+            }
+            JsonNode node = data.get(field);
+            if (node.isNumber()) {
+                return node.asDouble();
+            }
+            if (node.isTextual()) {
+                try {
+                    return Double.parseDouble(node.asText());
+                } catch (NumberFormatException ignored) {
+                    // fall through
+                }
+            }
+        }
+        return null;
+    }
+
     public void processLtpUpdate(Integer scripCode, Double ltp) {
+        processLtpUpdate(scripCode, ltp, null, null);
+    }
+
+    public void processLtpUpdate(Integer scripCode, Double ltp, Double bestBid, Double bestAsk) {
         // make effectively-final copies for use inside lambdas
         final int sc = scripCode;
-        final double lv = ltp;
+        final Double lv = ltp;
 
         // Important: only log concise LTP tick info
-        log.info("📊 LTP Tick received - scripCode={}, ltp={}", sc, lv);
-        try {
-            ltpCacheService.updateLtp(sc, lv);
-        } catch (Exception e) {
-            log.warn("Failed to update LTP cache for {}: {}", sc, e.getMessage());
+        if (lv != null) {
+            log.info("📊 LTP Tick received - scripCode={}, ltp={}", sc, lv);
+            try {
+                ltpCacheService.updateLtp(sc, lv);
+            } catch (Exception e) {
+                log.warn("Failed to update LTP cache for {}: {}", sc, e.getMessage());
+            }
+        } else {
+            log.debug("Feed update without LTP for {}", sc);
         }
 
         try {
-            scripExecutorManager.submitTriggerTask(sc, () -> priceTriggerService.evaluatePriceTrigger(sc, lv));
+            quoteCacheService.updateQuote(sc, bestBid, bestAsk, lv);
+        } catch (Exception e) {
+            log.warn("Failed to update quote cache for {}: {}", sc, e.getMessage());
+        }
+
+        final double triggerLtp = lv != null ? lv : bestAsk != null ? bestAsk : bestBid != null ? bestBid : 0d;
+        final double broadcastPrice = triggerLtp;
+
+        try {
+            scripExecutorManager.submitTriggerTask(sc, () -> priceTriggerService.evaluatePriceTrigger(sc, triggerLtp));
         } catch (Exception e) {
             log.error("Failed to submit trigger task for scrip {}: {}", sc, e.getMessage(), e);
         }
 
         try {
-            scripExecutorManager.submitMonitorTask(sc, () -> priceTriggerService.monitorOpenTrades(sc, lv));
+            scripExecutorManager.submitMonitorTask(sc, () -> priceTriggerService.monitorOpenTrades(sc, triggerLtp));
         } catch (Exception e) {
             log.error("Failed to submit monitor task for scrip {}: {}", sc, e.getMessage(), e);
         }
@@ -249,7 +293,7 @@ public class WebSocketClientService  {
                 else if ("NF".equalsIgnoreCase(exchange)) exchange = "NFO";
                 else if ("BF".equalsIgnoreCase(exchange)) exchange = "BFO";
             }
-            ltpWebSocketHandler.broadcastLtp(sc, lv, instrument, exchange);
+            ltpWebSocketHandler.broadcastLtp(sc, broadcastPrice, instrument, exchange);
         } catch (Exception e) {
             log.warn("Failed to broadcast LTP to frontend for {}: {}", sc, e.getMessage());
         }

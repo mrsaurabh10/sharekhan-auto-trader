@@ -31,3 +31,11 @@ logging:
       springframework:
         orm:
           jpa: ERROR
+
+# Application specific overrides
+app:
+  trading:
+    entry:
+      max-spread-percent: 1.5
+      quote-stale-ms: 2000
+      chase-max-steps: 3

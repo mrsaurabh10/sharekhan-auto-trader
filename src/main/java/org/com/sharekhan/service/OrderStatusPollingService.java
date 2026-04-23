@@ -421,7 +421,6 @@ public class OrderStatusPollingService {
         }
         return flattened;
     }
-
     /*
     Example Response from Sharekhan
 

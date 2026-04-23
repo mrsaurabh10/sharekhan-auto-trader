@@ -38,7 +38,11 @@ public class SharekhanBrokerService implements BrokerService {
         return executeSharekhanOrder(trade, context, exitPrice, "S", "NEW");
     }
 
-    private OrderPlacementResult executeSharekhanOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double price, String transactionType, String requestType) {
+    private OrderPlacementResult executeSharekhanOrder(TriggeredTradeSetupEntity trade,
+                                                       BrokerContext context,
+                                                       double price,
+                                                       String transactionType,
+                                                       String requestType) {
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
@@ -55,6 +59,7 @@ public class SharekhanBrokerService implements BrokerService {
             order.orderType = "NORMAL";
             order.productType = "INVESTMENT";
             order.instrumentType = trade.getInstrumentType();
+            order.triggerPrice = "0";
             
             if (trade.getStrikePrice() != null) {
                 order.strikePrice = String.valueOf(trade.getStrikePrice());

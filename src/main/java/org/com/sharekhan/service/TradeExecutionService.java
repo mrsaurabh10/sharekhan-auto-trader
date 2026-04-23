@@ -6,8 +6,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
+import org.com.sharekhan.dto.ExitOrderPlan;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
@@ -30,6 +32,7 @@ import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
@@ -37,6 +40,7 @@ import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.Duration;
@@ -56,6 +60,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class TradeExecutionService {
 
     private static final Duration ORDER_LOCK_TIMEOUT = Duration.ofSeconds(8);
+    private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
 
     public static class ModifyExitOrderResult {
         private final boolean success;
@@ -79,6 +84,7 @@ public class TradeExecutionService {
     private final TriggerTradeRequestRepository triggerTradeRequestRepo;
     private final TokenStoreService tokenStoreService; // ✅ holds current token
     private final LtpCacheService ltpCacheService;
+    private final QuoteCacheService quoteCacheService;
 
     private final ApplicationEventPublisher eventPublisher;
 
@@ -102,10 +108,252 @@ public class TradeExecutionService {
     @PersistenceContext
     private EntityManager entityManager;
 
+    @Value("${app.trading.entry.max-spread-percent:1.5}")
+    private double entryMaxSpreadPercent;
+
+    @Value("${app.trading.entry.quote-stale-ms:2000}")
+    private long entryQuoteStaleMillis;
+
+    @Value("${app.trading.entry.chase-max-steps:3}")
+    private int entryChaseMaxSteps;
+
 
     // Backwards compatible public API - by default allow service to compute quantity if missing
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request) {
         return executeTrade(request, false);
+    }
+
+    private EntryPlan planEntryOrder(TriggeredTradeSetupEntity trigger) {
+        if (trigger == null || trigger.getScripCode() == null) {
+            return EntryPlan.skip("Missing scrip code for trigger.");
+        }
+
+        Optional<QuoteCacheService.QuoteSnapshot> snapshotOpt = quoteCacheService.getSnapshot(trigger.getScripCode());
+        if (snapshotOpt.isEmpty()) {
+            return EntryPlan.skip("No quote snapshot available.");
+        }
+
+        QuoteCacheService.QuoteSnapshot snapshot = snapshotOpt.get();
+        Duration maxAge = Duration.ofMillis(Math.max(entryQuoteStaleMillis, 500));
+        if (quoteCacheService.isStale(snapshot, maxAge)) {
+            return EntryPlan.skip(String.format(Locale.ROOT,
+                    "Quote snapshot stale (updated %s)", snapshot.getUpdatedAt()));
+        }
+
+        if (!snapshot.hasBook()) {
+            return EntryPlan.skip("Quote snapshot missing best bid/ask.");
+        }
+
+        Double spreadPercent = snapshot.getSpreadPercent();
+        if (spreadPercent == null) {
+            return EntryPlan.skip("Quote snapshot missing spread.");
+        }
+        if (spreadPercent > entryMaxSpreadPercent) {
+            return EntryPlan.skip(String.format(Locale.ROOT,
+                    "Spread %.2f%% exceeds threshold %.2f%%", spreadPercent, entryMaxSpreadPercent));
+        }
+
+        double tickSize = resolveTickSize(trigger);
+        double midPrice = snapshot.getMidPrice() != null ? snapshot.getMidPrice() : snapshot.getLastTradedPrice();
+        double askPrice = snapshot.getBestAsk() != null ? snapshot.getBestAsk() : midPrice;
+
+        if (midPrice <= 0d || askPrice <= 0d) {
+            return EntryPlan.skip("Invalid mid/ask price computed.");
+        }
+
+        double initialLimit = roundToTick(midPrice, tickSize);
+        double askCeiling = roundToTick(askPrice, tickSize);
+        if (initialLimit > askCeiling) {
+            initialLimit = askCeiling;
+        }
+
+        List<Double> chasePrices = buildChasePrices(initialLimit, askCeiling, tickSize);
+        return EntryPlan.plan(initialLimit, askCeiling, spreadPercent, snapshot.getBestBid(),
+                snapshot.getBestAsk(), tickSize, chasePrices, snapshot.getUpdatedAt());
+    }
+
+    private List<Double> buildChasePrices(double initial, double askCeiling, double tickSize) {
+        int steps = Math.max(entryChaseMaxSteps, 1);
+        if (steps == 1 || askCeiling <= initial) {
+            return List.of(initial);
+        }
+
+        double gap = Math.max(0d, askCeiling - initial);
+        List<Double> prices = new ArrayList<>(steps);
+        prices.add(initial);
+        for (int i = 1; i < steps; i++) {
+            double fraction = (double) i / (steps - 1);
+            double candidate = initial + (gap * fraction);
+            double rounded = roundToTick(candidate, tickSize);
+            if (rounded > askCeiling) {
+                rounded = askCeiling;
+            }
+            if (!prices.contains(rounded)) {
+                prices.add(rounded);
+            }
+        }
+        return prices;
+    }
+
+    private double roundToTick(double value, double tickSize) {
+        if (tickSize <= 0) {
+            return value;
+        }
+        return Math.round(value / tickSize) * tickSize;
+    }
+
+    public double resolveTickSize(TriggeredTradeSetupEntity trigger) {
+        try {
+            ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trigger.getScripCode());
+            if (script != null) {
+                String instrumentType = script.getInstrumentType();
+                String exchange = script.getExchange();
+
+                if (instrumentType != null) {
+                    String it = instrumentType.toUpperCase(Locale.ROOT);
+                    if (it.startsWith("OI") || it.startsWith("OS") || it.startsWith("FI") || it.startsWith("FS")) {
+                        return 0.05d;
+                    }
+                }
+                if (exchange != null) {
+                    String ex = exchange.toUpperCase(Locale.ROOT);
+                    if (ex.equals("NF") || ex.equals("BF") || ex.equals("MX")) {
+                        return 0.05d;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to resolve tick size for trigger {}: {}", trigger.getId(), e.getMessage());
+        }
+        return 0.01d;
+    }
+
+    private record EntryPlan(boolean allowPlacement,
+                             String reason,
+                             Double plannedLimit,
+                             Double plannedAsk,
+                             Double plannedSpreadPercent,
+                             Double plannedBid,
+                             Double plannedAskRaw,
+                             Double tickSize,
+                             List<Double> chasePrices,
+                             Instant quoteTimestamp) {
+
+        static EntryPlan skip(String reason) {
+            return new EntryPlan(false, reason, null, null, null, null, null, null, List.of(), null);
+        }
+
+        static EntryPlan plan(Double plannedLimit,
+                              Double plannedAsk,
+                              Double plannedSpreadPercent,
+                              Double plannedBid,
+                              Double plannedAskRaw,
+                              Double tickSize,
+                              List<Double> chasePrices,
+                              Instant quoteTimestamp) {
+            return new EntryPlan(true, null, plannedLimit, plannedAsk, plannedSpreadPercent,
+                    plannedBid, plannedAskRaw, tickSize, chasePrices, quoteTimestamp);
+        }
+    }
+
+    private void logEntryDiagnostics(TriggeredTradeSetupEntity trigger, EntryPlan plan, double ltp) {
+        if (plan == null) {
+            log.info("📋 Entry diagnostics unavailable for trigger {} (no quote snapshot)", trigger.getId());
+            return;
+        }
+
+        String spreadStr = plan.plannedSpreadPercent() != null
+                ? String.format(Locale.ROOT, "%.4f", plan.plannedSpreadPercent())
+                : "NA";
+        String bidStr = plan.plannedBid() != null ? plan.plannedBid().toString() : "NA";
+        String askStr = plan.plannedAsk() != null ? plan.plannedAsk().toString() : "NA";
+        String limitStr = plan.plannedLimit() != null ? plan.plannedLimit().toString() : "NA";
+
+        if (!plan.allowPlacement()) {
+            log.info("📋 Entry diagnostics trade {} would skip due to '{}' (spread={}%, bid={}, ask={}, ltp={})",
+                    trigger.getId(),
+                    plan.reason(),
+                    spreadStr,
+                    bidStr,
+                    askStr,
+                    ltp);
+        } else {
+            log.info("📋 Entry diagnostics trade {} spread={}%, bid={}, ask={}, midLimit={} | actual order ltp={}",
+                    trigger.getId(),
+                    spreadStr,
+                    bidStr,
+                    askStr,
+                    limitStr,
+                    ltp);
+        }
+    }
+
+    private void logExitDiagnostics(TriggeredTradeSetupEntity trade,
+                                    ExitOrderPlan plan,
+                                    double exitPrice,
+                                    String exitReason) {
+        if (plan == null) {
+            log.info("📋 Exit diagnostics unavailable for trade {} (reason={}, exitPrice={})",
+                    trade.getId(), exitReason, exitPrice);
+            return;
+        }
+
+        log.info("📋 Exit diagnostics trade {} reason='{}' style={} recommendedLimit={} trigger={} actualExit={}",
+                trade.getId(),
+                exitReason,
+                plan.getStyle(),
+                plan.getLimitPrice(),
+                plan.getTriggerPrice(),
+                exitPrice);
+    }
+
+    private ExitOrderPlan buildExitOrderPlan(TriggeredTradeSetupEntity trade,
+                                             Double referencePrice,
+                                             String exitReason) {
+        double tickSize = resolveTickSize(trade);
+        double fallbackPrice = referencePrice != null && referencePrice > 0d
+                ? referencePrice
+                : Optional.ofNullable(ltpCacheService.getLtp(trade.getScripCode())).orElse(
+                        trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() :
+                                trade.getEntryPrice() != null ? trade.getEntryPrice() : tickSize);
+        fallbackPrice = Math.max(fallbackPrice, tickSize);
+        fallbackPrice = roundToTick(fallbackPrice, tickSize);
+
+        ExitOrderPlan.ExitStyle style;
+        double limitPrice;
+        Double triggerPrice = null;
+
+        String normalizedReason = exitReason != null ? exitReason.toUpperCase(Locale.ROOT) : "";
+
+        if ("STOP_LOSS_HIT".equalsIgnoreCase(exitReason)) {
+            style = ExitOrderPlan.ExitStyle.STOP_LOSS_LIMIT;
+            double stop = trade.getStopLoss() != null ? trade.getStopLoss() : fallbackPrice;
+            stop = Math.max(stop, tickSize);
+            stop = roundToTick(stop, tickSize);
+            limitPrice = roundToTick(Math.max(stop - 1.0d, tickSize), tickSize);
+            triggerPrice = stop;
+        } else if (normalizedReason.contains("INTRADAY") || normalizedReason.contains("FORCE")) {
+            style = ExitOrderPlan.ExitStyle.FORCE_MARKET;
+            double trigger = Math.max(fallbackPrice, tickSize);
+            trigger = roundToTick(trigger, tickSize);
+            limitPrice = trigger;
+            triggerPrice = trigger;
+        } else if ("TARGET_HIT".equalsIgnoreCase(exitReason)
+                || "TARGET_ORDER_AUTO".equalsIgnoreCase(exitReason)
+                || "TARGET_ORDER_AFTER_HOURS".equalsIgnoreCase(exitReason)) {
+            style = ExitOrderPlan.ExitStyle.QUICK_LIMIT;
+            limitPrice = roundToTick(Math.max(fallbackPrice - 0.25d, tickSize), tickSize);
+        } else {
+            style = ExitOrderPlan.ExitStyle.QUICK_LIMIT;
+            limitPrice = roundToTick(Math.max(fallbackPrice - 0.25d, tickSize), tickSize);
+        }
+
+        return ExitOrderPlan.builder()
+                .style(style)
+                .limitPrice(limitPrice)
+                .triggerPrice(triggerPrice)
+                .reasonTag(exitReason)
+                .build();
     }
 
     // New overload: if requireQuantity==true, throw an exception and send telegram when quantity is null
@@ -748,6 +996,11 @@ public class TradeExecutionService {
 //                }
 //            }
 
+            EntryPlan entryPlan = planEntryOrder(trigger);
+            logEntryDiagnostics(trigger, entryPlan, ltp);
+
+            double orderPrice = ltp;
+
             // Prefer a customer specific token when placing the order
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
             
@@ -760,7 +1013,7 @@ public class TradeExecutionService {
                 throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
             }
 
-            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, ltp);
+            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, orderPrice);
 
             if (!result.isSuccess()) {
                 log.error("❌ Place order failed for trigger {}. Reason: {}", trigger.getId(), result.getRejectionReason());
@@ -842,6 +1095,11 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             triggeredTradeSetupEntity.setSource(trigger.getSource());
+            triggeredTradeSetupEntity.setPlannedEntryPrice(trigger.getPlannedEntryPrice());
+            triggeredTradeSetupEntity.setPlannedEntryAsk(trigger.getPlannedEntryAsk());
+            triggeredTradeSetupEntity.setPlannedEntrySpreadPercent(trigger.getPlannedEntrySpreadPercent());
+            triggeredTradeSetupEntity.setPlannedEntryAt(trigger.getPlannedEntryAt());
+            triggeredTradeSetupEntity.setEntryChaseAttempts(trigger.getEntryChaseAttempts());
             
             triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
@@ -956,8 +1214,8 @@ public class TradeExecutionService {
 
             log.info("🛑 Force-closing trade {} at price: {}", trade.getId(), exitPrice);
 
-            // delegate directly to OrderExitService to avoid self-invocation of transactional logic
-            squareOff(trade, exitPrice, "Force fully close the trade"); // reuse existing logic
+            // Build an exit plan via squareOff using the quick-exit strategy
+            squareOff(trade, exitPrice, "Force fully close the trade");
             return true;
         } else {
             return false;
@@ -1014,8 +1272,11 @@ public class TradeExecutionService {
         persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found after claim: " + trade.getId()));
 
+        ExitOrderPlan plan = buildExitOrderPlan(persisted, exitPrice, exitReason);
+        logExitDiagnostics(persisted, plan, exitPrice, exitReason);
+
         // Resolve customerId from broker credentials if available; fallback to default
-        OrderPlacementResult result = placeExitOrderAndPersist(persisted, exitPrice, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, exitPrice, plan, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
 
         if (result == null || !result.isSuccess()) {
             String rejectionReason = result != null ? result.getRejectionReason() : "Unknown error";
@@ -1054,6 +1315,7 @@ public class TradeExecutionService {
 
     private OrderPlacementResult placeExitOrderAndPersist(TriggeredTradeSetupEntity persisted,
                                                           double exitPrice,
+                                                          ExitOrderPlan plan,
                                                           String exitReason,
                                                           TriggeredTradeStatus placedStatus) {
         String lockKey = buildExitLockKey(persisted);
@@ -1237,7 +1499,10 @@ public class TradeExecutionService {
             return;
         }
 
-        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AUTO", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        ExitOrderPlan plan = buildExitOrderPlan(persisted, targetPrice, "TARGET_ORDER_AUTO");
+        logExitDiagnostics(persisted, plan, targetPrice, "TARGET_ORDER_AUTO");
+
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, plan, "TARGET_ORDER_AUTO", TriggeredTradeStatus.TARGET_ORDER_PLACED);
 
         if (result == null || !result.isSuccess()) {
             log.warn("Failed to auto-place target order for trade {}: {}", persisted.getId(),
@@ -1323,8 +1588,11 @@ public class TradeExecutionService {
             return false;
         }
 
+        ExitOrderPlan plan = buildExitOrderPlan(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS");
+        logExitDiagnostics(persisted, plan, targetPrice, "TARGET_ORDER_AFTER_HOURS");
+
         String previousOrderId = persisted.getExitOrderId();
-        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, plan, "TARGET_ORDER_AFTER_HOURS", TriggeredTradeStatus.TARGET_ORDER_PLACED);
         if (result == null || !result.isSuccess()) {
             log.warn("Failed to place after-hours target exit for trade {}: {}", tradeId,
                     result != null ? result.getRejectionReason() : "No response");

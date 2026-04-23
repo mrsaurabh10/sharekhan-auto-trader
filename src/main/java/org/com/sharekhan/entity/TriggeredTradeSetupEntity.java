@@ -93,4 +93,11 @@ public class TriggeredTradeSetupEntity {
     private Double pnl;
 
     private LocalDateTime exitOrderPlacedAt;
+
+    // Entry planning metadata for analytics / chase logic
+    private Double plannedEntryPrice;
+    private Double plannedEntryAsk;
+    private Double plannedEntrySpreadPercent;
+    private LocalDateTime plannedEntryAt;
+    private Integer entryChaseAttempts;
 }

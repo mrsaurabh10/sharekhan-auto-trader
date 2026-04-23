@@ -50,5 +50,10 @@ app:
     client-code: "SGUPTA78"
     password: "Anvi@2023"
     totp-secret: "3VNUAS5GNB5UXCXR"
+  trading:
+    entry:
+      max-spread-percent: 1.5
+      quote-stale-ms: 2000
+      chase-max-steps: 3
   crypto:
     key: "ZTuc7iRkkeGN+B9ayiZu5m6M56VWSNhktO6STOF8aXA="
