@@ -125,7 +125,7 @@ final class QuotePayloadParser {
     );
 
     private static final Set<String> DIRECT_ASK_KEYS = Set.of(
-            "bestAskPrice", "bestOfferPrice", "askPrice", "sellPrice", "offer", "ask"
+            "bestAskPrice", "bestOfferPrice", "askPrice", "sellPrice", "offer", "ask", "offPrice"
     );
 
     private static final Set<String> PRICE_FIELD_KEYS = Set.of(
@@ -140,4 +140,3 @@ final class QuotePayloadParser {
             "sell", "ask", "asks", "offer", "selldepth", "offer depth"
     );
 }
-
