@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.dto.TriggerRequest;
@@ -31,6 +32,7 @@ import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
@@ -41,6 +43,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
@@ -93,6 +96,7 @@ public class TradeExecutionService {
     private final TriggerTradeRequestRepository triggerTradeRequestRepo;
     private final TokenStoreService tokenStoreService; // ✅ holds current token
     private final LtpCacheService ltpCacheService;
+    private final QuoteCacheService quoteCacheService;
 
     private final ApplicationEventPublisher eventPublisher;
 
@@ -117,6 +121,124 @@ public class TradeExecutionService {
 
     @PersistenceContext
     private EntityManager entityManager;
+
+    @Value("${app.trading.entry.max-spread-percent:1.5}")
+    private double entryMaxSpreadPercent;
+
+    @Value("${app.trading.entry.quote-stale-ms:2000}")
+    private long entryQuoteStaleMillis;
+
+    private static final Duration DEFAULT_QUOTE_STALENESS = Duration.ofMillis(2000);
+
+    private record EntryDiagnostics(boolean shouldPlace,
+                                    String reason,
+                                    Double spreadPercent,
+                                    Double recommendedLimit,
+                                    Double bestBid,
+                                    Double bestAsk,
+                                    Instant quoteTimestamp) { }
+
+    private record ExitDiagnostics(String exitReason,
+                                   Double recommendedLimit,
+                                   Double triggerPrice) { }
+
+    private EntryDiagnostics analyseEntry(TriggeredTradeSetupEntity trigger, Double ltp) {
+        if (trigger == null || trigger.getScripCode() == null) {
+            return new EntryDiagnostics(true, "NO_SCRIP_CODE", null, null, null, null, null);
+        }
+
+        Optional<QuoteCacheService.QuoteSnapshot> snapshotOpt = quoteCacheService.getSnapshot(trigger.getScripCode());
+        if (snapshotOpt.isEmpty()) {
+            return new EntryDiagnostics(true, "NO_QUOTE", null, null, null, null, null);
+        }
+
+        QuoteCacheService.QuoteSnapshot snapshot = snapshotOpt.get();
+        long staleMs = entryQuoteStaleMillis > 0 ? entryQuoteStaleMillis : DEFAULT_QUOTE_STALENESS.toMillis();
+        boolean stale = quoteCacheService.isStale(snapshot, Duration.ofMillis(staleMs));
+        if (stale) {
+            return new EntryDiagnostics(true, "STALE_QUOTE", snapshot.getSpreadPercent(),
+                    snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getUpdatedAt());
+        }
+
+        Double spreadPercent = snapshot.getSpreadPercent();
+        boolean shouldPlace = spreadPercent == null || spreadPercent <= entryMaxSpreadPercent;
+        String reason = shouldPlace ? "SPREAD_OK" : "SPREAD_THRESHOLD_EXCEEDED";
+        return new EntryDiagnostics(shouldPlace, reason, spreadPercent,
+                snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getUpdatedAt());
+    }
+
+    private void logEntryDiagnostics(TriggeredTradeSetupEntity trigger,
+                                     EntryDiagnostics diagnostics,
+                                     Double ltp) {
+        if (trigger == null || diagnostics == null) {
+            return;
+        }
+        String spread = formatPercent(diagnostics.spreadPercent());
+        String bid = formatPrice(diagnostics.bestBid());
+        String ask = formatPrice(diagnostics.bestAsk());
+        String mid = formatPrice(diagnostics.recommendedLimit());
+        String quoteTime = diagnostics.quoteTimestamp() != null ? diagnostics.quoteTimestamp().toString() : "NA";
+        String ltpStr = formatPrice(ltp);
+
+        if (diagnostics.shouldPlace()) {
+            log.info("📋 Entry diagnostics trade {} decision=PLACE reason={} spread={} bid={} ask={} mid={} ltp={} quoteTime={}",
+                    trigger.getId(), diagnostics.reason(), spread, bid, ask, mid, ltpStr, quoteTime);
+        } else {
+            log.info("📋 Entry diagnostics trade {} decision=SKIP reason={} spread={} bid={} ask={} mid={} ltp={} quoteTime={}",
+                    trigger.getId(), diagnostics.reason(), spread, bid, ask, mid, ltpStr, quoteTime);
+        }
+    }
+
+    private ExitDiagnostics analyseExit(TriggeredTradeSetupEntity trade,
+                                        Double referencePrice,
+                                        String exitReason) {
+        if (trade == null) {
+            return new ExitDiagnostics(exitReason, null, null);
+        }
+        String reasonKey = exitReason != null ? exitReason.toUpperCase(Locale.ROOT) : "";
+        Double recommended = referencePrice;
+        Double trigger = null;
+
+        if ("STOP_LOSS_HIT".equals(reasonKey)) {
+            recommended = trade.getStopLoss() != null ? trade.getStopLoss() : referencePrice;
+            trigger = trade.getStopLoss();
+        } else if (reasonKey.contains("TARGET")) {
+            recommended = pickTargetPrice(trade);
+        } else if (reasonKey.contains("INTRADAY") || reasonKey.contains("FORCE")) {
+            recommended = referencePrice;
+        }
+
+        return new ExitDiagnostics(exitReason, recommended, trigger);
+    }
+
+    private void logExitDiagnostics(TriggeredTradeSetupEntity trade,
+                                    ExitDiagnostics diagnostics,
+                                    Double actualExitPrice) {
+        if (trade == null || diagnostics == null) {
+            return;
+        }
+        String limit = formatPrice(diagnostics.recommendedLimit());
+        String trigger = formatPrice(diagnostics.triggerPrice());
+        String actual = formatPrice(actualExitPrice);
+
+        log.info("📋 Exit diagnostics trade {} reason='{}' recommendedLimit={} trigger={} actualReference={}",
+                trade.getId(), diagnostics.exitReason(), limit, trigger, actual);
+    }
+
+    private String formatPrice(Double value) {
+        if (value == null || !Double.isFinite(value)) {
+            return "NA";
+        }
+        return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    private String formatPercent(Double value) {
+        if (value == null || !Double.isFinite(value)) {
+            return "NA";
+        }
+        return String.format(Locale.ROOT, "%.2f", value);
+    }
+
 
 
     // Backwards compatible public API - by default allow service to compute quantity if missing
@@ -866,6 +988,9 @@ public class TradeExecutionService {
 //                }
 //            }
 
+            EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
+            logEntryDiagnostics(trigger, entryDiagnostics, ltp);
+
             // Prefer a customer specific token when placing the order
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
             
@@ -1134,6 +1259,9 @@ public class TradeExecutionService {
         // reload the persisted state after claim to ensure we have latest values
         persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found after claim: " + trade.getId()));
+
+        ExitDiagnostics exitDiagnostics = analyseExit(persisted, exitPrice, exitReason);
+        logExitDiagnostics(persisted, exitDiagnostics, exitPrice);
 
         // Resolve customerId from broker credentials if available; fallback to default
         OrderPlacementResult result = placeExitOrderAndPersist(persisted, exitPrice, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
@@ -1525,6 +1653,9 @@ public class TradeExecutionService {
             return;
         }
 
+        ExitDiagnostics exitDiagnostics = analyseExit(persisted, targetPrice, "TARGET_ORDER_AUTO");
+        logExitDiagnostics(persisted, exitDiagnostics, targetPrice);
+
         OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AUTO", TriggeredTradeStatus.TARGET_ORDER_PLACED);
 
         if (result == null || !result.isSuccess()) {
@@ -1612,6 +1743,9 @@ public class TradeExecutionService {
         }
 
         String previousOrderId = persisted.getExitOrderId();
+        ExitDiagnostics exitDiagnostics = analyseExit(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS");
+        logExitDiagnostics(persisted, exitDiagnostics, targetPrice);
+
         OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS", TriggeredTradeStatus.TARGET_ORDER_PLACED);
         if (result == null || !result.isSuccess()) {
             log.warn("Failed to place after-hours target exit for trade {}: {}", tradeId,
