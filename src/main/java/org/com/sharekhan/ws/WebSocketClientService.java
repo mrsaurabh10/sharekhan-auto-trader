@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.cache.QuoteCacheService;
+import org.com.sharekhan.ws.QuotePayloadParser.BidAsk;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
@@ -143,8 +144,6 @@ public class WebSocketClientService  {
                     // Try various common field names for scripCode and ltp
                     Integer scripCode = null;
                     Double ltp = null;
-                    Double bestBid = null;
-                    Double bestAsk = null;
 
                     // scripCode may be number or string field named scripCode, scrip, ScripCode
                     if (data.has("scripCode") && data.get("scripCode").canConvertToInt()) scripCode = data.get("scripCode").asInt();
@@ -155,15 +154,25 @@ public class WebSocketClientService  {
                     }
 
                     // ltp may be number or string under 'ltp' or 'last_price' or 'lastPrice'
-                    ltp = extractDouble(data, "ltp", "last_price", "lastPrice");
-                    bestBid = extractDouble(data, "bestBidPrice", "bestBid", "bidPrice", "buyPrice");
-                    bestAsk = extractDouble(data, "bestAskPrice", "bestOfferPrice", "askPrice", "sellPrice");
+                    ltp = extractFirstDouble(data, "ltp", "last_price", "lastPrice", "lastTradedPrice");
+                    BidAsk bidAsk = QuotePayloadParser.extractBestBidAsk(data);
+                    Double bestBid = bidAsk.bid();
+                    Double bestAsk = bidAsk.ask();
 
                     if (scripCode == null || scripCode == 0) {
                         log.debug("Feed message missing scripCode");
                     } else if (ltp == null && bestBid == null && bestAsk == null) {
                         log.debug("Feed message for {} missing price fields", scripCode);
                     } else {
+                        if (bestBid != null || bestAsk != null) {
+                            log.info("📘 Depth update - scripCode={} bid={} ask={} ltp={}",
+                                    scripCode,
+                                    bestBid != null ? bestBid : "NA",
+                                    bestAsk != null ? bestAsk : "NA",
+                                    ltp != null ? ltp : "NA");
+                        } else if (data.has("depth")) {
+                            log.debug("Depth payload present for {} but no top-of-book price parsed: {}", scripCode, data.get("depth"));
+                        }
                         processLtpUpdate(scripCode, ltp, bestBid, bestAsk);
                     }
                 }
@@ -205,6 +214,31 @@ public class WebSocketClientService  {
          } catch (Exception e) {
             log.error("❌ Failed to parse WebSocket message", e);
          }
+    }
+
+    private Double extractFirstDouble(JsonNode data, String... fields) {
+        if (data == null) {
+            return null;
+        }
+        for (String field : fields) {
+            if (!data.has(field)) {
+                continue;
+            }
+            JsonNode node = data.get(field);
+            if (node == null || node.isNull()) {
+                continue;
+            }
+            if (node.isNumber()) {
+                return node.asDouble();
+            }
+            if (node.isTextual()) {
+                try {
+                    return Double.parseDouble(node.asText());
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return null;
     }
 
     public void processLtpUpdate(Integer scripCode, Double ltp) {
@@ -277,23 +311,6 @@ public class WebSocketClientService  {
         } catch (Exception e) {
             log.warn("Failed to broadcast quote to frontend for {}: {}", sc, e.getMessage());
         }
-    }
-
-    private Double extractDouble(JsonNode data, String... fields) {
-        for (String field : fields) {
-            if (!data.has(field)) continue;
-            JsonNode node = data.get(field);
-            if (node.isNumber()) {
-                return node.asDouble();
-            }
-            if (node.isTextual()) {
-                try {
-                    return Double.parseDouble(node.asText());
-                } catch (NumberFormatException ignored) {
-                }
-            }
-        }
-        return null;
     }
 
     public void close() {
