@@ -164,6 +164,9 @@ public class WebSocketClientService  {
                     } else if (ltp == null && bestBid == null && bestAsk == null) {
                         log.debug("Feed message for {} missing price fields", scripCode);
                     } else {
+                        if (data.hasNonNull("depth")) {
+                            logDepthPayload(scripCode, bestBid, bestAsk, data.get("depth"));
+                        }
                         if (bestBid != null || bestAsk != null) {
                             log.info("📘 Depth update - scripCode={} bid={} ask={} ltp={}",
                                     scripCode,
@@ -171,7 +174,7 @@ public class WebSocketClientService  {
                                     bestAsk != null ? bestAsk : "NA",
                                     ltp != null ? ltp : "NA");
                         } else if (data.has("depth")) {
-                            log.debug("Depth payload present for {} but no top-of-book price parsed: {}", scripCode, data.get("depth"));
+                            log.warn("📘 Depth payload (ask missing) for {}: {}", scripCode, data.get("depth"));
                         }
                         processLtpUpdate(scripCode, ltp, bestBid, bestAsk);
                     }
@@ -214,6 +217,35 @@ public class WebSocketClientService  {
          } catch (Exception e) {
             log.error("❌ Failed to parse WebSocket message", e);
          }
+    }
+
+    private void logDepthPayload(Integer scripCode,
+                                 Double bestBid,
+                                 Double bestAsk,
+                                 JsonNode depthNode) {
+        if (depthNode == null || depthNode.isNull()) {
+            return;
+        }
+
+        String reason;
+        if (bestBid == null && bestAsk == null) {
+            reason = "BID_AND_ASK_MISSING";
+        } else if (bestBid == null) {
+            reason = "BID_MISSING";
+        } else if (bestAsk == null) {
+            reason = "ASK_MISSING";
+        } else {
+            // Both sides present – avoid noisy logs unless debug is enabled.
+            if (log.isDebugEnabled()) {
+                log.debug("Depth payload for {}: {}", scripCode, depthNode);
+            }
+            return;
+        }
+
+        log.info("🧪 Depth raw payload - scripCode={} reason={} depth={}",
+                scripCode,
+                reason,
+                depthNode);
     }
 
     private Double extractFirstDouble(JsonNode data, String... fields) {
