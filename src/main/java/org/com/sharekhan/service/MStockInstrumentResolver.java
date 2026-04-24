@@ -56,6 +56,8 @@ public class MStockInstrumentResolver {
             "BSE", "NC"
     );
 
+    private static final DateTimeFormatter DISPLAY_EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
+
     private static final List<DateTimeFormatter> FUTURE_EXPIRY_FORMATS = List.of(
             DateTimeFormatter.ofPattern("dd/MM/uuuu"),
             DateTimeFormatter.ISO_LOCAL_DATE,
@@ -345,9 +347,9 @@ public class MStockInstrumentResolver {
         }
 
         if (StringUtils.hasText(script.getExpiry())) {
+            LocalDate scriptExpiry = parseExpiry(script.getExpiry());
             List<MStockInstrumentEntity> expiryMatches = current.stream()
-                    .filter(i -> StringUtils.hasText(i.getExpiry()) &&
-                            i.getExpiry().trim().equalsIgnoreCase(script.getExpiry().trim()))
+                    .filter(i -> expiryMatches(scriptExpiry, script.getExpiry(), i.getExpiry()))
                     .toList();
             if (!expiryMatches.isEmpty()) {
                 current = expiryMatches;
@@ -386,12 +388,12 @@ public class MStockInstrumentResolver {
 
     private int scoreCandidate(MStockInstrumentEntity entity, ScriptMasterEntity script) {
         int score = 0;
+        LocalDate parsedExpiry = parseExpiry(script.getExpiry());
         if (entity.getStrike() != null && script.getStrikePrice() != null &&
                 Math.abs(entity.getStrike() - script.getStrikePrice()) < 0.001) {
             score += 4;
         }
-        if (StringUtils.hasText(entity.getExpiry()) && StringUtils.hasText(script.getExpiry()) &&
-                entity.getExpiry().trim().equalsIgnoreCase(script.getExpiry().trim())) {
+        if (expiryMatches(parsedExpiry, script.getExpiry(), entity.getExpiry())) {
             score += 3;
         }
         if (StringUtils.hasText(entity.getInstrumentType()) && StringUtils.hasText(script.getInstrumentType()) &&
@@ -552,7 +554,7 @@ public class MStockInstrumentResolver {
         }
         return isDerivativeExchange(normalizedExchange);
     }
-    
+
     private LocalDate parseExpiry(String expiry) {
         if (!StringUtils.hasText(expiry)) {
             return null;
@@ -571,6 +573,31 @@ public class MStockInstrumentResolver {
             }
         }
         return null;
+    }
+
+    private boolean expiryMatches(LocalDate scriptExpiry,
+                                  String scriptExpiryRaw,
+                                  String candidateExpiryRaw) {
+        if (!StringUtils.hasText(candidateExpiryRaw)) {
+            return false;
+        }
+
+        LocalDate candidateExpiry = parseExpiry(candidateExpiryRaw);
+        if (scriptExpiry != null && candidateExpiry != null) {
+            return scriptExpiry.isEqual(candidateExpiry);
+        }
+
+        if (scriptExpiry != null) {
+            String formatted = DISPLAY_EXPIRY_FORMAT.format(scriptExpiry);
+            return formatted.equalsIgnoreCase(candidateExpiryRaw.trim());
+        }
+
+        if (candidateExpiry != null && StringUtils.hasText(scriptExpiryRaw)) {
+            return DISPLAY_EXPIRY_FORMAT.format(candidateExpiry)
+                    .equalsIgnoreCase(scriptExpiryRaw.trim());
+        }
+
+        return StringUtils.hasText(scriptExpiryRaw) && candidateExpiryRaw.trim().equalsIgnoreCase(scriptExpiryRaw.trim());
     }
 
     private boolean isSpotInstrument(ScriptMasterEntity script) {
