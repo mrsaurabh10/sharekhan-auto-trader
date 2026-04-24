@@ -164,8 +164,13 @@ public class WebSocketClientService  {
                     } else if (ltp == null && bestBid == null && bestAsk == null) {
                         log.debug("Feed message for {} missing price fields", scripCode);
                     } else {
-                        if (data.hasNonNull("depth")) {
-                            logDepthPayload(scripCode, bestBid, bestAsk, data.get("depth"));
+                        boolean depthLogged = false;
+                        JsonNode depthNode = data.get("depth");
+                        if (depthNode != null && !depthNode.isNull()) {
+                            depthLogged = logDepthPayload(scripCode, bestBid, bestAsk, depthNode);
+                        }
+                        if ((bestBid == null || bestAsk == null) && !depthLogged) {
+                            logQuotePayload(scripCode, bestBid, bestAsk, data);
                         }
                         if (bestBid != null || bestAsk != null) {
                             log.info("📘 Depth update - scripCode={} bid={} ask={} ltp={}",
@@ -173,8 +178,6 @@ public class WebSocketClientService  {
                                     bestBid != null ? bestBid : "NA",
                                     bestAsk != null ? bestAsk : "NA",
                                     ltp != null ? ltp : "NA");
-                        } else if (data.has("depth")) {
-                            log.warn("📘 Depth payload (ask missing) for {}: {}", scripCode, data.get("depth"));
                         }
                         processLtpUpdate(scripCode, ltp, bestBid, bestAsk);
                     }
@@ -219,12 +222,12 @@ public class WebSocketClientService  {
          }
     }
 
-    private void logDepthPayload(Integer scripCode,
-                                 Double bestBid,
-                                 Double bestAsk,
-                                 JsonNode depthNode) {
+    private boolean logDepthPayload(Integer scripCode,
+                                    Double bestBid,
+                                    Double bestAsk,
+                                    JsonNode depthNode) {
         if (depthNode == null || depthNode.isNull()) {
-            return;
+            return false;
         }
 
         String reason;
@@ -239,13 +242,39 @@ public class WebSocketClientService  {
             if (log.isDebugEnabled()) {
                 log.debug("Depth payload for {}: {}", scripCode, depthNode);
             }
-            return;
+            return false;
         }
 
         log.info("🧪 Depth raw payload - scripCode={} reason={} depth={}",
                 scripCode,
                 reason,
                 depthNode);
+        return true;
+    }
+
+    private void logQuotePayload(Integer scripCode,
+                                 Double bestBid,
+                                 Double bestAsk,
+                                 JsonNode payload) {
+        if (payload == null || payload.isNull()) {
+            return;
+        }
+
+        String reason;
+        if (bestBid == null && bestAsk == null) {
+            reason = "BID_AND_ASK_MISSING";
+        } else if (bestBid == null) {
+            reason = "BID_MISSING";
+        } else if (bestAsk == null) {
+            reason = "ASK_MISSING";
+        } else {
+            return;
+        }
+
+        log.info("🧪 Quote raw payload - scripCode={} reason={} payload={}",
+                scripCode,
+                reason,
+                payload);
     }
 
     private Double extractFirstDouble(JsonNode data, String... fields) {
