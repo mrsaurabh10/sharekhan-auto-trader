@@ -37,8 +37,8 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
 
         // If we created a new counter, this is the first subscription (0 -> 1)
         if (created[0] != null) {
-            log.info("📡 Subscribing to {}", scripKey);
-            connector.send("{\"action\":\"feed\",\"key\":[\"ltp\"],\"value\":[\"" + scripKey + "\"]}");
+            log.info("📡 Subscribing to {} with full depth feed", scripKey);
+            connector.send("{\"action\":\"feed\",\"key\":[\"full\"],\"value\":[\"" + scripKey + "\"]}");
             return true;
         } else {
             log.debug("Already subscribed to {}, ref++ -> {}", scripKey, refCounts.get(scripKey).get());
@@ -69,8 +69,8 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         });
 
         if (shouldUnsub[0]) {
-            log.info("🛑 Unsubscribing from {}", scripKey);
-            connector.send("{\"action\":\"unsubscribe\",\"key\":[\"ltp\"],\"value\":[\"" + scripKey + "\"]}");
+            log.info("🛑 Unsubscribing from {} full feed", scripKey);
+            connector.send("{\"action\":\"unsubscribe\",\"key\":[\"full\"],\"value\":[\"" + scripKey + "\"]}");
             return true;
         } else {
             if (!refCounts.containsKey(scripKey)) {
