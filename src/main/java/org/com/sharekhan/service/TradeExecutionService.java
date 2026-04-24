@@ -991,6 +991,18 @@ public class TradeExecutionService {
             EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
             logEntryDiagnostics(trigger, entryDiagnostics, ltp);
 
+            if (!entryDiagnostics.shouldPlace()) {
+                log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}", 
+                        trigger.getId(),
+                        entryDiagnostics.reason(),
+                        formatPercent(entryDiagnostics.spreadPercent()),
+                        formatPrice(entryDiagnostics.bestBid()),
+                        formatPrice(entryDiagnostics.bestAsk()),
+                        formatPrice(entryDiagnostics.recommendedLimit()));
+                TradeEventLogger.logOrderRejected("ENTRY_SPREAD_CHECK", trigger, entryDiagnostics.reason(), ltp);
+                return null;
+            }
+
             // Prefer a customer specific token when placing the order
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
             
@@ -1003,7 +1015,11 @@ public class TradeExecutionService {
                 throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
             }
 
-            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, ltp);
+            Double entryLimitPrice = entryDiagnostics.recommendedLimit() != null
+                    ? entryDiagnostics.recommendedLimit()
+                    : ltp;
+
+            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, entryLimitPrice);
 
             if (!result.isSuccess()) {
                 TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp);
@@ -1263,8 +1279,12 @@ public class TradeExecutionService {
         ExitDiagnostics exitDiagnostics = analyseExit(persisted, exitPrice, exitReason);
         logExitDiagnostics(persisted, exitDiagnostics, exitPrice);
 
+        Double resolvedExitPrice = exitDiagnostics.recommendedLimit() != null
+                ? exitDiagnostics.recommendedLimit()
+                : exitPrice;
+
         // Resolve customerId from broker credentials if available; fallback to default
-        OrderPlacementResult result = placeExitOrderAndPersist(persisted, exitPrice, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, resolvedExitPrice, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
 
         if (result == null || !result.isSuccess()) {
             String rejectionReason = result != null ? result.getRejectionReason() : "Unknown error";
@@ -1656,7 +1676,11 @@ public class TradeExecutionService {
         ExitDiagnostics exitDiagnostics = analyseExit(persisted, targetPrice, "TARGET_ORDER_AUTO");
         logExitDiagnostics(persisted, exitDiagnostics, targetPrice);
 
-        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AUTO", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        Double resolvedTargetPrice = exitDiagnostics.recommendedLimit() != null
+                ? exitDiagnostics.recommendedLimit()
+                : targetPrice;
+
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, resolvedTargetPrice, "TARGET_ORDER_AUTO", TriggeredTradeStatus.TARGET_ORDER_PLACED);
 
         if (result == null || !result.isSuccess()) {
             log.warn("Failed to auto-place target order for trade {}: {}", persisted.getId(),
@@ -1746,7 +1770,11 @@ public class TradeExecutionService {
         ExitDiagnostics exitDiagnostics = analyseExit(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS");
         logExitDiagnostics(persisted, exitDiagnostics, targetPrice);
 
-        OrderPlacementResult result = placeExitOrderAndPersist(persisted, targetPrice, "TARGET_ORDER_AFTER_HOURS", TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        Double resolvedAfterHoursTargetPrice = exitDiagnostics.recommendedLimit() != null
+                ? exitDiagnostics.recommendedLimit()
+                : targetPrice;
+
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, resolvedAfterHoursTargetPrice, "TARGET_ORDER_AFTER_HOURS", TriggeredTradeStatus.TARGET_ORDER_PLACED);
         if (result == null || !result.isSuccess()) {
             log.warn("Failed to place after-hours target exit for trade {}: {}", tradeId,
                     result != null ? result.getRejectionReason() : "No response");
