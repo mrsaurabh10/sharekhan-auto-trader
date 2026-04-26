@@ -73,6 +73,8 @@ public class TradeExecutionService {
             DateTimeFormatter.ISO_LOCAL_DATE,
             DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
     );
+    private static final int MAX_ENTRY_ATTEMPTS = 3;
+    private static final double SECOND_ATTEMPT_SPREAD_FRACTION = 0.25;
 
     public static class ModifyExitOrderResult {
         private final boolean success;
@@ -988,24 +990,7 @@ public class TradeExecutionService {
 //                }
 //            }
 
-            EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
-            logEntryDiagnostics(trigger, entryDiagnostics, ltp);
-
-            if (!entryDiagnostics.shouldPlace()) {
-                log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}", 
-                        trigger.getId(),
-                        entryDiagnostics.reason(),
-                        formatPercent(entryDiagnostics.spreadPercent()),
-                        formatPrice(entryDiagnostics.bestBid()),
-                        formatPrice(entryDiagnostics.bestAsk()),
-                        formatPrice(entryDiagnostics.recommendedLimit()));
-                TradeEventLogger.logOrderRejected("ENTRY_SPREAD_CHECK", trigger, entryDiagnostics.reason(), ltp);
-                return null;
-            }
-
-            // Prefer a customer specific token when placing the order
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
-            
             if (ctx == null || ctx.getApiKey() == null || ctx.getCustomerId() == null) {
                 throw new IllegalStateException("No active broker configured for this user");
             }
@@ -1015,11 +1000,7 @@ public class TradeExecutionService {
                 throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
             }
 
-            Double entryLimitPrice = entryDiagnostics.recommendedLimit() != null
-                    ? entryDiagnostics.recommendedLimit()
-                    : ltp;
-
-            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, entryLimitPrice);
+            OrderPlacementResult result = attemptEntryPlacement(trigger, ltp, ctx, brokerService);
 
             if (!result.isSuccess()) {
                 TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp);
@@ -1319,6 +1300,86 @@ public class TradeExecutionService {
         return;
     }
 
+
+    private OrderPlacementResult attemptEntryPlacement(TriggeredTradeSetupEntity trigger,
+                                                       double ltp,
+                                                       BrokerContext ctx,
+                                                       BrokerService brokerService) {
+        OrderPlacementResult lastResult = null;
+
+        for (int attempt = 0; attempt < MAX_ENTRY_ATTEMPTS; attempt++) {
+            EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
+            logEntryDiagnostics(trigger, entryDiagnostics, ltp);
+
+            if (!entryDiagnostics.shouldPlace()) {
+                log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}",
+                        trigger.getId(),
+                        entryDiagnostics.reason(),
+                        formatPercent(entryDiagnostics.spreadPercent()),
+                        formatPrice(entryDiagnostics.bestBid()),
+                        formatPrice(entryDiagnostics.bestAsk()),
+                        formatPrice(entryDiagnostics.recommendedLimit()));
+                TradeEventLogger.logOrderRejected("ENTRY_SPREAD_CHECK", trigger, entryDiagnostics.reason(), ltp);
+                return OrderPlacementResult.builder()
+                        .success(false)
+                        .status("Rejected")
+                        .rejectionReason(entryDiagnostics.reason())
+                        .build();
+            }
+
+            double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
+            log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, trigger.getId(), formatPrice(price));
+
+            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, price);
+            lastResult = result;
+
+            if (result != null && result.isSuccess()) {
+                log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, trigger.getId(), result.getOrderId());
+                return result;
+            }
+
+            String reason = result != null ? result.getRejectionReason() : "unknown";
+            log.warn("⚠️ Entry attempt {} failed for trigger {} reason={}", attempt + 1, trigger.getId(), reason);
+
+            if (attempt < MAX_ENTRY_ATTEMPTS - 1) {
+                long delayMillis = "OI".equalsIgnoreCase(trigger.getInstrumentType() != null ? trigger.getInstrumentType().trim() : "")
+                        ? 1000L
+                        : 2000L;
+                try {
+                    Thread.sleep(delayMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Entry attempts interrupted for trigger {}", trigger.getId());
+                    break;
+                }
+            }
+        }
+
+        log.warn("❌ Entry attempts exhausted for trigger {}. Marking as rejected.", trigger.getId());
+        return lastResult != null ? lastResult : OrderPlacementResult.builder()
+                .success(false)
+                .status("Rejected")
+                .rejectionReason("ENTRY_ATTEMPTS_EXHAUSTED")
+                .build();
+    }
+
+    private double resolveEntryAttemptPrice(EntryDiagnostics diagnostics, int attemptIndex, double fallbackLtp) {
+        Double bid = diagnostics.bestBid();
+        Double ask = diagnostics.bestAsk();
+        Double mid = diagnostics.recommendedLimit();
+
+        if (bid == null || ask == null || mid == null) {
+            return fallbackLtp;
+        }
+
+        double spread = Math.max(0d, ask - bid);
+
+        return switch (attemptIndex) {
+            case 0 -> mid;
+            case 1 -> Math.min(ask, mid + spread * SECOND_ATTEMPT_SPREAD_FRACTION);
+            default -> ask;
+        };
+    }
 
     public void squareOffTrade(Long id) {
         squareOffTrade(id, null);
