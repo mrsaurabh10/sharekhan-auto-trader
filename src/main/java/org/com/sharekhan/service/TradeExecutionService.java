@@ -1,7 +1,8 @@
 package org.com.sharekhan.service;
 
-import com.sharekhan.model.OrderParams;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
+import com.sharekhan.model.OrderParams;
+import com.sharekhan.SharekhanConnect;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
@@ -25,8 +26,10 @@ import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.service.broker.BrokerService;
 import org.com.sharekhan.service.broker.BrokerServiceFactory;
+import org.com.sharekhan.service.broker.ModifiableEntryBrokerService;
 import org.com.sharekhan.util.CryptoService;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
+import org.com.sharekhan.util.SharekhanConsoleSilencer;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
@@ -47,6 +50,12 @@ import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.io.IOException;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.EntityManager;
@@ -73,6 +82,8 @@ public class TradeExecutionService {
             DateTimeFormatter.ISO_LOCAL_DATE,
             DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
     );
+    private static final int MAX_ENTRY_ATTEMPTS = 3;
+    private static final double SECOND_ATTEMPT_SPREAD_FRACTION = 0.25;
 
     public static class ModifyExitOrderResult {
         private final boolean success;
@@ -110,6 +121,20 @@ public class TradeExecutionService {
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final BrokerServiceFactory brokerServiceFactory;
     private final OrderPlacementGuard orderPlacementGuard;
+
+    private final ScheduledExecutorService exitChaseScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "exit-chase-scheduler");
+        t.setDaemon(true);
+        return t;
+    });
+    private final ConcurrentMap<Long, ScheduledFuture<?>> exitChaseFutures = new ConcurrentHashMap<>();
+
+    private static final class ExitChaseState {
+        private boolean bufferedAttempted;
+        private Double lastPrice;
+    }
+
+    private final ConcurrentMap<Long, ExitChaseState> exitChaseStates = new ConcurrentHashMap<>();
 
     @Autowired
     private UserConfigService userConfigService;
@@ -988,24 +1013,7 @@ public class TradeExecutionService {
 //                }
 //            }
 
-            EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
-            logEntryDiagnostics(trigger, entryDiagnostics, ltp);
-
-            if (!entryDiagnostics.shouldPlace()) {
-                log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}", 
-                        trigger.getId(),
-                        entryDiagnostics.reason(),
-                        formatPercent(entryDiagnostics.spreadPercent()),
-                        formatPrice(entryDiagnostics.bestBid()),
-                        formatPrice(entryDiagnostics.bestAsk()),
-                        formatPrice(entryDiagnostics.recommendedLimit()));
-                TradeEventLogger.logOrderRejected("ENTRY_SPREAD_CHECK", trigger, entryDiagnostics.reason(), ltp);
-                return null;
-            }
-
-            // Prefer a customer specific token when placing the order
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
-            
             if (ctx == null || ctx.getApiKey() == null || ctx.getCustomerId() == null) {
                 throw new IllegalStateException("No active broker configured for this user");
             }
@@ -1015,11 +1023,7 @@ public class TradeExecutionService {
                 throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
             }
 
-            Double entryLimitPrice = entryDiagnostics.recommendedLimit() != null
-                    ? entryDiagnostics.recommendedLimit()
-                    : ltp;
-
-            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, entryLimitPrice);
+            OrderPlacementResult result = attemptEntryPlacement(trigger, ltp, ctx, brokerService);
 
             if (!result.isSuccess()) {
                 TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp);
@@ -1165,6 +1169,9 @@ public class TradeExecutionService {
             }
 
             log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
+            if (triggeredTradeSetupEntity.getExitOrderId() != null) {
+                scheduleExitOrderChase(triggeredTradeSetupEntity);
+            }
             return triggeredTradeSetupEntity;
 
         } catch (Exception e) {
@@ -1319,6 +1326,331 @@ public class TradeExecutionService {
         return;
     }
 
+
+    private OrderPlacementResult attemptEntryPlacement(TriggeredTradeSetupEntity trigger,
+                                                       double ltp,
+                                                       BrokerContext ctx,
+                                                       BrokerService brokerService) {
+        OrderPlacementResult lastResult = null;
+        String orderId = null;
+        TradeStatus latestStatus = TradeStatus.NO_RECORDS;
+
+        for (int attempt = 0; attempt < MAX_ENTRY_ATTEMPTS; attempt++) {
+            EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
+            logEntryDiagnostics(trigger, entryDiagnostics, ltp);
+
+            if (!entryDiagnostics.shouldPlace()) {
+                log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}",
+                        trigger.getId(),
+                        entryDiagnostics.reason(),
+                        formatPercent(entryDiagnostics.spreadPercent()),
+                        formatPrice(entryDiagnostics.bestBid()),
+                        formatPrice(entryDiagnostics.bestAsk()),
+                        formatPrice(entryDiagnostics.recommendedLimit()));
+                TradeEventLogger.logOrderRejected("ENTRY_SPREAD_CHECK", trigger, entryDiagnostics.reason(), ltp);
+                return OrderPlacementResult.builder()
+                        .success(false)
+                        .status("Rejected")
+                        .rejectionReason(entryDiagnostics.reason())
+                        .build();
+            }
+
+            double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
+            log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, trigger.getId(), formatPrice(price));
+
+            if (attempt > 0 && orderId != null && !orderId.isBlank()) {
+                latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
+                log.info("📊 Entry status snapshot for trade {} attempt {}: {}", trigger.getId(), attempt + 1, latestStatus);
+                if (isOrderFilled(latestStatus)) {
+                    log.info("✅ Entry order {} already filled before modify attempt", orderId);
+                    return lastResult != null && lastResult.isSuccess()
+                            ? lastResult
+                            : OrderPlacementResult.builder()
+                                    .success(true)
+                                    .orderId(orderId)
+                                    .status("Fully Executed")
+                                    .build();
+                }
+                if (TradeStatus.REJECTED.equals(latestStatus)) {
+                    log.warn("⚠️ Entry order {} rejected before modify attempt", orderId);
+                    break;
+                }
+            }
+
+            OrderPlacementResult result;
+            if (attempt == 0) {
+                result = brokerService.placeOrder(trigger, ctx, price);
+                if (result != null && result.getOrderId() != null && !result.getOrderId().isBlank()) {
+                    orderId = result.getOrderId();
+                    trigger.setOrderId(orderId);
+                }
+            } else {
+                if (orderId == null || orderId.isBlank()) {
+                    log.warn("Cannot modify entry for trigger {} because no orderId was captured from the first attempt", trigger.getId());
+                    break;
+                }
+                if (!(brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker)) {
+                    log.warn("Broker service {} does not support entry modify; aborting attempts for trigger {}", brokerService.getClass().getSimpleName(), trigger.getId());
+                    break;
+                }
+                result = modifiableEntryBroker.modifyEntryOrder(trigger, ctx, orderId, price);
+            }
+
+            lastResult = result;
+
+            if (result != null && result.getOrderId() != null && !result.getOrderId().isBlank()) {
+                orderId = result.getOrderId();
+                trigger.setOrderId(orderId);
+            }
+
+            if (result != null && result.isSuccess()) {
+                log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, trigger.getId(), result.getOrderId());
+                return result;
+            }
+
+            String reason = result != null ? result.getRejectionReason() : "unknown";
+            log.warn("⚠️ Entry attempt {} failed for trigger {} reason={}", attempt + 1, trigger.getId(), reason);
+
+            if (attempt < MAX_ENTRY_ATTEMPTS - 1) {
+                if (orderId != null && !orderId.isBlank()) {
+                    latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
+                    log.info("📊 Entry status snapshot post attempt {} for trade {}: {}", attempt + 1, trigger.getId(), latestStatus);
+                    if (isOrderFilled(latestStatus)) {
+                        log.info("✅ Entry order {} filled after attempt {}", orderId, attempt + 1);
+                        return lastResult != null && lastResult.isSuccess()
+                                ? lastResult
+                                : OrderPlacementResult.builder()
+                                        .success(true)
+                                        .orderId(orderId)
+                                        .status("Fully Executed")
+                                        .build();
+                    }
+                    if (TradeStatus.REJECTED.equals(latestStatus)) {
+                        log.warn("⚠️ Entry order {} rejected after attempt {}", orderId, attempt + 1);
+                        break;
+                    }
+                }
+
+                long delayMillis = "OI".equalsIgnoreCase(trigger.getInstrumentType() != null ? trigger.getInstrumentType().trim() : "")
+                        ? 1000L
+                        : 2000L;
+                try {
+                    Thread.sleep(delayMillis);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Entry attempts interrupted for trigger {}", trigger.getId());
+                    break;
+                }
+            }
+        }
+
+        if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker
+                && orderId != null && !orderId.isBlank()
+                && !isOrderFilled(latestStatus)) {
+            log.info("🚫 Cancelled pending entry order {} for trigger {}", orderId, trigger.getId());
+            modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
+        }
+
+        log.warn("❌ Entry attempts exhausted for trigger {}. Marking as rejected.", trigger.getId());
+        return lastResult != null ? lastResult : OrderPlacementResult.builder()
+                .success(false)
+                .status("Rejected")
+                .rejectionReason("ENTRY_ATTEMPTS_EXHAUSTED")
+                .build();
+    }
+
+    private TradeStatus fetchEntryOrderStatus(TriggeredTradeSetupEntity trade,
+                                              BrokerContext ctx,
+                                              String orderId) {
+        return fetchOrderStatus(trade, ctx, orderId);
+    }
+
+    private TradeStatus fetchOrderStatus(TriggeredTradeSetupEntity trade,
+                                         BrokerContext ctx,
+                                         String orderId) {
+        if (trade == null || ctx == null || orderId == null || orderId.isBlank()) {
+            return TradeStatus.NO_RECORDS;
+        }
+
+        Broker broker;
+        try {
+            broker = Broker.fromDisplayName(ctx.getBrokerName());
+        } catch (Exception ignore) {
+            return TradeStatus.NO_RECORDS;
+        }
+
+        if (broker != Broker.SHAREKHAN) {
+            return TradeStatus.NO_RECORDS;
+        }
+
+        try {
+            String accessToken = tokenStoreService.getAccessToken(broker, ctx.getCustomerId());
+            if (accessToken == null) {
+                accessToken = tokenStoreService.getAccessToken(broker);
+            }
+            if (accessToken == null || ctx.getApiKey() == null) {
+                return TradeStatus.NO_RECORDS;
+            }
+
+            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx.getApiKey(), accessToken);
+            JSONObject response = SharekhanConsoleSilencer.call(() ->
+                    sharekhanConnect.orderHistory(trade.getExchange(), ctx.getCustomerId(), orderId)
+            );
+            return evaluateOrderFinalStatus(trade, response);
+        } catch (Exception e) {
+            log.debug("Order status fetch failed for trade {} order {}: {}", trade.getId(), orderId, e.getMessage());
+            return TradeStatus.NO_RECORDS;
+        }
+    }
+
+    private boolean isOrderFilled(TradeStatus status) {
+        return TradeStatus.FULLY_EXECUTED.equals(status);
+    }
+
+    private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getId() == null) {
+            return;
+        }
+
+        if (trade.getExitOrderId() == null || trade.getExitOrderId().isBlank()) {
+            return;
+        }
+
+        BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+        if (ctx == null || ctx.getBrokerName() == null) {
+            return;
+        }
+
+        Broker broker;
+        try {
+            broker = Broker.fromDisplayName(ctx.getBrokerName());
+        } catch (Exception ignore) {
+            return;
+        }
+
+        if (broker != Broker.SHAREKHAN) {
+            return;
+        }
+
+        long tradeId = trade.getId();
+        stopExitOrderChase(tradeId);
+
+        ExitChaseState state = new ExitChaseState();
+        exitChaseStates.put(tradeId, state);
+
+        String exitOrderId = trade.getExitOrderId();
+        long delayMillis = "OI".equalsIgnoreCase(trade.getInstrumentType() != null ? trade.getInstrumentType().trim() : "")
+                ? 750L
+                : 1500L;
+
+        Runnable task = () -> {
+            try {
+                TriggeredTradeSetupEntity latest = triggeredTradeRepo.findById(tradeId).orElse(null);
+                if (latest == null || latest.getExitOrderId() == null) {
+                    stopExitOrderChase(tradeId);
+                    return;
+                }
+
+                TradeStatus status = fetchOrderStatus(latest, ctx, exitOrderId);
+                if (isOrderFilled(status)) {
+                    stopExitOrderChase(tradeId);
+                    return;
+                }
+                if (TradeStatus.REJECTED.equals(status)) {
+                    log.warn("🧵 Exit chase stopping for trade {} — order rejected", tradeId);
+                    stopExitOrderChase(tradeId);
+                    return;
+                }
+
+                ExitChaseState chaseState = exitChaseStates.computeIfAbsent(tradeId, id -> new ExitChaseState());
+                Double candidatePrice = determineExitChasePrice(latest, chaseState);
+                if (candidatePrice == null || candidatePrice <= 0) {
+                    return;
+                }
+
+                if (chaseState.lastPrice != null && Math.abs(chaseState.lastPrice - candidatePrice) < 0.01) {
+                    return;
+                }
+
+                ModifyExitOrderResult modifyResult = modifyExistingExitOrder(latest, candidatePrice, "EXIT_CHASE", TriggeredTradeStatus.EXIT_ORDER_PLACED);
+                if (modifyResult.isSuccess()) {
+                    chaseState.lastPrice = candidatePrice;
+                    log.info("🧵 Exit chase adjusting trade {} order {} to {}", tradeId, exitOrderId, formatPrice(candidatePrice));
+                } else {
+                    log.warn("⚠️ Exit chase modify failed for trade {}: {}", tradeId, modifyResult.getMessage());
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ Exit chase iteration failed for trade {}: {}", tradeId, e.getMessage());
+            }
+        };
+
+        ScheduledFuture<?> future = exitChaseScheduler.scheduleWithFixedDelay(task, 0L, delayMillis, TimeUnit.MILLISECONDS);
+        exitChaseFutures.put(tradeId, future);
+        log.info("🧵 Exit chase started for trade {} order {}", tradeId, exitOrderId);
+    }
+
+    public void stopExitOrderChase(Long tradeId) {
+        if (tradeId == null) {
+            return;
+        }
+        ScheduledFuture<?> future = exitChaseFutures.remove(tradeId);
+        if (future != null) {
+            future.cancel(true);
+            log.info("🧵 Exit chase completed for trade {}", tradeId);
+        }
+        exitChaseStates.remove(tradeId);
+    }
+
+    private Double determineExitChasePrice(TriggeredTradeSetupEntity trade, ExitChaseState state) {
+        if (trade == null) {
+            return null;
+        }
+
+        Double stopLoss = trade.getStopLoss();
+        if (!state.bufferedAttempted) {
+            state.bufferedAttempted = true;
+            if (stopLoss != null && stopLoss > 0) {
+                return roundPrice(stopLoss * 0.9975d);
+            }
+        }
+
+        Double bid = null;
+        if (trade.getScripCode() != null) {
+            Optional<QuoteCacheService.QuoteSnapshot> snapshot = quoteCacheService.getSnapshot(trade.getScripCode());
+            if (snapshot.isPresent() && snapshot.get().getBestBid() != null && snapshot.get().getBestBid() > 0) {
+                bid = snapshot.get().getBestBid();
+            }
+        }
+
+        if (bid != null && bid > 0) {
+            return roundPrice(bid);
+        }
+
+        Double ltp = ltpCacheService.getLtp(trade.getScripCode());
+        if (ltp != null && ltp > 0) {
+            return roundPrice(ltp);
+        }
+
+        return null;
+    }
+
+    private double resolveEntryAttemptPrice(EntryDiagnostics diagnostics, int attemptIndex, double fallbackLtp) {
+        Double bid = diagnostics.bestBid();
+        Double ask = diagnostics.bestAsk();
+        Double mid = diagnostics.recommendedLimit();
+
+        if (bid == null || ask == null || mid == null) {
+            return fallbackLtp;
+        }
+
+        double spread = Math.max(0d, ask - bid);
+
+        return switch (attemptIndex) {
+            case 0 -> mid;
+            case 1 -> Math.min(ask, mid + spread * SECOND_ATTEMPT_SPREAD_FRACTION);
+            default -> ask;
+        };
+    }
 
     public void squareOffTrade(Long id) {
         squareOffTrade(id, null);
@@ -1549,6 +1881,10 @@ public class TradeExecutionService {
             triggeredTradeRepo.save(persisted);
         } catch (Exception e) {
             log.debug("Failed to persist exitOrderId/status {} for trade {}: {}", placedStatus, persisted.getId(), e.getMessage());
+        }
+
+        if (!"Fully Executed".equalsIgnoreCase(result.getStatus())) {
+            scheduleExitOrderChase(persisted);
         }
 
         // If the broker response indicates the exit order was fully executed, mark trade exited immediately
