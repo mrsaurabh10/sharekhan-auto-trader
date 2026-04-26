@@ -78,4 +78,42 @@ public class ShareKhanOrderUtil {
             throw new IOException("Sharekhan modifyorder interrupted: " + e.getMessage(), e);
         }
     }
+
+    public static JSONObject cancelOrder(SharekhanConnect sharekhanConnect,
+                                         TriggeredTradeSetupEntity tradeSetupEntity,
+                                         String orderId,
+                                         Long customerId,
+                                         String channelUser) throws SharekhanAPIException, IOException {
+        OrderParams orderParams = new OrderParams();
+        orderParams.orderId = orderId;
+        orderParams.customerId = customerId;
+        orderParams.scripCode = tradeSetupEntity.getScripCode();
+        orderParams.exchange = tradeSetupEntity.getExchange();
+        orderParams.quantity = tradeSetupEntity.getQuantity() != null ? tradeSetupEntity.getQuantity().longValue() : 0L;
+        orderParams.tradingSymbol = tradeSetupEntity.getSymbol();
+        orderParams.productType = "INVESTMENT";
+        orderParams.transactionType = "B";
+        orderParams.orderType = "NORMAL";
+        orderParams.validity = "GFD";
+        orderParams.afterHour = isAfterHours() ? "Y" : "N";
+        orderParams.channelUser = channelUser;
+        orderParams.requestType = "CANCEL";
+        orderParams.instrumentType = tradeSetupEntity.getInstrumentType();
+        if (tradeSetupEntity.getStrikePrice() != null) {
+            orderParams.strikePrice = String.valueOf(tradeSetupEntity.getStrikePrice());
+        }
+        orderParams.optionType = (tradeSetupEntity.getOptionType() != null && !tradeSetupEntity.getOptionType().isBlank())
+                ? tradeSetupEntity.getOptionType()
+                : null;
+        orderParams.expiry = (tradeSetupEntity.getExpiry() != null && !tradeSetupEntity.getExpiry().isBlank())
+                ? tradeSetupEntity.getExpiry()
+                : null;
+        try {
+            return SharekhanConsoleSilencer.call(() -> sharekhanConnect.cancelOrder(orderParams));
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Sharekhan cancelOrder interrupted: " + e.getMessage(), e);
+        }
+    }
 }

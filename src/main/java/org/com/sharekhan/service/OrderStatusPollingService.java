@@ -251,6 +251,7 @@ public class OrderStatusPollingService {
                             || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(currentTrade.getStatus())
                             || (orderIdToMonitor != null && orderIdToMonitor.equals(currentTrade.getExitOrderId()));
                     if (wasExitOrder) {
+                        tradeExecutionService.stopExitOrderChase(currentTrade.getId());
                         currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
                         webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
                     } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
@@ -327,6 +328,7 @@ public class OrderStatusPollingService {
                     }
                     return;
                 } else if (TradeStatus.REJECTED.equals(tradeStatus)) {
+                    tradeExecutionService.stopExitOrderChase(currentTrade.getId());
 
                     if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus())) {
                         currentTrade.setStatus(TriggeredTradeStatus.EXIT_FAILED);

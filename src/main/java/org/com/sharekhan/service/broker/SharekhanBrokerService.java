@@ -19,7 +19,7 @@ import java.util.Set;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class SharekhanBrokerService implements BrokerService {
+public class SharekhanBrokerService implements ModifiableEntryBrokerService {
 
     private final TokenStoreService tokenStoreService;
 
@@ -36,6 +36,79 @@ public class SharekhanBrokerService implements BrokerService {
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
         return executeSharekhanOrder(trade, context, exitPrice, "S", "NEW");
+    }
+
+    @Override
+    public OrderPlacementResult modifyEntryOrder(TriggeredTradeSetupEntity trade,
+                                                 BrokerContext context,
+                                                 String orderId,
+                                                 double newPrice) {
+        try {
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
+            if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, context.getApiKey(), accessToken);
+
+            JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, newPrice, context.getCustomerId(), context.getClientCode());
+            String updatedOrderId = orderId;
+            String status = "Pending";
+            Double executedPrice = null;
+
+            if (response != null && response.has("data")) {
+                JSONObject data = response.getJSONObject("data");
+                String respOrderId = data.optString("orderId", data.optString("orsOrderId", null));
+                if (respOrderId != null && !respOrderId.isBlank()) {
+                    updatedOrderId = respOrderId;
+                }
+                String respStatus = data.optString("orderStatus", "").toLowerCase();
+                if (respStatus.contains("fully") || respStatus.contains("executed")) {
+                    status = "Fully Executed";
+                    String avgPrice = data.optString("avgPrice", "").trim();
+                    if (!avgPrice.isBlank()) {
+                        try {
+                            executedPrice = Double.parseDouble(avgPrice);
+                        } catch (NumberFormatException ignore) { }
+                    }
+                }
+            }
+
+            return OrderPlacementResult.builder()
+                    .success(true)
+                    .orderId(updatedOrderId)
+                    .status(status)
+                    .executedPrice(executedPrice)
+                    .build();
+        } catch (com.sharekhan.http.exceptions.SharekhanAPIException e) {
+            log.warn("Sharekhan API rejected entry modify for trade {} orderId {}: {}", trade.getId(), orderId, e.getMessage());
+            return OrderPlacementResult.builder()
+                    .success(false)
+                    .status("Rejected")
+                    .rejectionReason("ENTRY_MODIFY_REJECTED: " + e.getMessage())
+                    .build();
+        } catch (Exception e) {
+            log.warn("Modify entry order failed for trade {} orderId {}: {}", trade.getId(), orderId, e.getMessage());
+            return OrderPlacementResult.builder()
+                    .success(false)
+                    .status("Rejected")
+                    .rejectionReason("ENTRY_MODIFY_FAILED: " + e.getMessage())
+                    .build();
+        }
+    }
+
+    @Override
+    public void cancelEntryOrder(TriggeredTradeSetupEntity trade,
+                                 BrokerContext context,
+                                 String orderId) {
+        try {
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
+            if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, context.getApiKey(), accessToken);
+            ShareKhanOrderUtil.cancelOrder(sharekhanConnect, trade, orderId, context.getCustomerId(), context.getClientCode());
+            log.info("🚫 Cancelled entry order {} for trade {}", orderId, trade.getId());
+        } catch (com.sharekhan.http.exceptions.SharekhanAPIException e) {
+            log.warn("Sharekhan API rejected entry cancel for trade {} orderId {}: {}", trade.getId(), orderId, e.getMessage());
+        } catch (Exception e) {
+            log.warn("Failed to cancel entry order {} for trade {}: {}", orderId, trade.getId(), e.getMessage());
+        }
     }
 
     private OrderPlacementResult executeSharekhanOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double price, String transactionType, String requestType) {
