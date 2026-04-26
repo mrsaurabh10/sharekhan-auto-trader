@@ -11,6 +11,7 @@ import org.com.sharekhan.util.CryptoService;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -68,11 +69,11 @@ public class MStockLtpService {
             storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK);
         }
 
-        if (storedToken == null) {
+        if (!StringUtils.hasText(storedToken)) {
             throw new IllegalStateException("No MStock access token available. Please authenticate first.");
         }
 
-        if (effectiveApiKey == null || effectiveApiKey.isBlank()) {
+        if (!StringUtils.hasText(effectiveApiKey)) {
             log.warn("MStock API key is not configured or resolved");
         }
 
@@ -235,11 +236,11 @@ public class MStockLtpService {
         if (instruments == null || instruments.isEmpty()) return Collections.emptyMap();
 
         String storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK, customerId);
-        if (storedToken == null) {
+        if (!StringUtils.hasText(storedToken)) {
             // fallback to global token
             storedToken = tokenStoreService.getAccessToken(Broker.MSTOCK);
         }
-        if (storedToken == null) {
+        if (!StringUtils.hasText(storedToken)) {
             throw new IllegalStateException("No MStock access token available. Please authenticate first.");
         }
 
