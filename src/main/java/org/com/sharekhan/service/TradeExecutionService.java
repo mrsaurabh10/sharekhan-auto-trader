@@ -1306,6 +1306,7 @@ public class TradeExecutionService {
                                                        BrokerContext ctx,
                                                        BrokerService brokerService) {
         OrderPlacementResult lastResult = null;
+        String orderId = null;
 
         for (int attempt = 0; attempt < MAX_ENTRY_ATTEMPTS; attempt++) {
             EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
@@ -1330,7 +1331,25 @@ public class TradeExecutionService {
             double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
             log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, trigger.getId(), formatPrice(price));
 
-            OrderPlacementResult result = brokerService.placeOrder(trigger, ctx, price);
+            OrderPlacementResult result;
+            if (attempt == 0) {
+                result = brokerService.placeOrder(trigger, ctx, price);
+                if (result != null && result.getOrderId() != null && !result.getOrderId().isBlank()) {
+                    orderId = result.getOrderId();
+                    trigger.setOrderId(orderId);
+                }
+            } else {
+                if (orderId == null || orderId.isBlank()) {
+                    log.warn("Cannot modify entry for trigger {} because no orderId was captured from the first attempt", trigger.getId());
+                    break;
+                }
+                if (!(brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker)) {
+                    log.warn("Broker service {} does not support entry modify; aborting attempts for trigger {}", brokerService.getClass().getSimpleName(), trigger.getId());
+                    break;
+                }
+                result = modifiableEntryBroker.modifyEntryOrder(trigger, ctx, orderId, price);
+            }
+
             lastResult = result;
 
             if (result != null && result.isSuccess()) {
