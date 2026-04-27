@@ -25,18 +25,20 @@ logging:
   level:
     org:
       hibernate:
-        SQL: OFF
+        SQL: DEBUG
         type:
           descriptor:
-            sql: OFF
+            sql: TRACE
         orm:
           jdbc:
-            bind: OFF
+            bind: TRACE
         tool:
-          hbm2ddl: ERROR
+          hbm2ddl: DEBUG
       springframework:
+        data:
+          repository: TRACE
         orm:
-          jpa: ERROR
+          jpa: DEBUG
 
 # Application specific
 app:
