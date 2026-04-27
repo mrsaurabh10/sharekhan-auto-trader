@@ -225,10 +225,15 @@ public class TradeExecutionService {
         Double trigger = null;
 
         if ("STOP_LOSS_HIT".equals(reasonKey)) {
-            recommended = trade.getStopLoss() != null ? trade.getStopLoss() : referencePrice;
             trigger = trade.getStopLoss();
+            if (!isSpotStopLoss(trade) && trigger != null) {
+                recommended = trigger;
+            }
         } else if (reasonKey.contains("TARGET")) {
-            recommended = pickTargetPrice(trade);
+            trigger = pickTargetPrice(trade);
+            if (!isSpotTarget(trade) && trigger != null) {
+                recommended = trigger;
+            }
         } else if (reasonKey.contains("INTRADAY") || reasonKey.contains("FORCE")) {
             recommended = referencePrice;
         }
@@ -2128,6 +2133,16 @@ public class TradeExecutionService {
             return true;
         }
         return trade.getUseSpotForTarget() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
+    }
+
+    private boolean isSpotStopLoss(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(trade.getUseSpotForSl())) {
+            return true;
+        }
+        return trade.getUseSpotForSl() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
     }
 
     private boolean isSimulatorBroker(TriggeredTradeSetupEntity trade) {
