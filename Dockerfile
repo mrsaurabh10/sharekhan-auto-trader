@@ -26,4 +26,4 @@ COPY --from=builder /app/target/*.jar app.jar
 EXPOSE 8080 5005
 RUN mkdir -p /app/logs /app/dumps
 
-ENTRYPOINT ["java", "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005", "-Xms256m", "-Xmx512m", "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=/app/dumps", "-Xlog:gc*:file=/app/logs/gc.log:utctime", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005", "-Xms256m", "-Xmx768m", "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=/app/dumps", "-Xlog:gc*:file=/app/logs/gc.log:utctime", "-jar", "app.jar"]
