@@ -23,7 +23,22 @@ WORKDIR /app
 
 COPY --from=builder /app/target/*.jar app.jar
 
-EXPOSE 8080 5005
+EXPOSE 8080 5005 9010
 RUN mkdir -p /app/logs /app/dumps
 
-ENTRYPOINT ["java", "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005", "-Xms256m", "-Xmx768m", "-XX:+HeapDumpOnOutOfMemoryError", "-XX:HeapDumpPath=/app/dumps", "-Xlog:gc*:file=/app/logs/gc.log:utctime", "-jar", "app.jar"]
+ENTRYPOINT ["java",
+  "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005",
+  "-Dcom.sun.management.jmxremote",
+  "-Dcom.sun.management.jmxremote.port=9010",
+  "-Dcom.sun.management.jmxremote.rmi.port=9010",
+  "-Dcom.sun.management.jmxremote.authenticate=false",
+  "-Dcom.sun.management.jmxremote.ssl=false",
+  "-Djava.rmi.server.hostname=0.0.0.0",
+  "-Xms256m",
+  "-Xmx768m",
+  "-XX:+HeapDumpOnOutOfMemoryError",
+  "-XX:HeapDumpPath=/app/dumps",
+  "-Xlog:gc*:file=/app/logs/gc.log:utctime",
+  "-jar",
+  "app.jar"
+]
