@@ -1687,17 +1687,54 @@ public class TradeExecutionService {
         Double ask = diagnostics.bestAsk();
         Double mid = diagnostics.recommendedLimit();
 
+        double rawPrice;
+
         if (bid == null || ask == null || mid == null) {
-            return fallbackLtp;
+            rawPrice = fallbackLtp;
+        } else {
+            double spread = Math.max(0d, ask - bid);
+            rawPrice = switch (attemptIndex) {
+                case 0 -> mid;
+                case 1 -> Math.min(ask, mid + spread * SECOND_ATTEMPT_SPREAD_FRACTION);
+                default -> ask;
+            };
         }
 
-        double spread = Math.max(0d, ask - bid);
+        return normalisePriceToTick(diagnostics, rawPrice);
+    }
 
-        return switch (attemptIndex) {
-            case 0 -> mid;
-            case 1 -> Math.min(ask, mid + spread * SECOND_ATTEMPT_SPREAD_FRACTION);
-            default -> ask;
-        };
+    private double normalisePriceToTick(EntryDiagnostics diagnostics, double price) {
+        double tickSize = resolveTickSizeFromDiagnostics(diagnostics);
+        if (tickSize <= 0d) {
+            return roundPrice(price);
+        }
+
+        double scaled = Math.round(price / tickSize) * tickSize;
+        double rounded = Math.round(scaled * 100.0d) / 100.0d;
+        double roundedTick = Math.round(tickSize * 100.0d) / 100.0d;
+        double epsilon = 1e-6;
+        double residual = rounded % roundedTick;
+        if (residual > epsilon && roundedTick - residual > epsilon) {
+            if (residual < roundedTick / 2) {
+                rounded = Math.round((rounded - residual) * 100.0d) / 100.0d;
+            } else {
+                rounded = Math.round((rounded + (roundedTick - residual)) * 100.0d) / 100.0d;
+            }
+        }
+        return rounded;
+    }
+
+    private double resolveTickSizeFromDiagnostics(EntryDiagnostics diagnostics) {
+        Double bestBid = diagnostics.bestBid();
+        Double bestAsk = diagnostics.bestAsk();
+        if (bestBid != null && bestAsk != null) {
+            double diff = Math.abs(bestAsk - bestBid);
+            if (diff > 0d) {
+                return Math.max(0.01d, (double) Math.round(diff * 100.0d) / 100.0d);
+            }
+        }
+
+        return 0.05d;
     }
 
     public void squareOffTrade(Long id) {
