@@ -83,6 +83,7 @@ public class TradeExecutionService {
             DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
     );
     private static final int MAX_ENTRY_ATTEMPTS = 3;
+    private static final long FINAL_STATUS_CHECK_DELAY_MS = 2000L;
     private static final double SECOND_ATTEMPT_SPREAD_FRACTION = 0.25;
 
     public static class ModifyExitOrderResult {
@@ -1412,6 +1413,45 @@ public class TradeExecutionService {
 
             if (result != null && result.isSuccess()) {
                 log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, trigger.getId(), result.getOrderId());
+
+                if (orderId != null && !orderId.isBlank()) {
+                    try {
+                        Thread.sleep(FINAL_STATUS_CHECK_DELAY_MS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        log.warn("Entry status wait interrupted for trigger {}", trigger.getId());
+                    }
+
+                    latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
+                    log.info("📊 Entry status snapshot after attempt {} for trade {}: {}", attempt + 1, trigger.getId(), latestStatus);
+
+                    if (isOrderFilled(latestStatus)) {
+                        return result;
+                    }
+
+                    if (attempt < MAX_ENTRY_ATTEMPTS - 1) {
+                        log.info("⏱️ Entry order {} still pending after attempt {}. Preparing next attempt.", orderId, attempt + 1);
+                        continue;
+                    }
+
+                    log.warn("⏱️ Entry order {} not filled after final attempt. Initiating cancellation.", orderId);
+                    if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker) {
+                        modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
+                        log.info("🚫 Cancelled entry order {} for trigger {} after pending final status", orderId, trigger.getId());
+                        orderId = null;
+                    } else {
+                        log.warn("⚠️ Broker service {} cannot cancel pending entry order {}", brokerService.getClass().getSimpleName(), orderId);
+                    }
+
+                    lastResult = OrderPlacementResult.builder()
+                            .success(false)
+                            .orderId(result.getOrderId())
+                            .status("Cancelled")
+                            .rejectionReason("ENTRY_NOT_FILLED_AFTER_RETRIES")
+                            .build();
+                    break;
+                }
+
                 return result;
             }
 
