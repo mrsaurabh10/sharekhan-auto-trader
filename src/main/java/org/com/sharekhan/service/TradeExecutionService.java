@@ -1312,6 +1312,8 @@ public class TradeExecutionService {
                 log.warn("Failed to persist EXIT_FAILED state after exit placeOrder failures: {}", e.getMessage());
             }
 
+            stopExitOrderChase(persisted.getId());
+
             try {
                 String title = "Exit Order Placement Failed ❌";
                 StringBuilder body = new StringBuilder();
@@ -1583,6 +1585,7 @@ public class TradeExecutionService {
                     log.info("🧵 Exit chase adjusting trade {} order {} to {}", tradeId, exitOrderId, formatPrice(candidatePrice));
                 } else {
                     log.warn("⚠️ Exit chase modify failed for trade {}: {}", tradeId, modifyResult.getMessage());
+                    stopExitOrderChase(tradeId);
                 }
             } catch (Exception e) {
                 log.warn("⚠️ Exit chase iteration failed for trade {}: {}", tradeId, e.getMessage());
