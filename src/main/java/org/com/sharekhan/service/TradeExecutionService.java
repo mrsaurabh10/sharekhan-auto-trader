@@ -83,6 +83,7 @@ public class TradeExecutionService {
             DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
     );
     private static final int MAX_ENTRY_ATTEMPTS = 3;
+    private static final long FINAL_STATUS_CHECK_DELAY_MS = 2000L;
     private static final double SECOND_ATTEMPT_SPREAD_FRACTION = 0.25;
 
     public static class ModifyExitOrderResult {
@@ -579,17 +580,28 @@ public class TradeExecutionService {
         }
 
         Integer optionScripCode = script.getScripCode();
-        Double ltp = ltpCacheService.getLtp(optionScripCode);
-        if (ltp == null) {
-            log.debug("Quick trade LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.", optionScripCode, request.getInstrument());
-            ltp = fetchLtpViaMStockFallback(optionScripCode, "executeQuickTrade");
-        }
-        if (ltp == null) {
-            log.warn("Quick trade LTP still unavailable for scrip {} after MStock fallback.", optionScripCode);
-            throw new InvalidTradeRequestException("Live price unavailable for quick trade; please retry shortly");
+        Double ltp = null;
+        boolean isMxExchange = "MX".equalsIgnoreCase(script.getExchange());
+        if (!isMxExchange) {
+            ltp = ltpCacheService.getLtp(optionScripCode);
+            if (ltp == null) {
+                log.debug("Quick trade LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.", optionScripCode, request.getInstrument());
+                ltp = fetchLtpViaMStockFallback(optionScripCode, "executeQuickTrade");
+            }
+            if (ltp == null) {
+                log.warn("Quick trade LTP still unavailable for scrip {} after MStock fallback.", optionScripCode);
+                throw new InvalidTradeRequestException("Live price unavailable for quick trade; please retry shortly");
+            }
         }
 
-        double entryPrice = roundPrice(ltp);
+        double entryPrice;
+        if (ltp != null) {
+            entryPrice = roundPrice(ltp);
+        } else if (request.getEntryPrice() != null && request.getEntryPrice() > 0) {
+            entryPrice = roundPrice(request.getEntryPrice());
+        } else {
+            throw new InvalidTradeRequestException("Entry price is required for MX exchange instruments");
+        }
         double slPercent = resolvePercentageConfig(request.getUserId(), "quick_trade_sl_percent", 20.0);
         double targetPercent = resolvePercentageConfig(request.getUserId(), "quick_trade_target_percent", 40.0);
         double target2Percent = resolvePercentageConfig(request.getUserId(), "quick_trade_target2_percent", 0.0);
@@ -1412,6 +1424,45 @@ public class TradeExecutionService {
 
             if (result != null && result.isSuccess()) {
                 log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, trigger.getId(), result.getOrderId());
+
+                if (orderId != null && !orderId.isBlank()) {
+                    try {
+                        Thread.sleep(FINAL_STATUS_CHECK_DELAY_MS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        log.warn("Entry status wait interrupted for trigger {}", trigger.getId());
+                    }
+
+                    latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
+                    log.info("📊 Entry status snapshot after attempt {} for trade {}: {}", attempt + 1, trigger.getId(), latestStatus);
+
+                    if (isOrderFilled(latestStatus)) {
+                        return result;
+                    }
+
+                    if (attempt < MAX_ENTRY_ATTEMPTS - 1) {
+                        log.info("⏱️ Entry order {} still pending after attempt {}. Preparing next attempt.", orderId, attempt + 1);
+                        continue;
+                    }
+
+                    log.warn("⏱️ Entry order {} not filled after final attempt. Initiating cancellation.", orderId);
+                    if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker) {
+                        modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
+                        log.info("🚫 Cancelled entry order {} for trigger {} after pending final status", orderId, trigger.getId());
+                        orderId = null;
+                    } else {
+                        log.warn("⚠️ Broker service {} cannot cancel pending entry order {}", brokerService.getClass().getSimpleName(), orderId);
+                    }
+
+                    lastResult = OrderPlacementResult.builder()
+                            .success(false)
+                            .orderId(result.getOrderId())
+                            .status("Cancelled")
+                            .rejectionReason("ENTRY_NOT_FILLED_AFTER_RETRIES")
+                            .build();
+                    break;
+                }
+
                 return result;
             }
 
@@ -1647,17 +1698,54 @@ public class TradeExecutionService {
         Double ask = diagnostics.bestAsk();
         Double mid = diagnostics.recommendedLimit();
 
+        double rawPrice;
+
         if (bid == null || ask == null || mid == null) {
-            return fallbackLtp;
+            rawPrice = fallbackLtp;
+        } else {
+            double spread = Math.max(0d, ask - bid);
+            rawPrice = switch (attemptIndex) {
+                case 0 -> mid;
+                case 1 -> Math.min(ask, mid + spread * SECOND_ATTEMPT_SPREAD_FRACTION);
+                default -> ask;
+            };
         }
 
-        double spread = Math.max(0d, ask - bid);
+        return normalisePriceToTick(diagnostics, rawPrice);
+    }
 
-        return switch (attemptIndex) {
-            case 0 -> mid;
-            case 1 -> Math.min(ask, mid + spread * SECOND_ATTEMPT_SPREAD_FRACTION);
-            default -> ask;
-        };
+    private double normalisePriceToTick(EntryDiagnostics diagnostics, double price) {
+        double tickSize = resolveTickSizeFromDiagnostics(diagnostics);
+        if (tickSize <= 0d) {
+            return roundPrice(price);
+        }
+
+        double scaled = Math.round(price / tickSize) * tickSize;
+        double rounded = Math.round(scaled * 100.0d) / 100.0d;
+        double roundedTick = Math.round(tickSize * 100.0d) / 100.0d;
+        double epsilon = 1e-6;
+        double residual = rounded % roundedTick;
+        if (residual > epsilon && roundedTick - residual > epsilon) {
+            if (residual < roundedTick / 2) {
+                rounded = Math.round((rounded - residual) * 100.0d) / 100.0d;
+            } else {
+                rounded = Math.round((rounded + (roundedTick - residual)) * 100.0d) / 100.0d;
+            }
+        }
+        return rounded;
+    }
+
+    private double resolveTickSizeFromDiagnostics(EntryDiagnostics diagnostics) {
+        Double bestBid = diagnostics.bestBid();
+        Double bestAsk = diagnostics.bestAsk();
+        if (bestBid != null && bestAsk != null) {
+            double diff = Math.abs(bestAsk - bestBid);
+            if (diff > 0d) {
+                return Math.max(0.01d, (double) Math.round(diff * 100.0d) / 100.0d);
+            }
+        }
+
+        return 0.05d;
     }
 
     public void squareOffTrade(Long id) {
@@ -2650,15 +2738,30 @@ public class TradeExecutionService {
 
         // attempt to fetch current LTP for the scrip
         Integer optionScripCode = requestEntity.getScripCode();
-        Double ltp = ltpCacheService.getLtp(optionScripCode);
+        Double ltp = null;
+        String exchange = requestEntity.getExchange();
+        boolean isMxExchange = exchange != null && exchange.equalsIgnoreCase("MX");
 
-        if (ltp == null) {
-            ltp = fetchLtpViaMStockFallback(optionScripCode, "executeTradeFromEntity");
+        if (!isMxExchange) {
+            ltp = ltpCacheService.getLtp(optionScripCode);
+
+            if (ltp == null) {
+                ltp = fetchLtpViaMStockFallback(optionScripCode, "executeTradeFromEntity");
+            }
+
+            if (ltp == null) {
+                log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());
+                return null; // Signal to the caller to skip and re-try later for equities.
+            }
         }
 
-        if (ltp == null) {
-            log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());
-            return null; // Signal to the caller to skip.
+        if (ltp == null && isMxExchange) {
+            Double manualEntry = requestEntity.getEntryPrice();
+            if (manualEntry == null || manualEntry <= 0d) {
+                log.warn("MX exchange request {} requires an entry price when LTP is unavailable. Skipping execution.", requestEntity.getId());
+                return null;
+            }
+            ltp = manualEntry;
         }
 
         // Resolve flags considering legacy useSpotPrice
