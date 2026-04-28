@@ -3,7 +3,6 @@ package org.com.sharekhan.service;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -30,6 +29,14 @@ public class ScripExecutorManager {
                 t.setDaemon(true);
                 return t;
             }));
+    }
+
+    public void submitTriggerTask(int scripCode, Runnable task) {
+        getTriggerExecutor(scripCode).submit(task);
+    }
+
+    public void submitMonitorTask(int scripCode, Runnable task) {
+        getMonitorExecutor(scripCode).submit(task);
     }
 
     public void registerTriggerUsage(int scripCode) {

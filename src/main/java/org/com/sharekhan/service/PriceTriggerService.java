@@ -39,6 +39,7 @@ public class PriceTriggerService {
     private final MStockLtpService mStockLtpService;
     private final MStockInstrumentResolver instrumentResolver;
     private final SharekhanHistoricalService sharekhanHistoricalService;
+    private final ScripExecutorManager scripExecutorManager;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         scripExecutorManager.registerTriggerUsage(scripCode);
