@@ -580,17 +580,28 @@ public class TradeExecutionService {
         }
 
         Integer optionScripCode = script.getScripCode();
-        Double ltp = ltpCacheService.getLtp(optionScripCode);
-        if (ltp == null) {
-            log.debug("Quick trade LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.", optionScripCode, request.getInstrument());
-            ltp = fetchLtpViaMStockFallback(optionScripCode, "executeQuickTrade");
-        }
-        if (ltp == null) {
-            log.warn("Quick trade LTP still unavailable for scrip {} after MStock fallback.", optionScripCode);
-            throw new InvalidTradeRequestException("Live price unavailable for quick trade; please retry shortly");
+        Double ltp = null;
+        boolean isMxExchange = "MX".equalsIgnoreCase(script.getExchange());
+        if (!isMxExchange) {
+            ltp = ltpCacheService.getLtp(optionScripCode);
+            if (ltp == null) {
+                log.debug("Quick trade LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.", optionScripCode, request.getInstrument());
+                ltp = fetchLtpViaMStockFallback(optionScripCode, "executeQuickTrade");
+            }
+            if (ltp == null) {
+                log.warn("Quick trade LTP still unavailable for scrip {} after MStock fallback.", optionScripCode);
+                throw new InvalidTradeRequestException("Live price unavailable for quick trade; please retry shortly");
+            }
         }
 
-        double entryPrice = roundPrice(ltp);
+        double entryPrice;
+        if (ltp != null) {
+            entryPrice = roundPrice(ltp);
+        } else if (request.getEntryPrice() != null && request.getEntryPrice() > 0) {
+            entryPrice = roundPrice(request.getEntryPrice());
+        } else {
+            throw new InvalidTradeRequestException("Entry price is required for MX exchange instruments");
+        }
         double slPercent = resolvePercentageConfig(request.getUserId(), "quick_trade_sl_percent", 20.0);
         double targetPercent = resolvePercentageConfig(request.getUserId(), "quick_trade_target_percent", 40.0);
         double target2Percent = resolvePercentageConfig(request.getUserId(), "quick_trade_target2_percent", 0.0);
@@ -2727,15 +2738,30 @@ public class TradeExecutionService {
 
         // attempt to fetch current LTP for the scrip
         Integer optionScripCode = requestEntity.getScripCode();
-        Double ltp = ltpCacheService.getLtp(optionScripCode);
+        Double ltp = null;
+        String exchange = requestEntity.getExchange();
+        boolean isMxExchange = exchange != null && exchange.equalsIgnoreCase("MX");
 
-        if (ltp == null) {
-            ltp = fetchLtpViaMStockFallback(optionScripCode, "executeTradeFromEntity");
+        if (!isMxExchange) {
+            ltp = ltpCacheService.getLtp(optionScripCode);
+
+            if (ltp == null) {
+                ltp = fetchLtpViaMStockFallback(optionScripCode, "executeTradeFromEntity");
+            }
+
+            if (ltp == null) {
+                log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());
+                return null; // Signal to the caller to skip and re-try later for equities.
+            }
         }
 
-        if (ltp == null) {
-            log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());
-            return null; // Signal to the caller to skip.
+        if (ltp == null && isMxExchange) {
+            Double manualEntry = requestEntity.getEntryPrice();
+            if (manualEntry == null || manualEntry <= 0d) {
+                log.warn("MX exchange request {} requires an entry price when LTP is unavailable. Skipping execution.", requestEntity.getId());
+                return null;
+            }
+            ltp = manualEntry;
         }
 
         // Resolve flags considering legacy useSpotPrice
