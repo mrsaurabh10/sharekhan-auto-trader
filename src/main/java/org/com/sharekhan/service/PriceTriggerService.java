@@ -71,20 +71,8 @@ public class PriceTriggerService {
                 if (trigger.getEntryPrice() == null) continue;
 
                 double tolerance = 1.10;
-                
-                // Check if LTP is more than tolerance % of the entry price
-                if (ltp > trigger.getEntryPrice() * tolerance) {
-                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
-                    if (claimed == 1) {
-                        TradeEventLogger.logGapRejection(
-                                trigger,
-                                "option LTP",
-                                ltp,
-                                trigger.getEntryPrice(),
-                                (tolerance - 1) * 100
-                        );
-                        log.warn("⚠️ LTP {} is more than {}% above entry price {} for trigger {}. Marking as REJECTED.", ltp, (tolerance - 1) * 100, trigger.getEntryPrice(), trigger.getId());
-                    }
+
+                if (rejectIfEntryPriceGuardFails(trigger, trigger.getScripCode(), ltp, "option LTP", tolerance, false)) {
                     continue;
                 }
 
@@ -129,67 +117,17 @@ public class PriceTriggerService {
 
                 double entryPrice = trigger.getEntryPrice();
                 double tolerance = 1.006;
+                boolean isPE = "PE".equalsIgnoreCase(trigger.getOptionType());
 
                 Integer referenceScrip = trigger.getSpotScripCode() != null ? trigger.getSpotScripCode() : trigger.getScripCode();
-                Double openingPrice = ltpCacheService.getTodayOpeningPrice(referenceScrip);
-                String gapComparisonLabel;
-                double gapComparisonPrice;
-
-                if (openingPrice != null) {
-                    gapComparisonPrice = openingPrice;
-                    gapComparisonLabel = "captured open";
-                } else {
-                    OptionalDouble openPriceOpt = sharekhanHistoricalService.getTodayOpenPrice(referenceScrip);
-                    if (openPriceOpt.isPresent()) {
-                        openingPrice = openPriceOpt.getAsDouble();
-                        gapComparisonPrice = openingPrice;
-                        gapComparisonLabel = "historical open";
-                    } else {
-                        gapComparisonPrice = ltp;
-                        gapComparisonLabel = "spot LTP";
-                    }
-                }
-
-                if (gapComparisonPrice > entryPrice * tolerance) {
-                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
-                    if (claimed == 1) {
-                        TradeEventLogger.logGapRejection(
-                                trigger,
-                                gapComparisonLabel,
-                                gapComparisonPrice,
-                                entryPrice,
-                                (tolerance - 1) * 100
-                        );
-                        log.warn("⚠️ Spot {} {} exceeds {}% above entry price {} for trigger {}. Marking as REJECTED.",
-                                gapComparisonLabel, gapComparisonPrice, (tolerance - 1) * 100, entryPrice, trigger.getId());
-                    }
+                if (rejectIfEntryPriceGuardFails(trigger, referenceScrip, ltp, "spot LTP", tolerance, isPE)) {
                     continue;
                 }
 
-                boolean isPE = "PE".equalsIgnoreCase(trigger.getOptionType());
                 boolean conditionMet;
                 if (isPE) {
                     // For PE, trigger if spot price goes BELOW entry price
                     conditionMet = ltp <= entryPrice;
-                    
-                    // Check for gap down with tolerance for PE
-                    double gapDownTolerance = 0.994; // 0.6% tolerance
-                    if (gapComparisonPrice < entryPrice * gapDownTolerance) {
-                        int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
-                        if (claimed == 1) {
-                            double tolerancePercent = (1 - gapDownTolerance) * 100;
-                            TradeEventLogger.logGapRejection(
-                                    trigger,
-                                    gapComparisonLabel,
-                                    gapComparisonPrice,
-                                    entryPrice,
-                                    tolerancePercent
-                            );
-                            log.warn("⚠️ Spot {} {} breaches {}% below entry price {} for PE trigger {}. Marking as REJECTED.",
-                                    gapComparisonLabel, gapComparisonPrice, (1 - gapDownTolerance) * 100, entryPrice, trigger.getId());
-                        }
-                        continue;
-                    }
                 } else {
                     // For CE (or others), trigger if spot price goes ABOVE entry price
                     conditionMet = ltp >= entryPrice;
@@ -220,6 +158,106 @@ public class PriceTriggerService {
         } catch (Exception e) {
             log.error("❌ Error evaluating price trigger for scripCode {}: {}", scripCode, e.getMessage(), e);
         }
+    }
+
+    private boolean rejectIfEntryPriceGuardFails(TriggerTradeRequestEntity trigger,
+                                                 Integer referenceScrip,
+                                                 double currentPrice,
+                                                 String currentPriceLabel,
+                                                 double toleranceMultiplier,
+                                                 boolean downsideEntry) {
+        Double entryPrice = trigger.getEntryPrice();
+        if (entryPrice == null || entryPrice <= 0d) {
+            return false;
+        }
+
+        Optional<ReferencePrice> openPrice = getTodayOpenReferencePrice(referenceScrip);
+        if (openPrice.isPresent() && rejectIfReferencePriceInvalid(
+                trigger,
+                openPrice.get().label(),
+                openPrice.get().price(),
+                entryPrice,
+                toleranceMultiplier,
+                downsideEntry)) {
+            return true;
+        }
+
+        return rejectIfReferencePriceInvalid(
+                trigger,
+                currentPriceLabel,
+                currentPrice,
+                entryPrice,
+                toleranceMultiplier,
+                downsideEntry);
+    }
+
+    private Optional<ReferencePrice> getTodayOpenReferencePrice(Integer referenceScrip) {
+        if (referenceScrip == null) {
+            return Optional.empty();
+        }
+
+        Double openingPrice = ltpCacheService.getTodayOpeningPrice(referenceScrip);
+        if (openingPrice != null) {
+            return Optional.of(new ReferencePrice("captured open", openingPrice));
+        }
+
+        OptionalDouble openPriceOpt = sharekhanHistoricalService.getTodayOpenPrice(referenceScrip);
+        return openPriceOpt.isPresent()
+                ? Optional.of(new ReferencePrice("historical open", openPriceOpt.getAsDouble()))
+                : Optional.empty();
+    }
+
+    private boolean rejectIfReferencePriceInvalid(TriggerTradeRequestEntity trigger,
+                                                  String priceLabel,
+                                                  double referencePrice,
+                                                  double entryPrice,
+                                                  double toleranceMultiplier,
+                                                  boolean downsideEntry) {
+        if (!Double.isFinite(referencePrice) || referencePrice <= 0d) {
+            return false;
+        }
+
+        double tolerancePercent = Math.abs(toleranceMultiplier - 1) * 100;
+        boolean outsideTolerance = downsideEntry
+                ? referencePrice < entryPrice * (2 - toleranceMultiplier)
+                : referencePrice > entryPrice * toleranceMultiplier;
+
+        if (outsideTolerance) {
+            int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+            if (claimed == 1) {
+                TradeEventLogger.logGapRejection(
+                        trigger,
+                        priceLabel,
+                        referencePrice,
+                        entryPrice,
+                        tolerancePercent
+                );
+                String direction = downsideEntry ? "below" : "above";
+                log.warn("⚠️ {} {} is more than {}% {} entry price {} for trigger {}. Marking as REJECTED.",
+                        priceLabel, referencePrice, tolerancePercent, direction, entryPrice, trigger.getId());
+            }
+            return true;
+        }
+
+        Double target1 = trigger.getTarget1();
+        if (target1 != null && target1 > 0d) {
+            boolean targetAlreadyReached = downsideEntry
+                    ? referencePrice <= target1
+                    : referencePrice >= target1;
+            if (targetAlreadyReached) {
+                int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+                if (claimed == 1) {
+                    log.warn("⚠️ {} {} has already reached/breached target1 {} for trigger {}. Marking as REJECTED.",
+                            priceLabel, referencePrice, target1, trigger.getId());
+                }
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private record ReferencePrice(String label, double price) {
     }
 
     public void monitorOpenTrades(Integer scripCode, double ltp) {
