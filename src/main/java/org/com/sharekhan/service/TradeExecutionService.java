@@ -1570,11 +1570,17 @@ public class TradeExecutionService {
             return;
         }
 
-        if (trade.getExitOrderId() == null || trade.getExitOrderId().isBlank()) {
+        TriggeredTradeSetupEntity latestTrade = triggeredTradeRepo.findById(trade.getId()).orElse(trade);
+        if (latestTrade.getExitOrderId() == null || latestTrade.getExitOrderId().isBlank()) {
             return;
         }
 
-        BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+        if (!TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(latestTrade.getStatus())) {
+            log.debug("Skipping exit chase for trade {} in status {}", latestTrade.getId(), latestTrade.getStatus());
+            return;
+        }
+
+        BrokerContext ctx = resolveBrokerContext(latestTrade.getBrokerCredentialsId(), latestTrade.getAppUserId());
         if (ctx == null || ctx.getBrokerName() == null) {
             return;
         }
@@ -1590,14 +1596,14 @@ public class TradeExecutionService {
             return;
         }
 
-        long tradeId = trade.getId();
+        long tradeId = latestTrade.getId();
         stopExitOrderChase(tradeId);
 
         ExitChaseState state = new ExitChaseState();
         exitChaseStates.put(tradeId, state);
 
-        String exitOrderId = trade.getExitOrderId();
-        long delayMillis = "OI".equalsIgnoreCase(trade.getInstrumentType() != null ? trade.getInstrumentType().trim() : "")
+        String exitOrderId = latestTrade.getExitOrderId();
+        long delayMillis = "OI".equalsIgnoreCase(latestTrade.getInstrumentType() != null ? latestTrade.getInstrumentType().trim() : "")
                 ? 750L
                 : 1500L;
 
@@ -1979,7 +1985,8 @@ public class TradeExecutionService {
             log.debug("Failed to persist exitOrderId/status {} for trade {}: {}", placedStatus, persisted.getId(), e.getMessage());
         }
 
-        if (!"Fully Executed".equalsIgnoreCase(result.getStatus())) {
+        if (!"Fully Executed".equalsIgnoreCase(result.getStatus())
+                && TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(placedStatus)) {
             scheduleExitOrderChase(persisted);
         }
 
@@ -2346,6 +2353,8 @@ public class TradeExecutionService {
         ModifyExitOrderResult result = modifyExistingExitOrder(trade, newPrice, "STOP_LOSS_HIT", TriggeredTradeStatus.EXIT_ORDER_PLACED);
         if (!result.isSuccess()) {
             log.warn("Stop-loss modify failed for trade {}: {}", trade.getId(), result.getMessage());
+        } else {
+            scheduleExitOrderChase(trade);
         }
         return result.isSuccess();
     }
