@@ -25,8 +25,16 @@ public class OrderViewController {
     @Autowired private TradeExecutionService tradeExecutionService;
 
     @GetMapping("/requests")
-    public ResponseEntity<?>  getRequestedOrders(@RequestParam(name = "userId", required = false) Long userId) {
+    public ResponseEntity<?> getRequestedOrders(@RequestParam(name = "userId", required = false) Long userId,
+                                                @RequestParam(name = "page", required = false) Integer page,
+                                                @RequestParam(name = "size", required = false) Integer size) {
+        if (page == null && size == null) {
             return ResponseEntity.ok(tradingRequestService.getRecentRequestsForUser(userId));
+        }
+        int pageNumber = Math.max(page == null ? 0 : page, 0);
+        int pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
+        Pageable pageable = PageRequest.of(pageNumber, pageSize);
+        return ResponseEntity.ok(tradingRequestService.getRequestsForUser(userId, pageable));
      }
 
     @GetMapping("/executed")

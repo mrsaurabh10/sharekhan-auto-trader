@@ -5,6 +5,8 @@
 
   const LIVE_PNL_STATUSES = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED']);
 
+  let currentRequestPage = 0;
+  const requestPageSize = 10;
   let currentExecPage = 0;
   const execPageSize = 10;
 
@@ -222,12 +224,21 @@
   }
 
   // --- Loaders ---
-  async function loadRequestedOrdersForUser(userId) {
+  async function loadRequestedOrdersForUser(userId, page) {
     const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-requests-table tbody'); if (!tbody) return; tbody.innerHTML = '';
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; return; }
+    if (typeof page === 'number') currentRequestPage = page;
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
     try {
-      const data = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid));
-      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No requests</td></tr>'; return; }
+      const responseData = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid) + '&page=' + currentRequestPage + '&size=' + requestPageSize);
+      let data = [], pageInfo = null;
+      if (responseData && Array.isArray(responseData.content)) {
+          data = responseData.content;
+          pageInfo = { number: responseData.number, totalPages: responseData.totalPages, first: responseData.first, last: responseData.last };
+      } else if (Array.isArray(responseData)) {
+          data = responseData;
+      }
+
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No requests</td></tr>'; updateRequestPaginationUI(pageInfo); return; }
       const seen = new Set(); const uniq = [];
       for (const r of data) { const rid = r && (r.id || r.requestId || r.request_id); if (!rid) { uniq.push(r); continue; } if (seen.has(rid)) continue; seen.add(rid); uniq.push(r); }
 
@@ -339,7 +350,26 @@
         const map = await batchFetchMstockLtp(Array.from(keySet));
         applyLtpMap(map);
       }
-    } catch (e) { console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="13">Error loading requests</td></tr>'; }
+      updateRequestPaginationUI(pageInfo);
+    } catch (e) { console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="13">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
+  }
+
+  function updateRequestPaginationUI(pageInfo) {
+      const prevBtn = document.getElementById('request-prev-btn');
+      const nextBtn = document.getElementById('request-next-btn');
+      const infoSpan = document.getElementById('request-page-info');
+      if (!prevBtn || !nextBtn || !infoSpan) return;
+      if (!pageInfo) { prevBtn.disabled = true; nextBtn.disabled = true; infoSpan.innerText = ''; return; }
+      prevBtn.disabled = pageInfo.first;
+      nextBtn.disabled = pageInfo.last;
+      infoSpan.innerText = 'Page ' + (pageInfo.number + 1) + ' of ' + pageInfo.totalPages;
+  }
+
+  function wireRequestPagination() {
+      const prevBtn = document.getElementById('request-prev-btn');
+      const nextBtn = document.getElementById('request-next-btn');
+      if (prevBtn) prevBtn.addEventListener('click', function() { if (currentRequestPage > 0) loadRequestedOrdersForUser(window.selectedUserId, currentRequestPage - 1); });
+      if (nextBtn) nextBtn.addEventListener('click', function() { loadRequestedOrdersForUser(window.selectedUserId, currentRequestPage + 1); });
   }
 
   async function loadExecutedForUser(userId, filterStatuses, page) {
@@ -788,7 +818,7 @@
     const uc = document.getElementById('userContent'); if (uc) uc.style.display = 'block';
     const parent = document.getElementById('usersContainer'); if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); }); if (liElem && liElem.classList) liElem.classList.add('active');
     showBrokersSectionFor(appUserId, window.selectedUserName);
-    loadRequestedOrdersForUser(appUserId).catch(function(){}); loadExecutedForUser(appUserId, getSelectedStatuses(), 0).catch(function(){}); loadBrokers(appUserId).catch(function(){});
+    loadRequestedOrdersForUser(appUserId, 0).catch(function(){}); loadExecutedForUser(appUserId, getSelectedStatuses(), 0).catch(function(){}); loadBrokers(appUserId).catch(function(){});
   }
 
   function wireAdminForm() {
@@ -950,6 +980,7 @@
     wireBrokersUI();
     wirePlaceOrderForm();
     wireStatusFilter();
+    wireRequestPagination();
     wireExecutedPagination();
     wireUserCreation();
     startAdminWs();

@@ -3,6 +3,8 @@ package org.com.sharekhan.repository;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -24,6 +26,41 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
 
     // app-user-scoped recent requests
     List<TriggerTradeRequestEntity> findTop10ByAppUserIdOrderByIdDesc(Long appUserId);
+
+    @Query(
+            value = """
+                    SELECT *
+                    FROM trigger_trade_requests
+                    ORDER BY CASE status
+                        WHEN 'PLACED_ORDER_PENDING' THEN 0
+                        WHEN 'PLACED_PENDING_CONFIRMATION' THEN 0
+                        WHEN 'TRIGGERED' THEN 1
+                        WHEN 'REJECTED' THEN 2
+                        ELSE 3
+                    END, id DESC
+                    """,
+            countQuery = "SELECT COUNT(*) FROM trigger_trade_requests",
+            nativeQuery = true
+    )
+    Page<TriggerTradeRequestEntity> findRequestsOrderedForDashboard(Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT *
+                    FROM trigger_trade_requests
+                    WHERE app_user_id = :appUserId
+                    ORDER BY CASE status
+                        WHEN 'PLACED_ORDER_PENDING' THEN 0
+                        WHEN 'PLACED_PENDING_CONFIRMATION' THEN 0
+                        WHEN 'TRIGGERED' THEN 1
+                        WHEN 'REJECTED' THEN 2
+                        ELSE 3
+                    END, id DESC
+                    """,
+            countQuery = "SELECT COUNT(*) FROM trigger_trade_requests WHERE app_user_id = :appUserId",
+            nativeQuery = true
+    )
+    Page<TriggerTradeRequestEntity> findRequestsOrderedForDashboardByAppUserId(@Param("appUserId") Long appUserId, Pageable pageable);
 
     @Query("select distinct t.appUserId from TriggerTradeRequestEntity t where t.appUserId is not null")
     List<Long> findDistinctAppUserIds();
