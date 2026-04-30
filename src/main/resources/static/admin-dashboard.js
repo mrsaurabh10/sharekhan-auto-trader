@@ -81,6 +81,27 @@
     }
   }
 
+  function promptManualCloseOrderStatus(tradeId, hasPrice) {
+    if (!hasPrice) return 'EXIT_ORDER_PLACED';
+    const choice = prompt(
+      'Close trade ' + tradeId + ' as:\n' +
+      '1 = TARGET_ORDER_PLACED (wait for entered price)\n' +
+      '2 = EXIT_ORDER_PLACED (chase the order)\n\n' +
+      'Enter 1 or 2:',
+      '2'
+    );
+    if (choice === null) return null;
+    const normalized = String(choice).trim().toUpperCase();
+    if (normalized === '1' || normalized === 'TARGET' || normalized === 'TARGET_ORDER_PLACED') {
+      return 'TARGET_ORDER_PLACED';
+    }
+    if (normalized === '' || normalized === '2' || normalized === 'EXIT' || normalized === 'EXIT_ORDER_PLACED') {
+      return 'EXIT_ORDER_PLACED';
+    }
+    alert('Please enter 1 for TARGET_ORDER_PLACED or 2 for EXIT_ORDER_PLACED.');
+    return null;
+  }
+
   // --- Instruments / option helpers ---
   async function fetchInstrumentsForExchange(exchange) {
     if (!exchange) return [];
@@ -398,7 +419,27 @@
             }
           }); actionCell.appendChild(modifyExitBtn);
           const closeBtn = document.createElement('button'); closeBtn.className = 'btn small danger'; closeBtn.style.marginLeft = '4px'; closeBtn.innerText = 'Close';
-          closeBtn.addEventListener('click', async function () { const price = prompt('Enter price to close trade ' + id + ' (optional):'); if (price === null) return; await ensureCsrf(); let url = '/api/trades/square-off/' + id; if (price && price.trim() !== '') url += '?price=' + encodeURIComponent(price.trim()); await fetchJson(url, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); }); actionCell.appendChild(closeBtn);
+          closeBtn.addEventListener('click', async function () {
+            const price = prompt('Enter price to close trade ' + id + ' (optional):');
+            if (price === null) return;
+            const trimmedPrice = String(price).trim();
+            if (trimmedPrice !== '') {
+              const parsedPrice = Number(trimmedPrice);
+              if (!isFinite(parsedPrice) || parsedPrice <= 0) {
+                alert('Please enter a valid positive price.');
+                return;
+              }
+            }
+            const exitOrderStatus = promptManualCloseOrderStatus(id, trimmedPrice !== '');
+            if (exitOrderStatus === null) return;
+            await ensureCsrf();
+            const params = new URLSearchParams();
+            if (trimmedPrice !== '') params.set('price', trimmedPrice);
+            params.set('exitOrderStatus', exitOrderStatus);
+            const url = '/api/trades/square-off/' + id + '?' + params.toString();
+            await fetchJson(url, { method: 'POST' });
+            setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800);
+          }); actionCell.appendChild(closeBtn);
         } else { actionCell.innerText = '-'; }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +

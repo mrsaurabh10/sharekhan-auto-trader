@@ -1251,12 +1251,24 @@ public class TradeExecutionService {
     }
 
     public void squareOff(TriggeredTradeSetupEntity trade, double exitPrice, String exitReason) {
+        squareOff(trade, exitPrice, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
+    }
+
+    public void squareOff(TriggeredTradeSetupEntity trade,
+                          double exitPrice,
+                          String exitReason,
+                          TriggeredTradeStatus placedStatus) {
+        if (placedStatus != TriggeredTradeStatus.EXIT_ORDER_PLACED
+                && placedStatus != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
+            throw new IllegalArgumentException("placedStatus must be EXIT_ORDER_PLACED or TARGET_ORDER_PLACED");
+        }
+
         // Re-load the trade from DB (within transaction) to avoid races. Claim the trade by setting status
         TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + trade.getId()));
 
-        // Prefer stricter claim: if current status is EXIT_TRIGGERED then move to EXIT_ORDER_PLACED.
-        // Otherwise (e.g., forceClose) allow transition from EXECUTED -> EXIT_ORDER_PLACED.
+        // Prefer stricter claim: if current status is EXIT_TRIGGERED then move to the requested exit-order state.
+        // Otherwise (e.g., forceClose) allow transition from EXECUTED into the requested exit-order state.
         int claimed = 0;
         try {
             // Try each claimable status in order, so TARGET_ORDER_PLACED trades can transition into EXIT_ORDER_PLACED.
@@ -1274,7 +1286,7 @@ public class TradeExecutionService {
                 claimed = triggeredTradeRepo.claimIfStatusEquals(
                         persisted.getId(),
                         fromStatus.name(),
-                        TriggeredTradeStatus.EXIT_ORDER_PLACED.name(),
+                        placedStatus.name(),
                         exitReason
                 );
             }
@@ -1288,7 +1300,7 @@ public class TradeExecutionService {
             return;
         }
 
-        // Persist exitReason so we record why we initiated a square-off. Do NOT mark EXIT_ORDER_PLACED until we have an exitOrderId.
+        // Persist exitReason so we record why we initiated a square-off. Do not finalize the placed state until we have an exitOrderId.
         try {
             persisted.setExitReason(exitReason);
             triggeredTradeRepo.save(persisted);
@@ -1308,7 +1320,7 @@ public class TradeExecutionService {
                 : exitPrice;
 
         // Resolve customerId from broker credentials if available; fallback to default
-        OrderPlacementResult result = placeExitOrderAndPersist(persisted, resolvedExitPrice, exitReason, TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        OrderPlacementResult result = placeExitOrderAndPersist(persisted, resolvedExitPrice, exitReason, placedStatus);
 
         if (result == null || !result.isSuccess()) {
             String rejectionReason = result != null ? result.getRejectionReason() : "Unknown error";
@@ -2371,6 +2383,10 @@ public class TradeExecutionService {
     }
 
     public void squareOffTrade(Long id, Double price) {
+        squareOffTrade(id, price, TriggeredTradeStatus.EXIT_ORDER_PLACED);
+    }
+
+    public void squareOffTrade(Long id, Double price, TriggeredTradeStatus placedStatus) {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(id)
                 .orElseThrow(() -> new RuntimeException("Trade not found"));
 
@@ -2380,7 +2396,7 @@ public class TradeExecutionService {
         } else {
             exitPrice = ltpCacheService.getLtp(tradeSetupEntity.getScripCode());
         }
-        squareOff(tradeSetupEntity, exitPrice, "Manual Exit");
+        squareOff(tradeSetupEntity, exitPrice, "Manual Exit", placedStatus);
     }
 
 
