@@ -6,7 +6,9 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
@@ -38,39 +40,47 @@ public class ScriptMasterService {
                         .filter(s -> (s.getStrikePrice() == null || Double.compare(s.getStrikePrice(), 0.0) == 0)
                                 && (s.getExpiry() == null || s.getExpiry().isBlank()))
                         .map(ScriptMasterEntity::getTradingSymbol)
-                        .distinct()
-                        .toList();
+                        .collect(Collectors.toList());
+                filtered = sortedDistinct(filtered);
                 log.debug("filtered (NULL or 0.0 & blank expiry) size for {} = {}", ex, filtered.size());
                 if (!filtered.isEmpty()) return filtered;
 
                 // Final fallback: return any trading symbols for the exchange to avoid empty responses
                 if (!all.isEmpty()) {
-                    List<String> any = all.stream()
-                            .map(ScriptMasterEntity::getTradingSymbol)
-                            .distinct()
-                            .toList();
+                    List<String> any = toSortedInstrumentNames(all);
                     log.debug("returning any trading symbols for {} size = {}", ex, any.size());
                     return any;
                 }
 
                 // As a last effort, try the original exact-match finder
-                List<String> exact = repository.findByExchange(ex).stream()
-                        .map(ScriptMasterEntity::getTradingSymbol)
-                        .distinct()
-                        .toList();
+                List<String> exact = toSortedInstrumentNames(repository.findByExchange(ex));
                 log.debug("exact-match fallback size for {} = {}", ex, exact.size());
                 return exact;
             }
 
-            return list.stream()
-                    .map(ScriptMasterEntity::getTradingSymbol)
-                    .distinct()
-                    .toList();
+            return toSortedInstrumentNames(list);
         }
 
-        return repository.findByExchange(exchange).stream()
+        return toSortedInstrumentNames(repository.findByExchange(exchange));
+    }
+
+    private List<String> toSortedInstrumentNames(List<ScriptMasterEntity> scripts) {
+        if (scripts == null || scripts.isEmpty()) {
+            return List.of();
+        }
+        return sortedDistinct(scripts.stream()
                 .map(ScriptMasterEntity::getTradingSymbol)
+                .collect(Collectors.toList()));
+    }
+
+    private List<String> sortedDistinct(List<String> instruments) {
+        if (instruments == null || instruments.isEmpty()) {
+            return List.of();
+        }
+        return instruments.stream()
+                .filter(Objects::nonNull)
                 .distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER.thenComparing(Comparator.naturalOrder()))
                 .toList();
     }
 

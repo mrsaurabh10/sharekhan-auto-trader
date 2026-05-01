@@ -3,6 +3,7 @@ package org.com.sharekhan.controller;
 import org.com.sharekhan.dto.ModifyOrderRequest;
 import org.com.sharekhan.dto.UpdateTargetsRequest;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.http.HttpStatus;
@@ -30,9 +31,19 @@ public class TradeExecutionController {
     }
 
     @PostMapping("/square-off/{id}")
-    public ResponseEntity<String> squareOff(@PathVariable Long id, @RequestParam(required = false) Double price) {
+    public ResponseEntity<String> squareOff(@PathVariable Long id,
+                                            @RequestParam(required = false) Double price,
+                                            @RequestParam(required = false) TriggeredTradeStatus exitOrderStatus) {
+        TriggeredTradeStatus requestedExitOrderStatus = exitOrderStatus != null
+                ? exitOrderStatus
+                : TriggeredTradeStatus.EXIT_ORDER_PLACED;
+        if (requestedExitOrderStatus != TriggeredTradeStatus.EXIT_ORDER_PLACED
+                && requestedExitOrderStatus != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
+            return ResponseEntity.badRequest()
+                    .body("exitOrderStatus must be EXIT_ORDER_PLACED or TARGET_ORDER_PLACED");
+        }
         try {
-            tradeExecutionService.squareOffTrade(id, price);
+            tradeExecutionService.squareOffTrade(id, price, requestedExitOrderStatus);
             return ResponseEntity.ok("Trade square off initiated");
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
