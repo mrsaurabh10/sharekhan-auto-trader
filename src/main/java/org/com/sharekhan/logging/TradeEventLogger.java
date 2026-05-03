@@ -47,11 +47,12 @@ public class TradeEventLogger {
                                         TriggerTradeRequestEntity trigger,
                                         OrderPlacementResult result,
                                         Double referencePrice) {
-        log.info("{}_ORDER_ACCEPTED | {} | orderId={} | brokerStatus={} | referencePrice={}",
+        log.info("{}_ORDER_ACCEPTED | {} | orderId={} | brokerStatus={} | attemptedPrice={} | referencePrice={}",
                 safe(stage),
                 describeTrigger(trigger),
                 safe(result != null ? result.getOrderId() : null),
                 safe(result != null ? result.getStatus() : null),
+                formatPrice(resolveAttemptedPrice(result, referencePrice)),
                 formatPrice(referencePrice));
     }
 
@@ -59,9 +60,10 @@ public class TradeEventLogger {
                                         TriggerTradeRequestEntity trigger,
                                         String reason,
                                         Double referencePrice) {
-        log.error("{}_ORDER_REJECTED | {} | referencePrice={} | reason={}",
+        log.error("{}_ORDER_REJECTED | {} | attemptedPrice={} | referencePrice={} | reason={}",
                 safe(stage),
                 describeTrigger(trigger),
+                formatPrice(referencePrice),
                 formatPrice(referencePrice),
                 safe(reason));
     }
@@ -70,11 +72,12 @@ public class TradeEventLogger {
                                         TriggeredTradeSetupEntity trade,
                                         OrderPlacementResult result,
                                         Double referencePrice) {
-        log.info("{}_ORDER_ACCEPTED | {} | orderId={} | brokerStatus={} | referencePrice={}",
+        log.info("{}_ORDER_ACCEPTED | {} | orderId={} | brokerStatus={} | attemptedPrice={} | referencePrice={}",
                 safe(stage),
                 describeTrade(trade),
                 safe(result != null ? result.getOrderId() : null),
                 safe(result != null ? result.getStatus() : null),
+                formatPrice(resolveAttemptedPrice(result, referencePrice)),
                 formatPrice(referencePrice));
     }
 
@@ -82,11 +85,35 @@ public class TradeEventLogger {
                                         TriggeredTradeSetupEntity trade,
                                         String reason,
                                         Double referencePrice) {
-        log.error("{}_ORDER_REJECTED | {} | referencePrice={} | reason={}",
+        logOrderRejected(stage, trade, reason, referencePrice, referencePrice);
+    }
+
+    public static void logOrderRejected(String stage,
+                                        TriggeredTradeSetupEntity trade,
+                                        String reason,
+                                        Double referencePrice,
+                                        Double attemptedPrice) {
+        log.error("{}_ORDER_REJECTED | {} | attemptedPrice={} | referencePrice={} | reason={}",
                 safe(stage),
                 describeTrade(trade),
+                formatPrice(attemptedPrice),
                 formatPrice(referencePrice),
                 safe(reason));
+    }
+
+    public static void logOrderAttempt(String stage,
+                                       TriggeredTradeSetupEntity trade,
+                                       int attemptNumber,
+                                       String action,
+                                       Double attemptedPrice,
+                                       String orderId) {
+        log.info("{}_ORDER_ATTEMPT | {} | attempt={} | action={} | attemptedPrice={} | orderId={}",
+                safe(stage),
+                describeTrade(trade),
+                attemptNumber,
+                safe(action),
+                formatPrice(attemptedPrice),
+                safe(orderId));
     }
 
     public static void logOrderExecuted(String stage,
@@ -160,6 +187,12 @@ public class TradeEventLogger {
                 .setScale(2, RoundingMode.HALF_UP)
                 .stripTrailingZeros()
                 .toPlainString();
+    }
+
+    private static Double resolveAttemptedPrice(OrderPlacementResult result, Double fallbackPrice) {
+        return result != null && result.getAttemptedPrice() != null
+                ? result.getAttemptedPrice()
+                : fallbackPrice;
     }
 
     private static String formatPrice(double value) {

@@ -25,6 +25,7 @@ public class SimulatorBrokerService implements BrokerService {
                 .success(true)
                 .orderId(orderId)
                 .status("Fully Executed")
+                .attemptedPrice(ltp)
                 .executedPrice(ltp)
                 .build();
     }
@@ -44,6 +45,7 @@ public class SimulatorBrokerService implements BrokerService {
                 .success(true)
                 .orderId(orderId)
                 .status("Fully Executed")
+                .attemptedPrice(exitPrice)
                 .executedPrice(exitPrice)
                 .pnl(pnl)
                 .build();

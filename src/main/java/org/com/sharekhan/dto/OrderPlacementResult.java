@@ -10,6 +10,7 @@ public class OrderPlacementResult {
     private String orderId;
     private String status; // e.g. "Fully Executed", "Pending", "Rejected"
     private String rejectionReason;
+    private Double attemptedPrice;
     private Double executedPrice;
     private Double pnl; // for exit orders if available
 }
