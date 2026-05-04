@@ -41,6 +41,7 @@ public class TradingMessageService {
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
 
     private final TradingSignalParser parserChain = new ParserChain(
+            new SpotTelegramSignalParser(),
             new TelegramSignalParser(),
             new WhatsappSignalParser(),
             new AartiSignalParser(),
@@ -423,10 +424,15 @@ public class TradingMessageService {
         request.setEntryPrice(parseDouble(parsed.get("entry")));
         request.setTarget1(parseDouble(parsed.get("target1")));
         request.setTarget2(parseDouble(parsed.get("target2")));
+        request.setTarget3(parseDouble(parsed.get("target3")));
         request.setStopLoss(parseDouble(parsed.get("stopLoss")));
         request.setExpiry((String) parsed.get("expiry"));
         request.setExchange((String) parsed.get("exchange"));
         request.setIntraday(true);
+        request.setUseSpotPrice(parseBoolean(parsed.get("useSpotPrice")));
+        request.setUseSpotForEntry(parseBoolean(parsed.get("useSpotForEntry")));
+        request.setUseSpotForSl(parseBoolean(parsed.get("useSpotForSl")));
+        request.setUseSpotForTarget(parseBoolean(parsed.get("useSpotForTarget")));
         Object action = parsed.get("action");
         if (action != null) {
             request.setAction(action.toString().trim().toUpperCase(Locale.ROOT));
@@ -457,6 +463,14 @@ public class TradingMessageService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private Boolean parseBoolean(Object val) {
+        if (val instanceof Boolean) return (Boolean) val;
+        if (val == null) return null;
+        String normalized = val.toString().trim().toLowerCase(Locale.ROOT);
+        if (normalized.isEmpty()) return null;
+        return normalized.equals("true") || normalized.equals("1") || normalized.equals("yes") || normalized.equals("on");
     }
 
 }
