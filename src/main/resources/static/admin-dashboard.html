@@ -52,6 +52,23 @@
         /* Keep select + reload button in the same grid cell to avoid misalignment */
         .input-with-btn { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
         .btn.small { padding: 4px 6px; font-size: 12px; }
+        .tab-btn { border: 1px solid #ccd3df; background: #fff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }
+        .tab-btn.active { background: #2b7cff; border-color: #2b7cff; color: #fff; font-weight: bold; }
+        .analytics-panel { border: 1px solid #e4e7ef; padding: 0.75rem; margin-top: 12px; background: #fcfcff; }
+        .analytics-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+        .analytics-toolbar input { padding: 4px 6px; }
+        .analytics-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 8px; margin-bottom: 10px; }
+        .analytics-card { border: 1px solid #dfe4ef; border-radius: 6px; padding: 8px; background: #fff; min-height: 56px; }
+        .analytics-card .label { font-size: 0.78rem; color: #666; margin-bottom: 4px; }
+        .analytics-card .value { font-size: 1.05rem; font-weight: bold; }
+        .analytics-card .value.positive { color: green; }
+        .analytics-card .value.negative { color: red; }
+        .analytics-grids { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .analytics-grids table { font-size: 0.9rem; }
+        .analytics-state { color: #666; margin: 6px 0; }
+        @media (max-width: 900px) {
+            .analytics-grids { grid-template-columns: 1fr; }
+        }
     </style>
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
     <meta http-equiv="Pragma" content="no-cache"/>
@@ -145,7 +162,7 @@
                 <div id="result" class="hint"></div>
             </div>
 
-            <div style="margin-top:12px">
+            <div id="requestsSection" style="margin-top:12px">
                 <h4>Trading Requests</h4>
                 <table id="user-requests-table" style="width:100%;border-collapse:collapse" border="1">
                     <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th></tr></thead>
@@ -157,7 +174,38 @@
                     <button id="request-next-btn" class="btn">Next &gt;</button>
                 </div>
             </div>
-            <div style="margin-top:12px">
+            <div id="analyticsPanel" class="analytics-panel" style="display:none">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:8px; flex-wrap:wrap;">
+                    <h4 style="margin:0;">Analytics</h4>
+                    <div id="analyticsState" class="analytics-state"></div>
+                </div>
+                <div class="analytics-toolbar">
+                    <label>From <input id="analyticsFrom" type="date"></label>
+                    <label>To <input id="analyticsTo" type="date"></label>
+                    <label>Symbol <input id="analyticsSymbol" type="search" placeholder="optional" style="width:120px;"></label>
+                    <label>Source <input id="analyticsSource" type="search" placeholder="optional" style="width:120px;"></label>
+                    <label><input id="analyticsIntraday" type="checkbox"> Intraday only</label>
+                    <button id="analyticsRefreshBtn" class="btn small">Refresh</button>
+                </div>
+                <div id="analyticsCards" class="analytics-cards"></div>
+                <div class="analytics-grids">
+                    <div>
+                        <h4 style="margin:0 0 4px 0;">Profitability by Symbol</h4>
+                        <table id="analyticsSymbolTable">
+                            <thead><tr><th>Symbol</th><th>Closed</th><th>PnL</th><th>Win %</th><th>Avg PnL</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                    <div>
+                        <h4 style="margin:0 0 4px 0;">Daily Realized PnL</h4>
+                        <table id="analyticsDayTable">
+                            <thead><tr><th>Date</th><th>Closed</th><th>PnL</th><th>Cumulative</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div id="executedSection" style="margin-top:12px">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
                     <h4 style="margin:0;">Trades Executed</h4>
                     <div>
@@ -245,6 +293,6 @@
     </div>
 </div>
 
-<script src="/admin-dashboard.js?v=14"></script>
+<script src="/admin-dashboard.js?v=16"></script>
 </body>
 </html>
