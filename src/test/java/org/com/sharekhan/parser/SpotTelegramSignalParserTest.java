@@ -58,6 +58,38 @@ class SpotTelegramSignalParserTest {
         assertNull(parser.parse(text));
     }
 
+    @Test
+    void parsesBelowSpotPutSignalWithoutQuickTradeFlag() {
+        String text = """
+                BUY TATASTEEL 210 PE BELOW SPOT 210.02
+
+                TARGET (SPOT) :- 205.96 / 203.50 / 201.00
+
+                SL (SPOT) :- 212.12
+
+                MAY EXPIRY
+                """;
+
+        Map<String, Object> result = parser.parse(text);
+
+        assertNotNull(result);
+        assertEquals("BUY", result.get("action"));
+        assertEquals("TATASTEEL", result.get("symbol"));
+        assertEquals("210", result.get("strike"));
+        assertEquals("PE", result.get("optionType"));
+        assertEquals(210.02, (Double) result.get("entry"), 0.01);
+        assertEquals("205.96", result.get("target1"));
+        assertEquals("203.50", result.get("target2"));
+        assertEquals("201.00", result.get("target3"));
+        assertEquals(212.12, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(expectedMayExpiry(), result.get("expiry"));
+        assertEquals(true, result.get("useSpotPrice"));
+        assertEquals(true, result.get("useSpotForEntry"));
+        assertEquals(true, result.get("useSpotForSl"));
+        assertEquals(true, result.get("useSpotForTarget"));
+        assertFalse(result.containsKey("quickTrade"));
+    }
+
     private String expectedMayExpiry() {
         LocalDate today = LocalDate.now();
         int year = today.getYear();
