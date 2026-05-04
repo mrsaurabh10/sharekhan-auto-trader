@@ -18,7 +18,7 @@ import java.util.stream.Collectors;
 public class SpotTelegramSignalParser implements TradingSignalParser {
 
     private static final Pattern TRADE_PATTERN = Pattern.compile(
-            "^(?:(BUY|SELL)\\s+)?([A-Z0-9\\s]+?)\\s+(\\d+(?:\\.\\d+)?)\\s+(CE|PE)\\s+ABOVE\\s+SPOT\\s+(\\d+(?:\\.\\d+)?)\\b",
+            "^(?:(BUY|SELL)\\s+)?([A-Z0-9\\s]+?)\\s+(\\d+(?:\\.\\d+)?)\\s+(CE|PE)\\s+(?:ABOVE|BELOW)\\s+SPOT\\s+(\\d+(?:\\.\\d+)?)\\b",
             Pattern.CASE_INSENSITIVE
     );
 
