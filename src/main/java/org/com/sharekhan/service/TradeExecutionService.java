@@ -1043,7 +1043,7 @@ public class TradeExecutionService {
             OrderPlacementResult result = attemptEntryPlacement(trigger, ltp, ctx, brokerService);
 
             if (!result.isSuccess()) {
-                TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp);
+                TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp, result.getAttemptedPrice());
                 log.error("❌ Place order failed for trigger {}. Reason: {}", trigger.getId(), result.getRejectionReason());
                 TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
                 rejected.setStatus(TriggeredTradeStatus.REJECTED);
@@ -1388,6 +1388,7 @@ public class TradeExecutionService {
 
             double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
             log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, trigger.getId(), formatPrice(price));
+            TradeEventLogger.logOrderAttempt("ENTRY", trigger, attempt + 1, attempt == 0 ? "PLACE" : "MODIFY", price, orderId);
 
             if (attempt > 0 && orderId != null && !orderId.isBlank()) {
                 latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
@@ -1428,6 +1429,9 @@ public class TradeExecutionService {
             }
 
             lastResult = result;
+            if (result != null && result.getAttemptedPrice() == null) {
+                result.setAttemptedPrice(price);
+            }
 
             if (result != null && result.getOrderId() != null && !result.getOrderId().isBlank()) {
                 orderId = result.getOrderId();
@@ -1965,9 +1969,20 @@ public class TradeExecutionService {
             throw new IllegalStateException("No broker service found for: " + exitCtx.getBrokerName());
         }
 
+        TradeEventLogger.logOrderAttempt("EXIT", persisted, 1, "PLACE", exitPrice, persisted.getExitOrderId());
         OrderPlacementResult result = brokerService.placeExitOrder(persisted, exitCtx, exitPrice);
+        if (result == null) {
+            result = OrderPlacementResult.builder()
+                    .success(false)
+                    .status("Rejected")
+                    .rejectionReason("Broker returned no exit placement result")
+                    .attemptedPrice(exitPrice)
+                    .build();
+        } else if (result.getAttemptedPrice() == null) {
+            result.setAttemptedPrice(exitPrice);
+        }
         if (!result.isSuccess()) {
-            TradeEventLogger.logOrderRejected("EXIT", persisted, result.getRejectionReason(), exitPrice);
+            TradeEventLogger.logOrderRejected("EXIT", persisted, result.getRejectionReason(), exitPrice, result.getAttemptedPrice());
             return result;
         }
 
@@ -2292,6 +2307,7 @@ public class TradeExecutionService {
         }
 
         if (broker == Broker.SIMULATOR) {
+            TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", newPrice, trade.getExitOrderId());
             trade.setExitReason(exitReason);
             if (postStatus != null) {
                 trade.setStatus(postStatus);
@@ -2324,6 +2340,7 @@ public class TradeExecutionService {
                 return new ModifyExitOrderResult(false, "Sharekhan token unavailable. Please re-authenticate and retry.");
             }
 
+            TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", newPrice, trade.getExitOrderId());
             com.sharekhan.SharekhanConnect sharekhanConnect = new com.sharekhan.SharekhanConnect(null, ctx.getApiKey(), accessToken);
             JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, newPrice, ctx.getCustomerId(), ctx.getClientCode());
 

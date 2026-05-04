@@ -75,6 +75,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                     .success(true)
                     .orderId(updatedOrderId)
                     .status(status)
+                    .attemptedPrice(newPrice)
                     .executedPrice(executedPrice)
                     .build();
         } catch (com.sharekhan.http.exceptions.SharekhanAPIException e) {
@@ -82,6 +83,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             return OrderPlacementResult.builder()
                     .success(false)
                     .status("Rejected")
+                    .attemptedPrice(newPrice)
                     .rejectionReason("ENTRY_MODIFY_REJECTED: " + e.getMessage())
                     .build();
         } catch (Exception e) {
@@ -89,6 +91,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             return OrderPlacementResult.builder()
                     .success(false)
                     .status("Rejected")
+                    .attemptedPrice(newPrice)
                     .rejectionReason("ENTRY_MODIFY_FAILED: " + e.getMessage())
                     .build();
         }
@@ -149,12 +152,16 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             String orderId = null;
             final int maxAttempts = 3;
             long[] backoffMs = new long[]{300L, 700L, 1500L};
+            String stage = "S".equalsIgnoreCase(transactionType) ? "EXIT" : "ENTRY";
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
+                    log.info("{}_BROKER_ATTEMPT | tradeId={} | symbol={} | attempt={} | requestType={} | transactionType={} | attemptedPrice={}",
+                            stage, trade.getId(), trade.getSymbol(), attempt, requestType, transactionType, price);
                     response = SharekhanConsoleSilencer.call(() -> sharekhanConnect.placeOrder(order));
                 } catch (Exception e) {
-                    log.warn("Attempt {}: placeOrder threw exception for trade {}: {}", attempt, trade.getId(), e.getMessage());
+                    log.warn("{}_BROKER_ATTEMPT_FAILED | tradeId={} | attempt={} | attemptedPrice={} | reason={}",
+                            stage, trade.getId(), attempt, price, e.getMessage());
                 }
 
                 if (response != null && response.has("data")) {
@@ -162,9 +169,14 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                     String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
                     if (respOrderId != null && !respOrderId.isBlank()) {
                         orderId = respOrderId;
+                        log.info("{}_BROKER_ATTEMPT_ACCEPTED | tradeId={} | attempt={} | attemptedPrice={} | orderId={}",
+                                stage, trade.getId(), attempt, price, orderId);
                         break;
                     }
                 }
+
+                log.warn("{}_BROKER_ATTEMPT_NO_ORDER_ID | tradeId={} | attempt={} | attemptedPrice={}",
+                        stage, trade.getId(), attempt, price);
 
                 if (attempt < maxAttempts) {
                     try { Thread.sleep(backoffMs[Math.min(attempt-1, backoffMs.length-1)]); } catch (InterruptedException ignored) {}
@@ -180,6 +192,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                 return OrderPlacementResult.builder()
                         .success(false)
                         .rejectionReason(reason)
+                        .attemptedPrice(price)
                         .status("Rejected")
                         .build();
             }
@@ -213,6 +226,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                     .success(true)
                     .orderId(orderId)
                     .status(status)
+                    .attemptedPrice(price)
                     .executedPrice(executedPrice)
                     .pnl(pnl)
                     .build();
@@ -222,6 +236,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             return OrderPlacementResult.builder()
                     .success(false)
                     .rejectionReason("Exception: " + e.getMessage())
+                    .attemptedPrice(price)
                     .status("Rejected")
                     .build();
         }
