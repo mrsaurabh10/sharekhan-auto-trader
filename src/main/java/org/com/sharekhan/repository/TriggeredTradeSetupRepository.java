@@ -99,4 +99,19 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     // Added for duplicate check
     List<TriggeredTradeSetupEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);
+
+    @Query("""
+            SELECT t
+            FROM TriggeredTradeSetupEntity t
+            WHERE (:userId IS NULL OR t.appUserId = :userId)
+              AND (:symbol IS NULL OR LOWER(t.symbol) LIKE LOWER(CONCAT('%', :symbol, '%')))
+              AND (:source IS NULL OR LOWER(t.source) LIKE LOWER(CONCAT('%', :source, '%')))
+              AND (:brokerCredentialsId IS NULL OR t.brokerCredentialsId = :brokerCredentialsId)
+              AND (:intraday IS NULL OR t.intraday = :intraday)
+            """)
+    List<TriggeredTradeSetupEntity> findForAnalytics(@Param("userId") Long userId,
+                                                     @Param("symbol") String symbol,
+                                                     @Param("source") String source,
+                                                     @Param("brokerCredentialsId") Long brokerCredentialsId,
+                                                     @Param("intraday") Boolean intraday);
 }

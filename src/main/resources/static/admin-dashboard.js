@@ -83,6 +83,145 @@
     }
   }
 
+  function formatAnalyticsNumber(value, decimals) {
+    if (value == null || value === '' || isNaN(Number(value))) return '-';
+    return Number(value).toFixed(decimals == null ? 2 : decimals);
+  }
+
+  function formatAnalyticsPercent(value) {
+    if (value == null || isNaN(Number(value))) return '-';
+    return Number(value).toFixed(1) + '%';
+  }
+
+  function analyticsValueClass(value) {
+    const num = Number(value);
+    if (isNaN(num) || num === 0) return '';
+    return num > 0 ? ' positive' : ' negative';
+  }
+
+  function setDefaultAnalyticsDates() {
+    const fromEl = document.getElementById('analyticsFrom');
+    const toEl = document.getElementById('analyticsTo');
+    if (!fromEl || !toEl || (fromEl.value && toEl.value)) return;
+    const to = new Date();
+    const from = new Date();
+    from.setDate(to.getDate() - 30);
+    const asDateInput = d => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return year + '-' + month + '-' + day;
+    };
+    if (!toEl.value) toEl.value = asDateInput(to);
+    if (!fromEl.value) fromEl.value = asDateInput(from);
+  }
+
+  function renderAnalyticsEmpty(message) {
+    const state = document.getElementById('analyticsState');
+    const cards = document.getElementById('analyticsCards');
+    const symbolBody = document.querySelector('#analyticsSymbolTable tbody');
+    const dayBody = document.querySelector('#analyticsDayTable tbody');
+    if (state) state.innerText = message || '';
+    if (cards) cards.innerHTML = '';
+    if (symbolBody) symbolBody.innerHTML = '<tr><td colspan="5">No symbol data</td></tr>';
+    if (dayBody) dayBody.innerHTML = '<tr><td colspan="4">No daily data</td></tr>';
+  }
+
+  function renderAnalytics(data) {
+    const state = document.getElementById('analyticsState');
+    const cards = document.getElementById('analyticsCards');
+    const symbolBody = document.querySelector('#analyticsSymbolTable tbody');
+    const dayBody = document.querySelector('#analyticsDayTable tbody');
+    if (!cards || !symbolBody || !dayBody) return;
+    const summary = data && data.summary ? data.summary : {};
+    if (state) {
+      const filters = data && data.filters ? data.filters : {};
+      state.innerText = filters.from && filters.to ? ('Range: ' + filters.from + ' to ' + filters.to) : '';
+    }
+
+    const cardDefs = [
+      ['Realized PnL', formatAnalyticsNumber(summary.realizedPnl), summary.realizedPnl],
+      ['Win Rate', formatAnalyticsPercent(summary.winRate), null],
+      ['Profit Factor', formatAnalyticsNumber(summary.profitFactor), null],
+      ['Closed Trades', String(summary.totalClosedTrades != null ? summary.totalClosedTrades : 0), null],
+      ['Average Win', formatAnalyticsNumber(summary.averageWin), summary.averageWin],
+      ['Average Loss', formatAnalyticsNumber(summary.averageLoss), summary.averageLoss],
+      ['Best/Worst', formatAnalyticsNumber(summary.bestTradePnl) + ' / ' + formatAnalyticsNumber(summary.worstTradePnl), null],
+      ['Open Trades', String(summary.openTrades != null ? summary.openTrades : 0) + ' / Qty ' + String(summary.openQuantity != null ? summary.openQuantity : 0), null]
+    ];
+    cards.innerHTML = cardDefs.map(def =>
+      '<div class="analytics-card"><div class="label">' + escapeHtml(def[0]) + '</div><div class="value' + analyticsValueClass(def[2]) + '">' + escapeHtml(def[1]) + '</div></div>'
+    ).join('');
+
+    const bySymbol = Array.isArray(data && data.bySymbol) ? data.bySymbol : [];
+    symbolBody.innerHTML = bySymbol.length ? bySymbol.map(row =>
+      '<tr><td>' + escapeHtml(row.symbol || '-') + '</td>' +
+      '<td>' + escapeHtml(String(row.closedCount || 0)) + '</td>' +
+      '<td style="color:' + (Number(row.realizedPnl || 0) >= 0 ? 'green' : 'red') + ';font-weight:bold">' + escapeHtml(formatAnalyticsNumber(row.realizedPnl)) + '</td>' +
+      '<td>' + escapeHtml(formatAnalyticsPercent(row.winRate)) + '</td>' +
+      '<td>' + escapeHtml(formatAnalyticsNumber(row.averagePnl)) + '</td></tr>'
+    ).join('') : '<tr><td colspan="5">No symbol data</td></tr>';
+
+    const byDay = Array.isArray(data && data.byDay) ? data.byDay : [];
+    dayBody.innerHTML = byDay.length ? byDay.map(row =>
+      '<tr><td>' + escapeHtml(row.date || '-') + '</td>' +
+      '<td>' + escapeHtml(String(row.closedCount || 0)) + '</td>' +
+      '<td style="color:' + (Number(row.realizedPnl || 0) >= 0 ? 'green' : 'red') + ';font-weight:bold">' + escapeHtml(formatAnalyticsNumber(row.realizedPnl)) + '</td>' +
+      '<td>' + escapeHtml(formatAnalyticsNumber(row.cumulativeRealizedPnl)) + '</td></tr>'
+    ).join('') : '<tr><td colspan="4">No daily data</td></tr>';
+  }
+
+  async function loadAnalyticsForUser(userId) {
+    const uid = userId || window.selectedUserId;
+    if (!uid) { renderAnalyticsEmpty('No user selected'); return; }
+    setDefaultAnalyticsDates();
+    const state = document.getElementById('analyticsState');
+    if (state) state.innerText = 'Loading analytics...';
+    try {
+      const params = new URLSearchParams();
+      params.set('userId', uid);
+      const from = (document.getElementById('analyticsFrom') || {}).value;
+      const to = (document.getElementById('analyticsTo') || {}).value;
+      const symbol = ((document.getElementById('analyticsSymbol') || {}).value || '').trim();
+      const source = ((document.getElementById('analyticsSource') || {}).value || '').trim();
+      const intraday = !!((document.getElementById('analyticsIntraday') || {}).checked);
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      if (symbol) params.set('symbol', symbol);
+      if (source) params.set('source', source);
+      if (intraday) params.set('intraday', 'true');
+      const data = await fetchJson('/api/analytics/trades?' + params.toString());
+      renderAnalytics(data);
+    } catch (e) {
+      console.error('Failed to load analytics', e);
+      renderAnalyticsEmpty('Error loading analytics');
+    }
+  }
+
+  function refreshAnalyticsForSelectedUser() {
+    if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId).catch(function(){});
+  }
+
+  function wireAnalytics() {
+    setDefaultAnalyticsDates();
+    const btn = document.getElementById('analyticsRefreshBtn');
+    if (btn) btn.addEventListener('click', refreshAnalyticsForSelectedUser);
+    ['analyticsFrom', 'analyticsTo', 'analyticsIntraday'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('change', refreshAnalyticsForSelectedUser);
+    });
+    ['analyticsSymbol', 'analyticsSource'].forEach(function(id) {
+      const symbol = document.getElementById(id);
+      if (!symbol) return;
+      let timer = null;
+      symbol.addEventListener('input', function() {
+        clearTimeout(timer);
+        timer = setTimeout(refreshAnalyticsForSelectedUser, 250);
+      });
+    });
+    renderAnalyticsEmpty('Select a user');
+  }
+
   function promptManualCloseOrderStatus(tradeId, hasPrice) {
     if (!hasPrice) return 'EXIT_ORDER_PLACED';
     const choice = prompt(
@@ -293,7 +432,7 @@
                 alert((res.reason ? ('Rejected: ' + res.reason) : (res.message || 'Order rejected')));
                 try { prefillPlaceOrderFormFromRequestRow(r); } catch (e) { }
               }
-              await loadRequestedOrdersForUser(uid); await loadExecutedForUser(uid);
+              await loadRequestedOrdersForUser(uid); await loadExecutedForUser(uid); await loadAnalyticsForUser(uid);
             } catch (e) { alert('Trigger failed: ' + (e && e.message ? e.message : e)); } finally { trig.disabled = false; }
           });
           actionCell.appendChild(trig);
@@ -425,7 +564,7 @@
         const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(statusUpper)) {
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.innerText = 'Edit';
-          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); }); }); actionCell.appendChild(editBtn);
+          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); await loadAnalyticsForUser(uid); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginLeft = '4px'; moveBtn.innerText = 'Move SL to Cost';
           moveBtn.addEventListener('click', async function () { await ensureCsrf(); try { await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); } catch(e) { alert('Failed to move SL to cost: ' + (e && e.message ? e.message : e)); } }); actionCell.appendChild(moveBtn);
           const modifyExitBtn = document.createElement('button'); modifyExitBtn.className = 'btn small'; modifyExitBtn.style.marginLeft = '4px'; modifyExitBtn.innerText = 'Modify Exit';
@@ -443,7 +582,7 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ price: parsed })
               });
-              setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800);
+              setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); refreshAnalyticsForSelectedUser(); } catch (e) { } }, 800);
             } catch (e) {
               alert('Failed to modify exit order: ' + (e && e.message ? e.message : e));
             }
@@ -468,7 +607,7 @@
             params.set('exitOrderStatus', exitOrderStatus);
             const url = '/api/trades/square-off/' + id + '?' + params.toString();
             await fetchJson(url, { method: 'POST' });
-            setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800);
+            setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); refreshAnalyticsForSelectedUser(); } catch (e) { } }, 800);
           }); actionCell.appendChild(closeBtn);
         } else { actionCell.innerText = '-'; }
 
@@ -763,7 +902,51 @@
   function showBrokersSectionFor(userId, userName) {
     const sec = document.getElementById('brokersSection'); const lbl = document.getElementById('selectedUserName');
     if (lbl) lbl.innerText = String(userName != null ? userName : userId);
-    if (sec) sec.style.display = 'block';
+    if (sec && window.currentUserTab === 'brokers') sec.style.display = 'block';
+  }
+
+  function setDisplay(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = value;
+  }
+
+  function renderUserTabs() {
+    const tabs = document.getElementById('userTabs');
+    if (!tabs) return;
+    const current = window.currentUserTab || 'trading';
+    const defs = [
+      ['trading', 'Trading'],
+      ['analytics', 'Analytics'],
+      ['brokers', 'Brokers']
+    ];
+    tabs.innerHTML = '';
+    defs.forEach(function(def) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'tab-btn' + (current === def[0] ? ' active' : '');
+      btn.setAttribute('data-tab', def[0]);
+      btn.innerText = def[1];
+      btn.addEventListener('click', function() { showUserTab(def[0]); });
+      tabs.appendChild(btn);
+    });
+  }
+
+  function showUserTab(tab) {
+    window.currentUserTab = tab || 'trading';
+    renderUserTabs();
+    const hasUser = !!window.selectedUserId;
+    setDisplay('userContent', hasUser ? 'block' : 'none');
+    setDisplay('placeOrderPanel', window.currentUserTab === 'trading' ? 'block' : 'none');
+    setDisplay('requestsSection', window.currentUserTab === 'trading' ? 'block' : 'none');
+    setDisplay('executedSection', window.currentUserTab === 'trading' ? 'block' : 'none');
+    setDisplay('analyticsPanel', window.currentUserTab === 'analytics' ? 'block' : 'none');
+    setDisplay('brokersSection', window.currentUserTab === 'brokers' ? 'block' : 'none');
+    if (window.currentUserTab === 'analytics' && window.selectedUserId) {
+      loadAnalyticsForUser(window.selectedUserId).catch(function(){});
+    }
+    if (window.currentUserTab === 'brokers' && window.selectedUserId) {
+      loadBrokers(window.selectedUserId).catch(function(){});
+    }
   }
 
   function resetAddBrokerForm() { ['b_brokerName','b_customerId','b_apiKey','b_brokerUser','b_brokerPw','b_clientCode','b_totp','b_secret'].forEach(function(id){ const el = document.getElementById(id); if (el) el.value = ''; }); const chk = document.getElementById('b_active'); if (chk) chk.checked = true; }
@@ -815,10 +998,13 @@
   function selectUser(appUserId, liElem, customerId, username) {
     window.selectedUserId = appUserId; window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId; window.selectedUserName = username || (typeof window.selectedCustomerId !== 'undefined' ? String(window.selectedCustomerId) : String(appUserId));
     const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedUserName;
-    const uc = document.getElementById('userContent'); if (uc) uc.style.display = 'block';
+    if (!window.currentUserTab) window.currentUserTab = 'trading';
     const parent = document.getElementById('usersContainer'); if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); }); if (liElem && liElem.classList) liElem.classList.add('active');
     showBrokersSectionFor(appUserId, window.selectedUserName);
-    loadRequestedOrdersForUser(appUserId, 0).catch(function(){}); loadExecutedForUser(appUserId, getSelectedStatuses(), 0).catch(function(){}); loadBrokers(appUserId).catch(function(){});
+    showUserTab(window.currentUserTab);
+    loadRequestedOrdersForUser(appUserId, 0).catch(function(){}); loadExecutedForUser(appUserId, getSelectedStatuses(), 0).catch(function(){});
+    if (window.currentUserTab === 'analytics') loadAnalyticsForUser(appUserId).catch(function(){});
+    if (window.currentUserTab === 'brokers') loadBrokers(appUserId).catch(function(){});
   }
 
   function wireAdminForm() {
@@ -908,7 +1094,7 @@
         const url = alreadyExecuted ? '/api/trades/manual-execute' : '/api/trades/trigger-on-price';
         const resp = await fetchJson(url, { method: 'POST', body: JSON.stringify(body) });
         if (alreadyExecuted) { if (resultDiv) resultDiv.innerText = 'Executed trade added: ' + (resp && resp.id ? ('Trade #' + resp.id) : 'OK'); } else { if (resultDiv) resultDiv.innerText = 'Order placed: ' + (resp && resp.id ? ('Request #' + resp.id) : 'OK'); }
-        if (window.selectedUserId) { await loadRequestedOrdersForUser(window.selectedUserId); await loadExecutedForUser(window.selectedUserId, getSelectedStatuses()); }
+        if (window.selectedUserId) { await loadRequestedOrdersForUser(window.selectedUserId); await loadExecutedForUser(window.selectedUserId, getSelectedStatuses()); await loadAnalyticsForUser(window.selectedUserId); }
       } catch (err) { const msg = (err && err.message) ? err.message : String(err); if (errDiv) { errDiv.style.display = 'block'; errDiv.innerText = msg; } else alert('Place Order failed: ' + msg); } finally { if (btn) btn.disabled = false; }
     });
     if (resetBtn) {
@@ -975,6 +1161,9 @@
   document.addEventListener('DOMContentLoaded', function(){
     ensureCsrf();
     ensureDefaultStatusSelection();
+    window.currentUserTab = window.currentUserTab || 'trading';
+    renderUserTabs();
+    showUserTab(window.currentUserTab);
     loadUsers().catch(function(){});
     wireAdminForm();
     wireBrokersUI();
@@ -983,6 +1172,7 @@
     wireRequestPagination();
     wireExecutedPagination();
     wireUserCreation();
+    wireAnalytics();
     startAdminWs();
   });
 
