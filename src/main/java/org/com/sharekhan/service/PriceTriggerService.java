@@ -392,6 +392,11 @@ public class PriceTriggerService {
                 }
 
                 if (slHit) {
+                    if (!tradeExecutionService.hasUsableTradedExitPrice(persisted, tradedLtp)) {
+                        log.warn("SL hit for trade {} on reference price {}, but traded LTP {} looks invalid for the option. Waiting for correct option LTP.",
+                                tradeId, slRefPrice, tradedLtp);
+                        return 0;
+                    }
                     int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
                     if (updated == 0) {
                         updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
@@ -405,6 +410,11 @@ public class PriceTriggerService {
                     if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
                         int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
                         if (lotsToBook > 0) {
+                            if (!tradeExecutionService.hasUsableTradedExitPrice(persisted, tradedLtp)) {
+                                log.warn("Target hit for trade {} on reference price {}, but traded LTP {} looks invalid for the option. Waiting for correct option LTP.",
+                                        tradeId, targetRefPrice, tradedLtp);
+                                return 0;
+                            }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
                             if (updated == 0) {
                                 updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
@@ -430,6 +440,11 @@ public class PriceTriggerService {
                         }
                         
                         if (targetHit) {
+                            if (!tradeExecutionService.hasUsableTradedExitPrice(persisted, tradedLtp)) {
+                                log.warn("Target hit for trade {} on reference price {}, but traded LTP {} looks invalid for the option. Waiting for correct option LTP.",
+                                        tradeId, targetRefPrice, tradedLtp);
+                                return 0;
+                            }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
                             if (updated == 0) {
                                 updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");

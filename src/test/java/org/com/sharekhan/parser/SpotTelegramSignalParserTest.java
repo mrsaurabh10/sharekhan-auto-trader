@@ -90,6 +90,37 @@ class SpotTelegramSignalParserTest {
         assertFalse(result.containsKey("quickTrade"));
     }
 
+    @Test
+    void parsesSpotSignalWithHyphenInSymbol() {
+        String text = """
+                BUY BAJAJ-AUTO 10100 CE ABOVE SPOT 10096.90
+
+                TARGET (SPOT) :- 10189.30 / 10204.45 / 10250.00
+
+                SL (SPOT) :- 10066.65
+
+                MAY EXPIRY
+                """;
+
+        Map<String, Object> result = parser.parse(text);
+
+        assertNotNull(result);
+        assertEquals("BAJAJ-AUTO", result.get("symbol"));
+        assertEquals("10100", result.get("strike"));
+        assertEquals("CE", result.get("optionType"));
+        assertEquals(10096.90, (Double) result.get("entry"), 0.01);
+        assertEquals("10189.30", result.get("target1"));
+        assertEquals("10204.45", result.get("target2"));
+        assertEquals("10250.00", result.get("target3"));
+        assertEquals(10066.65, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(expectedMayExpiry(), result.get("expiry"));
+        assertEquals(true, result.get("useSpotPrice"));
+        assertEquals(true, result.get("useSpotForEntry"));
+        assertEquals(true, result.get("useSpotForSl"));
+        assertEquals(true, result.get("useSpotForTarget"));
+        assertFalse(result.containsKey("quickTrade"));
+    }
+
     private String expectedMayExpiry() {
         LocalDate today = LocalDate.now();
         int year = today.getYear();

@@ -1267,6 +1267,12 @@ public class TradeExecutionService {
         TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + trade.getId()));
 
+        if (!hasUsableTradedExitPrice(persisted, exitPrice)) {
+            log.warn("Square-off delayed for trade {} because exitPrice={} looks like spot, not the traded option LTP. Waiting for correct option LTP.",
+                    persisted.getId(), exitPrice);
+            return;
+        }
+
         // Prefer stricter claim: if current status is EXIT_TRIGGERED then move to the requested exit-order state.
         // Otherwise (e.g., forceClose) allow transition from EXECUTED into the requested exit-order state.
         int claimed = 0;
@@ -1367,29 +1373,6 @@ public class TradeExecutionService {
         TradeStatus latestStatus = TradeStatus.NO_RECORDS;
 
         for (int attempt = 0; attempt < MAX_ENTRY_ATTEMPTS; attempt++) {
-            EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
-            logEntryDiagnostics(trigger, entryDiagnostics, ltp);
-
-            if (!entryDiagnostics.shouldPlace()) {
-                log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}",
-                        trigger.getId(),
-                        entryDiagnostics.reason(),
-                        formatPercent(entryDiagnostics.spreadPercent()),
-                        formatPrice(entryDiagnostics.bestBid()),
-                        formatPrice(entryDiagnostics.bestAsk()),
-                        formatPrice(entryDiagnostics.recommendedLimit()));
-                TradeEventLogger.logOrderRejected("ENTRY_SPREAD_CHECK", trigger, entryDiagnostics.reason(), ltp);
-                return OrderPlacementResult.builder()
-                        .success(false)
-                        .status("Rejected")
-                        .rejectionReason(entryDiagnostics.reason())
-                        .build();
-            }
-
-            double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
-            log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, trigger.getId(), formatPrice(price));
-            TradeEventLogger.logOrderAttempt("ENTRY", trigger, attempt + 1, attempt == 0 ? "PLACE" : "MODIFY", price, orderId);
-
             if (attempt > 0 && orderId != null && !orderId.isBlank()) {
                 latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
                 log.info("📊 Entry status snapshot for trade {} attempt {}: {}", trigger.getId(), attempt + 1, latestStatus);
@@ -1408,6 +1391,56 @@ public class TradeExecutionService {
                     break;
                 }
             }
+
+            EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
+            logEntryDiagnostics(trigger, entryDiagnostics, ltp);
+
+            if (!entryDiagnostics.shouldPlace()) {
+                log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}",
+                        trigger.getId(),
+                        entryDiagnostics.reason(),
+                        formatPercent(entryDiagnostics.spreadPercent()),
+                        formatPrice(entryDiagnostics.bestBid()),
+                        formatPrice(entryDiagnostics.bestAsk()),
+                        formatPrice(entryDiagnostics.recommendedLimit()));
+
+                if (orderId != null && !orderId.isBlank()) {
+                    String rejectionReason = "ENTRY_SPREAD_WIDENED_AFTER_PLACE";
+                    if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker) {
+                        modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
+                        log.info("🚫 Cancelled pending entry order {} for trigger {} because spread widened to {}",
+                                orderId, trigger.getId(), formatPercent(entryDiagnostics.spreadPercent()));
+                        return OrderPlacementResult.builder()
+                                .success(false)
+                                .orderId(orderId)
+                                .status("Cancelled")
+                                .attemptedPrice(entryDiagnostics.recommendedLimit())
+                                .rejectionReason(rejectionReason)
+                                .build();
+                    }
+
+                    log.warn("⚠️ Entry order {} remains pending because broker service {} cannot cancel after spread widened",
+                            orderId, brokerService.getClass().getSimpleName());
+                    return OrderPlacementResult.builder()
+                            .success(false)
+                            .orderId(orderId)
+                            .status("Pending")
+                            .attemptedPrice(entryDiagnostics.recommendedLimit())
+                            .rejectionReason(rejectionReason + "_CANCEL_UNSUPPORTED")
+                            .build();
+                }
+
+                TradeEventLogger.logOrderRejected("ENTRY_SPREAD_CHECK", trigger, entryDiagnostics.reason(), ltp);
+                return OrderPlacementResult.builder()
+                        .success(false)
+                        .status("Rejected")
+                        .rejectionReason(entryDiagnostics.reason())
+                        .build();
+            }
+
+            double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
+            log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, trigger.getId(), formatPrice(price));
+            TradeEventLogger.logOrderAttempt("ENTRY", trigger, attempt + 1, attempt == 0 ? "PLACE" : "MODIFY", price, orderId);
 
             OrderPlacementResult result;
             if (attempt == 0) {
@@ -2086,6 +2119,54 @@ public class TradeExecutionService {
         }
 
         return result;
+    }
+
+    public boolean hasUsableTradedEntryPrice(TriggerTradeRequestEntity request, double tradedLtp) {
+        if (request == null) {
+            return true;
+        }
+        boolean usesSpotReference = Boolean.TRUE.equals(request.getUseSpotForEntry())
+                || Boolean.TRUE.equals(request.getUseSpotForSl())
+                || Boolean.TRUE.equals(request.getUseSpotForTarget())
+                || Boolean.TRUE.equals(request.getUseSpotPrice());
+        return !looksLikeSpotPriceForSpotBasedOptionTrade(request.getEntryPrice(), tradedLtp, usesSpotReference);
+    }
+
+    public boolean hasUsableTradedExitPrice(TriggeredTradeSetupEntity trade, double exitPrice) {
+        if (trade == null || trade.getEntryPrice() == null) {
+            return true;
+        }
+        if (!usesSpotReference(trade)) {
+            return true;
+        }
+
+        boolean exitLooksSpot = looksLikeSpotPriceForSpotBasedOptionTrade(trade.getEntryPrice(), exitPrice, true);
+        boolean entryLooksSpotWhileExitLooksOption = trade.getActualEntryPrice() != null
+                && looksLikeSpotPriceForSpotBasedOptionTrade(trade.getEntryPrice(), trade.getActualEntryPrice(), true)
+                && !exitLooksSpot;
+        return !exitLooksSpot && !entryLooksSpotWhileExitLooksOption;
+    }
+
+    private boolean looksLikeSpotPriceForSpotBasedOptionTrade(Double spotReferencePrice,
+                                                              double tradedPrice,
+                                                              boolean usesSpotReference) {
+        if (!usesSpotReference || spotReferencePrice == null) {
+            return false;
+        }
+
+        double spotPrice = spotReferencePrice;
+        if (spotPrice <= 0 || tradedPrice <= 0) {
+            return false;
+        }
+
+        return tradedPrice > 100d && Math.abs(tradedPrice - spotPrice) / spotPrice <= 0.20d;
+    }
+
+    private boolean usesSpotReference(TriggeredTradeSetupEntity trade) {
+        return Boolean.TRUE.equals(trade.getUseSpotForEntry())
+                || Boolean.TRUE.equals(trade.getUseSpotForSl())
+                || Boolean.TRUE.equals(trade.getUseSpotForTarget())
+                || Boolean.TRUE.equals(trade.getUseSpotPrice());
     }
 
     public void handleEntryOrderExecution(TriggeredTradeSetupEntity trade) {
@@ -2794,6 +2875,12 @@ public class TradeExecutionService {
             if (ltp == null) {
                 log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());
                 return null; // Signal to the caller to skip and re-try later for equities.
+            }
+
+            if (!hasUsableTradedEntryPrice(requestEntity, ltp)) {
+                log.warn("Entry delayed for trigger request {} because traded LTP {} looks like spot, not the traded option LTP. Waiting for correct option LTP.",
+                        requestEntity.getId(), ltp);
+                return null;
             }
         }
 
