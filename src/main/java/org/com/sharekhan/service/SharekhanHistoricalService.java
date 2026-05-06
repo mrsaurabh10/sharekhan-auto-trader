@@ -10,6 +10,7 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.util.CryptoService;
+import org.com.sharekhan.util.SharekhanConsoleSilencer;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
@@ -116,7 +117,8 @@ public class SharekhanHistoricalService {
         try {
             String intervalPath = buildIntervalPath(targetDate);
             SharekhanConnect client = new SharekhanConnect(null, apiKey, accessToken);
-            JSONObject response = client.getHistorical(exchange, String.valueOf(scripCode), intervalPath);
+            JSONObject response = SharekhanConsoleSilencer.call(() ->
+                    client.getHistorical(exchange, String.valueOf(scripCode), intervalPath));
             OptionalDouble parsed = parseOpenPrice(response, targetDate);
             parsed.ifPresent(value -> log.debug("Sharekhan historical open price fetched: scrip={} exchange={} open={} date={}",
                     scripCode, exchange, value, targetDate));
