@@ -172,8 +172,8 @@ public class WebSocketClientService  {
                         if ((bestBid == null || bestAsk == null) && !depthLogged) {
                             logQuotePayload(scripCode, bestBid, bestAsk, data);
                         }
-                        if (bestBid != null || bestAsk != null) {
-                            log.info("📘 Depth update - scripCode={} bid={} ask={} ltp={}",
+                        if ((bestBid != null || bestAsk != null) && log.isDebugEnabled()) {
+                            log.debug("Depth update - scripCode={} bid={} ask={} ltp={}",
                                     scripCode,
                                     bestBid != null ? bestBid : "NA",
                                     bestAsk != null ? bestAsk : "NA",
@@ -245,7 +245,7 @@ public class WebSocketClientService  {
             return false;
         }
 
-        log.info("🧪 Depth raw payload - scripCode={} reason={} depth={}",
+        log.debug("Depth raw payload - scripCode={} reason={} depth={}",
                 scripCode,
                 reason,
                 depthNode);
@@ -271,7 +271,7 @@ public class WebSocketClientService  {
             return;
         }
 
-        log.info("🧪 Quote raw payload - scripCode={} reason={} payload={}",
+        log.debug("Quote raw payload - scripCode={} reason={} payload={}",
                 scripCode,
                 reason,
                 payload);
@@ -311,7 +311,7 @@ public class WebSocketClientService  {
         final Double lv = ltp;
 
         if (lv != null) {
-            log.info("📊 LTP Tick received - scripCode={}, ltp={}", sc, lv);
+            log.debug("LTP tick received - scripCode={}, ltp={}", sc, lv);
             try {
                 ltpCacheService.updateLtp(sc, lv);
             } catch (Exception e) {

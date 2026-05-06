@@ -2,9 +2,11 @@ package org.com.sharekhan.service;
 
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 @Component
 public class ScripExecutorManager {
@@ -15,20 +17,28 @@ public class ScripExecutorManager {
 
     public ExecutorService getTriggerExecutor(int scripCode) {
         return triggerExecutors.computeIfAbsent(scripCode,
-            code -> Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "trigger-scrip-" + code);
-                t.setDaemon(true);
-                return t;
-            }));
+            code -> newLatestOnlyExecutor("trigger-scrip-" + code));
     }
 
     public ExecutorService getMonitorExecutor(int scripCode) {
         return monitorExecutors.computeIfAbsent(scripCode,
-            code -> Executors.newSingleThreadExecutor(r -> {
-                Thread t = new Thread(r, "monitor-scrip-" + code);
-                t.setDaemon(true);
-                return t;
-            }));
+            code -> newLatestOnlyExecutor("monitor-scrip-" + code));
+    }
+
+    private ExecutorService newLatestOnlyExecutor(String threadName) {
+        return new ThreadPoolExecutor(
+                1,
+                1,
+                0L,
+                TimeUnit.MILLISECONDS,
+                new ArrayBlockingQueue<>(1),
+                r -> {
+                    Thread t = new Thread(r, threadName);
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.DiscardOldestPolicy()
+        );
     }
 
     public void submitTriggerTask(int scripCode, Runnable task) {
