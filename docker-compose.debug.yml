@@ -1,0 +1,9 @@
+services:
+  sharekhan-auto-trader:
+    environment:
+      ENABLE_DEBUG: "true"
+      ENABLE_JMX: "${ENABLE_JMX:-true}"
+      JMX_RMI_HOSTNAME: "${JMX_RMI_HOSTNAME:-127.0.0.1}"
+    ports:
+      - "${DEBUG_PORT:-5005}:5005"
+      - "${JMX_PORT:-9010}:9010"
