@@ -1,0 +1,25 @@
+services:
+  sharekhan-auto-trader:
+    container_name: sharekhan-auto-trader-container
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sharekhan-auto-trader
+    restart: unless-stopped
+    mem_limit: 640m
+    environment:
+      SPRING_PROFILES_ACTIVE: "${SPRING_PROFILES_ACTIVE:-user-test}"
+      SERVER_PORT: "${SERVER_PORT:-8080}"
+      APP_TELEGRAM_WEBHOOK_SECRET: "${APP_TELEGRAM_WEBHOOK_SECRET:-}"
+      TZ: Asia/Kolkata
+      JAVA_OPTS: "${JAVA_OPTS:--Xms128m -Xmx384m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/dumps -Xlog:gc*:file=/app/logs/gc.log:utctime}"
+      ENABLE_DEBUG: "${ENABLE_DEBUG:-false}"
+      ENABLE_JMX: "${ENABLE_JMX:-false}"
+      JMX_PORT: "${JMX_PORT:-9010}"
+      JMX_RMI_HOSTNAME: "${JMX_RMI_HOSTNAME:-127.0.0.1}"
+    ports:
+      - "${SERVER_PORT:-8080}:8080"
+    volumes:
+      - ${DATA_DIR:-./data}:/app/data
+      - ${LOG_DIR:-./logs}:/app/logs
+      - ${DUMP_DIR:-./dumps}:/app/dumps
