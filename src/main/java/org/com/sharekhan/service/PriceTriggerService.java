@@ -42,9 +42,6 @@ public class PriceTriggerService {
     private final ScripExecutorManager scripExecutorManager;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
-        scripExecutorManager.registerTriggerUsage(scripCode);
-        scripExecutorManager.registerTriggerUsage(scripCode);
-        scripExecutorManager.registerTriggerUsage(scripCode);
         // Check if current time is after 9:20 AM IST
          LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
          if (now.isBefore(LocalTime.of(9, 20))) {
@@ -261,7 +258,6 @@ public class PriceTriggerService {
     }
 
     public void monitorOpenTrades(Integer scripCode, double ltp) {
-        scripExecutorManager.registerMonitorUsage(scripCode);
         try {
             log.debug("Invoked monitorOpenTrades for scripCode={} with ltp={}", scripCode, ltp);
             

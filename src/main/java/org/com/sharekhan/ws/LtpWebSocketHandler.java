@@ -1,5 +1,6 @@
 package org.com.sharekhan.ws;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.*;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
@@ -9,6 +10,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
+@Slf4j
 public class LtpWebSocketHandler extends TextWebSocketHandler {
 
     private final Set<WebSocketSession> sessions = ConcurrentHashMap.newKeySet();
@@ -16,18 +18,18 @@ public class LtpWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         sessions.add(session);
-        System.out.println("✅ WebSocket connected: " + session.getId());
+        log.info("Frontend WebSocket connected: {}", session.getId());
     }
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         sessions.remove(session);
-        System.out.println("❌ WebSocket disconnected: " + session.getId());
+        log.info("Frontend WebSocket disconnected: {}", session.getId());
     }
 
     @Override
     public void handleTransportError(WebSocketSession session, Throwable exception) {
-        System.err.println("⚠️ WebSocket error: " + exception.getMessage());
+        log.warn("Frontend WebSocket error for {}: {}", session.getId(), exception.getMessage());
         sessions.remove(session);
     }
 
@@ -51,8 +53,7 @@ public class LtpWebSocketHandler extends TextWebSocketHandler {
                 try {
                     session.sendMessage(new TextMessage(msg));
                 } catch (IOException e) {
-                    System.err.println("⚠️ Failed to send message to session " + session.getId());
-                    e.printStackTrace();
+                    log.warn("Failed to send LTP message to frontend session {}: {}", session.getId(), e.getMessage());
                 }
             }
         }
