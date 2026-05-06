@@ -134,12 +134,13 @@ public class OrderExitService {
             log.error("❌ Sharekhan order failed or returned null for trigger {}", trade.getScripCode());
             return;
         }else if (!response.has("data")){
-            log.error("❌ Sharekhan order failed or returned null for trigger {}" + response, trade.getScripCode());
+            log.error("❌ Sharekhan order failed or returned no data for trigger {} message={}",
+                    trade.getScripCode(), response.optString("message", "n/a"));
             return;
         }else if (response.getJSONObject("data").getString("orderId") != null){
             String exitOrderId = response.getJSONObject("data").getString("orderId");
             //order placed  successfully
-            log.info("✅ Sharekhan order placed successfully: {}", response.toString(2));
+            log.info("✅ Sharekhan order placed successfully for trigger {} orderId={}", trade.getScripCode(), exitOrderId);
 
 
             trade.setExitOrderId(exitOrderId);

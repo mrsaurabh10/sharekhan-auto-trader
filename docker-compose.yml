@@ -23,3 +23,8 @@ services:
       - ${DATA_DIR:-./data}:/app/data
       - ${LOG_DIR:-./logs}:/app/logs
       - ${DUMP_DIR:-./dumps}:/app/dumps
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
