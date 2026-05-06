@@ -275,7 +275,16 @@ public class PriceTriggerService {
                     if (trade.getSpotScripCode() != null) {
                         spotLtp = ltpCacheService.getLtp(trade.getSpotScripCode());
                     }
-                    
+
+                    if (requiresSpotReference(trade) && spotLtp == null) {
+                        spotLtp = fetchLtpFromMStock(trade.getSpotScripCode(), trade.getId(), "spot");
+                        if (spotLtp == null) {
+                            log.debug("Skipping trade {} evaluation on traded tick because spot LTP for scrip {} is not available yet",
+                                    trade.getId(), trade.getSpotScripCode());
+                            continue;
+                        }
+                    }
+
                     // If spotLtp is missing but needed, we might skip or fallback.
                     // For now, pass both tradedLtp (ltp) and spotLtp to handleTradeWithLock
                     handleTradeWithLock(trade.getId(), ltp, spotLtp);
@@ -296,32 +305,7 @@ public class PriceTriggerService {
                      Double tradedLtp = ltpCacheService.getLtp(trade.getScripCode());
                      
                      if (tradedLtp == null) {
-                         // Try fetching from MStock if local cache is missing
-                         try {
-                             ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
-                             if (script != null) {
-                                 Optional<String> mstockKeyOpt = instrumentResolver.resolveInstrumentKey(script);
-                                 if (mstockKeyOpt.isPresent()) {
-                                     String mstockKey = mstockKeyOpt.get();
-                                     try {
-                                         Map<String, Object> mstockData = mStockLtpService.fetchLtpForInstrument(mstockKey);
-                                         if (mstockData != null) {
-                                             Object priceObj2 = mstockData.get("last_price");
-                                             if (priceObj2 instanceof Number) {
-                                                 tradedLtp = ((Number) priceObj2).doubleValue();
-                                                 log.info("Fetched missing LTP from MStock for {}: {}", mstockKey, tradedLtp);
-                                             }
-                                         }
-                                     } catch (Exception inner) {
-                                         log.warn("Failed to fetch fallback LTP from MStock for trade {} via {}: {}", trade.getId(), mstockKey, inner.getMessage());
-                                     }
-                                 } else {
-                                     log.debug("Unable to resolve MStock instrument for scrip {} while fetching fallback LTP", trade.getScripCode());
-                                 }
-                             }
-                         } catch (Exception ex) {
-                             log.warn("Failed to fetch fallback LTP from MStock for trade {}: {}", trade.getId(), ex.getMessage());
-                         }
+                         tradedLtp = fetchLtpFromMStock(trade.getScripCode(), trade.getId(), "traded");
                      }
 
                      if (tradedLtp != null) {
@@ -840,5 +824,50 @@ public class PriceTriggerService {
             return true;
         }
         return trade.getUseSpotForSl() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
+    }
+
+    private boolean requiresSpotReference(TriggeredTradeSetupEntity trade) {
+        return trade != null && trade.getSpotScripCode() != null
+                && (usesSpotForSl(trade) || usesSpotForTarget(trade));
+    }
+
+    private Double fetchLtpFromMStock(Integer scripCode, Long tradeId, String priceRole) {
+        if (scripCode == null) {
+            return null;
+        }
+        try {
+            ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
+            if (script == null) {
+                log.debug("Unable to find script master for {} scrip {} while fetching fallback LTP", priceRole, scripCode);
+                return null;
+            }
+
+            Optional<String> mstockKeyOpt = instrumentResolver.resolveInstrumentKey(script);
+            if (mstockKeyOpt.isEmpty()) {
+                log.debug("Unable to resolve MStock instrument for {} scrip {} while fetching fallback LTP", priceRole, scripCode);
+                return null;
+            }
+
+            String mstockKey = mstockKeyOpt.get();
+            Map<String, Object> mstockData = mStockLtpService.fetchLtpForInstrument(mstockKey);
+            if (mstockData == null) {
+                return null;
+            }
+
+            Object priceObj = mstockData.get("last_price");
+            if (priceObj instanceof Number) {
+                double fallbackLtp = ((Number) priceObj).doubleValue();
+                log.info("Fetched missing {} LTP from MStock for trade {} scrip {} instrument {}: {}",
+                        priceRole, tradeId, scripCode, mstockKey, fallbackLtp);
+                return fallbackLtp;
+            }
+
+            log.debug("MStock fallback LTP for {} scrip {} returned non-numeric last_price={}", priceRole, scripCode, priceObj);
+            return null;
+        } catch (Exception ex) {
+            log.warn("Failed to fetch {} fallback LTP from MStock for trade {} scrip {}: {}",
+                    priceRole, tradeId, scripCode, ex.getMessage());
+            return null;
+        }
     }
 }
