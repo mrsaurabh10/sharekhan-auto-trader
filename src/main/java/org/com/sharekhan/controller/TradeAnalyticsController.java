@@ -2,6 +2,7 @@ package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
+import org.com.sharekhan.service.GeminiTradeInsightService;
 import org.com.sharekhan.service.TradeAnalyticsService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -17,6 +18,7 @@ import java.time.LocalDate;
 @RequiredArgsConstructor
 public class TradeAnalyticsController {
     private final TradeAnalyticsService tradeAnalyticsService;
+    private final GeminiTradeInsightService geminiTradeInsightService;
 
     @GetMapping("/trades")
     public ResponseEntity<TradeAnalyticsResponse> getTradeAnalytics(
@@ -26,8 +28,9 @@ public class TradeAnalyticsController {
             @RequestParam(name = "symbol", required = false) String symbol,
             @RequestParam(name = "source", required = false) String source,
             @RequestParam(name = "brokerCredentialsId", required = false) Long brokerCredentialsId,
-            @RequestParam(name = "intraday", required = false) Boolean intraday) {
-        return ResponseEntity.ok(tradeAnalyticsService.getTradeAnalytics(
+            @RequestParam(name = "intraday", required = false) Boolean intraday,
+            @RequestParam(name = "ai", defaultValue = "false") boolean ai) {
+        TradeAnalyticsResponse response = tradeAnalyticsService.getTradeAnalytics(
                 userId,
                 from,
                 to,
@@ -35,6 +38,10 @@ public class TradeAnalyticsController {
                 source,
                 brokerCredentialsId,
                 intraday
-        ));
+        );
+        if (ai) {
+            response = geminiTradeInsightService.addNarrative(response);
+        }
+        return ResponseEntity.ok(response);
     }
 }

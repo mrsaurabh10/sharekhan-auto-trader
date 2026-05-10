@@ -15,6 +15,7 @@ public class TradeAnalyticsResponse {
     private List<SymbolAnalytics> bySymbol;
     private List<DailyAnalytics> byDay;
     private List<RecentClosedTrade> recentClosedTrades;
+    private String aiNarrative;
 
     @Data
     @Builder

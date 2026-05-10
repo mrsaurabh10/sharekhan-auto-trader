@@ -69,3 +69,10 @@ app:
     TELEGRAM_BOT_TOKEN: "8330200742:AAEinZnYlgatRTRcLrPH7r_MWIvJ0MBX_wY" # set to your bot token, e.g. 12345:ABCdef...
     TELEGRAM_CHAT_ID: "376501162"   # set to target chat id (group or user)
     webhook-secret: ""              # optional: set and keep in sync with Telegram setWebhook secret_token
+  gemini:
+    enabled: ${GEMINI_ANALYSIS_ENABLED:true}
+    api-key: ${GEMINI_API_KEY:}
+    model: ${GEMINI_MODEL:gemini-2.5-flash}
+    base-url: ${GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+    max-output-tokens: ${GEMINI_MAX_OUTPUT_TOKENS:2048}
+    thinking-budget: ${GEMINI_THINKING_BUDGET:0}

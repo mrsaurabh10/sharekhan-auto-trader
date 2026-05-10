@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
+import org.com.sharekhan.service.GeminiTradeInsightService;
 import org.com.sharekhan.service.TradeAnalyticsService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
@@ -25,7 +26,8 @@ class TradeAnalyticsControllerTest {
     @Test
     void returnsTradeAnalyticsResponseForQueryParams() throws Exception {
         TradeAnalyticsService service = mock(TradeAnalyticsService.class);
-        TradeAnalyticsController controller = new TradeAnalyticsController(service);
+        GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService);
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -89,5 +91,42 @@ class TradeAnalyticsControllerTest {
                 .andExpect(jsonPath("$.bySymbol").isArray())
                 .andExpect(jsonPath("$.byDay").isArray())
                 .andExpect(jsonPath("$.recentClosedTrades").isArray());
+    }
+
+    @Test
+    void addsGeminiNarrativeWhenAiFlagIsTrue() throws Exception {
+        TradeAnalyticsService service = mock(TradeAnalyticsService.class);
+        GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService);
+        ObjectMapper objectMapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
+                .build();
+
+        TradeAnalyticsResponse response = TradeAnalyticsResponse.builder()
+                .summary(TradeAnalyticsResponse.Summary.builder().realizedPnl(100.0).build())
+                .bySymbol(List.of())
+                .byDay(List.of())
+                .recentClosedTrades(List.of())
+                .build();
+        TradeAnalyticsResponse responseWithAi = TradeAnalyticsResponse.builder()
+                .summary(TradeAnalyticsResponse.Summary.builder().realizedPnl(100.0).build())
+                .bySymbol(List.of())
+                .byDay(List.of())
+                .recentClosedTrades(List.of())
+                .aiNarrative("Gemini says size down losing symbols.")
+                .build();
+
+        when(service.getTradeAnalytics(eq(7L), eq(null), eq(null), eq(null), eq(null), eq(null), eq(null)))
+                .thenReturn(response);
+        when(geminiTradeInsightService.addNarrative(response)).thenReturn(responseWithAi);
+
+        mockMvc.perform(get("/api/analytics/trades")
+                        .param("userId", "7")
+                        .param("ai", "true"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.aiNarrative", is("Gemini says size down losing symbols.")));
     }
 }

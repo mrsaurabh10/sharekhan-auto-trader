@@ -121,10 +121,14 @@
     const cards = document.getElementById('analyticsCards');
     const symbolBody = document.querySelector('#analyticsSymbolTable tbody');
     const dayBody = document.querySelector('#analyticsDayTable tbody');
+    const narrativeBox = document.getElementById('analyticsAiNarrativeBox');
+    const narrative = document.getElementById('analyticsAiNarrative');
     if (state) state.innerText = message || '';
     if (cards) cards.innerHTML = '';
     if (symbolBody) symbolBody.innerHTML = '<tr><td colspan="5">No symbol data</td></tr>';
     if (dayBody) dayBody.innerHTML = '<tr><td colspan="4">No daily data</td></tr>';
+    if (narrativeBox) narrativeBox.style.display = 'none';
+    if (narrative) narrative.innerText = '';
   }
 
   function renderAnalytics(data) {
@@ -132,6 +136,8 @@
     const cards = document.getElementById('analyticsCards');
     const symbolBody = document.querySelector('#analyticsSymbolTable tbody');
     const dayBody = document.querySelector('#analyticsDayTable tbody');
+    const narrativeBox = document.getElementById('analyticsAiNarrativeBox');
+    const narrative = document.getElementById('analyticsAiNarrative');
     if (!cards || !symbolBody || !dayBody) return;
     const summary = data && data.summary ? data.summary : {};
     if (state) {
@@ -169,15 +175,29 @@
       '<td style="color:' + (Number(row.realizedPnl || 0) >= 0 ? 'green' : 'red') + ';font-weight:bold">' + escapeHtml(formatAnalyticsNumber(row.realizedPnl)) + '</td>' +
       '<td>' + escapeHtml(formatAnalyticsNumber(row.cumulativeRealizedPnl)) + '</td></tr>'
     ).join('') : '<tr><td colspan="4">No daily data</td></tr>';
+
+    if (narrativeBox && narrative) {
+      if (data && data.aiNarrative) {
+        narrativeBox.style.display = 'block';
+        narrative.innerText = data.aiNarrative;
+      } else {
+        narrativeBox.style.display = 'none';
+        narrative.innerText = '';
+      }
+    }
   }
 
-  async function loadAnalyticsForUser(userId) {
+  async function loadAnalyticsForUser(userId, useGemini) {
     const uid = userId || window.selectedUserId;
     if (!uid) { renderAnalyticsEmpty('No user selected'); return; }
     setDefaultAnalyticsDates();
     const state = document.getElementById('analyticsState');
-    if (state) state.innerText = 'Loading analytics...';
+    const refreshBtn = document.getElementById('analyticsRefreshBtn');
+    const geminiBtn = document.getElementById('analyticsGeminiBtn');
+    if (state) state.innerText = useGemini ? 'Asking Gemini to analyze analytics...' : 'Loading analytics...';
     try {
+      if (refreshBtn) refreshBtn.disabled = true;
+      if (geminiBtn) geminiBtn.disabled = true;
       const params = new URLSearchParams();
       params.set('userId', uid);
       const from = (document.getElementById('analyticsFrom') || {}).value;
@@ -190,11 +210,15 @@
       if (symbol) params.set('symbol', symbol);
       if (source) params.set('source', source);
       if (intraday) params.set('intraday', 'true');
+      if (useGemini) params.set('ai', 'true');
       const data = await fetchJson('/api/analytics/trades?' + params.toString());
       renderAnalytics(data);
     } catch (e) {
       console.error('Failed to load analytics', e);
       renderAnalyticsEmpty('Error loading analytics');
+    } finally {
+      if (refreshBtn) refreshBtn.disabled = false;
+      if (geminiBtn) geminiBtn.disabled = false;
     }
   }
 
@@ -206,6 +230,10 @@
     setDefaultAnalyticsDates();
     const btn = document.getElementById('analyticsRefreshBtn');
     if (btn) btn.addEventListener('click', refreshAnalyticsForSelectedUser);
+    const geminiBtn = document.getElementById('analyticsGeminiBtn');
+    if (geminiBtn) geminiBtn.addEventListener('click', function() {
+      if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, true).catch(function(){});
+    });
     ['analyticsFrom', 'analyticsTo', 'analyticsIntraday'].forEach(function(id) {
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', refreshAnalyticsForSelectedUser);

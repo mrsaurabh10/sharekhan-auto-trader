@@ -11,6 +11,11 @@ services:
       SPRING_PROFILES_ACTIVE: "${SPRING_PROFILES_ACTIVE:-user-test}"
       SERVER_PORT: "${SERVER_PORT:-8080}"
       APP_TELEGRAM_WEBHOOK_SECRET: "${APP_TELEGRAM_WEBHOOK_SECRET:-}"
+      GEMINI_API_KEY: "${GEMINI_API_KEY:-}"
+      GEMINI_ANALYSIS_ENABLED: "${GEMINI_ANALYSIS_ENABLED:-true}"
+      GEMINI_MODEL: "${GEMINI_MODEL:-gemini-2.5-flash}"
+      GEMINI_MAX_OUTPUT_TOKENS: "${GEMINI_MAX_OUTPUT_TOKENS:-2048}"
+      GEMINI_THINKING_BUDGET: "${GEMINI_THINKING_BUDGET:-0}"
       TZ: Asia/Kolkata
       JAVA_OPTS: "${JAVA_OPTS:--Xms128m -Xmx384m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/dumps -Xlog:gc*:file=/app/logs/gc.log:utctime}"
       ENABLE_DEBUG: "${ENABLE_DEBUG:-false}"

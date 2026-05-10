@@ -66,6 +66,9 @@
         .analytics-grids { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .analytics-grids table { font-size: 0.9rem; }
         .analytics-state { color: #666; margin: 6px 0; }
+        .analytics-ai { border: 1px solid #dfe4ef; border-radius: 6px; padding: 10px; background: #fff; margin-top: 10px; }
+        .analytics-ai h4 { margin: 0 0 6px 0; }
+        .analytics-ai-text { white-space: pre-wrap; line-height: 1.35; }
         @media (max-width: 900px) {
             .analytics-grids { grid-template-columns: 1fr; }
         }
@@ -186,6 +189,7 @@
                     <label>Source <input id="analyticsSource" type="search" placeholder="optional" style="width:120px;"></label>
                     <label><input id="analyticsIntraday" type="checkbox"> Intraday only</label>
                     <button id="analyticsRefreshBtn" class="btn small">Refresh</button>
+                    <button id="analyticsGeminiBtn" class="btn small primary">Gemini</button>
                 </div>
                 <div id="analyticsCards" class="analytics-cards"></div>
                 <div class="analytics-grids">
@@ -203,6 +207,10 @@
                             <tbody></tbody>
                         </table>
                     </div>
+                </div>
+                <div id="analyticsAiNarrativeBox" class="analytics-ai" style="display:none">
+                    <h4>Gemini Analysis</h4>
+                    <div id="analyticsAiNarrative" class="analytics-ai-text"></div>
                 </div>
             </div>
             <div id="executedSection" style="margin-top:12px">
