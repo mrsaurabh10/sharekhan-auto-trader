@@ -33,6 +33,7 @@ public class TelegramNotificationService {
     @Autowired(required = false)
     private AppUserRepository appUserRepository;
 
+    @Autowired
     public TelegramNotificationService(@Value("${app.telegram.bot-token:}") String botToken,
                                        @Value("${app.telegram.chat-id:}") String chatId) {
         this.botToken = botToken == null ? "" : botToken;
