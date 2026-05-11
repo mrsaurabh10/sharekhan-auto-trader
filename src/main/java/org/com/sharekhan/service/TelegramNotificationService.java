@@ -5,6 +5,7 @@ import org.com.sharekhan.repository.AppUserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -32,10 +33,10 @@ public class TelegramNotificationService {
     @Autowired(required = false)
     private AppUserRepository appUserRepository;
 
-    public TelegramNotificationService() {
-        // Try to read from environment variables for easy runtime configuration
-        this.botToken = System.getenv().getOrDefault("TELEGRAM_BOT_TOKEN", "8330200742:AAEinZnYlgatRTRcLrPH7r_MWIvJ0MBX_wY");
-        this.chatId = System.getenv().getOrDefault("TELEGRAM_CHAT_ID", "376501162");
+    public TelegramNotificationService(@Value("${app.telegram.bot-token:}") String botToken,
+                                       @Value("${app.telegram.chat-id:}") String chatId) {
+        this.botToken = botToken == null ? "" : botToken;
+        this.chatId = chatId == null ? "" : chatId;
         this.restTemplate = new RestTemplate();
     }
 

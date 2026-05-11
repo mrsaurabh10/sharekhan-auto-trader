@@ -101,6 +101,7 @@ public class TradeAnalyticsService {
                         .to(resolvedTo)
                         .symbol(normalizedSymbol)
                         .source(normalizedSource)
+                        .scope(normalizedScope(scope))
                         .brokerCredentialsId(brokerCredentialsId)
                         .intraday(intraday)
                         .build())
@@ -159,6 +160,10 @@ public class TradeAnalyticsService {
 
     private boolean isAllScope(String scope) {
         return scope != null && "all".equalsIgnoreCase(scope.trim());
+    }
+
+    private String normalizedScope(String scope) {
+        return scope == null || scope.isBlank() ? null : scope.trim().toLowerCase();
     }
 
     private TradeAnalyticsResponse.Summary buildSummary(List<TriggeredTradeSetupEntity> realizedTrades,
