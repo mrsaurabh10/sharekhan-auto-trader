@@ -161,6 +161,9 @@ public class TradeEventLogger {
             return "tradeId=NA";
         }
         StringJoiner joiner = new StringJoiner(" ");
+        if (trade.getTriggerRequestId() != null) {
+            joiner.add("triggerId=" + safe(trade.getTriggerRequestId()));
+        }
         joiner.add("tradeId=" + safe(trade.getId()));
         joiner.add("symbol=" + safe(trade.getSymbol()));
         joiner.add("strike=" + formatPrice(trade.getStrikePrice()));

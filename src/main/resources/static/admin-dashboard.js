@@ -9,8 +9,49 @@
   const requestPageSize = 10;
   let currentExecPage = 0;
   const execPageSize = 10;
+  window.currentSession = null;
+  window.isAdminSession = false;
 
   // --- Utilities ---
+  async function loadCurrentSession() {
+    try {
+      const session = await fetchJson('/api/user/me');
+      window.currentSession = session || {};
+      window.isAdminSession = !!(session && session.admin);
+      return window.currentSession;
+    } catch (e) {
+      window.currentSession = {};
+      window.isAdminSession = false;
+      return window.currentSession;
+    }
+  }
+
+  function applySessionMode() {
+    const isAdmin = !!window.isAdminSession;
+    const title = document.getElementById('dashboardTitle');
+    if (title) title.innerText = isAdmin ? 'Admin Dashboard' : 'Trading Dashboard';
+    const usersList = document.querySelector('.users-list');
+    const content = document.querySelector('.content');
+    if (usersList) usersList.style.display = isAdmin ? 'block' : 'none';
+    if (content) content.style.marginLeft = isAdmin ? '240px' : '0';
+    const triggerAllBtn = document.getElementById('triggerForAllUsersBtn');
+    if (triggerAllBtn) triggerAllBtn.style.display = isAdmin ? 'inline-block' : 'none';
+    const placeOrderHeading = document.querySelector('#placeOrderPanel h4');
+    if (placeOrderHeading) placeOrderHeading.innerText = isAdmin ? 'Place Order (Admin)' : 'Place Order';
+  }
+
+  function brokerListUrl(userId) {
+    return window.isAdminSession
+      ? '/admin/app-users/' + encodeURIComponent(userId) + '/brokers'
+      : '/api/user/brokers';
+  }
+
+  function brokerDetailUrl(id) {
+    return window.isAdminSession
+      ? '/admin/brokers/' + encodeURIComponent(id)
+      : '/api/user/brokers/' + encodeURIComponent(id);
+  }
+
   async function ensureCsrf() {
     const meta = document.querySelector('meta[name="_csrf"]');
     if (meta && meta.getAttribute('content')) return;
@@ -71,6 +112,28 @@
 
   function escapeHtml(v) { return (v == null) ? '' : String(v).replace(/[&<>'"`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;","`":"&#96;"})[c]); }
 
+  function tradeScopeMeta(row) {
+    const brokerName = row && row.brokerName ? String(row.brokerName) : '';
+    const rawScope = row && row.tradeScope ? String(row.tradeScope).toUpperCase() : '';
+    const simulator = !!(row && row.simulator) || rawScope === 'SIMULATOR' || brokerName.toLowerCase() === 'simulator';
+    return {
+      label: simulator ? 'Simulator' : 'Own',
+      className: simulator ? 'trade-scope-simulator' : 'trade-scope-own',
+      title: brokerName ? ('Broker: ' + brokerName) : ''
+    };
+  }
+
+  function tradeScopeCellHtml(row) {
+    const meta = tradeScopeMeta(row || {});
+    return '<td><span class="trade-scope-badge ' + meta.className + '"' +
+           (meta.title ? ' title="' + escapeHtml(meta.title) + '"' : '') +
+           '>' + escapeHtml(meta.label) + '</span></td>';
+  }
+
+  function currentTradeScope() {
+    return window.currentUserTab === 'simulator' ? 'simulator' : 'own';
+  }
+
   function updatePnlStyle(element, value) {
     if (!element) return;
     const num = Number(value);
@@ -121,10 +184,14 @@
     const cards = document.getElementById('analyticsCards');
     const symbolBody = document.querySelector('#analyticsSymbolTable tbody');
     const dayBody = document.querySelector('#analyticsDayTable tbody');
+    const narrativeBox = document.getElementById('analyticsAiNarrativeBox');
+    const narrative = document.getElementById('analyticsAiNarrative');
     if (state) state.innerText = message || '';
     if (cards) cards.innerHTML = '';
     if (symbolBody) symbolBody.innerHTML = '<tr><td colspan="5">No symbol data</td></tr>';
     if (dayBody) dayBody.innerHTML = '<tr><td colspan="4">No daily data</td></tr>';
+    if (narrativeBox) narrativeBox.style.display = 'none';
+    if (narrative) narrative.innerText = '';
   }
 
   function renderAnalytics(data) {
@@ -132,6 +199,8 @@
     const cards = document.getElementById('analyticsCards');
     const symbolBody = document.querySelector('#analyticsSymbolTable tbody');
     const dayBody = document.querySelector('#analyticsDayTable tbody');
+    const narrativeBox = document.getElementById('analyticsAiNarrativeBox');
+    const narrative = document.getElementById('analyticsAiNarrative');
     if (!cards || !symbolBody || !dayBody) return;
     const summary = data && data.summary ? data.summary : {};
     if (state) {
@@ -169,17 +238,33 @@
       '<td style="color:' + (Number(row.realizedPnl || 0) >= 0 ? 'green' : 'red') + ';font-weight:bold">' + escapeHtml(formatAnalyticsNumber(row.realizedPnl)) + '</td>' +
       '<td>' + escapeHtml(formatAnalyticsNumber(row.cumulativeRealizedPnl)) + '</td></tr>'
     ).join('') : '<tr><td colspan="4">No daily data</td></tr>';
+
+    if (narrativeBox && narrative) {
+      if (data && data.aiNarrative) {
+        narrativeBox.style.display = 'block';
+        narrative.innerText = data.aiNarrative;
+      } else {
+        narrativeBox.style.display = 'none';
+        narrative.innerText = '';
+      }
+    }
   }
 
-  async function loadAnalyticsForUser(userId) {
+  async function loadAnalyticsForUser(userId, useGemini, scope) {
     const uid = userId || window.selectedUserId;
     if (!uid) { renderAnalyticsEmpty('No user selected'); return; }
     setDefaultAnalyticsDates();
+    const analyticsScope = scope || currentTradeScope();
     const state = document.getElementById('analyticsState');
-    if (state) state.innerText = 'Loading analytics...';
+    const refreshBtn = document.getElementById('analyticsRefreshBtn');
+    const geminiBtn = document.getElementById('analyticsGeminiBtn');
+    if (state) state.innerText = useGemini ? 'Asking Gemini to analyze analytics...' : 'Loading analytics...';
     try {
+      if (refreshBtn) refreshBtn.disabled = true;
+      if (geminiBtn) geminiBtn.disabled = true;
       const params = new URLSearchParams();
       params.set('userId', uid);
+      params.set('scope', analyticsScope);
       const from = (document.getElementById('analyticsFrom') || {}).value;
       const to = (document.getElementById('analyticsTo') || {}).value;
       const symbol = ((document.getElementById('analyticsSymbol') || {}).value || '').trim();
@@ -190,22 +275,30 @@
       if (symbol) params.set('symbol', symbol);
       if (source) params.set('source', source);
       if (intraday) params.set('intraday', 'true');
+      if (useGemini) params.set('ai', 'true');
       const data = await fetchJson('/api/analytics/trades?' + params.toString());
       renderAnalytics(data);
     } catch (e) {
       console.error('Failed to load analytics', e);
       renderAnalyticsEmpty('Error loading analytics');
+    } finally {
+      if (refreshBtn) refreshBtn.disabled = false;
+      if (geminiBtn) geminiBtn.disabled = false;
     }
   }
 
   function refreshAnalyticsForSelectedUser() {
-    if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId).catch(function(){});
+    if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, false, currentTradeScope()).catch(function(){});
   }
 
   function wireAnalytics() {
     setDefaultAnalyticsDates();
     const btn = document.getElementById('analyticsRefreshBtn');
     if (btn) btn.addEventListener('click', refreshAnalyticsForSelectedUser);
+    const geminiBtn = document.getElementById('analyticsGeminiBtn');
+    if (geminiBtn) geminiBtn.addEventListener('click', function() {
+      if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, true, currentTradeScope()).catch(function(){});
+    });
     ['analyticsFrom', 'analyticsTo', 'analyticsIntraday'].forEach(function(id) {
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', refreshAnalyticsForSelectedUser);
@@ -363,12 +456,13 @@
   }
 
   // --- Loaders ---
-  async function loadRequestedOrdersForUser(userId, page) {
+  async function loadRequestedOrdersForUser(userId, page, scope) {
     const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-requests-table tbody'); if (!tbody) return; tbody.innerHTML = '';
     if (typeof page === 'number') currentRequestPage = page;
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="13">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
+    const orderScope = scope || currentTradeScope();
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="14">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
     try {
-      const responseData = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid) + '&page=' + currentRequestPage + '&size=' + requestPageSize);
+      const responseData = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(orderScope) + '&page=' + currentRequestPage + '&size=' + requestPageSize);
       let data = [], pageInfo = null;
       if (responseData && Array.isArray(responseData.content)) {
           data = responseData.content;
@@ -377,7 +471,7 @@
           data = responseData;
       }
 
-      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="13">No requests</td></tr>'; updateRequestPaginationUI(pageInfo); return; }
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="14">No requests</td></tr>'; updateRequestPaginationUI(pageInfo); return; }
       const seen = new Set(); const uniq = [];
       for (const r of data) { const rid = r && (r.id || r.requestId || r.request_id); if (!rid) { uniq.push(r); continue; } if (seen.has(rid)) continue; seen.add(rid); uniq.push(r); }
 
@@ -426,7 +520,9 @@
             try {
               await ensureCsrf();
               const brokerId = await resolveBrokerForUser(uid);
-              const url = brokerId ? ('/admin/trigger/' + id + '?brokerCredentialsId=' + encodeURIComponent(brokerId)) : ('/admin/trigger/' + id);
+              const url = window.isAdminSession
+                ? (brokerId ? ('/admin/trigger/' + id + '?brokerCredentialsId=' + encodeURIComponent(brokerId)) : ('/admin/trigger/' + id))
+                : ('/api/trades/trigger/' + id);
               const res = await fetchJson(url, { method: 'POST' });
               if (res && typeof res === 'object' && String(res.status).toLowerCase() === 'rejected') {
                 alert((res.reason ? ('Rejected: ' + res.reason) : (res.message || 'Order rejected')));
@@ -439,6 +535,7 @@
         }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       tradeScopeCellHtml(r) +
                        '<td>' + escapeHtml(String(symbol)) + '</td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
@@ -490,7 +587,7 @@
         applyLtpMap(map);
       }
       updateRequestPaginationUI(pageInfo);
-    } catch (e) { console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="13">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
+    } catch (e) { console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="14">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
   }
 
   function updateRequestPaginationUI(pageInfo) {
@@ -507,21 +604,22 @@
   function wireRequestPagination() {
       const prevBtn = document.getElementById('request-prev-btn');
       const nextBtn = document.getElementById('request-next-btn');
-      if (prevBtn) prevBtn.addEventListener('click', function() { if (currentRequestPage > 0) loadRequestedOrdersForUser(window.selectedUserId, currentRequestPage - 1); });
-      if (nextBtn) nextBtn.addEventListener('click', function() { loadRequestedOrdersForUser(window.selectedUserId, currentRequestPage + 1); });
+      if (prevBtn) prevBtn.addEventListener('click', function() { if (currentRequestPage > 0) loadRequestedOrdersForUser(window.selectedUserId, currentRequestPage - 1, currentTradeScope()); });
+      if (nextBtn) nextBtn.addEventListener('click', function() { loadRequestedOrdersForUser(window.selectedUserId, currentRequestPage + 1, currentTradeScope()); });
   }
 
-  async function loadExecutedForUser(userId, filterStatuses, page) {
+  async function loadExecutedForUser(userId, filterStatuses, page, scope) {
     const uid = userId || window.selectedUserId;
     const tbody = document.querySelector('#user-executed-table tbody');
     if (!tbody) return;
     tbody.innerHTML = '';
 
     if (typeof page === 'number') currentExecPage = page;
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="14">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    const tradeScope = scope || currentTradeScope();
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="15">No user selected</td></tr>'; updatePaginationUI(null); return; }
 
     try {
-      let url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&page=' + currentExecPage + '&size=' + execPageSize;
+      let url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(tradeScope) + '&page=' + currentExecPage + '&size=' + execPageSize;
       if (filterStatuses && filterStatuses.length > 0) filterStatuses.forEach(s => { url += '&status=' + encodeURIComponent(s); });
 
       const responseData = await fetchJson(url);
@@ -533,7 +631,7 @@
           data = responseData;
       }
 
-      if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="14">No executed trades</td></tr>'; updatePaginationUI(pageInfo); return; }
+      if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="15">No executed trades</td></tr>'; updatePaginationUI(pageInfo); return; }
 
       const seen = new Set(); const uniq = [];
       for (const t of data) { const tid = t && (t.id || t.tradeId); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
@@ -612,6 +710,7 @@
         } else { actionCell.innerText = '-'; }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       tradeScopeCellHtml(t) +
                        '<td>' + escapeHtml(String(symbol)) + '</td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
@@ -679,7 +778,7 @@
         applyLtpMap(map);
       }
       updatePaginationUI(pageInfo);
-    } catch (e) { console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="14">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
@@ -696,8 +795,8 @@
   function wireExecutedPagination() {
       const prevBtn = document.getElementById('exec-prev-btn');
       const nextBtn = document.getElementById('exec-next-btn');
-      if (prevBtn) prevBtn.addEventListener('click', function() { if (currentExecPage > 0) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), currentExecPage - 1); });
-      if (nextBtn) nextBtn.addEventListener('click', function() { loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), currentExecPage + 1); });
+      if (prevBtn) prevBtn.addEventListener('click', function() { if (currentExecPage > 0) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), currentExecPage - 1, currentTradeScope()); });
+      if (nextBtn) nextBtn.addEventListener('click', function() { loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), currentExecPage + 1, currentTradeScope()); });
   }
 
   function getSelectedStatuses() {
@@ -721,7 +820,7 @@
 
   function wireStatusFilter() {
     const btn = document.getElementById('applyStatusFilterBtn');
-    if (btn) btn.addEventListener('click', function() { if (window.selectedUserId) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0); });
+    if (btn) btn.addEventListener('click', function() { if (window.selectedUserId) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0, currentTradeScope()); });
   }
 
   // --- LTP helpers ---
@@ -869,6 +968,12 @@
   async function loadUsers() {
     const container = document.getElementById('usersContainer'); if (!container) return; container.innerText = 'Loading users...';
     try {
+      if (!window.isAdminSession) {
+        const session = window.currentSession || {};
+        selectUser(session.id, null, session.customerId, session.username);
+        container.innerText = '';
+        return;
+      }
       let users = null; try { users = await fetchJson('/admin/app-users'); } catch (e) { }
       if (!Array.isArray(users) || users.length === 0) { try { users = await fetchJson('/admin/users'); } catch (e) { } }
       if (!Array.isArray(users)) users = [];
@@ -887,7 +992,7 @@
   async function loadBrokers(userId) {
     const tbody = document.querySelector('#brokersTable tbody'); if (!tbody) return; tbody.innerHTML = '';
     try {
-      const data = await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers');
+      const data = await fetchJson(brokerListUrl(userId));
       if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="7">No brokers configured</td></tr>'; return; }
       data.forEach(function (b) {
         const tr = document.createElement('tr'); tr.setAttribute('data-broker-id', b.id);
@@ -910,6 +1015,27 @@
     if (el) el.style.display = value;
   }
 
+  function updateTradeSectionTitles() {
+    const simulator = currentTradeScope() === 'simulator';
+    const requestsTitle = document.getElementById('requestsSectionTitle');
+    const analyticsTitle = document.getElementById('analyticsPanelTitle');
+    const executedTitle = document.getElementById('executedSectionTitle');
+    if (requestsTitle) requestsTitle.innerText = simulator ? 'Simulator Requests' : 'Trading Requests';
+    if (analyticsTitle) analyticsTitle.innerText = simulator ? 'Simulator Analytics' : 'Analytics';
+    if (executedTitle) executedTitle.innerText = simulator ? 'Simulator Trades Executed' : 'Trades Executed';
+  }
+
+  function updateAccountSectionFor(userName) {
+    const lbl = document.getElementById('accountUserName');
+    if (lbl) lbl.innerText = String(userName || window.selectedUserName || window.selectedUserId || '-');
+    const state = document.getElementById('accountPasswordState');
+    if (state) state.innerText = '';
+    const pw = document.getElementById('accountNewPassword');
+    const confirm = document.getElementById('accountConfirmPassword');
+    if (pw) pw.value = '';
+    if (confirm) confirm.value = '';
+  }
+
   function renderUserTabs() {
     const tabs = document.getElementById('userTabs');
     if (!tabs) return;
@@ -917,7 +1043,9 @@
     const defs = [
       ['trading', 'Trading'],
       ['analytics', 'Analytics'],
-      ['brokers', 'Brokers']
+      ['simulator', 'Simulator'],
+      ['brokers', 'Brokers'],
+      ['account', 'Account']
     ];
     tabs.innerHTML = '';
     defs.forEach(function(def) {
@@ -934,18 +1062,31 @@
   function showUserTab(tab) {
     window.currentUserTab = tab || 'trading';
     renderUserTabs();
+    updateTradeSectionTitles();
     const hasUser = !!window.selectedUserId;
+    const isSimulator = window.currentUserTab === 'simulator';
     setDisplay('userContent', hasUser ? 'block' : 'none');
     setDisplay('placeOrderPanel', window.currentUserTab === 'trading' ? 'block' : 'none');
-    setDisplay('requestsSection', window.currentUserTab === 'trading' ? 'block' : 'none');
-    setDisplay('executedSection', window.currentUserTab === 'trading' ? 'block' : 'none');
-    setDisplay('analyticsPanel', window.currentUserTab === 'analytics' ? 'block' : 'none');
+    setDisplay('requestsSection', (window.currentUserTab === 'trading' || isSimulator) ? 'block' : 'none');
+    setDisplay('executedSection', (window.currentUserTab === 'trading' || isSimulator) ? 'block' : 'none');
+    setDisplay('analyticsPanel', (window.currentUserTab === 'analytics' || isSimulator) ? 'block' : 'none');
     setDisplay('brokersSection', window.currentUserTab === 'brokers' ? 'block' : 'none');
+    setDisplay('accountSection', window.currentUserTab === 'account' ? 'block' : 'none');
+    if ((window.currentUserTab === 'trading' || isSimulator) && window.selectedUserId) {
+      loadRequestedOrdersForUser(window.selectedUserId, 0, currentTradeScope()).catch(function(){});
+      loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0, currentTradeScope()).catch(function(){});
+    }
     if (window.currentUserTab === 'analytics' && window.selectedUserId) {
-      loadAnalyticsForUser(window.selectedUserId).catch(function(){});
+      loadAnalyticsForUser(window.selectedUserId, false, 'own').catch(function(){});
+    }
+    if (isSimulator && window.selectedUserId) {
+      loadAnalyticsForUser(window.selectedUserId, false, 'simulator').catch(function(){});
     }
     if (window.currentUserTab === 'brokers' && window.selectedUserId) {
       loadBrokers(window.selectedUserId).catch(function(){});
+    }
+    if (window.currentUserTab === 'account' && window.selectedUserId) {
+      updateAccountSectionFor(window.selectedUserName);
     }
   }
 
@@ -958,7 +1099,7 @@
     const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = (val == null ? '' : val); };
     try {
       document.getElementById('editBrokerIdLbl').innerText = '#' + b.id; editor.setAttribute('data-edit-id', b.id); editor.style.display = 'block'; closeAddBrokerForm();
-      const full = await fetchJson('/admin/brokers/' + encodeURIComponent(b.id)).catch(() => null);
+      const full = await fetchJson(brokerDetailUrl(b.id)).catch(() => null);
       const data = full || b || {};
       setVal('e_brokerName', data.brokerName); setVal('e_customerId', data.customerId); setVal('e_apiKey', data.apiKey); setVal('e_brokerUser', data.brokerUsername); setVal('e_brokerPw', data.brokerPassword); setVal('e_clientCode', data.clientCode); setVal('e_totp', data.totpSecret); setVal('e_secret', data.secretKey);
       const chk = document.getElementById('e_active'); if (chk) chk.checked = !!data.active;
@@ -974,16 +1115,16 @@
     let customerIdRaw = getVal('e_customerId');
     const body = { brokerName: toNullIfEmpty(getVal('e_brokerName')), customerId: toNullIfEmpty(customerIdRaw), apiKey: toNullIfEmpty(getVal('e_apiKey')), brokerUsername: toNullIfEmpty(getVal('e_brokerUser')), brokerPassword: toNullIfEmpty(getVal('e_brokerPw')), clientCode: toNullIfEmpty(getVal('e_clientCode')), totpSecret: toNullIfEmpty(getVal('e_totp')), secretKey: toNullIfEmpty(getVal('e_secret')), active: (document.getElementById('e_active')||{}).checked };
     if (body.customerId != null) { const n = Number(body.customerId); body.customerId = Number.isNaN(n) ? null : n; }
-    try { await ensureCsrf(); await fetchJson('/admin/brokers/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify(body) }); closeBrokerEditor(); await loadBrokers(window.selectedUserId); } catch (e) { alert('Failed to save broker: ' + (e && e.message ? e.message : e)); }
+    try { await ensureCsrf(); await fetchJson(brokerDetailUrl(id), { method: 'PUT', body: JSON.stringify(body) }); closeBrokerEditor(); await loadBrokers(window.selectedUserId); } catch (e) { alert('Failed to save broker: ' + (e && e.message ? e.message : e)); }
   }
 
-  async function deleteBroker(id) { if (!id) return; if (!confirm('Delete broker #' + id + '?')) return; try { await ensureCsrf(); await fetch('/admin/brokers/' + encodeURIComponent(id), { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }); await loadBrokers(window.selectedUserId); } catch (e) { alert('Failed to delete broker: ' + (e && e.message ? e.message : e)); } }
+  async function deleteBroker(id) { if (!id) return; if (!confirm('Delete broker #' + id + '?')) return; try { await ensureCsrf(); await fetch(brokerDetailUrl(id), { method: 'DELETE', credentials: 'include', headers: { 'X-Requested-With': 'XMLHttpRequest' } }); await loadBrokers(window.selectedUserId); } catch (e) { alert('Failed to delete broker: ' + (e && e.message ? e.message : e)); } }
 
   async function submitAddBroker() {
     const userId = window.selectedUserId; if (!userId) { alert('Select a user first'); return; }
     const body = { brokerName: (document.getElementById('b_brokerName')||{}).value || null, customerId: (document.getElementById('b_customerId')||{}).value || null, apiKey: (document.getElementById('b_apiKey')||{}).value || null, brokerUsername: (document.getElementById('b_brokerUser')||{}).value || null, brokerPassword: (document.getElementById('b_brokerPw')||{}).value || null, clientCode: (document.getElementById('b_clientCode')||{}).value || null, totpSecret: (document.getElementById('b_totp')||{}).value || null, secretKey: (document.getElementById('b_secret')||{}).value || null, active: (document.getElementById('b_active')||{}).checked };
     if (!body.brokerName) { alert('Broker Name is required'); return; }
-    try { await ensureCsrf(); await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers', { method: 'POST', body: JSON.stringify(body) }); closeAddBrokerForm(); await loadBrokers(userId); } catch (e) { alert('Failed to add broker: ' + (e && e.message ? e.message : e)); }
+    try { await ensureCsrf(); await fetchJson(brokerListUrl(userId), { method: 'POST', body: JSON.stringify(body) }); closeAddBrokerForm(); await loadBrokers(userId); } catch (e) { alert('Failed to add broker: ' + (e && e.message ? e.message : e)); }
   }
 
   function wireBrokersUI() {
@@ -995,12 +1136,42 @@
     const btnCancelEdit = document.getElementById('cancelEditBrokerBtn'); if (btnCancelEdit) btnCancelEdit.addEventListener('click', function(){ closeBrokerEditor(); });
   }
 
+  async function changeAccountPassword() {
+    const state = document.getElementById('accountPasswordState');
+    const pwEl = document.getElementById('accountNewPassword');
+    const confirmEl = document.getElementById('accountConfirmPassword');
+    const password = pwEl ? pwEl.value.trim() : '';
+    const confirm = confirmEl ? confirmEl.value.trim() : '';
+    if (state) state.innerText = '';
+    if (!password) { if (state) state.innerText = 'Password is required.'; return; }
+    if (password !== confirm) { if (state) state.innerText = 'Passwords do not match.'; return; }
+    if (!window.selectedUserId) { if (state) state.innerText = 'No user selected.'; return; }
+    const url = window.isAdminSession
+      ? '/admin/app-users/' + encodeURIComponent(window.selectedUserId) + '/password'
+      : '/api/user/password';
+    try {
+      await ensureCsrf();
+      await fetchJson(url, { method: 'POST', body: JSON.stringify({ password: password }) });
+      if (pwEl) pwEl.value = '';
+      if (confirmEl) confirmEl.value = '';
+      if (state) state.innerText = 'Password updated.';
+    } catch (e) {
+      if (state) state.innerText = 'Failed to update password: ' + (e && e.message ? e.message : e);
+    }
+  }
+
+  function wireAccountUI() {
+    const btn = document.getElementById('changeAccountPasswordBtn');
+    if (btn) btn.addEventListener('click', changeAccountPassword);
+  }
+
   function selectUser(appUserId, liElem, customerId, username) {
     window.selectedUserId = appUserId; window.selectedCustomerId = (customerId == null || customerId === 'null' || customerId === '') ? appUserId : customerId; window.selectedUserName = username || (typeof window.selectedCustomerId !== 'undefined' ? String(window.selectedCustomerId) : String(appUserId));
     const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedUserName;
     if (!window.currentUserTab) window.currentUserTab = 'trading';
     const parent = document.getElementById('usersContainer'); if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); }); if (liElem && liElem.classList) liElem.classList.add('active');
     showBrokersSectionFor(appUserId, window.selectedUserName);
+    updateAccountSectionFor(window.selectedUserName);
     showUserTab(window.currentUserTab);
     loadRequestedOrdersForUser(appUserId, 0).catch(function(){}); loadExecutedForUser(appUserId, getSelectedStatuses(), 0).catch(function(){});
     if (window.currentUserTab === 'analytics') loadAnalyticsForUser(appUserId).catch(function(){});
@@ -1050,7 +1221,7 @@
   // --- Place Order wiring ---
   async function resolveBrokerForUser(userId) {
     try {
-      const list = await fetchJson('/admin/app-users/' + encodeURIComponent(userId) + '/brokers').catch(() => null);
+      const list = await fetchJson(brokerListUrl(userId)).catch(() => null);
       if (!Array.isArray(list) || list.length === 0) return null;
       const activeSk = list.find(b => b && b.brokerName && String(b.brokerName).toLowerCase() === 'sharekhan' && b.active); if (activeSk) return activeSk.id;
       const activeAny = list.find(b => b && b.active); if (activeAny) return activeAny.id;
@@ -1067,7 +1238,7 @@
     function readNum(id) { const v = readVal(id); if (v == null || v === '') return null; const n = Number(v); return (Number.isNaN(n) ? null : n); }
     async function buildPayload(userIdOverride) {
       const ex = readVal('exchange'); const instrument = readVal('instrument'); const strikeStr = readVal('strikePrice'); const expiry = readVal('expiry'); const optionType = readVal('optionType'); const isNCBC = (ex === 'NC' || ex === 'BC');
-      const payload = { exchange: ex || null, instrument: instrument || null, strikePrice: isNCBC ? null : (strikeStr ? Number(strikeStr) : null), expiry: isNCBC ? null : (expiry || null), optionType: isNCBC ? null : (optionType || null), entryPrice: readNum('entryPrice'), stopLoss: readNum('stopLoss'), target1: readNum('target1'), target2: readNum('target2'), target3: readNum('target3'), quantity: readNum('quantity'), intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked), tslEnabled: !!(document.getElementById('tslEnabled') && document.getElementById('tslEnabled').checked), useSpotPrice: !!(document.getElementById('useSpotPrice') && document.getElementById('useSpotPrice').checked), useSpotForEntry: !!(document.getElementById('useSpotForEntry') && document.getElementById('useSpotForEntry').checked), useSpotForSl: !!(document.getElementById('useSpotForSl') && document.getElementById('useSpotForSl').checked), useSpotForTarget: !!(document.getElementById('useSpotForTarget') && document.getElementById('useSpotForTarget').checked), spotScripCode: readNum('spotScripCode'), trailingSl: null, userId: userIdOverride || window.selectedUserId || null, brokerCredentialsId: null, source: 'admin-ui' };
+      const payload = { exchange: ex || null, instrument: instrument || null, strikePrice: isNCBC ? null : (strikeStr ? Number(strikeStr) : null), expiry: isNCBC ? null : (expiry || null), optionType: isNCBC ? null : (optionType || null), entryPrice: readNum('entryPrice'), stopLoss: readNum('stopLoss'), target1: readNum('target1'), target2: readNum('target2'), target3: readNum('target3'), quantity: readNum('quantity'), intraday: !!(document.getElementById('intraday') && document.getElementById('intraday').checked), tslEnabled: !!(document.getElementById('tslEnabled') && document.getElementById('tslEnabled').checked), useSpotPrice: !!(document.getElementById('useSpotPrice') && document.getElementById('useSpotPrice').checked), useSpotForEntry: !!(document.getElementById('useSpotForEntry') && document.getElementById('useSpotForEntry').checked), useSpotForSl: !!(document.getElementById('useSpotForSl') && document.getElementById('useSpotForSl').checked), useSpotForTarget: !!(document.getElementById('useSpotForTarget') && document.getElementById('useSpotForTarget').checked), spotScripCode: readNum('spotScripCode'), trailingSl: null, userId: userIdOverride || window.selectedUserId || null, brokerCredentialsId: null, source: window.isAdminSession ? 'admin-ui' : 'user-ui' };
       if (payload.userId) payload.brokerCredentialsId = await resolveBrokerForUser(payload.userId);
       return payload;
     }
@@ -1125,9 +1296,10 @@
   function wireUserCreation() {
     const btn = document.getElementById('createUserBtn'); if (!btn) return;
     btn.addEventListener('click', async function() {
-      const nameInput = document.getElementById('newUserName'); const custIdInput = document.getElementById('newUserCustomerId'); const username = nameInput ? nameInput.value.trim() : ''; const customerId = custIdInput ? custIdInput.value.trim() : '';
+      const nameInput = document.getElementById('newUserName'); const pwInput = document.getElementById('newUserPassword'); const custIdInput = document.getElementById('newUserCustomerId'); const username = nameInput ? nameInput.value.trim() : ''; const password = pwInput ? pwInput.value.trim() : ''; const customerId = custIdInput ? custIdInput.value.trim() : '';
       if (!username) { alert('Username is required'); return; }
-      try { await ensureCsrf(); const payload = { username: username }; if (customerId) payload.customerId = customerId; const res = await fetchJson('/admin/app-users', { method: 'POST', body: JSON.stringify(payload) }); if (res && res.id) { if (nameInput) nameInput.value = ''; if (custIdInput) custIdInput.value = ''; await loadUsers(); alert('User created: ' + res.username); } else { alert('Failed to create user'); } } catch (e) { alert('Error creating user: ' + (e.message || e)); }
+      if (!password) { alert('Password is required'); return; }
+      try { await ensureCsrf(); const payload = { username: username, password: password }; if (customerId) payload.customerId = customerId; const res = await fetchJson('/admin/app-users', { method: 'POST', body: JSON.stringify(payload) }); if (res && res.id) { if (nameInput) nameInput.value = ''; if (pwInput) pwInput.value = ''; if (custIdInput) custIdInput.value = ''; await loadUsers(); alert('User created: ' + res.username); } else { alert('Failed to create user'); } } catch (e) { alert('Error creating user: ' + (e.message || e)); }
     });
   }
 
@@ -1158,8 +1330,10 @@
       fetchMStockLtp({ exchange, instrument, strikePrice, optionType, expiry }).then(ltp => { if (ltp != null) { const entryPriceInput = document.getElementById('entryPrice'); if (entryPriceInput) entryPriceInput.value = ltp; } }).catch(() => {});
   }
 
-  document.addEventListener('DOMContentLoaded', function(){
-    ensureCsrf();
+  document.addEventListener('DOMContentLoaded', async function(){
+    await ensureCsrf();
+    await loadCurrentSession();
+    applySessionMode();
     ensureDefaultStatusSelection();
     window.currentUserTab = window.currentUserTab || 'trading';
     renderUserTabs();
@@ -1167,6 +1341,7 @@
     loadUsers().catch(function(){});
     wireAdminForm();
     wireBrokersUI();
+    wireAccountUI();
     wirePlaceOrderForm();
     wireStatusFilter();
     wireRequestPagination();

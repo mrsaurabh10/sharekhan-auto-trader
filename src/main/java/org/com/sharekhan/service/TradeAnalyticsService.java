@@ -3,6 +3,7 @@ package org.com.sharekhan.service;
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.stereotype.Service;
@@ -41,6 +42,17 @@ public class TradeAnalyticsService {
                                                     String source,
                                                     Long brokerCredentialsId,
                                                     Boolean intraday) {
+        return getTradeAnalytics(userId, from, to, symbol, source, brokerCredentialsId, intraday, null);
+    }
+
+    public TradeAnalyticsResponse getTradeAnalytics(Long userId,
+                                                    LocalDate from,
+                                                    LocalDate to,
+                                                    String symbol,
+                                                    String source,
+                                                    Long brokerCredentialsId,
+                                                    Boolean intraday,
+                                                    String scope) {
         LocalDate resolvedTo = to != null ? to : LocalDate.now(MARKET_ZONE);
         LocalDate resolvedFrom = from != null ? from : resolvedTo.minusDays(30);
         if (resolvedFrom.isAfter(resolvedTo)) {
@@ -51,12 +63,13 @@ public class TradeAnalyticsService {
 
         String normalizedSymbol = symbol == null || symbol.isBlank() ? null : symbol.trim();
         String normalizedSource = source == null || source.isBlank() ? null : source.trim();
-        List<TriggeredTradeSetupEntity> candidateTrades = tradeRepository.findForAnalytics(
+        List<TriggeredTradeSetupEntity> candidateTrades = findCandidateTrades(
                 userId,
                 normalizedSymbol,
                 normalizedSource,
                 brokerCredentialsId,
-                intraday
+                intraday,
+                scope
         );
 
         LocalDateTime start = resolvedFrom.atStartOfDay();
@@ -96,6 +109,56 @@ public class TradeAnalyticsService {
                 .byDay(buildByDay(realizedTrades))
                 .recentClosedTrades(buildRecentClosedTrades(realizedTrades))
                 .build();
+    }
+
+    private List<TriggeredTradeSetupEntity> findCandidateTrades(Long userId,
+                                                                String symbol,
+                                                                String source,
+                                                                Long brokerCredentialsId,
+                                                                Boolean intraday,
+                                                                String scope) {
+        if (isSimulatorScope(scope)) {
+            return tradeRepository.findForAnalyticsBySimulator(
+                    Broker.SIMULATOR.getDisplayName(),
+                    symbol,
+                    source,
+                    brokerCredentialsId,
+                    intraday
+            );
+        }
+        if (isOwnScope(scope) && userId != null) {
+            return tradeRepository.findForAnalyticsByUserExcludingSimulator(
+                    userId,
+                    Broker.SIMULATOR.getDisplayName(),
+                    symbol,
+                    source,
+                    brokerCredentialsId,
+                    intraday
+            );
+        }
+        if (isAllScope(scope) && userId != null) {
+            return tradeRepository.findForAnalyticsByUserOrSimulator(
+                    userId,
+                    Broker.SIMULATOR.getDisplayName(),
+                    symbol,
+                    source,
+                    brokerCredentialsId,
+                    intraday
+            );
+        }
+        return tradeRepository.findForAnalytics(userId, symbol, source, brokerCredentialsId, intraday);
+    }
+
+    private boolean isOwnScope(String scope) {
+        return scope != null && "own".equalsIgnoreCase(scope.trim());
+    }
+
+    private boolean isSimulatorScope(String scope) {
+        return scope != null && "simulator".equalsIgnoreCase(scope.trim());
+    }
+
+    private boolean isAllScope(String scope) {
+        return scope != null && "all".equalsIgnoreCase(scope.trim());
     }
 
     private TradeAnalyticsResponse.Summary buildSummary(List<TriggeredTradeSetupEntity> realizedTrades,

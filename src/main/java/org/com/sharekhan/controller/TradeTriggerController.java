@@ -7,6 +7,7 @@ import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.com.sharekhan.service.TradingMessageService;
+import org.com.sharekhan.service.CurrentUserService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -23,6 +24,7 @@ public class TradeTriggerController {
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final TradeExecutionService tradeExecutionService;
     private final TradingMessageService tradingMessageService;
+    private final CurrentUserService currentUserService;
 
     @Value("${app.admin.token:}")
     private String adminToken;
@@ -52,19 +54,44 @@ public class TradeTriggerController {
     @PostMapping("/trigger-on-price")
     public ResponseEntity<?> createTriggerTrade(@RequestBody TriggerRequest request) {
         // If userId is not passed we accept it; service will fallback to default customer/app user handling.
+        if (!currentUserService.isAdmin()) {
+            request.setUserId(currentUserService.currentAppUserIdOrNull());
+        }
         TriggerTradeRequestEntity saved  = tradeExecutionService.executeTrade(request);
         return ResponseEntity.ok(saved);
     }
 
     @PostMapping("/manual-execute")
     public ResponseEntity<?> manualExecuteTrade(@RequestBody TriggerRequest request) {
+        if (!currentUserService.isAdmin()) {
+            request.setUserId(currentUserService.currentAppUserIdOrNull());
+        }
         TriggeredTradeSetupEntity saved = tradeExecutionService.createExecutedTrade(request);
         return ResponseEntity.ok(saved);
     }
 
+    @PostMapping("/trigger/{id}")
+    public ResponseEntity<?> triggerSavedTrade(@PathVariable Long id) {
+        var opt = triggerTradeRequestRepository.findById(id);
+        if (opt.isEmpty()) return ResponseEntity.notFound().build();
+        TriggerTradeRequestEntity request = opt.get();
+        if (!currentUserService.isAdmin()) {
+            Long currentUserId = currentUserService.currentAppUserIdOrNull();
+            if (currentUserId == null || request.getAppUserId() == null || !currentUserId.equals(request.getAppUserId())) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: request does not belong to user");
+            }
+        }
+        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(request);
+        if (executed != null) {
+            triggerTradeRequestRepository.delete(request);
+        }
+        return ResponseEntity.ok(executed != null ? executed : Map.of("status", "pending", "message", "LTP unavailable; request remains pending"));
+    }
+
     @GetMapping("/requests/user/{userId}")
     public ResponseEntity<?> getRequestsForUser(@PathVariable Long userId) {
-        return ResponseEntity.ok(triggerTradeRequestRepository.findTop10ByAppUserIdOrderByIdDesc(userId));
+        Long scopedUserId = currentUserService.scopedUserId(userId);
+        return ResponseEntity.ok(triggerTradeRequestRepository.findTop10ByAppUserIdOrderByIdDesc(scopedUserId));
     }
 
     @PutMapping("/force-close/{scripCode}")
@@ -80,12 +107,21 @@ public class TradeTriggerController {
 
     @GetMapping("/recent-executions")
     public ResponseEntity<List<TriggeredTradeSetupEntity>> recentExecutions() {
-        return ResponseEntity.ok(tradeExecutionService.getRecentExecutions());
+        Long scopedUserId = currentUserService.scopedUserId(null);
+        return ResponseEntity.ok(scopedUserId == null
+                ? tradeExecutionService.getRecentExecutions()
+                : tradeExecutionService.getRecentExecutionsForUser(scopedUserId));
     }
 
     @GetMapping("/pending")
     public ResponseEntity<List<TriggerTradeRequestEntity>> pendingRequests() {
         List<TriggerTradeRequestEntity> list = tradeExecutionService.getPendingRequests();
+        if (!currentUserService.isAdmin()) {
+            Long currentUserId = currentUserService.currentAppUserIdOrNull();
+            list = list.stream()
+                    .filter(r -> currentUserId != null && currentUserId.equals(r.getAppUserId()))
+                    .toList();
+        }
         return ResponseEntity.ok(list);
     }
 }

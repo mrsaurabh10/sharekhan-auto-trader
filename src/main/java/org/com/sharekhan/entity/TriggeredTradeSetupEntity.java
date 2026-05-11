@@ -19,6 +19,9 @@ public class TriggeredTradeSetupEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Transient
+    private Long triggerRequestId;
+
     private String symbol;
     private Integer scripCode;
 

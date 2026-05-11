@@ -18,6 +18,9 @@ public class AppUser {
     @Column(nullable = false, unique = true)
     private String username;
 
+    @Column(length = 1024)
+    private String password;
+
     private Long customerId;
 
     private String notes;

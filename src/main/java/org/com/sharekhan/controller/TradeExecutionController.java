@@ -5,11 +5,10 @@ import org.com.sharekhan.dto.UpdateTargetsRequest;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.service.CurrentUserService;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -24,10 +23,14 @@ public class TradeExecutionController {
 
     private final TradeExecutionService tradeExecutionService;
     private final TriggeredTradeSetupRepository triggeredTradeSetupRepository;
+    private final CurrentUserService currentUserService;
 
-    public TradeExecutionController(TradeExecutionService tradeExecutionService, TriggeredTradeSetupRepository triggeredTradeSetupRepository) {
+    public TradeExecutionController(TradeExecutionService tradeExecutionService,
+                                    TriggeredTradeSetupRepository triggeredTradeSetupRepository,
+                                    CurrentUserService currentUserService) {
         this.tradeExecutionService = tradeExecutionService;
         this.triggeredTradeSetupRepository = triggeredTradeSetupRepository;
+        this.currentUserService = currentUserService;
     }
 
     @PostMapping("/square-off/{id}")
@@ -42,6 +45,9 @@ public class TradeExecutionController {
             return ResponseEntity.badRequest()
                     .body("exitOrderStatus must be EXIT_ORDER_PLACED or TARGET_ORDER_PLACED");
         }
+        if (!canMutateTrade(id)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: trade does not belong to user");
+        }
         try {
             tradeExecutionService.squareOffTrade(id, price, requestedExitOrderStatus);
             return ResponseEntity.ok("Trade square off initiated");
@@ -53,6 +59,9 @@ public class TradeExecutionController {
 
     @PostMapping("/move-sl-to-cost/{tradeId}")
     public ResponseEntity<String> moveStopLossToCost(@PathVariable Long tradeId) {
+        if (!canMutateTrade(tradeId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: trade does not belong to user");
+        }
         boolean updated = tradeExecutionService.moveStopLossToCost(tradeId);
         if (updated) {
             return ResponseEntity.ok("Stop Loss moved to cost.");
@@ -63,6 +72,9 @@ public class TradeExecutionController {
 
     @PostMapping("/exit-order/{id}/modify")
     public ResponseEntity<?> modifyExitOrder(@PathVariable Long id, @RequestBody ModifyOrderRequest request) {
+        if (!canMutateTrade(id)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: trade does not belong to user");
+        }
         if (request == null || request.getPrice() == null || request.getPrice() <= 0) {
             return ResponseEntity.badRequest().body("Invalid price supplied for exit order modification.");
         }
@@ -136,9 +148,7 @@ public class TradeExecutionController {
                     }
 
                     if (changed) {
-                        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-                        boolean isAdmin = auth != null && auth.getAuthorities().stream().anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
-                        if (!isAdmin && update.getUserId() != null && trade.getAppUserId() != null && !trade.getAppUserId().equals(update.getUserId())) {
+                        if (!currentUserService.isAdmin() && !ownedByCurrentUser(trade.getAppUserId())) {
                             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: cannot update another user's execution");
                         }
                         TriggeredTradeSetupEntity saved = triggeredTradeSetupRepository.save(trade);
@@ -147,5 +157,19 @@ public class TradeExecutionController {
                     return ResponseEntity.badRequest().body("No updatable fields provided");
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    private boolean canMutateTrade(Long tradeId) {
+        if (currentUserService.isAdmin()) {
+            return true;
+        }
+        return triggeredTradeSetupRepository.findById(tradeId)
+                .map(trade -> ownedByCurrentUser(trade.getAppUserId()))
+                .orElse(false);
+    }
+
+    private boolean ownedByCurrentUser(Long appUserId) {
+        Long currentUserId = currentUserService.currentAppUserIdOrNull();
+        return currentUserId != null && appUserId != null && currentUserId.equals(appUserId);
     }
 }
