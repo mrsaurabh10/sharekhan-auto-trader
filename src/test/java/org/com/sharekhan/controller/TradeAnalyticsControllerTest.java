@@ -134,4 +134,55 @@ class TradeAnalyticsControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.aiNarrative", is("Gemini says size down losing symbols.")));
     }
+
+    @Test
+    void adminOwnScopeUsesAllAnalyticsScope() throws Exception {
+        TradeAnalyticsService service = mock(TradeAnalyticsService.class);
+        GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        when(currentUserService.scopedUserId(3L)).thenReturn(3L);
+        when(currentUserService.isAdmin()).thenReturn(true);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        ObjectMapper objectMapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
+                .build();
+
+        TradeAnalyticsResponse response = TradeAnalyticsResponse.builder()
+                .filters(TradeAnalyticsResponse.Filters.builder()
+                        .userId(3L)
+                        .from(LocalDate.of(2026, 4, 12))
+                        .to(LocalDate.of(2026, 5, 12))
+                        .scope("all")
+                        .build())
+                .summary(TradeAnalyticsResponse.Summary.builder()
+                        .realizedPnl(500.0)
+                        .totalClosedTrades(1)
+                        .build())
+                .bySymbol(List.of())
+                .byDay(List.of())
+                .recentClosedTrades(List.of())
+                .build();
+        when(service.getTradeAnalytics(
+                eq(3L),
+                eq(LocalDate.of(2026, 4, 12)),
+                eq(LocalDate.of(2026, 5, 12)),
+                eq(null),
+                eq(null),
+                eq(null),
+                eq(null),
+                eq("all")
+        )).thenReturn(response);
+
+        mockMvc.perform(get("/api/analytics/trades")
+                        .param("userId", "3")
+                        .param("scope", "own")
+                        .param("from", "2026-04-12")
+                        .param("to", "2026-05-12"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.filters.scope", is("all")))
+                .andExpect(jsonPath("$.summary.realizedPnl", is(500.0)));
+    }
 }

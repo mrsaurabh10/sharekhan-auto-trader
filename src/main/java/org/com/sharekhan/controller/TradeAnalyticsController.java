@@ -34,7 +34,8 @@ public class TradeAnalyticsController {
             @RequestParam(name = "scope", required = false) String scope,
             @RequestParam(name = "ai", defaultValue = "false") boolean ai) {
         Long scopedUserId = currentUserService.scopedUserId(userId);
-        TradeAnalyticsResponse response = scope == null || scope.isBlank()
+        String analyticsScope = normalizeAnalyticsScopeForSession(scope);
+        TradeAnalyticsResponse response = analyticsScope == null
                 ? tradeAnalyticsService.getTradeAnalytics(
                         scopedUserId,
                         from,
@@ -52,11 +53,19 @@ public class TradeAnalyticsController {
                         source,
                         brokerCredentialsId,
                         intraday,
-                        scope
+                        analyticsScope
                 );
         if (ai) {
             response = geminiTradeInsightService.addNarrative(response);
         }
         return ResponseEntity.ok(response);
+    }
+
+    private String normalizeAnalyticsScopeForSession(String scope) {
+        String normalized = scope == null || scope.isBlank() ? null : scope.trim().toLowerCase();
+        if (currentUserService.isAdmin() && (normalized == null || "own".equals(normalized))) {
+            return "all";
+        }
+        return normalized;
     }
 }

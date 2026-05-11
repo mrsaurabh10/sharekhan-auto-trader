@@ -134,6 +134,11 @@
     return window.currentUserTab === 'simulator' ? 'simulator' : 'own';
   }
 
+  function currentAnalyticsScope() {
+    if (window.currentUserTab === 'simulator') return 'simulator';
+    return window.isAdminSession ? 'all' : 'own';
+  }
+
   function updatePnlStyle(element, value) {
     if (!element) return;
     const num = Number(value);
@@ -254,7 +259,7 @@
     const uid = userId || window.selectedUserId;
     if (!uid) { renderAnalyticsEmpty('No user selected'); return; }
     setDefaultAnalyticsDates();
-    const analyticsScope = scope || currentTradeScope();
+    const analyticsScope = scope || currentAnalyticsScope();
     const state = document.getElementById('analyticsState');
     const refreshBtn = document.getElementById('analyticsRefreshBtn');
     const geminiBtn = document.getElementById('analyticsGeminiBtn');
@@ -288,7 +293,7 @@
   }
 
   function refreshAnalyticsForSelectedUser() {
-    if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, false, currentTradeScope()).catch(function(){});
+    if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, false, currentAnalyticsScope()).catch(function(){});
   }
 
   function wireAnalytics() {
@@ -297,7 +302,7 @@
     if (btn) btn.addEventListener('click', refreshAnalyticsForSelectedUser);
     const geminiBtn = document.getElementById('analyticsGeminiBtn');
     if (geminiBtn) geminiBtn.addEventListener('click', function() {
-      if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, true, currentTradeScope()).catch(function(){});
+      if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, true, currentAnalyticsScope()).catch(function(){});
     });
     ['analyticsFrom', 'analyticsTo', 'analyticsIntraday'].forEach(function(id) {
       const el = document.getElementById(id);
@@ -1077,7 +1082,7 @@
       loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0, currentTradeScope()).catch(function(){});
     }
     if (window.currentUserTab === 'analytics' && window.selectedUserId) {
-      loadAnalyticsForUser(window.selectedUserId, false, 'own').catch(function(){});
+      loadAnalyticsForUser(window.selectedUserId, false, currentAnalyticsScope()).catch(function(){});
     }
     if (isSimulator && window.selectedUserId) {
       loadAnalyticsForUser(window.selectedUserId, false, 'simulator').catch(function(){});
