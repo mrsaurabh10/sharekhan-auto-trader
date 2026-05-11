@@ -208,10 +208,10 @@ public class TradeExecutionService {
 
         if (diagnostics.shouldPlace()) {
             log.info("📋 Entry diagnostics trade {} decision=PLACE reason={} spread={} bid={} ask={} mid={} ltp={} quoteTime={}",
-                    trigger.getId(), diagnostics.reason(), spread, bid, ask, mid, ltpStr, quoteTime);
+                    triggerLogId(trigger), diagnostics.reason(), spread, bid, ask, mid, ltpStr, quoteTime);
         } else {
             log.info("📋 Entry diagnostics trade {} decision=SKIP reason={} spread={} bid={} ask={} mid={} ltp={} quoteTime={}",
-                    trigger.getId(), diagnostics.reason(), spread, bid, ask, mid, ltpStr, quoteTime);
+                    triggerLogId(trigger), diagnostics.reason(), spread, bid, ask, mid, ltpStr, quoteTime);
         }
     }
 
@@ -268,6 +268,13 @@ public class TradeExecutionService {
             return "NA";
         }
         return String.format(Locale.ROOT, "%.2f", value);
+    }
+
+    private Long triggerLogId(TriggeredTradeSetupEntity trigger) {
+        if (trigger == null) {
+            return null;
+        }
+        return trigger.getTriggerRequestId() != null ? trigger.getTriggerRequestId() : trigger.getId();
     }
 
 
@@ -937,7 +944,7 @@ public class TradeExecutionService {
                     () -> executeWithoutLock(trigger, ltp, triggeredAt));
         } catch (OrderPlacementGuard.LockAcquisitionException e) {
             log.warn("⚠️ Duplicate entry placement prevented for triggerId={}, symbol={}: {}",
-                    trigger != null ? trigger.getId() : null,
+                    triggerLogId(trigger),
                     trigger != null ? trigger.getSymbol() : "N/A",
                     e.getMessage());
             return null;
@@ -948,8 +955,9 @@ public class TradeExecutionService {
         try {
             // Safety guard: do not attempt broker placement if quantity is null/zero
             if (trigger.getQuantity() == null || trigger.getQuantity() <= 0L) {
-                log.warn("Blocking placement for trigger {} due to non-positive quantity: {}", trigger.getId(), trigger.getQuantity());
+                log.warn("Blocking placement for trigger {} due to non-positive quantity: {}", triggerLogId(trigger), trigger.getQuantity());
                 TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
+                rejected.setTriggerRequestId(trigger.getTriggerRequestId());
                 rejected.setStatus(TriggeredTradeStatus.REJECTED);
                 rejected.setExitReason("Quantity must be greater than zero");
                 rejected.setScripCode(trigger.getScripCode());
@@ -1044,8 +1052,9 @@ public class TradeExecutionService {
 
             if (!result.isSuccess()) {
                 TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp, result.getAttemptedPrice());
-                log.error("❌ Place order failed for trigger {}. Reason: {}", trigger.getId(), result.getRejectionReason());
+                log.error("❌ Place order failed for trigger {}. Reason: {}", triggerLogId(trigger), result.getRejectionReason());
                 TriggeredTradeSetupEntity rejected = new TriggeredTradeSetupEntity();
+                rejected.setTriggerRequestId(trigger.getTriggerRequestId());
                 rejected.setStatus(TriggeredTradeStatus.REJECTED);
                 rejected.setExitReason(result.getRejectionReason());
                 rejected.setScripCode(trigger.getScripCode());
@@ -1081,7 +1090,7 @@ public class TradeExecutionService {
                     body.append("Exchange: ").append(trigger.getExchange()).append("\n");
                     body.append("Attempted Qty: ").append(trigger.getQuantity()).append("\n");
                     body.append("Attempted Price(LTP): ").append(ltp).append("\n");
-                    body.append("Trigger Entity Id: ").append(trigger.getId()).append("\n");
+                    body.append("Trigger Entity Id: ").append(triggerLogId(trigger)).append("\n");
                     body.append("Reason: ").append(result.getRejectionReason());
                     telegramNotificationService.sendTradeMessageForUser(trigger.getAppUserId(), title, body.toString());
                 } catch (Exception e) {
@@ -1096,6 +1105,7 @@ public class TradeExecutionService {
             log.info("✅ Order placed successfully: orderId={}", result.getOrderId());
 
             TriggeredTradeSetupEntity triggeredTradeSetupEntity = new TriggeredTradeSetupEntity();
+            triggeredTradeSetupEntity.setTriggerRequestId(trigger.getTriggerRequestId());
             triggeredTradeSetupEntity.setOrderId(result.getOrderId());
             triggeredTradeSetupEntity.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
             triggeredTradeSetupEntity.setTriggeredAt(triggeredAt != null ? triggeredAt : java.time.LocalDateTime.now());
@@ -1192,7 +1202,7 @@ public class TradeExecutionService {
             return triggeredTradeSetupEntity;
 
         } catch (Exception e) {
-            log.error("❌ Error executing trade for trigger {}: {}", trigger.getId(), e.getMessage(), e);
+            log.error("❌ Error executing trade for trigger {}: {}", triggerLogId(trigger), e.getMessage(), e);
         }
         return null;
     }
@@ -1375,7 +1385,7 @@ public class TradeExecutionService {
         for (int attempt = 0; attempt < MAX_ENTRY_ATTEMPTS; attempt++) {
             if (attempt > 0 && orderId != null && !orderId.isBlank()) {
                 latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
-                log.info("📊 Entry status snapshot for trade {} attempt {}: {}", trigger.getId(), attempt + 1, latestStatus);
+                log.info("📊 Entry status snapshot for trade {} attempt {}: {}", triggerLogId(trigger), attempt + 1, latestStatus);
                 if (isOrderFilled(latestStatus)) {
                     log.info("✅ Entry order {} already filled before modify attempt", orderId);
                     return lastResult != null && lastResult.isSuccess()
@@ -1397,7 +1407,7 @@ public class TradeExecutionService {
 
             if (!entryDiagnostics.shouldPlace()) {
                 log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}",
-                        trigger.getId(),
+                        triggerLogId(trigger),
                         entryDiagnostics.reason(),
                         formatPercent(entryDiagnostics.spreadPercent()),
                         formatPrice(entryDiagnostics.bestBid()),
@@ -1409,7 +1419,7 @@ public class TradeExecutionService {
                     if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker) {
                         modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
                         log.info("🚫 Cancelled pending entry order {} for trigger {} because spread widened to {}",
-                                orderId, trigger.getId(), formatPercent(entryDiagnostics.spreadPercent()));
+                                orderId, triggerLogId(trigger), formatPercent(entryDiagnostics.spreadPercent()));
                         return OrderPlacementResult.builder()
                                 .success(false)
                                 .orderId(orderId)
@@ -1439,7 +1449,7 @@ public class TradeExecutionService {
             }
 
             double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
-            log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, trigger.getId(), formatPrice(price));
+            log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, triggerLogId(trigger), formatPrice(price));
             TradeEventLogger.logOrderAttempt("ENTRY", trigger, attempt + 1, attempt == 0 ? "PLACE" : "MODIFY", price, orderId);
 
             OrderPlacementResult result;
@@ -1451,11 +1461,11 @@ public class TradeExecutionService {
                 }
             } else {
                 if (orderId == null || orderId.isBlank()) {
-                    log.warn("Cannot modify entry for trigger {} because no orderId was captured from the first attempt", trigger.getId());
+                    log.warn("Cannot modify entry for trigger {} because no orderId was captured from the first attempt", triggerLogId(trigger));
                     break;
                 }
                 if (!(brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker)) {
-                    log.warn("Broker service {} does not support entry modify; aborting attempts for trigger {}", brokerService.getClass().getSimpleName(), trigger.getId());
+                    log.warn("Broker service {} does not support entry modify; aborting attempts for trigger {}", brokerService.getClass().getSimpleName(), triggerLogId(trigger));
                     break;
                 }
                 result = modifiableEntryBroker.modifyEntryOrder(trigger, ctx, orderId, price);
@@ -1472,18 +1482,18 @@ public class TradeExecutionService {
             }
 
             if (result != null && result.isSuccess()) {
-                log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, trigger.getId(), result.getOrderId());
+                log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, triggerLogId(trigger), result.getOrderId());
 
                 if (orderId != null && !orderId.isBlank()) {
                     try {
                         Thread.sleep(FINAL_STATUS_CHECK_DELAY_MS);
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
-                        log.warn("Entry status wait interrupted for trigger {}", trigger.getId());
+                        log.warn("Entry status wait interrupted for trigger {}", triggerLogId(trigger));
                     }
 
                     latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
-                    log.info("📊 Entry status snapshot after attempt {} for trade {}: {}", attempt + 1, trigger.getId(), latestStatus);
+                    log.info("📊 Entry status snapshot after attempt {} for trade {}: {}", attempt + 1, triggerLogId(trigger), latestStatus);
 
                     if (isOrderFilled(latestStatus)) {
                         return result;
@@ -1497,7 +1507,7 @@ public class TradeExecutionService {
                     log.warn("⏱️ Entry order {} not filled after final attempt. Initiating cancellation.", orderId);
                     if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker) {
                         modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
-                        log.info("🚫 Cancelled entry order {} for trigger {} after pending final status", orderId, trigger.getId());
+                        log.info("🚫 Cancelled entry order {} for trigger {} after pending final status", orderId, triggerLogId(trigger));
                         orderId = null;
                     } else {
                         log.warn("⚠️ Broker service {} cannot cancel pending entry order {}", brokerService.getClass().getSimpleName(), orderId);
@@ -1516,12 +1526,12 @@ public class TradeExecutionService {
             }
 
             String reason = result != null ? result.getRejectionReason() : "unknown";
-            log.warn("⚠️ Entry attempt {} failed for trigger {} reason={}", attempt + 1, trigger.getId(), reason);
+            log.warn("⚠️ Entry attempt {} failed for trigger {} reason={}", attempt + 1, triggerLogId(trigger), reason);
 
             if (attempt < MAX_ENTRY_ATTEMPTS - 1) {
                 if (orderId != null && !orderId.isBlank()) {
                     latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
-                    log.info("📊 Entry status snapshot post attempt {} for trade {}: {}", attempt + 1, trigger.getId(), latestStatus);
+                    log.info("📊 Entry status snapshot post attempt {} for trade {}: {}", attempt + 1, triggerLogId(trigger), latestStatus);
                     if (isOrderFilled(latestStatus)) {
                         log.info("✅ Entry order {} filled after attempt {}", orderId, attempt + 1);
                         return lastResult != null && lastResult.isSuccess()
@@ -1545,7 +1555,7 @@ public class TradeExecutionService {
                     Thread.sleep(delayMillis);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
-                    log.warn("Entry attempts interrupted for trigger {}", trigger.getId());
+                    log.warn("Entry attempts interrupted for trigger {}", triggerLogId(trigger));
                     break;
                 }
             }
@@ -1554,11 +1564,11 @@ public class TradeExecutionService {
         if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker
                 && orderId != null && !orderId.isBlank()
                 && !isOrderFilled(latestStatus)) {
-            log.info("🚫 Cancelled pending entry order {} for trigger {}", orderId, trigger.getId());
+            log.info("🚫 Cancelled pending entry order {} for trigger {}", orderId, triggerLogId(trigger));
             modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
         }
 
-        log.warn("❌ Entry attempts exhausted for trigger {}. Marking as rejected.", trigger.getId());
+        log.warn("❌ Entry attempts exhausted for trigger {}. Marking as rejected.", triggerLogId(trigger));
         return lastResult != null ? lastResult : OrderPlacementResult.builder()
                 .success(false)
                 .status("Rejected")
@@ -2938,6 +2948,7 @@ public class TradeExecutionService {
 
         // build a temporary TriggeredTradeSetupEntity from the saved request so we can reuse the execute(...) method
         TriggeredTradeSetupEntity temp = new TriggeredTradeSetupEntity();
+        temp.setTriggerRequestId(requestEntity.getId());
         temp.setScripCode(requestEntity.getScripCode());
         temp.setBrokerCredentialsId(requestEntity.getBrokerCredentialsId());
         temp.setAppUserId(requestEntity.getAppUserId());
