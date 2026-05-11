@@ -29,6 +29,52 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
 
     @Query(
             value = """
+                    SELECT r.*
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE r.app_user_id = :appUserId
+                       OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY r.id DESC
+                    LIMIT 10
+                    """,
+            nativeQuery = true
+    )
+    List<TriggerTradeRequestEntity> findTop10ByAppUserIdOrSimulatorOrderByIdDesc(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName);
+
+    @Query(
+            value = """
+                    SELECT r.*
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE r.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                    ORDER BY r.id DESC
+                    LIMIT 10
+                    """,
+            nativeQuery = true
+    )
+    List<TriggerTradeRequestEntity> findTop10ByAppUserIdExcludingSimulatorOrderByIdDesc(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName);
+
+    @Query(
+            value = """
+                    SELECT r.*
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY r.id DESC
+                    LIMIT 10
+                    """,
+            nativeQuery = true
+    )
+    List<TriggerTradeRequestEntity> findTop10BySimulatorOrderByIdDesc(
+            @Param("simulatorBrokerName") String simulatorBrokerName);
+
+    @Query(
+            value = """
                     SELECT *
                     FROM trigger_trade_requests
                     ORDER BY CASE status
@@ -61,6 +107,90 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
             nativeQuery = true
     )
     Page<TriggerTradeRequestEntity> findRequestsOrderedForDashboardByAppUserId(@Param("appUserId") Long appUserId, Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT r.*
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE r.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                    ORDER BY CASE r.status
+                        WHEN 'PLACED_ORDER_PENDING' THEN 0
+                        WHEN 'PLACED_PENDING_CONFIRMATION' THEN 0
+                        WHEN 'TRIGGERED' THEN 1
+                        WHEN 'REJECTED' THEN 2
+                        ELSE 3
+                    END, r.id DESC
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE r.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggerTradeRequestEntity> findRequestsOrderedForDashboardByAppUserIdExcludingSimulator(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT r.*
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE r.app_user_id = :appUserId
+                       OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY CASE r.status
+                        WHEN 'PLACED_ORDER_PENDING' THEN 0
+                        WHEN 'PLACED_PENDING_CONFIRMATION' THEN 0
+                        WHEN 'TRIGGERED' THEN 1
+                        WHEN 'REJECTED' THEN 2
+                        ELSE 3
+                    END, r.id DESC
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE r.app_user_id = :appUserId
+                       OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggerTradeRequestEntity> findRequestsOrderedForDashboardByAppUserIdOrSimulator(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT r.*
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY CASE r.status
+                        WHEN 'PLACED_ORDER_PENDING' THEN 0
+                        WHEN 'PLACED_PENDING_CONFIRMATION' THEN 0
+                        WHEN 'TRIGGERED' THEN 1
+                        WHEN 'REJECTED' THEN 2
+                        ELSE 3
+                    END, r.id DESC
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM trigger_trade_requests r
+                    LEFT JOIN broker_credentials b ON b.id = r.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggerTradeRequestEntity> findRequestsOrderedForDashboardBySimulator(
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            Pageable pageable);
 
     @Query("select distinct t.appUserId from TriggerTradeRequestEntity t where t.appUserId is not null")
     List<Long> findDistinctAppUserIds();

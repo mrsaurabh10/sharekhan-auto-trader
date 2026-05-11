@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
+import org.com.sharekhan.service.CurrentUserService;
 import org.com.sharekhan.service.GeminiTradeInsightService;
 import org.com.sharekhan.service.TradeAnalyticsService;
 import org.junit.jupiter.api.Test;
@@ -27,7 +28,9 @@ class TradeAnalyticsControllerTest {
     void returnsTradeAnalyticsResponseForQueryParams() throws Exception {
         TradeAnalyticsService service = mock(TradeAnalyticsService.class);
         GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
-        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        when(currentUserService.scopedUserId(7L)).thenReturn(7L);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -97,7 +100,9 @@ class TradeAnalyticsControllerTest {
     void addsGeminiNarrativeWhenAiFlagIsTrue() throws Exception {
         TradeAnalyticsService service = mock(TradeAnalyticsService.class);
         GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
-        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        when(currentUserService.scopedUserId(7L)).thenReturn(7L);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);

@@ -69,6 +69,9 @@
         .analytics-ai { border: 1px solid #dfe4ef; border-radius: 6px; padding: 10px; background: #fff; margin-top: 10px; }
         .analytics-ai h4 { margin: 0 0 6px 0; }
         .analytics-ai-text { white-space: pre-wrap; line-height: 1.35; }
+        .trade-scope-badge { display: inline-block; min-width: 58px; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; text-align: center; }
+        .trade-scope-own { background: #e8f5ee; color: #12633a; border: 1px solid #b9dec9; }
+        .trade-scope-simulator { background: #fff3d6; color: #805400; border: 1px solid #e8c46f; }
         @media (max-width: 900px) {
             .analytics-grids { grid-template-columns: 1fr; }
         }
@@ -80,12 +83,13 @@
     
 </head>
 <body>
-<h2>Admin Dashboard</h2>
+<h2 id="dashboardTitle">Admin Dashboard</h2>
 <div style="display:flex">
     <div class="users-list">
         <h4>Users</h4>
         <div style="margin-bottom:0.6rem;">
             <input id="newUserName" placeholder="username" style="width:100%; margin-bottom:0.25rem;" />
+            <input id="newUserPassword" placeholder="password" type="password" style="width:100%; margin-bottom:0.25rem;" />
             <input id="newUserCustomerId" placeholder="customerId (numeric)" style="width:100%; margin-bottom:0.25rem;" />
             <button class="btn primary" id="createUserBtn" style="width:100%;">Add User</button>
         </div>
@@ -166,9 +170,9 @@
             </div>
 
             <div id="requestsSection" style="margin-top:12px">
-                <h4>Trading Requests</h4>
+                <h4 id="requestsSectionTitle">Trading Requests</h4>
                 <table id="user-requests-table" style="width:100%;border-collapse:collapse" border="1">
-                    <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Type</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th></tr></thead>
                     <tbody></tbody>
                 </table>
                 <div id="requests-pagination" style="margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px;">
@@ -179,7 +183,7 @@
             </div>
             <div id="analyticsPanel" class="analytics-panel" style="display:none">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; gap:8px; flex-wrap:wrap;">
-                    <h4 style="margin:0;">Analytics</h4>
+                    <h4 id="analyticsPanelTitle" style="margin:0;">Analytics</h4>
                     <div id="analyticsState" class="analytics-state"></div>
                 </div>
                 <div class="analytics-toolbar">
@@ -215,7 +219,7 @@
             </div>
             <div id="executedSection" style="margin-top:12px">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                    <h4 style="margin:0;">Trades Executed</h4>
+                    <h4 id="executedSectionTitle" style="margin:0;">Trades Executed</h4>
                     <div>
                         <label for="statusFilter" class="small inline" style="font-weight:normal;">Filter Status:</label>
                         <select id="statusFilter" multiple style="height: 2.5em; vertical-align: middle;">
@@ -230,7 +234,7 @@
                     </div>
                 </div>
                 <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
-                    <thead><tr><th>ID</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>PNL</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Type</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>PNL</th></tr></thead>
                     <tbody></tbody>
                 </table>
                 <div id="executed-pagination" style="margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px;">
@@ -296,6 +300,16 @@
                 </div>
             </div>
 
+        </section>
+
+        <section id="accountSection" style="display:none">
+            <h4>Account for <span id="accountUserName"></span></h4>
+            <div style="border:1px solid #eee; padding:0.6rem; margin-bottom:0.6rem; background:#fafafa;">
+                <div class="form-row"><label class="inline small" for="accountNewPassword">New Password</label><input id="accountNewPassword" type="password" autocomplete="new-password" /></div>
+                <div class="form-row"><label class="inline small" for="accountConfirmPassword">Confirm Password</label><input id="accountConfirmPassword" type="password" autocomplete="new-password" /></div>
+                <button class="btn primary" id="changeAccountPasswordBtn" type="button">Update Password</button>
+                <div id="accountPasswordState" class="hint" style="margin-top:0.5rem;"></div>
+            </div>
         </section>
 
     </div>

@@ -2642,11 +2642,25 @@ public class TradeExecutionService {
     }
 
     public List<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId) {
+        return getRecentExecutionsForUser(userId, "own");
+    }
+
+    public List<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId, String scope) {
+        if (isSimulatorDashboardScope(scope)) {
+            return triggeredTradeRepo.findTop10BySimulatorOrderByIdDesc(Broker.SIMULATOR.getDisplayName());
+        }
         if (userId == null) return getRecentExecutions();
-        return triggeredTradeRepo.findTop10ByAppUserIdOrderByIdDesc(userId);
+        if (isAllDashboardScope(scope)) {
+            return triggeredTradeRepo.findTop10ByAppUserIdOrSimulatorOrderByIdDesc(userId, Broker.SIMULATOR.getDisplayName());
+        }
+        return triggeredTradeRepo.findTop10ByAppUserIdExcludingSimulatorOrderByIdDesc(userId, Broker.SIMULATOR.getDisplayName());
     }
 
     public Page<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId, List<String> statusList, Pageable pageable) {
+        return getRecentExecutionsForUser(userId, statusList, pageable, "own");
+    }
+
+    public Page<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId, List<String> statusList, Pageable pageable, String scope) {
         List<TriggeredTradeStatus> statuses = null;
         if (statusList != null && !statusList.isEmpty()) {
             statuses = statusList.stream()
@@ -2659,18 +2673,37 @@ public class TradeExecutionService {
         }
 
         if (statuses != null && !statuses.isEmpty()) {
+            List<String> statusNames = statuses.stream().map(Enum::name).collect(java.util.stream.Collectors.toList());
+            if (isSimulatorDashboardScope(scope)) {
+                return triggeredTradeRepo.findBySimulatorAndStatusIn(Broker.SIMULATOR.getDisplayName(), statusNames, pageable);
+            }
             if (userId == null) {
                 return triggeredTradeRepo.findByStatusIn(statuses, pageable);
+            } else if (isAllDashboardScope(scope)) {
+                return triggeredTradeRepo.findByAppUserIdOrSimulatorAndStatusIn(userId, Broker.SIMULATOR.getDisplayName(), statusNames, pageable);
             } else {
-                return triggeredTradeRepo.findByAppUserIdAndStatusIn(userId, statuses, pageable);
+                return triggeredTradeRepo.findByAppUserIdExcludingSimulatorAndStatusIn(userId, Broker.SIMULATOR.getDisplayName(), statusNames, pageable);
             }
         } else {
+            if (isSimulatorDashboardScope(scope)) {
+                return triggeredTradeRepo.findBySimulator(Broker.SIMULATOR.getDisplayName(), pageable);
+            }
             if (userId == null) {
                 return triggeredTradeRepo.findAll(pageable);
+            } else if (isAllDashboardScope(scope)) {
+                return triggeredTradeRepo.findByAppUserIdOrSimulator(userId, Broker.SIMULATOR.getDisplayName(), pageable);
             } else {
-                return triggeredTradeRepo.findByAppUserId(userId, pageable);
+                return triggeredTradeRepo.findByAppUserIdExcludingSimulator(userId, Broker.SIMULATOR.getDisplayName(), pageable);
             }
         }
+    }
+
+    private boolean isSimulatorDashboardScope(String scope) {
+        return scope != null && "simulator".equalsIgnoreCase(scope.trim());
+    }
+
+    private boolean isAllDashboardScope(String scope) {
+        return scope != null && "all".equalsIgnoreCase(scope.trim());
     }
 
     public void subscribeForOpenTrades() {

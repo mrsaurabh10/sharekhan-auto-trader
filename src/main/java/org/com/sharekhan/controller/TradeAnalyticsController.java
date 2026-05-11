@@ -2,6 +2,7 @@ package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
+import org.com.sharekhan.service.CurrentUserService;
 import org.com.sharekhan.service.GeminiTradeInsightService;
 import org.com.sharekhan.service.TradeAnalyticsService;
 import org.springframework.format.annotation.DateTimeFormat;
@@ -19,6 +20,7 @@ import java.time.LocalDate;
 public class TradeAnalyticsController {
     private final TradeAnalyticsService tradeAnalyticsService;
     private final GeminiTradeInsightService geminiTradeInsightService;
+    private final CurrentUserService currentUserService;
 
     @GetMapping("/trades")
     public ResponseEntity<TradeAnalyticsResponse> getTradeAnalytics(
@@ -29,16 +31,29 @@ public class TradeAnalyticsController {
             @RequestParam(name = "source", required = false) String source,
             @RequestParam(name = "brokerCredentialsId", required = false) Long brokerCredentialsId,
             @RequestParam(name = "intraday", required = false) Boolean intraday,
+            @RequestParam(name = "scope", required = false) String scope,
             @RequestParam(name = "ai", defaultValue = "false") boolean ai) {
-        TradeAnalyticsResponse response = tradeAnalyticsService.getTradeAnalytics(
-                userId,
-                from,
-                to,
-                symbol,
-                source,
-                brokerCredentialsId,
-                intraday
-        );
+        Long scopedUserId = currentUserService.scopedUserId(userId);
+        TradeAnalyticsResponse response = scope == null || scope.isBlank()
+                ? tradeAnalyticsService.getTradeAnalytics(
+                        scopedUserId,
+                        from,
+                        to,
+                        symbol,
+                        source,
+                        brokerCredentialsId,
+                        intraday
+                )
+                : tradeAnalyticsService.getTradeAnalytics(
+                        scopedUserId,
+                        from,
+                        to,
+                        symbol,
+                        source,
+                        brokerCredentialsId,
+                        intraday,
+                        scope
+                );
         if (ai) {
             response = geminiTradeInsightService.addNarrative(response);
         }

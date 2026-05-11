@@ -294,6 +294,7 @@ public class AdminController {
                 map.put("username", u.getUsername());
                 map.put("customerId", u.getCustomerId());
                 map.put("notes", u.getNotes());
+                map.put("hasPassword", u.getPassword() != null && !u.getPassword().isBlank());
                 return map;
             }).collect(Collectors.toList());
             return ResponseEntity.ok(list);
@@ -306,12 +307,15 @@ public class AdminController {
     @ResponseBody
     public ResponseEntity<?> createAppUser(@RequestBody java.util.Map<String,Object> body) {
         String username = (String) body.get("username");
+        String password = (String) body.get("password");
         Long customerId = body.get("customerId") == null ? null : Long.valueOf(body.get("customerId").toString());
         String notes = (String) body.getOrDefault("notes","");
         if (username==null || username.isBlank()) return ResponseEntity.badRequest().body("username required");
+        if (password==null || password.isBlank()) return ResponseEntity.badRequest().body("password required");
         
         AppUser u = new AppUser();
         u.setUsername(username);
+        u.setPassword(passwordEncoder.encode(password));
         u.setCustomerId(customerId);
         u.setNotes(notes);
 
@@ -346,7 +350,25 @@ public class AdminController {
         AppUser u = entityManager.find(AppUser.class, id);
         if (u == null) return ResponseEntity.notFound().build();
         if (body.containsKey("notes")) u.setNotes((String)body.get("notes"));
+        if (body.containsKey("password")) {
+            String password = (String) body.get("password");
+            if (password != null && !password.isBlank()) {
+                u.setPassword(passwordEncoder.encode(password));
+            }
+        }
         entityManager.merge(u);
+        return ResponseEntity.ok("updated");
+    }
+
+    @PostMapping("/app-users/{id}/password")
+    @ResponseBody
+    public ResponseEntity<?> changeAppUserPassword(@PathVariable Long id, @RequestBody java.util.Map<String, String> body) {
+        String newPw = body.get("password");
+        if (newPw == null || newPw.isBlank()) return ResponseEntity.badRequest().body("password required");
+        AppUser u = appUserRepository.findById(id).orElse(null);
+        if (u == null) return ResponseEntity.notFound().build();
+        u.setPassword(passwordEncoder.encode(newPw));
+        appUserRepository.save(u);
         return ResponseEntity.ok("updated");
     }
 

@@ -38,12 +38,191 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     // app-user-scoped recent executions
     List<TriggeredTradeSetupEntity> findTop10ByAppUserIdOrderByIdDesc(Long appUserId);
 
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                       OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY t.id DESC
+                    LIMIT 10
+                    """,
+            nativeQuery = true
+    )
+    List<TriggeredTradeSetupEntity> findTop10ByAppUserIdOrSimulatorOrderByIdDesc(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                    ORDER BY t.id DESC
+                    LIMIT 10
+                    """,
+            nativeQuery = true
+    )
+    List<TriggeredTradeSetupEntity> findTop10ByAppUserIdExcludingSimulatorOrderByIdDesc(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY t.id DESC
+                    LIMIT 10
+                    """,
+            nativeQuery = true
+    )
+    List<TriggeredTradeSetupEntity> findTop10BySimulatorOrderByIdDesc(
+            @Param("simulatorBrokerName") String simulatorBrokerName);
+
     // Pagination support
     Page<TriggeredTradeSetupEntity> findByAppUserId(Long appUserId, Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                       OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                       OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggeredTradeSetupEntity> findByAppUserIdOrSimulator(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggeredTradeSetupEntity> findByAppUserIdExcludingSimulator(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggeredTradeSetupEntity> findBySimulator(
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            Pageable pageable);
 
     // Pagination support with status filter
     Page<TriggeredTradeSetupEntity> findByStatusIn(List<TriggeredTradeStatus> statuses, Pageable pageable);
     Page<TriggeredTradeSetupEntity> findByAppUserIdAndStatusIn(Long appUserId, List<TriggeredTradeStatus> statuses, Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE (t.app_user_id = :appUserId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
+                      AND t.status IN (:statuses)
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE (t.app_user_id = :appUserId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
+                      AND t.status IN (:statuses)
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggeredTradeSetupEntity> findByAppUserIdOrSimulatorAndStatusIn(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            @Param("statuses") List<String> statuses,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                      AND t.status IN (:statuses)
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :appUserId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                      AND t.status IN (:statuses)
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggeredTradeSetupEntity> findByAppUserIdExcludingSimulatorAndStatusIn(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            @Param("statuses") List<String> statuses,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                      AND t.status IN (:statuses)
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                      AND t.status IN (:statuses)
+                    """,
+            nativeQuery = true
+    )
+    Page<TriggeredTradeSetupEntity> findBySimulatorAndStatusIn(
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            @Param("statuses") List<String> statuses,
+            Pageable pageable);
 
 
     // Atomically claim the exit flow by setting status and exit_reason only if current status is not already in an exiting/terminal state.
@@ -114,4 +293,64 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                                                      @Param("source") String source,
                                                      @Param("brokerCredentialsId") Long brokerCredentialsId,
                                                      @Param("intraday") Boolean intraday);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE (t.app_user_id = :userId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
+                      AND (:symbol IS NULL OR LOWER(t.symbol) LIKE LOWER(CONCAT('%', :symbol, '%')))
+                      AND (:source IS NULL OR LOWER(t.source) LIKE LOWER(CONCAT('%', :source, '%')))
+                      AND (:brokerCredentialsId IS NULL OR t.broker_credentials_id = :brokerCredentialsId)
+                      AND (:intraday IS NULL OR t.intraday = :intraday)
+                    """,
+            nativeQuery = true
+    )
+    List<TriggeredTradeSetupEntity> findForAnalyticsByUserOrSimulator(@Param("userId") Long userId,
+                                                                      @Param("simulatorBrokerName") String simulatorBrokerName,
+                                                                      @Param("symbol") String symbol,
+                                                                      @Param("source") String source,
+                                                                      @Param("brokerCredentialsId") Long brokerCredentialsId,
+                                                                      @Param("intraday") Boolean intraday);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :userId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                      AND (:symbol IS NULL OR LOWER(t.symbol) LIKE LOWER(CONCAT('%', :symbol, '%')))
+                      AND (:source IS NULL OR LOWER(t.source) LIKE LOWER(CONCAT('%', :source, '%')))
+                      AND (:brokerCredentialsId IS NULL OR t.broker_credentials_id = :brokerCredentialsId)
+                      AND (:intraday IS NULL OR t.intraday = :intraday)
+                    """,
+            nativeQuery = true
+    )
+    List<TriggeredTradeSetupEntity> findForAnalyticsByUserExcludingSimulator(@Param("userId") Long userId,
+                                                                             @Param("simulatorBrokerName") String simulatorBrokerName,
+                                                                             @Param("symbol") String symbol,
+                                                                             @Param("source") String source,
+                                                                             @Param("brokerCredentialsId") Long brokerCredentialsId,
+                                                                             @Param("intraday") Boolean intraday);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                      AND (:symbol IS NULL OR LOWER(t.symbol) LIKE LOWER(CONCAT('%', :symbol, '%')))
+                      AND (:source IS NULL OR LOWER(t.source) LIKE LOWER(CONCAT('%', :source, '%')))
+                      AND (:brokerCredentialsId IS NULL OR t.broker_credentials_id = :brokerCredentialsId)
+                      AND (:intraday IS NULL OR t.intraday = :intraday)
+                    """,
+            nativeQuery = true
+    )
+    List<TriggeredTradeSetupEntity> findForAnalyticsBySimulator(@Param("simulatorBrokerName") String simulatorBrokerName,
+                                                                @Param("symbol") String symbol,
+                                                                @Param("source") String source,
+                                                                @Param("brokerCredentialsId") Long brokerCredentialsId,
+                                                                @Param("intraday") Boolean intraday);
 }

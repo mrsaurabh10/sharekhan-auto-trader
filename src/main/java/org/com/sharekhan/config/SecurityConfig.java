@@ -6,11 +6,11 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.com.sharekhan.service.AdminUserDetailsService;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.AuthenticationSuccessHandler;
 import org.springframework.security.web.util.matcher.AntPathRequestMatcher;
 
 @Configuration
@@ -41,23 +41,30 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // allow H2 console and static resources publicly
                         .requestMatchers("/h2-console/**").permitAll()
-                        .requestMatchers("/admin/login", "/css/**", "/js/**", "/images/**").permitAll()
+                        .requestMatchers("/login", "/admin/login", "/css/**", "/js/**", "/images/**").permitAll()
+                        .requestMatchers("/admin-dashboard.html", "/dashboard").hasAnyRole("ADMIN", "USER")
                         // admin endpoints require ROLE_ADMIN
                         .requestMatchers("/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/user/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/orders/**", "/api/analytics/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/auth/**").permitAll() // keep token endpoints accessible via admin UI via login
                         .requestMatchers("/api/trades/trigger-all").permitAll() // Secure via X-Admin-Token inside the controller
+                        .requestMatchers("/api/trades/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/scripts/**", "/api/mstock/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/ws/**").hasAnyRole("ADMIN", "USER")
                         .anyRequest().permitAll()
                 )
                 .userDetailsService(adminUserDetailsService)
                 .formLogin(form -> form
-                        .loginPage("/admin/login")
-                        .defaultSuccessUrl("/admin/dashboard", true)
+                        .loginPage("/login")
+                        .loginProcessingUrl("/login")
+                        .successHandler(roleAwareSuccessHandler())
                         .permitAll()
                 )
                 .logout(logout -> logout
                         // allow logout via GET for the admin UI convenience (also works with POST)
-                        .logoutRequestMatcher(new AntPathRequestMatcher("/admin/logout", "GET"))
-                        .logoutSuccessUrl("/admin/login?logout")
+                        .logoutRequestMatcher(new AntPathRequestMatcher("/logout", "GET"))
+                        .logoutSuccessUrl("/login?logout")
                         .permitAll()
                 )
                 // disable frameOptions so H2 console can render in a frame
@@ -71,5 +78,14 @@ public class SecurityConfig {
             new AntPathRequestMatcher("/telegram/webhook") // Telegram supplies its own shared secret header
         ));
         return http.build();
+    }
+
+    @Bean
+    public AuthenticationSuccessHandler roleAwareSuccessHandler() {
+        return (request, response, authentication) -> {
+            boolean admin = authentication.getAuthorities().stream()
+                    .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+            response.sendRedirect(admin ? "/admin/dashboard" : "/dashboard");
+        };
     }
 }
