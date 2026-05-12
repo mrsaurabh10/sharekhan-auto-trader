@@ -2660,6 +2660,9 @@ public class TradeExecutionService {
             return triggeredTradeRepo.findTop10BySimulatorOrderByIdDesc(Broker.SIMULATOR.getDisplayName());
         }
         if (userId == null) return getRecentExecutions();
+        if (isUserDashboardScope(scope)) {
+            return triggeredTradeRepo.findTop10ByAppUserIdOrderByIdDesc(userId);
+        }
         if (isAllDashboardScope(scope)) {
             return triggeredTradeRepo.findTop10ByAppUserIdOrSimulatorOrderByIdDesc(userId, Broker.SIMULATOR.getDisplayName());
         }
@@ -2689,6 +2692,8 @@ public class TradeExecutionService {
             }
             if (userId == null) {
                 return triggeredTradeRepo.findByStatusIn(statuses, pageable);
+            } else if (isUserDashboardScope(scope)) {
+                return triggeredTradeRepo.findByAppUserIdAndStatusIn(userId, statuses, pageable);
             } else if (isAllDashboardScope(scope)) {
                 return triggeredTradeRepo.findByAppUserIdOrSimulatorAndStatusIn(userId, Broker.SIMULATOR.getDisplayName(), statusNames, pageable);
             } else {
@@ -2700,6 +2705,8 @@ public class TradeExecutionService {
             }
             if (userId == null) {
                 return triggeredTradeRepo.findAll(pageable);
+            } else if (isUserDashboardScope(scope)) {
+                return triggeredTradeRepo.findByAppUserId(userId, pageable);
             } else if (isAllDashboardScope(scope)) {
                 return triggeredTradeRepo.findByAppUserIdOrSimulator(userId, Broker.SIMULATOR.getDisplayName(), pageable);
             } else {
@@ -2714,6 +2721,10 @@ public class TradeExecutionService {
 
     private boolean isAllDashboardScope(String scope) {
         return scope != null && "all".equalsIgnoreCase(scope.trim());
+    }
+
+    private boolean isUserDashboardScope(String scope) {
+        return scope != null && "user".equalsIgnoreCase(scope.trim());
     }
 
     public void subscribeForOpenTrades() {

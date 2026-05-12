@@ -28,6 +28,9 @@ public class TradingRequestService {
             return repo.findTop10BySimulatorOrderByIdDesc(Broker.SIMULATOR.getDisplayName());
         }
         if (userId == null) return getRecentRequests();
+        if (isUserScope(scope)) {
+            return repo.findTop10ByAppUserIdOrderByIdDesc(userId);
+        }
         if (isAllScope(scope)) {
             return repo.findTop10ByAppUserIdOrSimulatorOrderByIdDesc(userId, Broker.SIMULATOR.getDisplayName());
         }
@@ -45,6 +48,9 @@ public class TradingRequestService {
         if (userId == null) {
             return repo.findRequestsOrderedForDashboard(pageable);
         }
+        if (isUserScope(scope)) {
+            return repo.findRequestsOrderedForDashboardByAppUserId(userId, pageable);
+        }
         if (isAllScope(scope)) {
             return repo.findRequestsOrderedForDashboardByAppUserIdOrSimulator(userId, Broker.SIMULATOR.getDisplayName(), pageable);
         }
@@ -57,5 +63,9 @@ public class TradingRequestService {
 
     private boolean isAllScope(String scope) {
         return scope != null && "all".equalsIgnoreCase(scope.trim());
+    }
+
+    private boolean isUserScope(String scope) {
+        return scope != null && "user".equalsIgnoreCase(scope.trim());
     }
 }

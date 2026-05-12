@@ -106,11 +106,22 @@ public class TradeTriggerController {
     }
 
     @GetMapping("/recent-executions")
-    public ResponseEntity<List<TriggeredTradeSetupEntity>> recentExecutions() {
-        Long scopedUserId = currentUserService.scopedUserId(null);
+    public ResponseEntity<List<TriggeredTradeSetupEntity>> recentExecutions(
+            @RequestParam(name = "userId", required = false) Long userId,
+            @RequestParam(name = "scope", defaultValue = "own") String scope) {
+        Long scopedUserId = currentUserService.scopedUserId(userId);
+        String setupScope = normalizeSetupScopeForSession(scope);
         return ResponseEntity.ok(scopedUserId == null
                 ? tradeExecutionService.getRecentExecutions()
-                : tradeExecutionService.getRecentExecutionsForUser(scopedUserId));
+                : tradeExecutionService.getRecentExecutionsForUser(scopedUserId, setupScope));
+    }
+
+    private String normalizeSetupScopeForSession(String scope) {
+        String normalized = scope == null || scope.isBlank() ? "own" : scope.trim().toLowerCase();
+        if (currentUserService.isAdmin() && "own".equals(normalized)) {
+            return "user";
+        }
+        return normalized;
     }
 
     @GetMapping("/pending")

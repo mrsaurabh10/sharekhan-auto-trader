@@ -46,15 +46,16 @@ public class OrderViewController {
                                                 @RequestParam(name = "size", required = false) Integer size,
                                                 @RequestParam(name = "scope", defaultValue = "own") String scope) {
         Long scopedUserId = currentUserService.scopedUserId(userId);
+        String orderScope = normalizeOrderScopeForSession(scope);
         if (page == null && size == null) {
-            return ResponseEntity.ok(tradingRequestService.getRecentRequestsForUser(scopedUserId, scope).stream()
+            return ResponseEntity.ok(tradingRequestService.getRecentRequestsForUser(scopedUserId, orderScope).stream()
                     .map(request -> enrichRequest(request, scopedUserId))
                     .toList());
         }
         int pageNumber = Math.max(page == null ? 0 : page, 0);
         int pageSize = Math.min(Math.max(size == null ? 10 : size, 1), 100);
         Pageable pageable = PageRequest.of(pageNumber, pageSize);
-        Page<TriggerTradeRequestEntity> requests = tradingRequestService.getRequestsForUser(scopedUserId, pageable, scope);
+        Page<TriggerTradeRequestEntity> requests = tradingRequestService.getRequestsForUser(scopedUserId, pageable, orderScope);
         return ResponseEntity.ok(requests.map(request -> enrichRequest(request, scopedUserId)));
      }
 
@@ -66,7 +67,8 @@ public class OrderViewController {
                                          @RequestParam(defaultValue = "10") int size) {
         Pageable pageable = PageRequest.of(page, size, Sort.by("id").descending());
         Long scopedUserId = currentUserService.scopedUserId(userId);
-        Page<TriggeredTradeSetupEntity> executions = tradeExecutionService.getRecentExecutionsForUser(scopedUserId, statuses, pageable, scope);
+        String orderScope = normalizeOrderScopeForSession(scope);
+        Page<TriggeredTradeSetupEntity> executions = tradeExecutionService.getRecentExecutionsForUser(scopedUserId, statuses, pageable, orderScope);
         return ResponseEntity.ok(executions.map(trade -> enrichExecution(trade, scopedUserId)));
     }
 
@@ -95,5 +97,13 @@ public class OrderViewController {
         row.put("simulator", simulator);
         row.put("tradeScope", tradeScope);
         row.put("tradeScopeLabel", simulator ? "Simulator" : "Own");
+    }
+
+    private String normalizeOrderScopeForSession(String scope) {
+        String normalized = scope == null || scope.isBlank() ? "own" : scope.trim().toLowerCase();
+        if (currentUserService.isAdmin() && "own".equals(normalized)) {
+            return "user";
+        }
+        return normalized;
     }
 }
