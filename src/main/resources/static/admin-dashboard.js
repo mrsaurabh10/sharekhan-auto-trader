@@ -7,8 +7,10 @@
 
   let currentRequestPage = 0;
   const requestPageSize = 10;
+  let requestLoadSeq = 0;
   let currentExecPage = 0;
   const execPageSize = 10;
+  let execLoadSeq = 0;
   window.currentSession = null;
   window.isAdminSession = false;
 
@@ -463,11 +465,13 @@
   // --- Loaders ---
   async function loadRequestedOrdersForUser(userId, page, scope) {
     const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-requests-table tbody'); if (!tbody) return; tbody.innerHTML = '';
+    const loadSeq = ++requestLoadSeq;
     if (typeof page === 'number') currentRequestPage = page;
     const orderScope = scope || currentTradeScope();
     if (!uid) { tbody.innerHTML = '<tr><td colspan="14">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
     try {
       const responseData = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(orderScope) + '&page=' + currentRequestPage + '&size=' + requestPageSize);
+      if (loadSeq !== requestLoadSeq) return;
       let data = [], pageInfo = null;
       if (responseData && Array.isArray(responseData.content)) {
           data = responseData.content;
@@ -592,7 +596,7 @@
         applyLtpMap(map);
       }
       updateRequestPaginationUI(pageInfo);
-    } catch (e) { console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="14">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
+    } catch (e) { if (loadSeq !== requestLoadSeq) return; console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="14">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
   }
 
   function updateRequestPaginationUI(pageInfo) {
@@ -618,6 +622,7 @@
     const tbody = document.querySelector('#user-executed-table tbody');
     if (!tbody) return;
     tbody.innerHTML = '';
+    const loadSeq = ++execLoadSeq;
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
@@ -628,6 +633,7 @@
       if (filterStatuses && filterStatuses.length > 0) filterStatuses.forEach(s => { url += '&status=' + encodeURIComponent(s); });
 
       const responseData = await fetchJson(url);
+      if (loadSeq !== execLoadSeq) return;
       let data = [], pageInfo = null;
       if (responseData && Array.isArray(responseData.content)) {
           data = responseData.content;
@@ -783,7 +789,7 @@
         applyLtpMap(map);
       }
       updatePaginationUI(pageInfo);
-    } catch (e) { console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
@@ -1178,9 +1184,6 @@
     showBrokersSectionFor(appUserId, window.selectedUserName);
     updateAccountSectionFor(window.selectedUserName);
     showUserTab(window.currentUserTab);
-    loadRequestedOrdersForUser(appUserId, 0).catch(function(){}); loadExecutedForUser(appUserId, getSelectedStatuses(), 0).catch(function(){});
-    if (window.currentUserTab === 'analytics') loadAnalyticsForUser(appUserId).catch(function(){});
-    if (window.currentUserTab === 'brokers') loadBrokers(appUserId).catch(function(){});
   }
 
   function wireAdminForm() {
