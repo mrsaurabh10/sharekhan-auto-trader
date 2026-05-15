@@ -1,6 +1,8 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TriggerRequest;
+import org.com.sharekhan.dto.CloseTradesRequest;
+import org.com.sharekhan.dto.CloseTradesResponse;
 import org.com.sharekhan.parser.*;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
@@ -17,6 +19,8 @@ import java.util.concurrent.*;
 import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,6 +43,9 @@ public class TradingMessageService {
 
     @Autowired
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
+
+    @Autowired
+    private TradeCloseService tradeCloseService;
 
     private final TradingSignalParser parserChain = new ParserChain(
             new SpotTelegramSignalParser(),
@@ -93,6 +100,10 @@ public class TradingMessageService {
             }
         }
 
+        if (handleSharekhanUpdateClose(message, uniqueId)) {
+            return;
+        }
+
         Map<String, Object> parsed = parserChain.parse(message);
         if (parsed != null) {
             System.out.println("✅ Parsed message: " + parsed);
@@ -114,6 +125,146 @@ public class TradingMessageService {
         } else {
             System.out.println("⚠️ No parser matched message" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
         }
+    }
+
+    private boolean handleSharekhanUpdateClose(String message, String uniqueId) {
+        Optional<CloseTradesRequest> closeRequestOpt = extractUpdateCloseRequest(message);
+        if (closeRequestOpt.isEmpty()) {
+            return false;
+        }
+
+        CloseTradesRequest closeRequest = closeRequestOpt.get();
+        try {
+            closeRequest.setReason("Sharekhan UPDATE notification");
+            CloseTradesResponse response = tradeCloseService.closeAllByContract(closeRequest);
+            System.out.println("✅ Sharekhan UPDATE close handled for " + closeRequest.getInstrument() + " response=" + response);
+            notifyCloseUpdate(response, uniqueId);
+        } catch (Exception e) {
+            System.err.println("Failed handling Sharekhan UPDATE close for " + closeRequest.getInstrument() + ": " + e.getMessage());
+            if (telegramNotificationService != null) {
+                try {
+                    telegramNotificationService.sendTradeMessage(
+                            "Sharekhan UPDATE Close Failed",
+                            "Instrument: " + closeRequest.getInstrument()
+                                    + "\nOption: " + closeRequest.getOptionType()
+                                    + "\nStrike: " + closeRequest.getStrikePrice()
+                                    + "\nExpiry: " + closeRequest.getExpiry()
+                                    + "\nReason: " + e.getMessage()
+                    );
+                } catch (Exception ignored) {}
+            }
+        }
+        return true;
+    }
+
+    private Optional<CloseTradesRequest> extractUpdateCloseRequest(String message) {
+        if (message == null || message.isBlank()) {
+            return Optional.empty();
+        }
+
+        String upper = message.toUpperCase(Locale.ROOT);
+        boolean updateIntent = Pattern.compile("\\bACTION\\s*[=:]\\s*UPDATE\\b", Pattern.CASE_INSENSITIVE)
+                .matcher(message)
+                .find()
+                || upper.startsWith("UPDATE")
+                || upper.contains("SHAREKHAN UPDATE")
+                || upper.contains("UPDATE NOTIFICATION");
+
+        if (!updateIntent) {
+            return Optional.empty();
+        }
+
+        return extractKeyValueUpdateContract(message)
+                .or(() -> extractPlainUpdateContract(message));
+    }
+
+    private Optional<CloseTradesRequest> extractKeyValueUpdateContract(String message) {
+        Map<String, String> data = new HashMap<>();
+        Matcher matcher = Pattern.compile("\\b([A-Za-z][A-Za-z0-9_]*)\\s*[=:]\\s*([^,}\\n]+)")
+                .matcher(message);
+        while (matcher.find()) {
+            data.put(matcher.group(1).trim().toLowerCase(Locale.ROOT), matcher.group(2).trim());
+        }
+
+        String symbol = firstPresent(data, "symbol", "instrument", "tradingsymbol");
+        String optionType = firstPresent(data, "optiontype", "option", "type");
+        String strike = firstPresent(data, "strike", "strikeprice");
+        String expiry = firstPresent(data, "expiry", "expirydate");
+        if (symbol == null || optionType == null || strike == null || expiry == null) {
+            return Optional.empty();
+        }
+        return buildCloseRequest(symbol, optionType, strike, expiry);
+    }
+
+    private Optional<CloseTradesRequest> extractPlainUpdateContract(String message) {
+        String normalized = message
+                .replaceAll("(?i)\\bSHAREKHAN\\b", " ")
+                .replaceAll("(?i)\\bSIGNAL\\b", " ")
+                .replaceAll("(?i)\\bNOTIFICATION\\b", " ")
+                .replaceAll("(?i)\\bACTION\\b", " ")
+                .replaceAll("(?i)\\bUPDATE\\b", " ")
+                .replaceAll("[{}=,:]", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+
+        Matcher matcher = Pattern.compile("\\b([A-Z][A-Z0-9_\\-]*)\\s+(CE|PE|CALL|PUT)\\s+([0-9]+(?:\\.[0-9]+)?)\\s+(.+)$",
+                Pattern.CASE_INSENSITIVE).matcher(normalized);
+        if (!matcher.find()) {
+            return Optional.empty();
+        }
+
+        String expiry = matcher.group(4).trim();
+        expiry = expiry.replaceAll("(?i)\\b(close|exit|square|off|now|trade|trades)\\b", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return buildCloseRequest(matcher.group(1), matcher.group(2), matcher.group(3), expiry);
+    }
+
+    private Optional<CloseTradesRequest> buildCloseRequest(String symbol, String optionType, String strike, String expiry) {
+        try {
+            CloseTradesRequest request = new CloseTradesRequest();
+            request.setInstrument(symbol.trim().toUpperCase(Locale.ROOT));
+            String normalizedOption = optionType.trim().toUpperCase(Locale.ROOT);
+            if ("CALL".equals(normalizedOption)) {
+                normalizedOption = "CE";
+            } else if ("PUT".equals(normalizedOption)) {
+                normalizedOption = "PE";
+            }
+            request.setOptionType(normalizedOption);
+            request.setStrikePrice(Double.parseDouble(strike.trim()));
+            request.setExpiry(expiry.trim());
+            return Optional.of(request);
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    private String firstPresent(Map<String, String> data, String... keys) {
+        for (String key : keys) {
+            String value = data.get(key);
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private void notifyCloseUpdate(CloseTradesResponse response, String uniqueId) {
+        if (telegramNotificationService == null || response == null) {
+            return;
+        }
+        try {
+            String body = "Instrument: " + response.getInstrument() + "\n"
+                    + "Option: " + response.getOptionType() + "\n"
+                    + "Strike: " + response.getStrikePrice() + "\n"
+                    + "Expiry: " + response.getExpiry() + "\n"
+                    + "Pending requests cancelled: " + response.getCancelledRequests() + "\n"
+                    + "Executed trades square-off initiated: " + response.getSquareOffInitiated() + "\n"
+                    + "Skipped: " + response.getSkipped() + "\n"
+                    + "Errors: " + response.getErrors()
+                    + (uniqueId != null ? "\nUpdate: " + uniqueId : "");
+            telegramNotificationService.sendTradeMessage("Sharekhan UPDATE Close Triggered", body);
+        } catch (Exception ignored) {}
     }
 
     private boolean isDuplicateTrade(TriggerRequest req, Long appUserId) {

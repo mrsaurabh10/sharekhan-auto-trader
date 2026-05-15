@@ -1,10 +1,12 @@
 package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.com.sharekhan.dto.CloseTradesRequest;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.service.TradeCloseService;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.com.sharekhan.service.TradingMessageService;
 import org.com.sharekhan.service.CurrentUserService;
@@ -23,6 +25,7 @@ public class TradeTriggerController {
 
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final TradeExecutionService tradeExecutionService;
+    private final TradeCloseService tradeCloseService;
     private final TradingMessageService tradingMessageService;
     private final CurrentUserService currentUserService;
 
@@ -48,6 +51,56 @@ public class TradeTriggerController {
             return ResponseEntity.ok(java.util.Map.of("status", "triggered", "message", "Request submitted for all active users."));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/close-all")
+    public ResponseEntity<?> closeAllByInstrument(
+            @RequestHeader(value = "X-Admin-Token", required = false) String token,
+            @RequestBody(required = false) CloseTradesRequest request) {
+
+        if (!authorized(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "forbidden", "message", "Invalid or missing X-Admin-Token"));
+        }
+
+        try {
+            return ResponseEntity.ok(tradeCloseService.closeAllByContract(request));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "close_failed", "message", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/close-all/{instrument}")
+    public ResponseEntity<?> closeAllByInstrumentPath(
+            @RequestHeader(value = "X-Admin-Token", required = false) String token,
+            @PathVariable String instrument,
+            @RequestParam String optionType,
+            @RequestParam Double strikePrice,
+            @RequestParam String expiry,
+            @RequestParam(required = false) Double price,
+            @RequestParam(required = false) String reason) {
+
+        if (!authorized(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "forbidden", "message", "Invalid or missing X-Admin-Token"));
+        }
+
+        try {
+            CloseTradesRequest request = new CloseTradesRequest();
+            request.setInstrument(instrument);
+            request.setOptionType(optionType);
+            request.setStrikePrice(strikePrice);
+            request.setExpiry(expiry);
+            request.setPrice(price);
+            request.setReason(reason);
+            return ResponseEntity.ok(tradeCloseService.closeAllByContract(request));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "close_failed", "message", e.getMessage()));
         }
     }
 

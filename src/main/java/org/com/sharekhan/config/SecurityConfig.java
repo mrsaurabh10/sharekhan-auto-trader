@@ -48,7 +48,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/user/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/orders/**", "/api/analytics/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/auth/**").permitAll() // keep token endpoints accessible via admin UI via login
-                        .requestMatchers("/api/trades/trigger-all").permitAll() // Secure via X-Admin-Token inside the controller
+                        .requestMatchers("/api/trades/trigger-all", "/api/trades/close-all", "/api/trades/close-all/**").permitAll() // Secure via X-Admin-Token inside the controller
                         .requestMatchers("/api/trades/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/scripts/**", "/api/mstock/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/ws/**").hasAnyRole("ADMIN", "USER")
@@ -75,6 +75,8 @@ public class SecurityConfig {
         http.csrf(csrf -> csrf.ignoringRequestMatchers(
             new AntPathRequestMatcher("/h2-console/**"),
             new AntPathRequestMatcher("/api/trades/trigger-all"),
+            new AntPathRequestMatcher("/api/trades/close-all"),
+            new AntPathRequestMatcher("/api/trades/close-all/**"),
             new AntPathRequestMatcher("/telegram/webhook") // Telegram supplies its own shared secret header
         ));
         return http.build();
