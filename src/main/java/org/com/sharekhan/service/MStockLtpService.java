@@ -88,7 +88,7 @@ public class MStockLtpService {
             }
 
             String urlStr = sb.toString();
-            log.info("MStock LTP request ({} instruments): {}", instruments.size(), urlStr);
+            log.debug("MStock LTP request ({} instruments): {}", instruments.size(), urlStr);
 
             // Attempt request with the required Authorization format: 'token {apiKey}:{accessToken}'
             HttpResult res = doRequestWithApiKey(urlStr, storedToken, effectiveApiKey);
