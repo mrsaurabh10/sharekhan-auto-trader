@@ -82,6 +82,46 @@ public class SharekhanHistoricalService {
         return fetched;
     }
 
+    public List<HistoricalCandle> getHistoricalCandles(Integer scripCode,
+                                                       String intervalSegment,
+                                                       LocalDate from,
+                                                       LocalDate to) {
+        if (scripCode == null) {
+            return List.of();
+        }
+
+        ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
+        if (script == null || !StringUtils.hasText(script.getExchange())) {
+            log.debug("Sharekhan historical candles skipped: script {} not found in master cache", scripCode);
+            return List.of();
+        }
+
+        String exchange = script.getExchange().trim().toUpperCase();
+        String accessToken = resolveAccessToken();
+        if (!StringUtils.hasText(accessToken)) {
+            log.debug("Sharekhan historical candles skipped: access token unavailable");
+            return List.of();
+        }
+
+        String apiKey = resolveApiKey();
+        if (!StringUtils.hasText(apiKey)) {
+            log.debug("Sharekhan historical candles skipped: API key unavailable");
+            return List.of();
+        }
+
+        try {
+            String intervalPath = buildIntervalPath(intervalSegment, from, to);
+            SharekhanConnect client = new SharekhanConnect(null, apiKey, accessToken);
+            JSONObject response = SharekhanConsoleSilencer.call(() ->
+                    client.getHistorical(exchange, String.valueOf(scripCode), intervalPath));
+            return parseHistoricalCandles(response);
+        } catch (Exception ex) {
+            log.warn("Failed to fetch Sharekhan historical candles for scrip {}: {}", scripCode, ex.getMessage());
+            log.debug("Historical candle fetch error", ex);
+            return List.of();
+        }
+    }
+
     private OptionalDouble fetchOpenPrice(Integer scripCode, LocalDate targetDate) {
         ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
         if (script == null || !StringUtils.hasText(script.getExchange())) {
@@ -91,24 +131,13 @@ public class SharekhanHistoricalService {
 
         String exchange = script.getExchange().trim().toUpperCase();
 
-        TokenInfo tokenInfo = null;
-        try {
-            tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN);
-        } catch (Exception ex) {
-            log.warn("Unable to resolve Sharekhan token info for historical price fetch: {}", ex.getMessage());
-        }
-
-        String accessToken = tokenInfo != null ? tokenInfo.getToken() : null;
-        if (!StringUtils.hasText(accessToken)) {
-            accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-        }
+        String accessToken = resolveAccessToken();
         if (!StringUtils.hasText(accessToken)) {
             log.debug("Sharekhan historical open price skipped: access token unavailable");
             return OptionalDouble.empty();
         }
 
-        String apiKeyCandidate = tokenInfo != null ? tokenInfo.getApiKey() : sharekhanProperties.getApiKey();
-        String apiKey = decryptIfNeeded(apiKeyCandidate);
+        String apiKey = resolveApiKey();
         if (!StringUtils.hasText(apiKey)) {
             log.debug("Sharekhan historical open price skipped: API key unavailable");
             return OptionalDouble.empty();
@@ -128,6 +157,34 @@ public class SharekhanHistoricalService {
             log.debug("Historical fetch error", ex);
             return OptionalDouble.empty();
         }
+    }
+
+    private String resolveAccessToken() {
+        TokenInfo tokenInfo = null;
+        try {
+            tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN);
+        } catch (Exception ex) {
+            log.warn("Unable to resolve Sharekhan token info for historical fetch: {}", ex.getMessage());
+        }
+
+        String accessToken = tokenInfo != null ? tokenInfo.getToken() : null;
+        if (!StringUtils.hasText(accessToken)) {
+            accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+        }
+        return accessToken;
+    }
+
+    private String resolveApiKey() {
+        String apiKeyCandidate = null;
+        try {
+            TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN);
+            apiKeyCandidate = tokenInfo != null ? tokenInfo.getApiKey() : null;
+        } catch (Exception ignored) {
+        }
+        if (!StringUtils.hasText(apiKeyCandidate)) {
+            apiKeyCandidate = sharekhanProperties.getApiKey();
+        }
+        return decryptIfNeeded(apiKeyCandidate);
     }
 
     private OptionalDouble parseOpenPrice(JSONObject response, LocalDate targetDate) {
@@ -253,6 +310,55 @@ public class SharekhanHistoricalService {
         return null;
     }
 
+    private List<HistoricalCandle> parseHistoricalCandles(JSONObject response) {
+        JSONArray candles = extractCandlesArray(response);
+        if (candles == null || candles.isEmpty()) {
+            return List.of();
+        }
+
+        List<HistoricalCandle> parsed = new ArrayList<>();
+        for (int i = 0; i < candles.length(); i++) {
+            HistoricalCandle candle = parseHistoricalCandle(candles.get(i));
+            if (candle != null && candle.hasOhlc()) {
+                parsed.add(candle);
+            }
+        }
+        return parsed;
+    }
+
+    private HistoricalCandle parseHistoricalCandle(Object node) {
+        if (node instanceof JSONArray array) {
+            if (array.length() < 5) {
+                return null;
+            }
+            String ts = array.optString(0, null);
+            return new HistoricalCandle(
+                    extractDate(ts),
+                    extractTime(ts),
+                    array.optDouble(1, Double.NaN),
+                    array.optDouble(2, Double.NaN),
+                    array.optDouble(3, Double.NaN),
+                    array.optDouble(4, Double.NaN)
+            );
+        }
+        if (node instanceof JSONObject obj) {
+            String dateString = extractDateString(obj);
+            LocalTime time = extractTime(dateString != null ? dateString : obj.optString("tradeTime", null));
+            if (time == null && obj.has("tradeTime")) {
+                time = extractTime(obj.optString("tradeTime", null));
+            }
+            return new HistoricalCandle(
+                    extractDate(dateString),
+                    time,
+                    extractOpenValue(obj),
+                    extractPriceValue(obj, "high", "High", "h"),
+                    extractPriceValue(obj, "low", "Low", "l"),
+                    extractPriceValue(obj, "close", "Close", "c")
+            );
+        }
+        return null;
+    }
+
     private double extractOpenValue(JSONObject obj) {
         if (obj == null) {
             return Double.NaN;
@@ -278,6 +384,19 @@ public class SharekhanHistoricalService {
                 return Double.parseDouble(str);
             } catch (NumberFormatException ignored) {
                 return Double.NaN;
+            }
+        }
+        return Double.NaN;
+    }
+
+    private double extractPriceValue(JSONObject obj, String... keys) {
+        if (obj == null || keys == null) {
+            return Double.NaN;
+        }
+        for (String key : keys) {
+            double value = tryDouble(obj, key);
+            if (!Double.isNaN(value)) {
+                return value;
             }
         }
         return Double.NaN;
@@ -374,14 +493,33 @@ public class SharekhanHistoricalService {
     }
 
     private String buildIntervalPath(LocalDate targetDate) {
-        String interval = DEFAULT_INTERVAL_SEGMENT;
-        if (targetDate != null && StringUtils.hasText(DEFAULT_QUERY_TEMPLATE)) {
-            String dateStr = targetDate.format(DateTimeFormatter.ISO_DATE);
-            String query = String.format(DEFAULT_QUERY_TEMPLATE, dateStr, dateStr);
+        return buildIntervalPath(DEFAULT_INTERVAL_SEGMENT, targetDate, targetDate);
+    }
+
+    private record Candle(LocalDate date, LocalTime time, double open) { }
+
+    private String buildIntervalPath(String intervalSegment, LocalDate from, LocalDate to) {
+        String interval = StringUtils.hasText(intervalSegment) ? intervalSegment.trim() : DEFAULT_INTERVAL_SEGMENT;
+        if (from != null && to != null && StringUtils.hasText(DEFAULT_QUERY_TEMPLATE)) {
+            String query = String.format(DEFAULT_QUERY_TEMPLATE,
+                    from.format(DateTimeFormatter.ISO_DATE),
+                    to.format(DateTimeFormatter.ISO_DATE));
             interval = interval + "?" + query;
         }
         return interval;
     }
 
-    private record Candle(LocalDate date, LocalTime time, double open) { }
+    public record HistoricalCandle(LocalDate date,
+                                   LocalTime time,
+                                   double open,
+                                   double high,
+                                   double low,
+                                   double close) {
+        private boolean hasOhlc() {
+            return Double.isFinite(open)
+                    && Double.isFinite(high)
+                    && Double.isFinite(low)
+                    && Double.isFinite(close);
+        }
+    }
 }

@@ -23,7 +23,7 @@ public class TelegramSignalParser implements TradingSignalParser {
 
         String normalizedForQuick = cleanedText.replace("\n", " ").replaceAll("\\s+", " ").trim();
         if (!normalizedForQuick.isEmpty() && !normalizedForQuick.toLowerCase(Locale.ROOT).contains("above")) {
-            Pattern quickPattern = Pattern.compile("^(?:(BUY|SELL)\\s+)?([A-Z0-9]+)\\s+([\\d\\.]+)\\s+(CE|PE|FUT|CALL|PUT)\\b.*$", Pattern.CASE_INSENSITIVE);
+            Pattern quickPattern = Pattern.compile("^(?:(BUY|SELL)\\s+)?([A-Z0-9_\\-]+)\\s+([\\d\\.]+)\\s+(CE|PE|FUT|CALL|PUT)\\b.*$", Pattern.CASE_INSENSITIVE);
             Matcher quickMatcher = quickPattern.matcher(normalizedForQuick);
             if (quickMatcher.matches()) {
                 String actionQuick = quickMatcher.group(1);
@@ -50,11 +50,12 @@ public class TelegramSignalParser implements TradingSignalParser {
                 quickResult.put("quickTrade", true);
                 quickResult.put("intraday", true);
 
-                Pattern qtyPattern = Pattern.compile("\\b(\\d+)\\s*(LOTS?|LOT|QTY|QUANTITY)\\b", Pattern.CASE_INSENSITIVE);
+                Pattern qtyPattern = Pattern.compile("\\b(?:(\\d+)\\s*(?:LOTS?|LOT|QTY|QUANTITY)|(?:LOTS?|LOT|QTY|QUANTITY)\\s*(\\d+))\\b", Pattern.CASE_INSENSITIVE);
                 Matcher qtyMatcher = qtyPattern.matcher(normalizedForQuick);
                 if (qtyMatcher.find()) {
                     try {
-                        int qty = Integer.parseInt(qtyMatcher.group(1));
+                        String qtyText = qtyMatcher.group(1) != null ? qtyMatcher.group(1) : qtyMatcher.group(2);
+                        int qty = Integer.parseInt(qtyText);
                         quickResult.put("quantity", qty);
                     } catch (NumberFormatException ignored) {
                     }
@@ -65,7 +66,7 @@ public class TelegramSignalParser implements TradingSignalParser {
 
         // Find the first line that matches the trade regex
         // Updated regex to handle optional BUY/SELL prefix, capture symbol correctly, and handle decimal strike
-        Pattern tradePattern = Pattern.compile("^(?:BUY|SELL)?\\s*([A-Z0-9\\s]+?)\\s+([\\d\\.]+)\\s+(CE|PE)\\s+above\\s+([\\d\\.]+)", Pattern.CASE_INSENSITIVE);
+        Pattern tradePattern = Pattern.compile("^(?:BUY|SELL)?\\s*([A-Z0-9_\\-\\s]+?)\\s+([\\d\\.]+)\\s+(CE|PE)\\s+above\\s+([\\d\\.]+)", Pattern.CASE_INSENSITIVE);
         String tradeLine = lines.stream()
                 .filter(line -> tradePattern.matcher(line).find())
                 .findFirst()

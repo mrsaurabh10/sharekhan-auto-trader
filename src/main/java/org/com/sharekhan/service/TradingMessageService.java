@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TriggerRequest;
+import org.com.sharekhan.dto.StockAtrTradeRequest;
 import org.com.sharekhan.dto.CloseTradesRequest;
 import org.com.sharekhan.dto.CloseTradesResponse;
 import org.com.sharekhan.parser.*;
@@ -47,7 +48,11 @@ public class TradingMessageService {
     @Autowired
     private TradeCloseService tradeCloseService;
 
+    @Autowired
+    private StockAtrTradeService stockAtrTradeService;
+
     private final TradingSignalParser parserChain = new ParserChain(
+            new StockAtrSignalParser(),
             new SpotTelegramSignalParser(),
             new TelegramSignalParser(),
             new WhatsappSignalParser(),
@@ -107,6 +112,11 @@ public class TradingMessageService {
         Map<String, Object> parsed = parserChain.parse(message);
         if (parsed != null) {
             System.out.println("✅ Parsed message: " + parsed);
+            if (Boolean.TRUE.equals(parsed.get("stockAtrTrade"))) {
+                handleStockAtrMessage(parsed, source);
+                System.out.println("✅ ATR stock message handled" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
+                return;
+            }
             TriggerRequest base = mapToTriggerRequest(parsed);
             if (source != null) {
                 base.setSource(source);
@@ -125,6 +135,30 @@ public class TradingMessageService {
         } else {
             System.out.println("⚠️ No parser matched message" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
         }
+    }
+
+    private void handleStockAtrMessage(Map<String, Object> parsed, String source) {
+        StockAtrTradeRequest request = new StockAtrTradeRequest();
+        request.setStock((String) parsed.get("stock"));
+        request.setEntryPrice(parseDouble(parsed.get("entry")));
+        Object direction = parsed.get("direction");
+        if (direction != null) {
+            request.setDirection(direction.toString());
+        }
+        Object quantity = parsed.get("quantity");
+        if (quantity instanceof Number num) {
+            request.setLots(num.intValue());
+        } else if (quantity != null) {
+            try {
+                request.setLots(Integer.parseInt(quantity.toString()));
+            } catch (NumberFormatException ignored) {
+            }
+        }
+        request.setIntraday(true);
+        request.setSource(source != null ? source : "telegram-atr");
+
+        TriggerRequest triggerRequest = stockAtrTradeService.buildTriggerRequest(request);
+        placeForAllSharekhanCustomers(triggerRequest);
     }
 
     private boolean handleSharekhanUpdateClose(String message, String uniqueId) {
