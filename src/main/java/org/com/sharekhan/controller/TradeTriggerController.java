@@ -2,6 +2,7 @@ package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.CloseTradesRequest;
+import org.com.sharekhan.dto.StockAtrTradeRequest;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
@@ -10,6 +11,7 @@ import org.com.sharekhan.service.TradeCloseService;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.com.sharekhan.service.TradingMessageService;
 import org.com.sharekhan.service.CurrentUserService;
+import org.com.sharekhan.service.StockAtrTradeService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -28,6 +30,7 @@ public class TradeTriggerController {
     private final TradeCloseService tradeCloseService;
     private final TradingMessageService tradingMessageService;
     private final CurrentUserService currentUserService;
+    private final StockAtrTradeService stockAtrTradeService;
 
     @Value("${app.admin.token:}")
     private String adminToken;
@@ -51,6 +54,27 @@ public class TradeTriggerController {
             return ResponseEntity.ok(java.util.Map.of("status", "triggered", "message", "Request submitted for all active users."));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(java.util.Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/trigger-stock-atr-all")
+    public ResponseEntity<?> triggerStockAtrForAllUsers(
+            @RequestHeader(value = "X-Admin-Token", required = false) String token,
+            @RequestBody StockAtrTradeRequest request) {
+
+        if (!authorized(token)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "forbidden", "message", "Invalid or missing X-Admin-Token"));
+        }
+
+        try {
+            TriggerRequest triggerRequest = stockAtrTradeService.buildTriggerRequest(request);
+            tradingMessageService.placeForAllSharekhanCustomers(triggerRequest);
+            return ResponseEntity.ok(stockAtrTradeService.buildResponse(triggerRequest, request.getDirection()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "stock_atr_trigger_failed", "message", e.getMessage()));
         }
     }
 

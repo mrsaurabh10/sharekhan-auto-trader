@@ -32,6 +32,19 @@ public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity
             @Param("optionType") String optionType
     );
 
+    @Query("SELECT DISTINCT s.expiry FROM ScriptMasterEntity s WHERE UPPER(s.tradingSymbol) = UPPER(:symbol) AND UPPER(s.optionType) = UPPER(:optionType) AND s.strikePrice IS NOT NULL AND s.expiry IS NOT NULL")
+    List<String> findAllOptionExpiriesByTradingSymbolAndOptionType(
+            @Param("symbol") String symbol,
+            @Param("optionType") String optionType
+    );
+
+    @Query("SELECT DISTINCT s.strikePrice FROM ScriptMasterEntity s WHERE UPPER(s.tradingSymbol) = UPPER(:symbol) AND UPPER(s.optionType) = UPPER(:optionType) AND s.expiry = :expiry AND s.strikePrice IS NOT NULL")
+    List<Double> findStrikePricesByTradingSymbolAndOptionTypeAndExpiry(
+            @Param("symbol") String symbol,
+            @Param("optionType") String optionType,
+            @Param("expiry") String expiry
+    );
+
     List<ScriptMasterEntity> findByExchange(String exchange);
 
     @Query("SELECT DISTINCT s.strikePrice FROM ScriptMasterEntity s WHERE s.exchange = :exchange AND s.tradingSymbol = :instrument AND s.strikePrice IS NOT NULL")
