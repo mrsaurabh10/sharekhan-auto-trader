@@ -2064,10 +2064,10 @@ public class TradeExecutionService {
         if ("Fully Executed".equalsIgnoreCase(result.getStatus()) && result.getExecutedPrice() != null) {
             try {
                 double exitPriceVal = result.getExecutedPrice();
-                double pnlVal = result.getPnl() != null ? result.getPnl() : 0.0d;
+                Double pnlVal = result.getPnl();
 
-                Double entryPriceForPnl = persisted.getActualEntryPrice() != null ? persisted.getActualEntryPrice() : persisted.getEntryPrice();
-                if (pnlVal == 0.0d && entryPriceForPnl != null && persisted.getQuantity() != null) {
+                Double entryPriceForPnl = resolveEntryPriceForPnl(persisted);
+                if (pnlVal == null && entryPriceForPnl != null && persisted.getQuantity() != null) {
                     pnlVal = java.math.BigDecimal.valueOf(exitPriceVal)
                             .subtract(java.math.BigDecimal.valueOf(entryPriceForPnl))
                             .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
@@ -2140,6 +2140,21 @@ public class TradeExecutionService {
                 || Boolean.TRUE.equals(request.getUseSpotForTarget())
                 || Boolean.TRUE.equals(request.getUseSpotPrice());
         return !looksLikeSpotPriceForSpotBasedOptionTrade(request.getEntryPrice(), tradedLtp, usesSpotReference);
+    }
+
+    private Double resolveEntryPriceForPnl(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
+        }
+        if (trade.getActualEntryPrice() != null) {
+            return trade.getActualEntryPrice();
+        }
+        if (usesSpotReference(trade)) {
+            log.warn("Cannot compute PnL for spot-referenced trade {} because actualEntryPrice is missing. entryPrice={} is a reference price, not the traded instrument fill.",
+                    trade.getId(), trade.getEntryPrice());
+            return null;
+        }
+        return trade.getEntryPrice();
     }
 
     public boolean hasUsableTradedExitPrice(TriggeredTradeSetupEntity trade, double exitPrice) {
@@ -2479,6 +2494,19 @@ public class TradeExecutionService {
         return result.isSuccess();
     }
 
+    public boolean modifyExitOrderForTarget(TriggeredTradeSetupEntity trade, double newPrice) {
+        if (trade == null) {
+            return false;
+        }
+        ModifyExitOrderResult result = modifyExistingExitOrder(trade, newPrice, "TARGET_HIT", TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        if (!result.isSuccess()) {
+            log.warn("Target modify failed for trade {}: {}", trade.getId(), result.getMessage());
+        } else {
+            scheduleExitOrderChase(trade);
+        }
+        return result.isSuccess();
+    }
+
     public boolean modifyExitOrderForIntradayClose(TriggeredTradeSetupEntity trade, double newPrice) {
         if (trade == null) {
             return false;
@@ -2612,21 +2640,19 @@ public class TradeExecutionService {
                             }
                         }
 
-                    } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
+                    } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())
+                            || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
                         tradeSetupEntity.setExitPrice(price);
                         tradeSetupEntity.setExitedAt(LocalDateTime.now());
 
-                        Double entryForPnl = tradeSetupEntity.getActualEntryPrice();
-                        if (entryForPnl == null) {
-                            // Fallback for older trades or non-spot trades where entryPrice is the executed price
-                            entryForPnl = tradeSetupEntity.getEntryPrice();
+                        Double entryForPnl = resolveEntryPriceForPnl(tradeSetupEntity);
+                        if (entryForPnl != null && tradeSetupEntity.getQuantity() != null) {
+                            double pnl = (price - entryForPnl)
+                                    * tradeSetupEntity.getQuantity();
+                            // just keep integer part, positive/negative safe
+                            pnl = pnl > 0 ? Math.floor(pnl) : Math.ceil(pnl);
+                            tradeSetupEntity.setPnl(pnl);
                         }
-                        
-                        double pnl = (price - entryForPnl)
-                                * tradeSetupEntity.getQuantity();
-                        // just keep integer part, positive/negative safe
-                        pnl = pnl > 0 ? Math.floor(pnl) : Math.ceil(pnl);
-                        tradeSetupEntity.setPnl(pnl);
                     }
                 }
             }

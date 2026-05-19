@@ -214,7 +214,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                     
                     // Calculate PnL if it's a sell order and we have entry price
                     if ("S".equals(transactionType) && executedPrice != null) {
-                        Double entryPriceForPnl = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+                        Double entryPriceForPnl = resolveEntryPriceForPnl(trade);
                         if (entryPriceForPnl != null) {
                             pnl = (executedPrice - entryPriceForPnl) * trade.getQuantity();
                         }
@@ -240,5 +240,27 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                     .status("Rejected")
                     .build();
         }
+    }
+
+    private Double resolveEntryPriceForPnl(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
+        }
+        if (trade.getActualEntryPrice() != null) {
+            return trade.getActualEntryPrice();
+        }
+        if (usesSpotReference(trade)) {
+            log.warn("Cannot compute PnL for spot-referenced trade {} because actualEntryPrice is missing. entryPrice={} is a reference price.",
+                    trade.getId(), trade.getEntryPrice());
+            return null;
+        }
+        return trade.getEntryPrice();
+    }
+
+    private boolean usesSpotReference(TriggeredTradeSetupEntity trade) {
+        return Boolean.TRUE.equals(trade.getUseSpotForEntry())
+                || Boolean.TRUE.equals(trade.getUseSpotForSl())
+                || Boolean.TRUE.equals(trade.getUseSpotForTarget())
+                || Boolean.TRUE.equals(trade.getUseSpotPrice());
     }
 }
