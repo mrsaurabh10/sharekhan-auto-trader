@@ -477,12 +477,16 @@ public class PriceTriggerService {
                 } else {
                     // TARGET_HIT
                     if (exitOrderAlreadyPresent) {
-                        log.info("🎯 Target hit for trade {} - existing exit order {} already placed. Maintaining TARGET_ORDER_PLACED state.", tradeId, reloaded.getExitOrderId());
-                        try {
-                            reloaded.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
-                            triggeredRepo.save(reloaded);
-                        } catch (Exception e) {
-                            log.debug("Failed to persist TARGET_ORDER_PLACED status for trade {}: {}", tradeId, e.getMessage());
+                        log.info("🎯 Target hit for trade {} - existing exit order {} already placed. Modifying toward traded LTP {}.",
+                                tradeId, reloaded.getExitOrderId(), tradedLtp);
+                        boolean modified = tradeExecutionService.modifyExitOrderForTarget(reloaded, tradedLtp);
+                        if (!modified) {
+                            try {
+                                reloaded.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+                                triggeredRepo.save(reloaded);
+                            } catch (Exception e) {
+                                log.debug("Failed to persist TARGET_ORDER_PLACED status for trade {}: {}", tradeId, e.getMessage());
+                            }
                         }
                     } else if (Boolean.TRUE.equals(reloaded.getTslEnabled())) {
                         Integer lots = reloaded.getLots();
@@ -704,6 +708,7 @@ public class PriceTriggerService {
             remainingTrade.setOptionType(trade.getOptionType());
             remainingTrade.setExpiry(trade.getExpiry());
             remainingTrade.setEntryPrice(trade.getEntryPrice());
+            remainingTrade.setActualEntryPrice(trade.getActualEntryPrice());
             remainingTrade.setStopLoss(newStopLoss); // Updated SL
             remainingTrade.setTarget1(trade.getTarget1());
             remainingTrade.setTarget2(trade.getTarget2());
@@ -770,10 +775,7 @@ public class PriceTriggerService {
 
             if (saved.getPnl() != null) return;
 
-            Double entryPriceForPnl = saved.getActualEntryPrice();
-            if (entryPriceForPnl == null) {
-                entryPriceForPnl = saved.getEntryPrice();
-            }
+            Double entryPriceForPnl = resolveEntryPriceForPnl(saved);
             Long quantity = saved.getQuantity();
 
             if (entryPriceForPnl == null || quantity == null || quantity <= 0) {
@@ -806,6 +808,21 @@ public class PriceTriggerService {
         }
     }
 
+    private Double resolveEntryPriceForPnl(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
+        }
+        if (trade.getActualEntryPrice() != null) {
+            return trade.getActualEntryPrice();
+        }
+        if (usesSpotReference(trade)) {
+            log.warn("Cannot compute PnL for spot-referenced trade {} because actualEntryPrice is missing. entryPrice={} is a reference price, not the traded instrument fill.",
+                    trade.getId(), trade.getEntryPrice());
+            return null;
+        }
+        return trade.getEntryPrice();
+    }
+
     private boolean usesSpotForTarget(TriggeredTradeSetupEntity trade) {
         if (trade == null) {
             return false;
@@ -829,6 +846,13 @@ public class PriceTriggerService {
     private boolean requiresSpotReference(TriggeredTradeSetupEntity trade) {
         return trade != null && trade.getSpotScripCode() != null
                 && (usesSpotForSl(trade) || usesSpotForTarget(trade));
+    }
+
+    private boolean usesSpotReference(TriggeredTradeSetupEntity trade) {
+        return trade != null && (Boolean.TRUE.equals(trade.getUseSpotForEntry())
+                || Boolean.TRUE.equals(trade.getUseSpotForSl())
+                || Boolean.TRUE.equals(trade.getUseSpotForTarget())
+                || Boolean.TRUE.equals(trade.getUseSpotPrice()));
     }
 
     private Double fetchLtpFromMStock(Integer scripCode, Long tradeId, String priceRole) {
