@@ -489,9 +489,9 @@ public class PriceTriggerService {
                             }
                         }
                     } else if (Boolean.TRUE.equals(reloaded.getTslEnabled())) {
-                        Integer lots = reloaded.getLots();
-                        // If lots info is missing, assume single lot / full exit
-                        if (lots == null || lots <= 1) {
+                        int lots = resolveCurrentLots(reloaded);
+                        // If lot count cannot be derived, fall back to single-lot target exit behavior.
+                        if (lots <= 1) {
                             log.info("🎯 Target hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff (Single/Unknown Lot)", tradeId, targetRefPrice, tradedLtp);
                             tradeExecutionService.squareOff(reloaded, tradedLtp, "TARGET_HIT");
                         } else {
@@ -514,110 +514,23 @@ public class PriceTriggerService {
     }
 
     private int calculateLotsToBook(TriggeredTradeSetupEntity trade, double ltp) {
-        boolean isSpotTarget = usesSpotForTarget(trade);
-        boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
-        
-        boolean target1Hit, target2Hit, target3Hit;
-        
-        if (isSpotTarget && isPE) {
-            // For PE with Spot Target: Hit if Spot Price goes BELOW Target
-            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && ltp <= trade.getTarget1();
-            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && ltp <= trade.getTarget2();
-            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && ltp <= trade.getTarget3();
-        } else {
-            // For CE (or non-spot Target): Hit if Price goes ABOVE Target
-            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && ltp >= trade.getTarget1();
-            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && ltp >= trade.getTarget2();
-            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && ltp >= trade.getTarget3();
+        int currentLots = resolveCurrentLots(trade);
+        int totalLots = resolveTotalLots(trade, currentLots);
+        BookingStep step = resolveNextBookingStep(totalLots, currentLots);
+
+        if (step == null || !isTargetHit(trade, ltp, step.targetNumber())) {
+            return 0;
         }
 
-        if (!target1Hit && !target2Hit && !target3Hit) return 0;
-
-        int currentLots = trade.getLots() != null ? trade.getLots() : 1;
-        int totalLots = trade.getOriginalLots() != null ? trade.getOriginalLots() : currentLots;
-
-        int lotsToBook = 0;
-        
-        if (totalLots == 3) {
-            // 3 Lots: 1 @ T1, 1 @ T2, 1 @ T3
-            if (target3Hit) {
-                lotsToBook = currentLots;
-            } else if (target2Hit) {
-                // Should have 1 lot remaining (Lot 3)
-                int desiredRemaining = 1;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                }
-            } else if (target1Hit) {
-                // Should have 2 lots remaining (Lot 2, Lot 3)
-                int desiredRemaining = 2;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                }
-            }
-        } else if (totalLots == 2) {
-            // 2 Lots: 1 @ T1, 1 @ T2 (Final)
-            if (target2Hit) {
-                lotsToBook = currentLots; // Close all
-            } else if (target1Hit) {
-                // Should have 1 lot remaining
-                int desiredRemaining = 1;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                }
-            }
-        } else {
-            // Mix: 40% @ T1, 40% @ T2, 20% @ T3
-            int lot40 = (int) Math.round(totalLots * 0.4);
-            if (lot40 < 1) lot40 = 1;
-
-            int exitAtT1 = lot40;
-            int exitAtT2 = lot40;
-            int exitAtT3 = totalLots - exitAtT1 - exitAtT2;
-
-            if (target3Hit) {
-                lotsToBook = currentLots;
-            } else if (target2Hit) {
-                int desiredRemaining = exitAtT3;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                }
-            } else if (target1Hit) {
-                int desiredRemaining = exitAtT2 + exitAtT3;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                }
-            }
-        }
-        
-        // Safety cap
-        if (lotsToBook > currentLots) lotsToBook = currentLots;
-        
-        return lotsToBook;
+        return Math.min(step.lotsToBook(), currentLots);
     }
 
     private void handlePartialBooking(TriggeredTradeSetupEntity trade, double referenceLtp, double tradedLtp, int currentLots) {
-        // Re-calculate lotsToBook to determine split and new SL
-        // (Logic duplicated from calculateLotsToBook but needed for newStopLoss determination)
-        
-        boolean isSpotTarget = usesSpotForTarget(trade);
-        boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
-        
-        boolean target1Hit, target2Hit, target3Hit;
-        
-        if (isSpotTarget && isPE) {
-            // For PE with Spot Target: Hit if Spot Price goes BELOW Target
-            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && referenceLtp <= trade.getTarget1();
-            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && referenceLtp <= trade.getTarget2();
-            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && referenceLtp <= trade.getTarget3();
-        } else {
-            // For CE (or non-spot Target): Hit if Price goes ABOVE Target
-            target1Hit = trade.getTarget1() != null && trade.getTarget1() > 0d && referenceLtp >= trade.getTarget1();
-            target2Hit = trade.getTarget2() != null && trade.getTarget2() > 0d && referenceLtp >= trade.getTarget2();
-            target3Hit = trade.getTarget3() != null && trade.getTarget3() > 0d && referenceLtp >= trade.getTarget3();
+        if (currentLots <= 0) {
+            currentLots = resolveCurrentLots(trade);
         }
 
-        int totalLots = trade.getOriginalLots() != null ? trade.getOriginalLots() : currentLots;
+        int totalLots = resolveTotalLots(trade, currentLots);
         if (trade.getOriginalLots() == null) {
             trade.setOriginalLots(totalLots);
             triggeredRepo.save(trade);
@@ -625,61 +538,35 @@ public class PriceTriggerService {
 
         log.info("🎯 Target hit for trade {} with {} current lots (original: {}). Calculating partial booking.", trade.getId(), currentLots, totalLots);
 
-        int lotsToBook = 0;
-        double newStopLoss = trade.getStopLoss();
-
-        if (totalLots == 3) {
-            if (target3Hit) {
-                lotsToBook = currentLots;
-            } else if (target2Hit) {
-                int desiredRemaining = 1;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                    newStopLoss = trade.getTarget1();
-                }
-            } else if (target1Hit) {
-                int desiredRemaining = 2;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                    newStopLoss = trade.getEntryPrice();
-                }
-            }
-        } else if (totalLots == 2) {
-            if (target2Hit) {
-                lotsToBook = currentLots;
-            } else if (target1Hit) {
-                int desiredRemaining = 1;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                    newStopLoss = trade.getEntryPrice();
-                }
-            }
-        } else {
-            int lot40 = (int) Math.round(totalLots * 0.4);
-            if (lot40 < 1) lot40 = 1;
-            int exitAtT1 = lot40;
-            int exitAtT2 = lot40;
-            int exitAtT3 = totalLots - exitAtT1 - exitAtT2;
-
-            if (target3Hit) {
-                lotsToBook = currentLots;
-            } else if (target2Hit) {
-                int desiredRemaining = exitAtT3;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                    newStopLoss = trade.getTarget1();
-                }
-            } else if (target1Hit) {
-                int desiredRemaining = exitAtT2 + exitAtT3;
-                if (currentLots > desiredRemaining) {
-                    lotsToBook = currentLots - desiredRemaining;
-                    newStopLoss = trade.getEntryPrice();
-                }
-            }
+        BookingStep step = resolveNextBookingStep(totalLots, currentLots);
+        if (step == null || !isTargetHit(trade, referenceLtp, step.targetNumber())) {
+            log.warn("Ignoring partial booking for trade {} because next target stage is not hit. currentLots={}, totalLots={}, referenceLtp={}",
+                    trade.getId(), currentLots, totalLots, referenceLtp);
+            return;
         }
 
-        if (lotsToBook > currentLots) lotsToBook = currentLots;
-        if (lotsToBook <= 0) lotsToBook = currentLots; // Fallback
+        int lotsToBook = Math.min(step.lotsToBook(), currentLots);
+        Double newStopLoss = trade.getStopLoss();
+        boolean newStopLossUsesTradedInstrument = false;
+        boolean target1Hit = isTargetHit(trade, referenceLtp, 1);
+        Double t1OptionStopLoss = resolveT1OptionStopLoss(trade, target1Hit, tradedLtp);
+
+        if (step.targetNumber() == 1) {
+            Double optionCost = resolveOptionCost(trade);
+            if (optionCost != null) {
+                newStopLoss = optionCost;
+                newStopLossUsesTradedInstrument = true;
+            }
+        } else if (step.targetNumber() == 2 && t1OptionStopLoss != null) {
+            newStopLoss = t1OptionStopLoss;
+            newStopLossUsesTradedInstrument = true;
+        }
+
+        if (lotsToBook <= 0) {
+            log.warn("Ignoring partial booking for trade {} because calculated lotsToBook={} currentLots={}",
+                    trade.getId(), lotsToBook, currentLots);
+            return;
+        }
 
         if (lotsToBook >= currentLots) {
             // Full exit
@@ -713,7 +600,7 @@ public class PriceTriggerService {
             remainingTrade.setTarget1(trade.getTarget1());
             remainingTrade.setTarget2(trade.getTarget2());
             remainingTrade.setTarget3(trade.getTarget3());
-            remainingTrade.setTrailingSl(trade.getTrailingSl());
+            remainingTrade.setTrailingSl(resolveTrailingT1OptionPrice(trade, target1Hit, tradedLtp));
             remainingTrade.setQuantity(remainingQty);
             remainingTrade.setLots(remainingLots);
             remainingTrade.setOriginalLots(totalLots);
@@ -723,7 +610,7 @@ public class PriceTriggerService {
             remainingTrade.setTriggeredAt(trade.getTriggeredAt());
             remainingTrade.setEntryAt(trade.getEntryAt());
             remainingTrade.setUseSpotForEntry(trade.getUseSpotForEntry());
-            remainingTrade.setUseSpotForSl(trade.getUseSpotForSl());
+            remainingTrade.setUseSpotForSl(newStopLossUsesTradedInstrument ? Boolean.FALSE : trade.getUseSpotForSl());
             remainingTrade.setUseSpotForTarget(trade.getUseSpotForTarget());
             remainingTrade.setSpotScripCode(trade.getSpotScripCode());
             
@@ -757,6 +644,156 @@ public class PriceTriggerService {
             // Proceed to square off this portion
             tradeExecutionService.squareOff(trade, tradedLtp, "TARGET_HIT_PARTIAL");
         }
+    }
+
+    private BookingStep resolveNextBookingStep(int totalLots, int currentLots) {
+        if (currentLots <= 0) {
+            return null;
+        }
+
+        if (totalLots <= 1) {
+            return new BookingStep(1, currentLots);
+        }
+
+        if (totalLots == 2) {
+            return currentLots >= 2
+                    ? new BookingStep(1, currentLots - 1)
+                    : new BookingStep(2, currentLots);
+        }
+
+        if (totalLots == 3) {
+            if (currentLots >= 3) {
+                return new BookingStep(1, currentLots - 2);
+            }
+            return currentLots == 2
+                    ? new BookingStep(2, 1)
+                    : new BookingStep(3, currentLots);
+        }
+
+        int exitAtT1 = Math.max(1, (int) Math.round(totalLots * 0.4));
+        int exitAtT3 = Math.max(1, totalLots - exitAtT1 - exitAtT1);
+        int exitAtT2 = Math.max(1, totalLots - exitAtT1 - exitAtT3);
+
+        int bookedLots = Math.max(0, totalLots - currentLots);
+        int afterT1Booked = exitAtT1;
+        int afterT2Booked = exitAtT1 + exitAtT2;
+
+        if (bookedLots < afterT1Booked) {
+            return new BookingStep(1, afterT1Booked - bookedLots);
+        }
+        if (bookedLots < afterT2Booked) {
+            return new BookingStep(2, afterT2Booked - bookedLots);
+        }
+        return new BookingStep(3, currentLots);
+    }
+
+    private boolean isTargetHit(TriggeredTradeSetupEntity trade, double ltp, int targetNumber) {
+        Double target = getTargetForStage(trade, targetNumber);
+        if (target == null || target <= 0d) {
+            return false;
+        }
+
+        boolean isSpotTarget = usesSpotForTarget(trade);
+        boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
+        if (isSpotTarget && isPE) {
+            return ltp <= target;
+        }
+        return ltp >= target;
+    }
+
+    private Double getTargetForStage(TriggeredTradeSetupEntity trade, int targetNumber) {
+        if (trade == null) {
+            return null;
+        }
+        if (targetNumber == 1) {
+            return trade.getTarget1();
+        }
+        if (targetNumber == 2) {
+            return trade.getTarget2();
+        }
+        if (targetNumber == 3) {
+            return trade.getTarget3();
+        }
+        return null;
+    }
+
+    private int resolveCurrentLots(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return 0;
+        }
+
+        Integer derivedLots = deriveLotsFromQuantity(trade);
+        if (derivedLots != null && derivedLots > 0) {
+            if (trade.getLots() != null && trade.getLots() > 0 && !trade.getLots().equals(derivedLots)) {
+                log.warn("Trade {} lots={} differs from quantity-derived lots={}; using quantity-derived lots for TSL booking.",
+                        trade.getId(), trade.getLots(), derivedLots);
+            }
+            return derivedLots;
+        }
+
+        return trade.getLots() != null && trade.getLots() > 0 ? trade.getLots() : 1;
+    }
+
+    private Integer deriveLotsFromQuantity(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0L || trade.getScripCode() == null) {
+            return null;
+        }
+
+        ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
+        if (script == null || script.getLotSize() == null || script.getLotSize() <= 0) {
+            return null;
+        }
+
+        return (int) Math.ceil((double) trade.getQuantity() / script.getLotSize());
+    }
+
+    private int resolveTotalLots(TriggeredTradeSetupEntity trade, int currentLots) {
+        if (trade != null && trade.getOriginalLots() != null && trade.getOriginalLots() > 0) {
+            return Math.max(trade.getOriginalLots(), currentLots);
+        }
+        return Math.max(currentLots, 1);
+    }
+
+    private Double resolveOptionCost(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
+        }
+        if (trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d) {
+            return trade.getActualEntryPrice();
+        }
+        if (trade.getEntryPrice() != null && trade.getEntryPrice() > 0d) {
+            return trade.getEntryPrice();
+        }
+        return null;
+    }
+
+    private Double resolveT1OptionStopLoss(TriggeredTradeSetupEntity trade, boolean target1Hit, double tradedLtp) {
+        if (trade == null) {
+            return null;
+        }
+        if (trade.getTrailingSl() != null && trade.getTrailingSl() > 0d) {
+            return trade.getTrailingSl();
+        }
+        if (!usesSpotForTarget(trade) && trade.getTarget1() != null && trade.getTarget1() > 0d) {
+            return trade.getTarget1();
+        }
+        if (target1Hit && Double.isFinite(tradedLtp) && tradedLtp > 0d) {
+            return tradedLtp;
+        }
+        return null;
+    }
+
+    private Double resolveTrailingT1OptionPrice(TriggeredTradeSetupEntity trade, boolean target1Hit, double tradedLtp) {
+        if (trade != null && trade.getTrailingSl() != null && trade.getTrailingSl() > 0d) {
+            return trade.getTrailingSl();
+        }
+        if (target1Hit && Double.isFinite(tradedLtp) && tradedLtp > 0d) {
+            return tradedLtp;
+        }
+        return trade != null ? trade.getTrailingSl() : null;
+    }
+
+    private record BookingStep(int targetNumber, int lotsToBook) {
     }
 
     private void persistPnlIfMissing(TriggeredTradeSetupEntity originalTrade, double ltp) {
