@@ -926,7 +926,11 @@ public class TradeExecutionService {
         TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(tradeId).orElse(null);
         if (tradeSetupEntity == null) return false;
 
-        tradeSetupEntity.setStopLoss(tradeSetupEntity.getEntryPrice());
+        Double costPrice = tradeSetupEntity.getActualEntryPrice() != null && tradeSetupEntity.getActualEntryPrice() > 0d
+                ? tradeSetupEntity.getActualEntryPrice()
+                : tradeSetupEntity.getEntryPrice();
+        tradeSetupEntity.setStopLoss(costPrice);
+        tradeSetupEntity.setUseSpotForSl(Boolean.FALSE);
         triggeredTradeRepo.save(tradeSetupEntity);
         return true;
     }

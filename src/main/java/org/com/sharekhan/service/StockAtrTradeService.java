@@ -29,6 +29,7 @@ public class StockAtrTradeService {
     private static final int ATR_PERIOD = 14;
     private static final String FIVE_MINUTE_INTERVAL = "5minute";
     private static final String FIFTEEN_MINUTE_INTERVAL = "15minute";
+    private static final double TARGET3_ATR15_MULTIPLIER = 1.0d;
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final DateTimeFormatter EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
@@ -61,15 +62,17 @@ public class StockAtrTradeService {
                 ? entry + (5.0d * atr)
                 : entry - (5.0d * atr);
         double target3 = "LONG".equals(direction)
-                ? entry + (3.0d * atr15m)
-                : entry - (3.0d * atr15m);
+                ? entry + (TARGET3_ATR15_MULTIPLIER * atr15m)
+                : entry - (TARGET3_ATR15_MULTIPLIER * atr15m);
 
         String expiry = nearestExpiry(stock, optionType);
-        double strike = nearestStrike(stock, optionType, expiry, entry);
+        double atmReferencePrice = entry;
+        double strike = nearestStrike(stock, optionType, expiry, atmReferencePrice);
 
-        log.info("📐 ATR stock trade computed | stock={} spotScrip={} direction={} optionType={} entry={} atrPeriod={} atr5m={} atr15m={} stopLoss={} target1={} target2={} target3={} strike={} expiry={}",
+        log.info("📐 ATR stock trade computed | stock={} spotScrip={} direction={} optionType={} entry={} atrPeriod={} atr5m={} atr15m={} stopLoss={} target1={} target2={} target3={} atmReference=spotEntry atmReferencePrice={} strike={} expiry={}",
                 stock, spot.getScripCode(), direction, optionType, roundPrice(entry), ATR_PERIOD,
-                atr, atr15m, roundPrice(stopLoss), roundPrice(target1), roundPrice(target2), roundPrice(target3), strike, expiry);
+                atr, atr15m, roundPrice(stopLoss), roundPrice(target1), roundPrice(target2), roundPrice(target3),
+                roundPrice(atmReferencePrice), strike, expiry);
 
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(stock);
@@ -111,7 +114,7 @@ public class StockAtrTradeService {
                 .target2(triggerRequest.getTarget2())
                 .target3(triggerRequest.getTarget3())
                 .atr15m(triggerRequest.getTarget3() != null
-                        ? Math.abs(triggerRequest.getTarget3() - triggerRequest.getEntryPrice()) / 3.0d
+                        ? Math.abs(triggerRequest.getTarget3() - triggerRequest.getEntryPrice()) / TARGET3_ATR15_MULTIPLIER
                         : null)
                 .strikePrice(triggerRequest.getStrikePrice())
                 .expiry(triggerRequest.getExpiry())
