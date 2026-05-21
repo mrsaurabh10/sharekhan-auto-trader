@@ -1287,6 +1287,86 @@
     }
   }
 
+  async function loadStrategyTemplates() {
+    const select = document.getElementById('strategyTemplate');
+    if (!select) return;
+    try {
+      const templates = await fetchJson('/api/strategies/templates');
+      if (!Array.isArray(templates) || templates.length === 0) {
+        select.innerHTML = '<option value="">No strategies</option>';
+        return;
+      }
+      select.innerHTML = templates.map(t => '<option value="' + escapeHtml(t.id) + '">' + escapeHtml(t.name || t.id) + '</option>').join('');
+    } catch (e) {
+      select.innerHTML = '<option value="">Strategies unavailable</option>';
+      console.debug('Failed to load strategy templates', e);
+    }
+  }
+
+  function wireStrategyPanel() {
+    const btn = document.getElementById('applyStrategyBtn');
+    const result = document.getElementById('strategyResult');
+    const errDiv = document.getElementById('serverError');
+    if (!btn) return;
+    btn.addEventListener('click', async function () {
+      if (result) result.innerText = '';
+      if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
+      const templateId = (document.getElementById('strategyTemplate') || {}).value || '';
+      const symbol = ((document.getElementById('strategySymbol') || {}).value || '').trim().toUpperCase();
+      const lotsValue = Number((document.getElementById('strategyLots') || {}).value || '1');
+      const intraday = !!(document.getElementById('strategyIntraday') && document.getElementById('strategyIntraday').checked);
+      if (!templateId) { if (result) result.innerText = 'Select a strategy template.'; return; }
+      if (!symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
+      try {
+        btn.disabled = true;
+        await ensureCsrf();
+        const body = {
+          templateId,
+          symbol,
+          lots: Number.isFinite(lotsValue) && lotsValue > 0 ? lotsValue : 1,
+          intraday,
+          userId: window.selectedUserId || null,
+          brokerCredentialsId: null,
+          source: 'strategy:' + templateId
+        };
+        if (body.userId) body.brokerCredentialsId = await resolveBrokerForUser(body.userId);
+        const resp = await fetchJson('/api/strategies/apply', { method: 'POST', body: JSON.stringify(body) });
+        const pieces = [];
+        pieces.push((resp && resp.status ? String(resp.status).toUpperCase() : 'OK') + ': ' + ((resp && resp.message) || 'Strategy evaluated.'));
+        if (resp && resp.openingRangeHigh != null && resp.openingRangeLow != null) pieces.push('ORH ' + resp.openingRangeHigh + ' / ORL ' + resp.openingRangeLow);
+        if (resp && resp.tradeRequest && resp.tradeRequest.id) pieces.push('Request #' + resp.tradeRequest.id);
+        if (resp && resp.vwapFilterSkipped) pieces.push('VWAP skipped');
+        if (resp && resp.volumeFilterSkipped) pieces.push('Volume skipped');
+        if (result) result.innerText = pieces.join(' | ');
+        if (resp && resp.triggerRequest) prefillPlaceOrderFormFromRequestRow({
+          exchange: resp.tradeRequest && resp.tradeRequest.exchange,
+          symbol: resp.triggerRequest.instrument,
+          strikePrice: resp.triggerRequest.strikePrice,
+          optionType: resp.triggerRequest.optionType,
+          expiry: resp.triggerRequest.expiry,
+          entryPrice: resp.triggerRequest.entryPrice,
+          stopLoss: resp.triggerRequest.stopLoss,
+          target1: resp.triggerRequest.target1,
+          target2: resp.triggerRequest.target2,
+          target3: resp.triggerRequest.target3,
+          quantity: resp.triggerRequest.quantity,
+          intraday: resp.triggerRequest.intraday,
+          useSpotPrice: resp.triggerRequest.useSpotPrice,
+          useSpotForEntry: resp.triggerRequest.useSpotForEntry,
+          useSpotForSl: resp.triggerRequest.useSpotForSl,
+          useSpotForTarget: resp.triggerRequest.useSpotForTarget,
+          spotScripCode: resp.triggerRequest.spotScripCode
+        });
+        if (window.selectedUserId) await loadRequestedOrdersForUser(window.selectedUserId);
+      } catch (e) {
+        const msg = e && e.message ? e.message : String(e);
+        if (errDiv) { errDiv.style.display = 'block'; errDiv.innerText = msg; } else alert(msg);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  }
+
   function prefillPlaceOrderFormFromRequestRow(req) {
     try {
       if (!req) return;
@@ -1351,6 +1431,8 @@
     wireBrokersUI();
     wireAccountUI();
     wirePlaceOrderForm();
+    await loadStrategyTemplates();
+    wireStrategyPanel();
     wireStatusFilter();
     wireRequestPagination();
     wireExecutedPagination();
