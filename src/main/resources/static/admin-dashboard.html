@@ -79,7 +79,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"/>
     <meta http-equiv="Pragma" content="no-cache"/>
     <meta http-equiv="Expires" content="0"/>
-    <script>/* cache-bust helper for static page */ window.__ASSET_VER__ = '7';</script>
+    <script>/* cache-bust helper for static page */ window.__ASSET_VER__ = '8';</script>
     
 </head>
 <body>
@@ -124,9 +124,14 @@
                         </div>
                     </div>
                     <div class="form-actions">
-                        <button type="button" class="btn primary" id="applyStrategyBtn">Apply Strategy</button>
+                        <button type="button" class="btn primary" id="applyStrategyBtn">Start Strategy</button>
+                        <button type="button" class="btn" id="refreshStrategiesBtn">Refresh Strategies</button>
                     </div>
                     <div id="strategyResult" class="hint"></div>
+                    <table id="strategy-subscriptions-table" style="width:100%;border-collapse:collapse;margin-top:8px" border="1">
+                        <thead><tr><th>ID</th><th>Template</th><th>Symbol</th><th>Lots</th><th>Status</th><th>Last Check</th><th>Message</th><th>Trade Request</th><th>Action</th></tr></thead>
+                        <tbody><tr><td colspan="9">No strategies loaded</td></tr></tbody>
+                    </table>
                 </div>
                 <div id="serverError" aria-live="polite"></div>
                 <form id="adminPlaceOrderForm" style="margin-bottom:0.5rem">

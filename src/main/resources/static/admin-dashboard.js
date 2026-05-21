@@ -1086,6 +1086,7 @@
     if ((window.currentUserTab === 'trading' || isSimulator) && window.selectedUserId) {
       loadRequestedOrdersForUser(window.selectedUserId, 0, currentTradeScope()).catch(function(){});
       loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0, currentTradeScope()).catch(function(){});
+      loadStrategySubscriptions(window.selectedUserId).catch(function(){});
     }
     if (window.currentUserTab === 'analytics' && window.selectedUserId) {
       loadAnalyticsForUser(window.selectedUserId, false, currentAnalyticsScope()).catch(function(){});
@@ -1305,8 +1306,14 @@
 
   function wireStrategyPanel() {
     const btn = document.getElementById('applyStrategyBtn');
+    const refreshBtn = document.getElementById('refreshStrategiesBtn');
     const result = document.getElementById('strategyResult');
     const errDiv = document.getElementById('serverError');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', function () {
+        loadStrategySubscriptions(window.selectedUserId).catch(function(){});
+      });
+    }
     if (!btn) return;
     btn.addEventListener('click', async function () {
       if (result) result.innerText = '';
@@ -1330,34 +1337,9 @@
           source: 'strategy:' + templateId
         };
         if (body.userId) body.brokerCredentialsId = await resolveBrokerForUser(body.userId);
-        const resp = await fetchJson('/api/strategies/apply', { method: 'POST', body: JSON.stringify(body) });
-        const pieces = [];
-        pieces.push((resp && resp.status ? String(resp.status).toUpperCase() : 'OK') + ': ' + ((resp && resp.message) || 'Strategy evaluated.'));
-        if (resp && resp.openingRangeHigh != null && resp.openingRangeLow != null) pieces.push('ORH ' + resp.openingRangeHigh + ' / ORL ' + resp.openingRangeLow);
-        if (resp && resp.tradeRequest && resp.tradeRequest.id) pieces.push('Request #' + resp.tradeRequest.id);
-        if (resp && resp.vwapFilterSkipped) pieces.push('VWAP skipped');
-        if (resp && resp.volumeFilterSkipped) pieces.push('Volume skipped');
-        if (result) result.innerText = pieces.join(' | ');
-        if (resp && resp.triggerRequest) prefillPlaceOrderFormFromRequestRow({
-          exchange: resp.tradeRequest && resp.tradeRequest.exchange,
-          symbol: resp.triggerRequest.instrument,
-          strikePrice: resp.triggerRequest.strikePrice,
-          optionType: resp.triggerRequest.optionType,
-          expiry: resp.triggerRequest.expiry,
-          entryPrice: resp.triggerRequest.entryPrice,
-          stopLoss: resp.triggerRequest.stopLoss,
-          target1: resp.triggerRequest.target1,
-          target2: resp.triggerRequest.target2,
-          target3: resp.triggerRequest.target3,
-          quantity: resp.triggerRequest.quantity,
-          intraday: resp.triggerRequest.intraday,
-          useSpotPrice: resp.triggerRequest.useSpotPrice,
-          useSpotForEntry: resp.triggerRequest.useSpotForEntry,
-          useSpotForSl: resp.triggerRequest.useSpotForSl,
-          useSpotForTarget: resp.triggerRequest.useSpotForTarget,
-          spotScripCode: resp.triggerRequest.spotScripCode
-        });
-        if (window.selectedUserId) await loadRequestedOrdersForUser(window.selectedUserId);
+        const resp = await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify(body) });
+        if (result) result.innerText = 'STARTED: Strategy #' + (resp && resp.id ? resp.id : '-') + ' is running in background.';
+        await loadStrategySubscriptions(window.selectedUserId);
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);
         if (errDiv) { errDiv.style.display = 'block'; errDiv.innerText = msg; } else alert(msg);
@@ -1365,6 +1347,56 @@
         btn.disabled = false;
       }
     });
+  }
+
+  async function loadStrategySubscriptions(userId) {
+    const tbody = document.querySelector('#strategy-subscriptions-table tbody');
+    if (!tbody) return;
+    const uid = userId || window.selectedUserId || null;
+    if (!uid && !window.isAdminSession) {
+      tbody.innerHTML = '<tr><td colspan="9">No user selected</td></tr>';
+      return;
+    }
+    try {
+      const url = '/api/strategies/subscriptions' + (uid ? ('?userId=' + encodeURIComponent(uid)) : '');
+      const rows = await fetchJson(url);
+      if (!Array.isArray(rows) || rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="9">No strategies</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + escapeHtml(row.id) + '</td>' +
+          '<td>' + escapeHtml(row.templateId || '-') + '</td>' +
+          '<td>' + escapeHtml(row.symbol || '-') + '</td>' +
+          '<td>' + escapeHtml(row.lots != null ? row.lots : '-') + '</td>' +
+          '<td>' + escapeHtml(row.status || '-') + '</td>' +
+          '<td>' + escapeHtml(row.lastEvaluatedAt || '-') + '</td>' +
+          '<td>' + escapeHtml(row.lastMessage || '-') + '</td>' +
+          '<td>' + escapeHtml(row.generatedTradeRequestId || '-') + '</td>';
+        const action = document.createElement('td');
+        if (String(row.status || '').toUpperCase() === 'ACTIVE') {
+          const cancel = document.createElement('button');
+          cancel.className = 'btn small danger';
+          cancel.innerText = 'Cancel';
+          cancel.addEventListener('click', async function () {
+            if (!confirm('Cancel strategy #' + row.id + '?')) return;
+            await ensureCsrf();
+            await fetchJson('/api/strategies/subscriptions/' + encodeURIComponent(row.id) + '/cancel', { method: 'POST' });
+            await loadStrategySubscriptions(uid);
+          });
+          action.appendChild(cancel);
+        } else {
+          action.innerText = '-';
+        }
+        tr.appendChild(action);
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="9">Error loading strategies</td></tr>';
+      console.error('Failed to load strategy subscriptions', e);
+    }
   }
 
   function prefillPlaceOrderFormFromRequestRow(req) {
@@ -1433,6 +1465,7 @@
     wirePlaceOrderForm();
     await loadStrategyTemplates();
     wireStrategyPanel();
+    loadStrategySubscriptions(window.selectedUserId).catch(function(){});
     wireStatusFilter();
     wireRequestPagination();
     wireExecutedPagination();
