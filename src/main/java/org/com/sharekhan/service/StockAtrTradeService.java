@@ -30,6 +30,7 @@ public class StockAtrTradeService {
     private static final String FIVE_MINUTE_INTERVAL = "5minute";
     private static final String FIFTEEN_MINUTE_INTERVAL = "15minute";
     private static final double TARGET3_ATR15_MULTIPLIER = 1.0d;
+    private static final double TARGET3_FIVE_MINUTE_FALLBACK_MULTIPLIER = 6.0d;
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final DateTimeFormatter EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
@@ -61,9 +62,7 @@ public class StockAtrTradeService {
         double target2 = "LONG".equals(direction)
                 ? entry + (5.0d * atr)
                 : entry - (5.0d * atr);
-        double target3 = "LONG".equals(direction)
-                ? entry + (TARGET3_ATR15_MULTIPLIER * atr15m)
-                : entry - (TARGET3_ATR15_MULTIPLIER * atr15m);
+        double target3 = calculateTarget3(entry, direction, atr, atr15m, target2);
 
         String expiry = nearestExpiry(stock, optionType);
         double atmReferencePrice = entry;
@@ -96,6 +95,22 @@ public class StockAtrTradeService {
             trigger.setLots(request.getLots());
         }
         return trigger;
+    }
+
+    static double calculateTarget3(double entry, String direction, double atr5m, double atr15m, double target2) {
+        boolean isLong = "LONG".equals(direction);
+        double target3 = isLong
+                ? entry + (TARGET3_ATR15_MULTIPLIER * atr15m)
+                : entry - (TARGET3_ATR15_MULTIPLIER * atr15m);
+
+        boolean target3BeyondTarget2 = isLong ? target3 >= target2 : target3 <= target2;
+        if (target3BeyondTarget2) {
+            return target3;
+        }
+
+        return isLong
+                ? entry + (TARGET3_FIVE_MINUTE_FALLBACK_MULTIPLIER * atr5m)
+                : entry - (TARGET3_FIVE_MINUTE_FALLBACK_MULTIPLIER * atr5m);
     }
 
     public StockAtrTradeResponse buildResponse(TriggerRequest triggerRequest, String direction) {
