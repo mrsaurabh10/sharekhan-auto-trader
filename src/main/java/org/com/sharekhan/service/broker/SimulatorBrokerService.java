@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 
 @Slf4j
 @Service
-public class SimulatorBrokerService implements BrokerService {
+public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public Broker getBroker() {
@@ -28,6 +28,32 @@ public class SimulatorBrokerService implements BrokerService {
                 .attemptedPrice(ltp)
                 .executedPrice(ltp)
                 .build();
+    }
+
+    @Override
+    public OrderPlacementResult modifyEntryOrder(TriggeredTradeSetupEntity trade,
+                                                 BrokerContext context,
+                                                 String orderId,
+                                                 double newPrice) {
+        log.info("🔁 [SIMULATOR] Modifying BUY order {} for {} to {}", orderId, trade.getSymbol(), newPrice);
+        String effectiveOrderId = orderId != null && !orderId.isBlank()
+                ? orderId
+                : "SIM-" + System.currentTimeMillis();
+
+        return OrderPlacementResult.builder()
+                .success(true)
+                .orderId(effectiveOrderId)
+                .status("Fully Executed")
+                .attemptedPrice(newPrice)
+                .executedPrice(newPrice)
+                .build();
+    }
+
+    @Override
+    public void cancelEntryOrder(TriggeredTradeSetupEntity trade,
+                                 BrokerContext context,
+                                 String orderId) {
+        log.info("🚫 [SIMULATOR] Cancelled BUY order {} for {}", orderId, trade.getSymbol());
     }
 
     @Override

@@ -1488,6 +1488,10 @@ public class TradeExecutionService {
             if (result != null && result.isSuccess()) {
                 log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, triggerLogId(trigger), result.getOrderId());
 
+                if (isOrderPlacementFilled(result)) {
+                    return result;
+                }
+
                 if (orderId != null && !orderId.isBlank()) {
                     try {
                         Thread.sleep(FINAL_STATUS_CHECK_DELAY_MS);
@@ -1626,6 +1630,13 @@ public class TradeExecutionService {
 
     private boolean isOrderFilled(TradeStatus status) {
         return TradeStatus.FULLY_EXECUTED.equals(status);
+    }
+
+    private boolean isOrderPlacementFilled(OrderPlacementResult result) {
+        return result != null
+                && result.isSuccess()
+                && result.getStatus() != null
+                && result.getStatus().trim().toLowerCase(Locale.ROOT).contains("executed");
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {
