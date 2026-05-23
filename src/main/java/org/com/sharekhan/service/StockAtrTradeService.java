@@ -153,13 +153,15 @@ public class StockAtrTradeService {
     }
 
     private ScriptMasterEntity resolveSpotScript(String stock) {
-        ScriptMasterEntity script = findSpotScript(stock, "NC");
-        if (script != null) {
-            return script;
-        }
-        script = findSpotScript(stock, "BC");
-        if (script != null) {
-            return script;
+        for (String candidate : SpotSymbolAliases.candidates(stock)) {
+            ScriptMasterEntity script = findSpotScript(candidate, "NC");
+            if (script != null) {
+                return script;
+            }
+            script = findSpotScript(candidate, "BC");
+            if (script != null) {
+                return script;
+            }
         }
         throw new IllegalArgumentException("Spot script not found for stock " + stock);
     }

@@ -1873,13 +1873,15 @@ public class TradeExecutionService {
         }
         String trimmed = instrumentName.trim();
 
-        Integer spot = resolveSpotScripFromExchange(trimmed, "NC");
-        if (spot != null) {
-            return spot;
-        }
-        spot = resolveSpotScripFromExchange(trimmed, "BC");
-        if (spot != null) {
-            return spot;
+        for (String candidate : SpotSymbolAliases.candidates(trimmed)) {
+            Integer spot = resolveSpotScripFromExchange(candidate, "NC");
+            if (spot != null) {
+                return spot;
+            }
+            spot = resolveSpotScripFromExchange(candidate, "BC");
+            if (spot != null) {
+                return spot;
+            }
         }
 
         Integer futureSpot = resolveIndexFutureScripCode(trimmed);

@@ -396,13 +396,15 @@ public class StrategyTemplateService {
     }
 
     private ScriptMasterEntity resolveSpotScript(String symbol) {
-        ScriptMasterEntity script = findSpotScript(symbol, "NC");
-        if (script != null) {
-            return script;
-        }
-        script = findSpotScript(symbol, "BC");
-        if (script != null) {
-            return script;
+        for (String candidate : SpotSymbolAliases.candidates(symbol)) {
+            ScriptMasterEntity script = findSpotScript(candidate, "NC");
+            if (script != null) {
+                return script;
+            }
+            script = findSpotScript(candidate, "BC");
+            if (script != null) {
+                return script;
+            }
         }
         throw new IllegalArgumentException("Spot script not found for symbol " + symbol);
     }
