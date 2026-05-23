@@ -104,7 +104,7 @@ public class StrategySubscriptionService {
             request.setIntraday(subscription.getIntraday());
             request.setUserId(subscription.getAppUserId());
             request.setBrokerCredentialsId(subscription.getBrokerCredentialsId());
-            request.setSource("strategy:subscription:" + subscription.getId() + ":" + subscription.getTemplateId());
+            request.setSource("strategy:" + subscription.getTemplateId());
 
             StrategyApplyResponse response = strategyTemplateService.apply(request);
             subscription.setLastEvaluatedAt(LocalDateTime.now());

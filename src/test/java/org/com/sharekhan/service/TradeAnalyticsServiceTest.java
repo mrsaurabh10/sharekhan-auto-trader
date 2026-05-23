@@ -12,6 +12,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -132,6 +133,55 @@ class TradeAnalyticsServiceTest {
         assertThat(response.getSummary().getTotalClosedTrades()).isEqualTo(1);
         assertThat(response.getSummary().getRealizedPnl()).isEqualTo(500.0);
         assertThat(response.getRecentClosedTrades()).extracting(TradeAnalyticsResponse.RecentClosedTrade::getId).containsExactly(2L);
+    }
+
+    @Test
+    void listsUserAnalyticsSourcesExcludingSimulatorByDefault() {
+        when(tradeRepository.findAnalyticsSourcesByUserExcludingSimulator(eq(1L), eq("Simulator")))
+                .thenReturn(Arrays.asList("telegram", " Manual ", "", null, "api"));
+
+        List<String> sources = service.getAvailableSources(1L, null);
+
+        assertThat(sources).containsExactly("api", "Manual", "telegram");
+    }
+
+    @Test
+    void listsSimulatorSourcesForSimulatorScope() {
+        when(tradeRepository.findAnalyticsSourcesBySimulator(eq("Simulator")))
+                .thenReturn(List.of("simulator", "backtest"));
+
+        List<String> sources = service.getAvailableSources(1L, "simulator");
+
+        assertThat(sources).containsExactly("backtest", "simulator");
+    }
+
+    @Test
+    void filtersAnalyticsByMultipleSources() {
+        TriggeredTradeSetupEntity telegram = closed(1L, "NIFTY", 100.0, LocalDateTime.of(2026, 4, 3, 10, 0));
+        telegram.setSource("telegram");
+        TriggeredTradeSetupEntity adminUi = closed(2L, "NIFTY", 200.0, LocalDateTime.of(2026, 4, 4, 10, 0));
+        adminUi.setSource("admin-ui");
+        TriggeredTradeSetupEntity strategy = closed(3L, "NIFTY", 300.0, LocalDateTime.of(2026, 4, 5, 10, 0));
+        strategy.setSource("strategy:orb");
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq(null), eq(null), eq(null)))
+                .thenReturn(List.of(telegram, adminUi, strategy));
+
+        TradeAnalyticsResponse response = service.getTradeAnalyticsForSources(
+                1L,
+                LocalDate.of(2026, 4, 1),
+                LocalDate.of(2026, 4, 30),
+                null,
+                List.of("telegram", "admin-ui"),
+                null,
+                null,
+                null
+        );
+
+        assertThat(response.getSummary().getTotalClosedTrades()).isEqualTo(2);
+        assertThat(response.getSummary().getRealizedPnl()).isEqualTo(300.0);
+        assertThat(response.getFilters().getSources()).containsExactly("telegram", "admin-ui");
+        assertThat(response.getRecentClosedTrades()).extracting(TradeAnalyticsResponse.RecentClosedTrade::getId)
+                .containsExactly(2L, 1L);
     }
 
     private TriggeredTradeSetupEntity closed(Long id, String symbol, Double pnl, LocalDateTime exitedAt) {

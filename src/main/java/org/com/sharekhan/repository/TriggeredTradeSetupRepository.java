@@ -298,6 +298,16 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                                                      @Param("brokerCredentialsId") Long brokerCredentialsId,
                                                      @Param("intraday") Boolean intraday);
 
+    @Query("""
+            SELECT DISTINCT TRIM(t.source)
+            FROM TriggeredTradeSetupEntity t
+            WHERE (:userId IS NULL OR t.appUserId = :userId)
+              AND t.source IS NOT NULL
+              AND TRIM(t.source) <> ''
+            ORDER BY TRIM(t.source)
+            """)
+    List<String> findAnalyticsSources(@Param("userId") Long userId);
+
     @Query(
             value = """
                     SELECT t.*
@@ -317,6 +327,21 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                                                                       @Param("source") String source,
                                                                       @Param("brokerCredentialsId") Long brokerCredentialsId,
                                                                       @Param("intraday") Boolean intraday);
+
+    @Query(
+            value = """
+                    SELECT DISTINCT TRIM(t.source) AS source
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE (t.app_user_id = :userId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
+                      AND t.source IS NOT NULL
+                      AND TRIM(t.source) <> ''
+                    ORDER BY source
+                    """,
+            nativeQuery = true
+    )
+    List<String> findAnalyticsSourcesByUserOrSimulator(@Param("userId") Long userId,
+                                                       @Param("simulatorBrokerName") String simulatorBrokerName);
 
     @Query(
             value = """
@@ -341,6 +366,22 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     @Query(
             value = """
+                    SELECT DISTINCT TRIM(t.source) AS source
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE t.app_user_id = :userId
+                      AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                      AND t.source IS NOT NULL
+                      AND TRIM(t.source) <> ''
+                    ORDER BY source
+                    """,
+            nativeQuery = true
+    )
+    List<String> findAnalyticsSourcesByUserExcludingSimulator(@Param("userId") Long userId,
+                                                              @Param("simulatorBrokerName") String simulatorBrokerName);
+
+    @Query(
+            value = """
                     SELECT t.*
                     FROM triggered_trade_setups t
                     LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
@@ -357,4 +398,18 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                                                                 @Param("source") String source,
                                                                 @Param("brokerCredentialsId") Long brokerCredentialsId,
                                                                 @Param("intraday") Boolean intraday);
+
+    @Query(
+            value = """
+                    SELECT DISTINCT TRIM(t.source) AS source
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                      AND t.source IS NOT NULL
+                      AND TRIM(t.source) <> ''
+                    ORDER BY source
+                    """,
+            nativeQuery = true
+    )
+    List<String> findAnalyticsSourcesBySimulator(@Param("simulatorBrokerName") String simulatorBrokerName);
 }
