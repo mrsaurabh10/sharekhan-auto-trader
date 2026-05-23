@@ -136,7 +136,7 @@ class TradeAnalyticsControllerTest {
     }
 
     @Test
-    void adminOwnScopeUsesAllAnalyticsScope() throws Exception {
+    void adminOwnScopeStaysUserOnlyAnalyticsScope() throws Exception {
         TradeAnalyticsService service = mock(TradeAnalyticsService.class);
         GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
         CurrentUserService currentUserService = mock(CurrentUserService.class);
@@ -155,7 +155,7 @@ class TradeAnalyticsControllerTest {
                         .userId(3L)
                         .from(LocalDate.of(2026, 4, 12))
                         .to(LocalDate.of(2026, 5, 12))
-                        .scope("all")
+                        .scope("own")
                         .build())
                 .summary(TradeAnalyticsResponse.Summary.builder()
                         .realizedPnl(500.0)
@@ -173,7 +173,7 @@ class TradeAnalyticsControllerTest {
                 eq(null),
                 eq(null),
                 eq(null),
-                eq("all")
+                eq("own")
         )).thenReturn(response);
 
         mockMvc.perform(get("/api/analytics/trades")
@@ -182,7 +182,7 @@ class TradeAnalyticsControllerTest {
                         .param("from", "2026-04-12")
                         .param("to", "2026-05-12"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.filters.scope", is("all")))
+                .andExpect(jsonPath("$.filters.scope", is("own")))
                 .andExpect(jsonPath("$.summary.realizedPnl", is(500.0)));
     }
 }

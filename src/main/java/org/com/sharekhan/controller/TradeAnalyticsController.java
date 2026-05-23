@@ -62,10 +62,6 @@ public class TradeAnalyticsController {
     }
 
     private String normalizeAnalyticsScopeForSession(String scope) {
-        String normalized = scope == null || scope.isBlank() ? null : scope.trim().toLowerCase();
-        if (currentUserService.isAdmin() && (normalized == null || "own".equals(normalized))) {
-            return "all";
-        }
-        return normalized;
+        return scope == null || scope.isBlank() ? null : scope.trim().toLowerCase();
     }
 }

@@ -147,6 +147,16 @@ public class TradeAnalyticsService {
                     intraday
             );
         }
+        if (userId != null) {
+            return tradeRepository.findForAnalyticsByUserExcludingSimulator(
+                    userId,
+                    Broker.SIMULATOR.getDisplayName(),
+                    symbol,
+                    source,
+                    brokerCredentialsId,
+                    intraday
+            );
+        }
         return tradeRepository.findForAnalytics(userId, symbol, source, brokerCredentialsId, intraday);
     }
 
