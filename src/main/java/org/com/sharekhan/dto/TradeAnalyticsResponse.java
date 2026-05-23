@@ -25,6 +25,7 @@ public class TradeAnalyticsResponse {
         private LocalDate to;
         private String symbol;
         private String source;
+        private List<String> sources;
         private String scope;
         private Long brokerCredentialsId;
         private Boolean intraday;

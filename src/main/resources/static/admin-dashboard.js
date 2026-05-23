@@ -257,6 +257,56 @@
     }
   }
 
+  function selectedAnalyticsSources() {
+    const select = document.getElementById('analyticsSource');
+    if (!select) return [];
+    return Array.from(select.selectedOptions || []).map(function(option) {
+      return (option.value || '').trim();
+    }).filter(Boolean);
+  }
+
+  function syncAnalyticsSourceAllOption() {
+    const select = document.getElementById('analyticsSource');
+    if (!select || !select.options.length) return;
+    const selectedSources = selectedAnalyticsSources();
+    select.options[0].selected = selectedSources.length === 0;
+  }
+
+  async function loadAnalyticsSourcesForUser(userId, scope) {
+    const select = document.getElementById('analyticsSource');
+    if (!select) return;
+    const uid = userId || window.selectedUserId;
+    const analyticsScope = scope || currentAnalyticsScope();
+    if (!uid) {
+      select.innerHTML = '<option value="">All</option>';
+      delete select.dataset.sourceKey;
+      return;
+    }
+    const key = String(uid) + '|' + String(analyticsScope || '');
+    if (select.dataset.sourceKey === key) return;
+    const previousSources = selectedAnalyticsSources();
+    try {
+      const params = new URLSearchParams();
+      params.set('userId', uid);
+      if (analyticsScope) params.set('scope', analyticsScope);
+      const sources = await fetchJson('/api/analytics/sources?' + params.toString());
+      const sourceList = Array.isArray(sources) ? sources.filter(function(source) {
+        return source != null && String(source).trim();
+      }).map(function(source) { return String(source).trim(); }) : [];
+      select.innerHTML = '<option value="">All</option>' + sourceList.map(function(source) {
+        return '<option value="' + escapeHtml(source) + '">' + escapeHtml(source) + '</option>';
+      }).join('');
+      const preserved = previousSources.filter(function(source) { return sourceList.includes(source); });
+      Array.from(select.options).forEach(function(option) {
+        option.selected = option.value ? preserved.includes(option.value) : preserved.length === 0;
+      });
+      select.dataset.sourceKey = key;
+    } catch (e) {
+      console.error('Failed to load analytics sources', e);
+      if (!select.options.length) select.innerHTML = '<option value="">All</option>';
+    }
+  }
+
   async function loadAnalyticsForUser(userId, useGemini, scope) {
     const uid = userId || window.selectedUserId;
     if (!uid) { renderAnalyticsEmpty('No user selected'); return; }
@@ -269,18 +319,19 @@
     try {
       if (refreshBtn) refreshBtn.disabled = true;
       if (geminiBtn) geminiBtn.disabled = true;
+      await loadAnalyticsSourcesForUser(uid, analyticsScope);
       const params = new URLSearchParams();
       params.set('userId', uid);
       params.set('scope', analyticsScope);
       const from = (document.getElementById('analyticsFrom') || {}).value;
       const to = (document.getElementById('analyticsTo') || {}).value;
       const symbol = ((document.getElementById('analyticsSymbol') || {}).value || '').trim();
-      const source = ((document.getElementById('analyticsSource') || {}).value || '').trim();
+      const sources = selectedAnalyticsSources();
       const intraday = !!((document.getElementById('analyticsIntraday') || {}).checked);
       if (from) params.set('from', from);
       if (to) params.set('to', to);
       if (symbol) params.set('symbol', symbol);
-      if (source) params.set('source', source);
+      sources.forEach(function(source) { params.append('source', source); });
       if (intraday) params.set('intraday', 'true');
       if (useGemini) params.set('ai', 'true');
       const data = await fetchJson('/api/analytics/trades?' + params.toString());
@@ -310,15 +361,19 @@
       const el = document.getElementById(id);
       if (el) el.addEventListener('change', refreshAnalyticsForSelectedUser);
     });
-    ['analyticsSymbol', 'analyticsSource'].forEach(function(id) {
-      const symbol = document.getElementById(id);
-      if (!symbol) return;
+    const source = document.getElementById('analyticsSource');
+    if (source) source.addEventListener('change', function() {
+      syncAnalyticsSourceAllOption();
+      refreshAnalyticsForSelectedUser();
+    });
+    const symbol = document.getElementById('analyticsSymbol');
+    if (symbol) {
       let timer = null;
       symbol.addEventListener('input', function() {
         clearTimeout(timer);
         timer = setTimeout(refreshAnalyticsForSelectedUser, 250);
       });
-    });
+    }
     renderAnalyticsEmpty('Select a user');
   }
 

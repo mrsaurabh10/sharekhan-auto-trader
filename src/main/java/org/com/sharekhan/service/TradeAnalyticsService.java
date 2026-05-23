@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.List;
@@ -53,6 +54,29 @@ public class TradeAnalyticsService {
                                                     Long brokerCredentialsId,
                                                     Boolean intraday,
                                                     String scope) {
+        return buildTradeAnalytics(userId, from, to, symbol, source, null, brokerCredentialsId, intraday, scope);
+    }
+
+    public TradeAnalyticsResponse getTradeAnalyticsForSources(Long userId,
+                                                              LocalDate from,
+                                                              LocalDate to,
+                                                              String symbol,
+                                                              List<String> sources,
+                                                              Long brokerCredentialsId,
+                                                              Boolean intraday,
+                                                              String scope) {
+        return buildTradeAnalytics(userId, from, to, symbol, null, sources, brokerCredentialsId, intraday, scope);
+    }
+
+    private TradeAnalyticsResponse buildTradeAnalytics(Long userId,
+                                                       LocalDate from,
+                                                       LocalDate to,
+                                                       String symbol,
+                                                       String source,
+                                                       List<String> sources,
+                                                       Long brokerCredentialsId,
+                                                       Boolean intraday,
+                                                       String scope) {
         LocalDate resolvedTo = to != null ? to : LocalDate.now(MARKET_ZONE);
         LocalDate resolvedFrom = from != null ? from : resolvedTo.minusDays(30);
         if (resolvedFrom.isAfter(resolvedTo)) {
@@ -63,14 +87,21 @@ public class TradeAnalyticsService {
 
         String normalizedSymbol = symbol == null || symbol.isBlank() ? null : symbol.trim();
         String normalizedSource = source == null || source.isBlank() ? null : source.trim();
+        List<String> normalizedSources = normalizeSources(sources);
+        String sourceFilter = normalizedSources.size() == 1 ? normalizedSources.get(0) : normalizedSource;
         List<TriggeredTradeSetupEntity> candidateTrades = findCandidateTrades(
                 userId,
                 normalizedSymbol,
-                normalizedSource,
+                sourceFilter,
                 brokerCredentialsId,
                 intraday,
                 scope
         );
+        if (normalizedSources.size() > 1) {
+            candidateTrades = candidateTrades.stream()
+                    .filter(trade -> matchesAnySource(trade.getSource(), normalizedSources))
+                    .toList();
+        }
 
         LocalDateTime start = resolvedFrom.atStartOfDay();
         LocalDateTime end = resolvedTo.atTime(LocalTime.MAX);
@@ -100,7 +131,8 @@ public class TradeAnalyticsService {
                         .from(resolvedFrom)
                         .to(resolvedTo)
                         .symbol(normalizedSymbol)
-                        .source(normalizedSource)
+                        .source(!normalizedSources.isEmpty() ? String.join(",", normalizedSources) : normalizedSource)
+                        .sources(normalizedSources.isEmpty() ? null : normalizedSources)
                         .scope(normalizedScope(scope))
                         .brokerCredentialsId(brokerCredentialsId)
                         .intraday(intraday)
@@ -110,6 +142,49 @@ public class TradeAnalyticsService {
                 .byDay(buildByDay(realizedTrades))
                 .recentClosedTrades(buildRecentClosedTrades(realizedTrades))
                 .build();
+    }
+
+    private List<String> normalizeSources(List<String> sources) {
+        if (sources == null || sources.isEmpty()) {
+            return List.of();
+        }
+        return sources.stream()
+                .filter(Objects::nonNull)
+                .flatMap(source -> Arrays.stream(source.split(",")))
+                .map(String::trim)
+                .filter(source -> !source.isBlank())
+                .distinct()
+                .toList();
+    }
+
+    private boolean matchesAnySource(String source, List<String> selectedSources) {
+        if (source == null) {
+            return false;
+        }
+        String normalized = source.trim();
+        return selectedSources.stream().anyMatch(selected -> selected.equalsIgnoreCase(normalized));
+    }
+
+    public List<String> getAvailableSources(Long userId, String scope) {
+        List<String> sources;
+        if (isSimulatorScope(scope)) {
+            sources = tradeRepository.findAnalyticsSourcesBySimulator(Broker.SIMULATOR.getDisplayName());
+        } else if (isOwnScope(scope) && userId != null) {
+            sources = tradeRepository.findAnalyticsSourcesByUserExcludingSimulator(userId, Broker.SIMULATOR.getDisplayName());
+        } else if (isAllScope(scope) && userId != null) {
+            sources = tradeRepository.findAnalyticsSourcesByUserOrSimulator(userId, Broker.SIMULATOR.getDisplayName());
+        } else if (userId != null) {
+            sources = tradeRepository.findAnalyticsSourcesByUserExcludingSimulator(userId, Broker.SIMULATOR.getDisplayName());
+        } else {
+            sources = tradeRepository.findAnalyticsSources(userId);
+        }
+        return sources.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(source -> !source.isBlank())
+                .distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
     }
 
     private List<TriggeredTradeSetupEntity> findCandidateTrades(Long userId,

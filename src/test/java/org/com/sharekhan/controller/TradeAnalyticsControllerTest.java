@@ -185,4 +185,76 @@ class TradeAnalyticsControllerTest {
                 .andExpect(jsonPath("$.filters.scope", is("own")))
                 .andExpect(jsonPath("$.summary.realizedPnl", is(500.0)));
     }
+
+    @Test
+    void returnsAnalyticsSourcesForScopedUserAndScope() throws Exception {
+        TradeAnalyticsService service = mock(TradeAnalyticsService.class);
+        GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        when(currentUserService.scopedUserId(7L)).thenReturn(7L);
+        when(service.getAvailableSources(eq(7L), eq("own"))).thenReturn(List.of("api", "telegram"));
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        ObjectMapper objectMapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
+                .build();
+
+        mockMvc.perform(get("/api/analytics/sources")
+                        .param("userId", "7")
+                        .param("scope", "OWN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0]", is("api")))
+                .andExpect(jsonPath("$[1]", is("telegram")));
+    }
+
+    @Test
+    void acceptsMultipleSourceFilters() throws Exception {
+        TradeAnalyticsService service = mock(TradeAnalyticsService.class);
+        GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
+        CurrentUserService currentUserService = mock(CurrentUserService.class);
+        when(currentUserService.scopedUserId(7L)).thenReturn(7L);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        ObjectMapper objectMapper = new ObjectMapper()
+                .registerModule(new JavaTimeModule())
+                .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        MockMvc mockMvc = MockMvcBuilders.standaloneSetup(controller)
+                .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
+                .build();
+
+        TradeAnalyticsResponse response = TradeAnalyticsResponse.builder()
+                .filters(TradeAnalyticsResponse.Filters.builder()
+                        .userId(7L)
+                        .source("telegram,admin-ui")
+                        .sources(List.of("telegram", "admin-ui"))
+                        .scope("own")
+                        .build())
+                .summary(TradeAnalyticsResponse.Summary.builder().realizedPnl(300.0).totalClosedTrades(2).build())
+                .bySymbol(List.of())
+                .byDay(List.of())
+                .recentClosedTrades(List.of())
+                .build();
+        when(service.getTradeAnalyticsForSources(
+                eq(7L),
+                eq(null),
+                eq(null),
+                eq(null),
+                eq(List.of("telegram", "admin-ui")),
+                eq(null),
+                eq(null),
+                eq("own")
+        )).thenReturn(response);
+
+        mockMvc.perform(get("/api/analytics/trades")
+                        .param("userId", "7")
+                        .param("scope", "own")
+                        .param("source", "telegram")
+                        .param("source", "admin-ui"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.filters.source", is("telegram,admin-ui")))
+                .andExpect(jsonPath("$.filters.sources[0]", is("telegram")))
+                .andExpect(jsonPath("$.filters.sources[1]", is("admin-ui")))
+                .andExpect(jsonPath("$.summary.totalClosedTrades", is(2)));
+    }
 }
