@@ -141,6 +141,13 @@
     return 'own';
   }
 
+  function activeAnalyticsScope(scope) {
+    if (scope) return scope;
+    const panel = document.getElementById('analyticsPanel');
+    if (window.currentUserTab === 'simulator' || (panel && panel.dataset.scope === 'simulator')) return 'simulator';
+    return currentAnalyticsScope();
+  }
+
   function updatePnlStyle(element, value) {
     if (!element) return;
     const num = Number(value);
@@ -276,7 +283,7 @@
     const select = document.getElementById('analyticsSource');
     if (!select) return;
     const uid = userId || window.selectedUserId;
-    const analyticsScope = scope || currentAnalyticsScope();
+    const analyticsScope = activeAnalyticsScope(scope);
     if (!uid) {
       select.innerHTML = '<option value="">All</option>';
       delete select.dataset.sourceKey;
@@ -311,7 +318,7 @@
     const uid = userId || window.selectedUserId;
     if (!uid) { renderAnalyticsEmpty('No user selected'); return; }
     setDefaultAnalyticsDates();
-    const analyticsScope = scope || currentAnalyticsScope();
+    const analyticsScope = activeAnalyticsScope(scope);
     const state = document.getElementById('analyticsState');
     const refreshBtn = document.getElementById('analyticsRefreshBtn');
     const geminiBtn = document.getElementById('analyticsGeminiBtn');
@@ -346,7 +353,7 @@
   }
 
   function refreshAnalyticsForSelectedUser() {
-    if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, false, currentAnalyticsScope()).catch(function(){});
+    if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, false, activeAnalyticsScope()).catch(function(){});
   }
 
   function wireAnalytics() {
@@ -355,7 +362,7 @@
     if (btn) btn.addEventListener('click', refreshAnalyticsForSelectedUser);
     const geminiBtn = document.getElementById('analyticsGeminiBtn');
     if (geminiBtn) geminiBtn.addEventListener('click', function() {
-      if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, true, currentAnalyticsScope()).catch(function(){});
+      if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, true, activeAnalyticsScope()).catch(function(){});
     });
     ['analyticsFrom', 'analyticsTo', 'analyticsIntraday'].forEach(function(id) {
       const el = document.getElementById(id);
@@ -1085,9 +1092,11 @@
     const simulator = currentTradeScope() === 'simulator';
     const requestsTitle = document.getElementById('requestsSectionTitle');
     const analyticsTitle = document.getElementById('analyticsPanelTitle');
+    const analyticsPanel = document.getElementById('analyticsPanel');
     const executedTitle = document.getElementById('executedSectionTitle');
     if (requestsTitle) requestsTitle.innerText = simulator ? 'Simulator Requests' : 'Trading Requests';
     if (analyticsTitle) analyticsTitle.innerText = simulator ? 'Simulator Analytics' : 'Analytics';
+    if (analyticsPanel) analyticsPanel.dataset.scope = simulator ? 'simulator' : 'own';
     if (executedTitle) executedTitle.innerText = simulator ? 'Simulator Trades Executed' : 'Trades Executed';
   }
 
