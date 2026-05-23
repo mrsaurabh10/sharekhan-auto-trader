@@ -613,6 +613,7 @@ public class PriceTriggerService {
             remainingTrade.setUseSpotForSl(newStopLossUsesTradedInstrument ? Boolean.FALSE : trade.getUseSpotForSl());
             remainingTrade.setUseSpotForTarget(trade.getUseSpotForTarget());
             remainingTrade.setSpotScripCode(trade.getSpotScripCode());
+            remainingTrade.setSource(trade.getSource());
             
             // Append suffix to orderId to avoid unique constraint violation
             if (trade.getOrderId() != null) {
