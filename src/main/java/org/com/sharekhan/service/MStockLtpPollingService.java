@@ -2,13 +2,16 @@ package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
@@ -30,13 +33,18 @@ public class MStockLtpPollingService {
     private final LtpCacheService ltpCacheService;
     private final PriceTriggerService priceTriggerService;
     private final MStockInstrumentResolver instrumentResolver;
+    private final TokenStoreService tokenStoreService;
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final LocalTime MARKET_CLOSE_TIME = LocalTime.of(15, 30);
+    private static final long MAX_TRANSIENT_BACKOFF_MS = 60_000L;
 
     private final Map<Integer, String> scripCodeToMStockKeyCache = new ConcurrentHashMap<>();
     private final Map<String, Integer> mStockKeyToScripCodeCache = new ConcurrentHashMap<>();
     private final AtomicBoolean afterHoursLogged = new AtomicBoolean(false);
+    private final AtomicBoolean missingTokenLogged = new AtomicBoolean(false);
+    private volatile Instant nextPollAttemptAt = Instant.EPOCH;
+    private volatile int consecutiveTransientFailures = 0;
 
     @Value("${app.mstock.poll-delay-ms:1500}")
     private long mstockPollDelayMs;
@@ -60,6 +68,18 @@ public class MStockLtpPollingService {
                 return;
             }
 
+            if (!hasMStockToken()) {
+                if (missingTokenLogged.compareAndSet(false, true)) {
+                    log.info("Skipping MStock LTP polling until a valid MStock access token is available.");
+                }
+                return;
+            }
+            missingTokenLogged.set(false);
+
+            if (isInTransientBackoff(now.toInstant())) {
+                return;
+            }
+
             java.util.LinkedHashSet<String> instrumentSet = new java.util.LinkedHashSet<>();
             for (String scripKey : activeScripKeys) {
                 Integer scripCode = extractScripCode(scripKey);
@@ -77,6 +97,7 @@ public class MStockLtpPollingService {
 
             Map<String, Map<String, Object>> ltpData = mStockLtpService.fetchLtp(new ArrayList<>(instrumentSet));
             if (ltpData == null || ltpData.isEmpty()) {
+                resetTransientBackoffIfNeeded();
                 return;
             }
 
@@ -101,10 +122,69 @@ public class MStockLtpPollingService {
                 priceTriggerService.evaluatePriceTrigger(scripCode, newLtp);
                 priceTriggerService.monitorOpenTrades(scripCode, newLtp);
             }
+            resetTransientBackoffIfNeeded();
+        } catch (MStockLtpException e) {
+            if (e.isTransientFailure()) {
+                applyTransientBackoff(e);
+            } else {
+                log.warn("Error during MStock LTP polling: {}", e.getMessage());
+                log.debug("MStock LTP polling error trace", e);
+            }
+        } catch (IllegalStateException e) {
+            if (e.getMessage() != null && e.getMessage().contains("No MStock access token")) {
+                if (missingTokenLogged.compareAndSet(false, true)) {
+                    log.info("Skipping MStock LTP polling until a valid MStock access token is available.");
+                }
+            } else {
+                log.warn("Error during MStock LTP polling: {}", e.getMessage());
+                log.debug("MStock LTP polling error trace", e);
+            }
         } catch (Exception e) {
             log.warn("Error during MStock LTP polling: {}", e.getMessage());
-            log.trace("MStock LTP polling error trace", e);
+            log.debug("MStock LTP polling error trace", e);
         }
+    }
+
+    private boolean hasMStockToken() {
+        return tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK) != null
+                || StringUtils.hasText(tokenStoreService.getFirstNonExpiredTokenForBroker(Broker.MSTOCK))
+                || StringUtils.hasText(tokenStoreService.getAccessToken(Broker.MSTOCK));
+    }
+
+    private boolean isInTransientBackoff(Instant now) {
+        return now != null && now.isBefore(nextPollAttemptAt);
+    }
+
+    private void applyTransientBackoff(MStockLtpException failure) {
+        int failures = ++consecutiveTransientFailures;
+        long baseDelay = Math.max(1_000L, mstockPollDelayMs);
+        long multiplier = 1L << Math.min(failures - 1, 5);
+        long delayMs = Math.min(MAX_TRANSIENT_BACKOFF_MS, baseDelay * multiplier);
+        nextPollAttemptAt = Instant.now().plusMillis(delayMs);
+
+        if (failures == 1 || failures % 5 == 0) {
+            log.warn("MStock LTP polling transient failure (http {}). Backing off for {} ms; consecutiveFailures={}. Body={}",
+                    failure.getHttpStatus(), delayMs, failures, summarize(failure.getResponseBody()));
+        } else {
+            log.debug("MStock LTP polling transient failure (http {}). Backing off for {} ms; consecutiveFailures={}",
+                    failure.getHttpStatus(), delayMs, failures);
+        }
+    }
+
+    private void resetTransientBackoffIfNeeded() {
+        if (consecutiveTransientFailures > 0) {
+            log.info("MStock LTP polling recovered after {} transient failure(s).", consecutiveTransientFailures);
+            consecutiveTransientFailures = 0;
+            nextPollAttemptAt = Instant.EPOCH;
+        }
+    }
+
+    private String summarize(String body) {
+        if (!StringUtils.hasText(body)) {
+            return "";
+        }
+        String compact = body.replaceAll("\\s+", " ").trim();
+        return compact.length() <= 240 ? compact : compact.substring(0, 240) + "...";
     }
 
     private Integer extractScripCode(String scripKey) {

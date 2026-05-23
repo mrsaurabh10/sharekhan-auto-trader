@@ -121,8 +121,7 @@ public class MStockLtpService {
             }
 
             if (res.code != 200) {
-                log.warn("MStock LTP failed (http {}): {}", res.code, res.body);
-                throw new RuntimeException("MStock LTP request failed (http:" + res.code + "): " + res.body);
+                throw new MStockLtpException(res.code, res.body);
             }
 
             log.debug("MStock LTP response (http {}): {}", res.code, res.body);
@@ -166,6 +165,8 @@ public class MStockLtpService {
 
             return result;
 
+        } catch (MStockLtpException e) {
+            throw e;
         } catch (Exception e) {
             log.error("❌ Failed to fetch MStock LTP", e);
             throw new RuntimeException("Failed to fetch MStock LTP: " + e.getMessage(), e);
@@ -298,8 +299,7 @@ public class MStockLtpService {
             }
 
             if (res.code != 200) {
-                log.warn("MStock LTP failed (http {}): {}", res.code, res.body);
-                throw new RuntimeException("MStock LTP request failed (http:" + res.code + "): " + res.body);
+                throw new MStockLtpException(res.code, res.body);
             }
 
             log.debug("MStock LTP response (http {}): {}", res.code, res.body);
@@ -342,6 +342,8 @@ public class MStockLtpService {
 
             return result;
 
+        } catch (MStockLtpException e) {
+            throw e;
         } catch (Exception e) {
             log.error("❌ Failed to fetch MStock LTP", e);
             throw new RuntimeException("Failed to fetch MStock LTP: " + e.getMessage(), e);
