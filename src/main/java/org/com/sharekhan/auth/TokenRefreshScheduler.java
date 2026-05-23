@@ -52,9 +52,18 @@ public class TokenRefreshScheduler {
     }
 
 
+    @Scheduled(cron = "0 30 7 * * MON-FRI", zone = "Asia/Kolkata")
+    public void refreshTokenAt730IST() {
+        refreshScheduledTokens("7:30 AM IST");
+    }
+
     @Scheduled(cron = "0 30 8 * * MON-FRI", zone = "Asia/Kolkata")
     public void refreshTokenAt830IST() {
-        log.info("⏰ Scheduled 8:30 AM IST token refresh starting...");
+        refreshScheduledTokens("8:30 AM IST");
+    }
+
+    private void refreshScheduledTokens(String label) {
+        log.info("⏰ Scheduled {} token refresh starting...", label);
 
         // Refresh per-credential tokens first (force refresh)
         try {

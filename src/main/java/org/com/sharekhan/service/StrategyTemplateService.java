@@ -66,7 +66,6 @@ public class StrategyTemplateService {
     private final MStockInstrumentRepository mStockInstrumentRepository;
     private final MStockLtpService mStockLtpService;
     private final MStockIntradayCandleService mStockIntradayCandleService;
-    private final SharekhanHistoricalService sharekhanHistoricalService;
     private final TradeExecutionService tradeExecutionService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
 
@@ -93,7 +92,7 @@ public class StrategyTemplateService {
             return waiting(definition, symbol, "Waiting for at least one completed 5-minute candle after 9:30.");
         }
 
-        CandleLoad candleLoad = loadCandles(spotScript, today);
+        CandleLoad candleLoad = loadCandles(spotScript);
         List<StrategyCandle> candles = candleLoad.candles().stream()
                 .filter(c -> today.equals(c.date()))
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
@@ -230,7 +229,7 @@ public class StrategyTemplateService {
                 .build();
     }
 
-    private CandleLoad loadCandles(ScriptMasterEntity spotScript, LocalDate today) {
+    private CandleLoad loadCandles(ScriptMasterEntity spotScript) {
         try {
             Optional<String> keyOpt = mStockInstrumentResolver.resolveInstrumentKey(spotScript);
             if (keyOpt.isPresent()) {
@@ -250,16 +249,11 @@ public class StrategyTemplateService {
                 }
             }
         } catch (Exception ex) {
-            log.warn("MStock intraday candles unavailable for {}. Falling back to Sharekhan OHLC candles; volume/VWAP filters will be skipped. Reason: {}",
+            log.warn("MStock intraday candles unavailable for {}. Strategy evaluation will wait for MStock 5-minute candles. Reason: {}",
                     spotScript.getTradingSymbol(), ex.getMessage());
         }
 
-        List<StrategyCandle> fallback = sharekhanHistoricalService
-                .getHistoricalCandles(spotScript.getScripCode(), "5minute", today, today)
-                .stream()
-                .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), null))
-                .toList();
-        return new CandleLoad(fallback, false);
+        return new CandleLoad(List.of(), false);
     }
 
     private Long resolveTokenViaLtp(String instrumentKey) {
@@ -396,13 +390,15 @@ public class StrategyTemplateService {
     }
 
     private ScriptMasterEntity resolveSpotScript(String symbol) {
-        ScriptMasterEntity script = findSpotScript(symbol, "NC");
-        if (script != null) {
-            return script;
-        }
-        script = findSpotScript(symbol, "BC");
-        if (script != null) {
-            return script;
+        for (String candidate : SpotSymbolAliases.candidates(symbol)) {
+            ScriptMasterEntity script = findSpotScript(candidate, "NC");
+            if (script != null) {
+                return script;
+            }
+            script = findSpotScript(candidate, "BC");
+            if (script != null) {
+                return script;
+            }
         }
         throw new IllegalArgumentException("Spot script not found for symbol " + symbol);
     }

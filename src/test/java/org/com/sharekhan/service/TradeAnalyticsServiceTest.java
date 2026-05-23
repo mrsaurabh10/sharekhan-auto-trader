@@ -30,7 +30,7 @@ class TradeAnalyticsServiceTest {
     void calculatesRealizedProfitabilityAndOrderHealth() {
         LocalDate from = LocalDate.of(2026, 4, 1);
         LocalDate to = LocalDate.of(2026, 4, 30);
-        when(tradeRepository.findForAnalytics(eq(1L), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of(
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of(
                 closed(1L, "NIFTY", 1000.0, LocalDateTime.of(2026, 4, 3, 10, 0)),
                 closed(2L, "NIFTY", -400.0, LocalDateTime.of(2026, 4, 4, 10, 0)),
                 closed(3L, "BANKNIFTY", 0.0, LocalDateTime.of(2026, 4, 5, 10, 0)),
@@ -64,7 +64,7 @@ class TradeAnalyticsServiceTest {
 
     @Test
     void returnsZeroMetricsWhenThereAreNoTrades() {
-        when(tradeRepository.findForAnalytics(eq(1L), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of());
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of());
 
         TradeAnalyticsResponse response = service.getTradeAnalytics(
                 1L,
@@ -87,7 +87,7 @@ class TradeAnalyticsServiceTest {
 
     @Test
     void leavesProfitFactorNullWhenThereAreNoLosingTrades() {
-        when(tradeRepository.findForAnalytics(eq(1L), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of(
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of(
                 closed(1L, "NIFTY", 100.0, LocalDateTime.of(2026, 4, 3, 10, 0)),
                 closed(2L, "BANKNIFTY", 200.0, LocalDateTime.of(2026, 4, 4, 10, 0))
         ));
@@ -113,7 +113,7 @@ class TradeAnalyticsServiceTest {
         TriggeredTradeSetupEntity exitedInsideTriggeredOutside = closed(2L, "NIFTY", 500.0, LocalDateTime.of(2026, 4, 5, 10, 0));
         exitedInsideTriggeredOutside.setTriggeredAt(LocalDateTime.of(2026, 3, 20, 10, 0));
         TriggeredTradeSetupEntity exitedOutside = closed(3L, "NIFTY", 250.0, LocalDateTime.of(2026, 5, 1, 10, 0));
-        when(tradeRepository.findForAnalytics(eq(1L), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of(
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of(
                 nullPnl,
                 exitedInsideTriggeredOutside,
                 exitedOutside

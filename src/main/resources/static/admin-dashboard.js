@@ -138,7 +138,7 @@
 
   function currentAnalyticsScope() {
     if (window.currentUserTab === 'simulator') return 'simulator';
-    return window.isAdminSession ? 'all' : 'own';
+    return 'own';
   }
 
   function updatePnlStyle(element, value) {
