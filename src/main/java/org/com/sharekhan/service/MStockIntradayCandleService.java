@@ -30,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 @Slf4j
 @Service
@@ -39,6 +40,22 @@ public class MStockIntradayCandleService {
     private static final String INTRADAY_URL_TEMPLATE =
             "https://api.mstock.trade/openapi/typea/instruments/intraday/%s/%s/%s";
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final Map<String, String> EXCHANGE_SEGMENTS = Map.ofEntries(
+            Map.entry("1", "1"),
+            Map.entry("NSE", "1"),
+            Map.entry("NC", "1"),
+            Map.entry("2", "2"),
+            Map.entry("NFO", "2"),
+            Map.entry("NF", "2"),
+            Map.entry("3", "3"),
+            Map.entry("CDS", "3"),
+            Map.entry("4", "4"),
+            Map.entry("BSE", "4"),
+            Map.entry("BC", "4"),
+            Map.entry("5", "5"),
+            Map.entry("BFO", "5"),
+            Map.entry("BF", "5")
+    );
 
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
@@ -52,7 +69,7 @@ public class MStockIntradayCandleService {
             return List.of();
         }
 
-        String normalizedExchange = exchange.trim().toUpperCase(Locale.ROOT);
+        String normalizedExchange = normalizeExchangeSegment(exchange);
         String normalizedInterval = interval.trim();
         String url = String.format(INTRADAY_URL_TEMPLATE, normalizedExchange, instrumentToken, normalizedInterval);
 
@@ -182,6 +199,18 @@ public class MStockIntradayCandleService {
             return "token " + apiKey + ":" + accessToken;
         }
         return "token " + accessToken;
+    }
+
+    static String normalizeExchangeSegment(String exchange) {
+        if (!StringUtils.hasText(exchange)) {
+            return null;
+        }
+        String trimmed = exchange.trim().toUpperCase(Locale.ROOT);
+        String segment = EXCHANGE_SEGMENTS.get(trimmed);
+        if (!StringUtils.hasText(segment)) {
+            throw new IllegalArgumentException("Unsupported MStock exchange segment: " + exchange);
+        }
+        return segment;
     }
 
     private String decryptIfNeeded(String value) {
