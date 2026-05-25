@@ -165,6 +165,14 @@ public class MStockIntradayCandleService {
             return null;
         }
         String text = raw.trim();
+        int tIndex = text.indexOf('T');
+        int offsetIndex = tIndex >= 0 ? Math.max(text.indexOf('+', tIndex), text.indexOf('-', tIndex + 1)) : -1;
+        if (offsetIndex > 0) {
+            try {
+                return LocalDateTime.parse(text.substring(0, offsetIndex), DateTimeFormatter.ISO_LOCAL_DATE_TIME);
+            } catch (DateTimeParseException ignored) {
+            }
+        }
         if (text.matches(".*[+-]\\d{2}$")) {
             text = text + ":00";
         } else if (text.matches(".*[+-]\\d{4}$")) {

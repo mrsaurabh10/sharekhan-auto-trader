@@ -115,7 +115,13 @@ public class StrategyTemplateService {
                 .filter(c -> !c.time().isBefore(OR_START) && c.time().isBefore(OR_END))
                 .toList();
         if (openingRange.size() < 3) {
-            return waiting(definition, symbol, "Opening range 9:15-9:30 is not complete.");
+            String reason = "Opening range 9:15-9:30 is not complete. Found "
+                    + openingRange.size()
+                    + " candles in range. Available candle times: "
+                    + summarizeCandleTimes(candles);
+            log.warn(reason);
+            printDiagnostic(reason);
+            return waiting(definition, symbol, reason);
         }
 
         double orh = openingRange.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
@@ -390,6 +396,17 @@ public class StrategyTemplateService {
                 .distinct()
                 .sorted()
                 .map(LocalDate::toString)
+                .toList()
+                .toString();
+    }
+
+    private String summarizeCandleTimes(List<StrategyCandle> candles) {
+        if (candles == null || candles.isEmpty()) {
+            return "none";
+        }
+        return candles.stream()
+                .map(c -> c.time().toString())
+                .limit(20)
                 .toList()
                 .toString();
     }
