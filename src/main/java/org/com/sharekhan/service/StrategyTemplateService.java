@@ -97,7 +97,18 @@ public class StrategyTemplateService {
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
                 .toList();
         if (candles.isEmpty()) {
-            return waiting(definition, symbol, "No intraday candles available for " + symbol + ".");
+            String reason = candleLoad.reason();
+            if (!StringUtils.hasText(reason) && !candleLoad.candles().isEmpty()) {
+                reason = "Loaded " + candleLoad.candles().size()
+                        + " candles from MStock, but none matched today's market date "
+                        + today
+                        + ". Candle dates: "
+                        + summarizeCandleDates(candleLoad.candles());
+                log.warn(reason);
+                printDiagnostic(reason);
+            }
+            String detail = StringUtils.hasText(reason) ? " Reason: " + reason : "";
+            return waiting(definition, symbol, "No intraday candles available for " + symbol + "." + detail);
         }
 
         List<StrategyCandle> openingRange = candles.stream()
@@ -230,33 +241,98 @@ public class StrategyTemplateService {
 
     private CandleLoad loadCandles(ScriptMasterEntity spotScript) {
         try {
+            String symbol = spotScript != null ? spotScript.getTradingSymbol() : null;
             Optional<String> keyOpt = mStockInstrumentResolver.resolveInstrumentKey(spotScript);
-            if (keyOpt.isPresent()) {
-                String key = keyOpt.get();
-                Optional<MStockInstrumentEntity> instrumentOpt = mStockInstrumentRepository.findByInstrumentKey(key);
-                String symbolToken = instrumentOpt
-                        .map(MStockInstrumentEntity::getExchangeToken)
-                        .filter(StringUtils::hasText)
-                        .map(String::trim)
-                        .orElse(null);
-                if (StringUtils.hasText(symbolToken)) {
-                    String exchange = key.contains(":") ? key.substring(0, key.indexOf(':')) : normalizeMStockExchange(spotScript.getExchange());
-                    List<StrategyCandle> candles = mStockIntradayCandleService
-                            .getIntradayCandles(exchange, symbolToken, "5minute")
-                            .stream()
-                            .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
-                            .toList();
-                    if (!candles.isEmpty()) {
-                        return new CandleLoad(candles, candles.stream().anyMatch(StrategyCandle::hasVolume));
-                    }
-                }
+            if (keyOpt.isEmpty()) {
+                String reason = "Unable to resolve MStock instrument key for symbol=" + symbol
+                        + ", exchange=" + (spotScript != null ? spotScript.getExchange() : null)
+                        + ", scripCode=" + (spotScript != null ? spotScript.getScripCode() : null);
+                log.warn(reason);
+                printDiagnostic(reason);
+                return new CandleLoad(List.of(), false, reason);
             }
-        } catch (Exception ex) {
-            log.warn("MStock intraday candles unavailable for {}. Strategy evaluation will wait for MStock 5-minute candles. Reason: {}",
-                    spotScript.getTradingSymbol(), ex.getMessage());
-        }
 
-        return new CandleLoad(List.of(), false);
+            String key = keyOpt.get();
+            Optional<MStockInstrumentEntity> instrumentOpt = mStockInstrumentRepository.findByInstrumentKey(key);
+            if (instrumentOpt.isEmpty()) {
+                String reason = "MStock instrument master row not found for key=" + key
+                        + ". Refresh the MStock script master before loading intraday candles.";
+                log.warn(reason);
+                printDiagnostic(reason);
+                return new CandleLoad(List.of(), false, reason);
+            }
+
+            MStockInstrumentEntity instrument = instrumentOpt.get();
+            String symbolToken = StringUtils.hasText(instrument.getExchangeToken())
+                    ? instrument.getExchangeToken().trim()
+                    : null;
+            if (!StringUtils.hasText(symbolToken)) {
+                String reason = "MStock exchangeToken is missing for key=" + key
+                        + ", instrumentToken=" + instrument.getInstrumentToken()
+                        + ", tradingSymbol=" + instrument.getTradingSymbol()
+                        + ", exchange=" + instrument.getExchange();
+                log.warn(reason);
+                printDiagnostic(reason);
+                return new CandleLoad(List.of(), false, reason);
+            }
+
+            String exchange = key.contains(":") ? key.substring(0, key.indexOf(':')) : normalizeMStockExchange(spotScript.getExchange());
+            log.info("Loading MStock intraday candles for symbol={}, key={}, exchange={}, symbolToken={}, interval={}",
+                    symbol, key, exchange, symbolToken, "5minute");
+            printDiagnostic("Loading candles symbol=" + symbol
+                    + ", key=" + key
+                    + ", exchange=" + exchange
+                    + ", symbolToken=" + symbolToken
+                    + ", interval=5minute");
+            List<StrategyCandle> candles = mStockIntradayCandleService
+                    .getIntradayCandles(exchange, symbolToken, "5minute")
+                    .stream()
+                    .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
+                    .toList();
+            if (!candles.isEmpty()) {
+                log.info("Loaded {} MStock intraday candles for symbol={}, key={}, exchange={}, symbolToken={}",
+                        candles.size(), symbol, key, exchange, symbolToken);
+                printDiagnostic("Loaded " + candles.size()
+                        + " candles for symbol=" + symbol
+                        + ", key=" + key
+                        + ", exchange=" + exchange
+                        + ", symbolToken=" + symbolToken
+                        + ", dates=" + summarizeCandleDates(candles));
+                return new CandleLoad(candles, candles.stream().anyMatch(StrategyCandle::hasVolume), null);
+            }
+
+            String reason = "MStock intraday API returned zero valid candles for key=" + key
+                    + ", exchange=" + exchange
+                    + ", symbolToken=" + symbolToken
+                    + ", interval=5minute";
+            log.warn(reason);
+            printDiagnostic(reason);
+            return new CandleLoad(List.of(), false, reason);
+        } catch (Exception ex) {
+            String reason = "MStock intraday candles unavailable for "
+                    + (spotScript != null ? spotScript.getTradingSymbol() : null)
+                    + ": " + ex.getMessage();
+            log.warn("{}. Strategy evaluation will wait for MStock 5-minute candles.", reason, ex);
+            printDiagnostic(reason);
+            return new CandleLoad(List.of(), false, reason);
+        }
+    }
+
+    private String summarizeCandleDates(List<StrategyCandle> candles) {
+        if (candles == null || candles.isEmpty()) {
+            return "none";
+        }
+        return candles.stream()
+                .map(StrategyCandle::date)
+                .distinct()
+                .sorted()
+                .map(LocalDate::toString)
+                .toList()
+                .toString();
+    }
+
+    private void printDiagnostic(String message) {
+        System.out.println("[MSTOCK-STRATEGY] " + message);
     }
 
     private boolean isBreakout(String optionType, StrategyCandle candle, double orh, double orl) {
@@ -462,7 +538,7 @@ public class StrategyTemplateService {
     private record StrategyDefinition(String id, String name, String description, String optionType) {
     }
 
-    private record CandleLoad(List<StrategyCandle> candles, boolean hasVolume) {
+    private record CandleLoad(List<StrategyCandle> candles, boolean hasVolume, String reason) {
     }
 
     private record StrategyCandle(LocalDate date,

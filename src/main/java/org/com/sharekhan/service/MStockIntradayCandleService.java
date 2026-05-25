@@ -73,6 +73,9 @@ public class MStockIntradayCandleService {
         String normalizedSymbolToken = symbolToken.trim();
         String normalizedInterval = interval.trim();
         String url = String.format(INTRADAY_URL_TEMPLATE, normalizedExchange, normalizedSymbolToken, normalizedInterval);
+        log.info("Requesting MStock intraday candles exchange={}, segment={}, symbolToken={}, interval={}",
+                exchange.trim(), normalizedExchange, normalizedSymbolToken, normalizedInterval);
+        printDiagnostic("MStock intraday request url=" + url);
 
         TokenStoreService.TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK);
         String accessToken = null;
@@ -103,8 +106,12 @@ public class MStockIntradayCandleService {
         }
 
         if (result.code != 200) {
+            printDiagnostic("MStock intraday response http=" + result.code + " body=" + result.body);
             throw new RuntimeException("MStock intraday request failed (http:" + result.code + "): " + result.body);
         }
+        log.debug("MStock intraday response http=200 exchange={}, symbolToken={}, interval={}, body={}",
+                normalizedExchange, normalizedSymbolToken, normalizedInterval, preview(result.body));
+        printDiagnostic("MStock intraday response http=200 body=" + result.body);
 
         JSONObject root = new JSONObject(result.body);
         if (!"success".equalsIgnoreCase(root.optString("status", ""))) {
@@ -113,6 +120,8 @@ public class MStockIntradayCandleService {
         JSONObject data = root.optJSONObject("data");
         JSONArray candles = data != null ? data.optJSONArray("candles") : null;
         if (candles == null || candles.isEmpty()) {
+            log.warn("MStock intraday response contained no candles exchange={}, symbolToken={}, interval={}, body={}",
+                    normalizedExchange, normalizedSymbolToken, normalizedInterval, preview(result.body));
             return List.of();
         }
 
@@ -122,6 +131,10 @@ public class MStockIntradayCandleService {
             if (candle != null && candle.hasOhlc()) {
                 parsed.add(candle);
             }
+        }
+        if (parsed.isEmpty()) {
+            log.warn("MStock intraday response had {} rows but zero valid OHLC candles exchange={}, symbolToken={}, interval={}",
+                    candles.length(), normalizedExchange, normalizedSymbolToken, normalizedInterval);
         }
         parsed.sort(Comparator.comparing(IntradayCandle::date).thenComparing(IntradayCandle::time));
         return parsed;
@@ -232,6 +245,18 @@ public class MStockIntradayCandleService {
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private String preview(String body) {
+        if (!StringUtils.hasText(body)) {
+            return "";
+        }
+        String compact = body.replaceAll("\\s+", " ").trim();
+        return compact.length() <= 500 ? compact : compact.substring(0, 500) + "...";
+    }
+
+    private void printDiagnostic(String message) {
+        System.out.println("[MSTOCK-INTRADAY] " + message);
     }
 
     private record HttpResult(int code, String body) {
