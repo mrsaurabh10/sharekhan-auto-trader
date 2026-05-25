@@ -64,14 +64,15 @@ public class MStockIntradayCandleService {
     @Value("${app.mstock.api-key:}")
     private String apiKey;
 
-    public List<IntradayCandle> getIntradayCandles(String exchange, Long instrumentToken, String interval) {
-        if (!StringUtils.hasText(exchange) || instrumentToken == null || !StringUtils.hasText(interval)) {
+    public List<IntradayCandle> getIntradayCandles(String exchange, String symbolToken, String interval) {
+        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(symbolToken) || !StringUtils.hasText(interval)) {
             return List.of();
         }
 
         String normalizedExchange = normalizeExchangeSegment(exchange);
+        String normalizedSymbolToken = symbolToken.trim();
         String normalizedInterval = interval.trim();
-        String url = String.format(INTRADAY_URL_TEMPLATE, normalizedExchange, instrumentToken, normalizedInterval);
+        String url = String.format(INTRADAY_URL_TEMPLATE, normalizedExchange, normalizedSymbolToken, normalizedInterval);
 
         TokenStoreService.TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK);
         String accessToken = null;
