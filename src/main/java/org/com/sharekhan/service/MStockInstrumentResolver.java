@@ -66,6 +66,17 @@ public class MStockInstrumentResolver {
             "MIDCPNIFTY", List.of("NIFTY MID SELECT", "NIFTY MIDCAP SELECT")
     );
 
+    private static final Set<String> INDEX_SYMBOL_KEYS;
+
+    static {
+        Set<String> keys = new HashSet<>();
+        INDEX_SYMBOL_ALIASES.forEach((symbol, aliases) -> {
+            keys.add(normalizeSymbolKey(symbol));
+            aliases.forEach(alias -> keys.add(normalizeSymbolKey(alias)));
+        });
+        INDEX_SYMBOL_KEYS = Set.copyOf(keys);
+    }
+
     private static final DateTimeFormatter DISPLAY_EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
     private static final List<DateTimeFormatter> FUTURE_EXPIRY_FORMATS = List.of(
@@ -154,6 +165,11 @@ public class MStockInstrumentResolver {
             if (key.isPresent()) {
                 String resolvedKey = key.get();
                 if (!isValidSpotKey(script, resolvedKey)) {
+                    log.warn("Resolved MStock key {} for scripCode={} tradingSymbol={} but rejected by spot validation.",
+                            resolvedKey, script.getScripCode(), script.getTradingSymbol());
+                    printDiagnostic("Rejected resolved key=" + resolvedKey
+                            + " for scripCode=" + script.getScripCode()
+                            + ", tradingSymbol=" + script.getTradingSymbol());
                     continue;
                 }
                 return cacheAndReturn(script, resolvedKey, true);
@@ -458,6 +474,9 @@ public class MStockInstrumentResolver {
         }
         String symbol = upperKey.substring(colonIndex + 1);
 
+        if (isIndexSpotScript(script)) {
+            return "NSE".equals(normalizedExchange) && INDEX_SYMBOL_KEYS.contains(normalizeSymbolKey(symbol));
+        }
         if ("NSE".equals(normalizedExchange)) {
             return symbol.endsWith("-EQ");
         }
@@ -638,6 +657,17 @@ public class MStockInstrumentResolver {
                 instrumentType.equalsIgnoreCase("EQ") ||
                 instrumentType.equalsIgnoreCase("EQUITY");
         return noStrike && noExpiry && isEquityType;
+    }
+
+    private boolean isIndexSpotScript(ScriptMasterEntity script) {
+        return script != null && INDEX_SYMBOL_KEYS.contains(normalizeSymbolKey(script.getTradingSymbol()));
+    }
+
+    private static String normalizeSymbolKey(String symbol) {
+        if (!StringUtils.hasText(symbol)) {
+            return "";
+        }
+        return symbol.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
     }
 
     private String deriveSpotSeriesSuffix(ScriptMasterEntity script, String normalizedExchange) {
