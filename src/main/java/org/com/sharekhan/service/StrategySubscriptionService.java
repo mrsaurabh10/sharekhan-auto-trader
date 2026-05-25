@@ -36,9 +36,16 @@ public class StrategySubscriptionService {
 
         if (request.getUserId() != null) {
             List<StrategySubscriptionEntity> existing = repository
-                    .findByStatusAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(ACTIVE, templateId, symbol, request.getUserId());
+                    .findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(
+                            List.of(ACTIVE, TRIGGERED), templateId, symbol, request.getUserId());
             if (existing != null && !existing.isEmpty()) {
-                return existing.get(0);
+                StrategySubscriptionEntity found = existing.get(0);
+                if (!ACTIVE.equalsIgnoreCase(found.getStatus())) {
+                    found.setStatus(ACTIVE);
+                    found.setLastMessage("Strategy is active and will run daily until cancelled.");
+                    return repository.save(found);
+                }
+                return found;
             }
         }
 
@@ -74,7 +81,7 @@ public class StrategySubscriptionService {
         if (!admin && (currentUserId == null || entity.getAppUserId() == null || !currentUserId.equals(entity.getAppUserId()))) {
             throw new IllegalArgumentException("Forbidden: strategy does not belong to user");
         }
-        if (!ACTIVE.equalsIgnoreCase(entity.getStatus())) {
+        if (CANCELLED.equalsIgnoreCase(entity.getStatus())) {
             return entity;
         }
         entity.setStatus(CANCELLED);
@@ -89,7 +96,7 @@ public class StrategySubscriptionService {
         if (now.isBefore(LocalTime.of(9, 30)) || now.isAfter(LocalTime.of(15, 25))) {
             return;
         }
-        List<StrategySubscriptionEntity> active = repository.findByStatusOrderByIdDesc(ACTIVE);
+        List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
         for (StrategySubscriptionEntity subscription : active) {
             evaluate(subscription);
         }
@@ -97,6 +104,19 @@ public class StrategySubscriptionService {
 
     private void evaluate(StrategySubscriptionEntity subscription) {
         try {
+            if (triggeredToday(subscription)) {
+                subscription.setStatus(ACTIVE);
+                subscription.setLastEvaluatedAt(LocalDateTime.now(MARKET_ZONE));
+                subscription.setLastEvaluationStatus("waiting");
+                subscription.setLastMessage("Strategy already triggered today; it will reset for the next trading day unless cancelled.");
+                repository.save(subscription);
+                return;
+            }
+
+            if (!ACTIVE.equalsIgnoreCase(subscription.getStatus())) {
+                subscription.setStatus(ACTIVE);
+            }
+
             StrategyApplyRequest request = new StrategyApplyRequest();
             request.setTemplateId(subscription.getTemplateId());
             request.setSymbol(subscription.getSymbol());
@@ -114,8 +134,9 @@ public class StrategySubscriptionService {
                 subscription.setGeneratedTradeRequestId(response.getTradeRequest().getId());
             }
             if ("triggered".equalsIgnoreCase(response.getStatus()) || "duplicate".equalsIgnoreCase(response.getStatus())) {
-                subscription.setStatus(TRIGGERED);
-                subscription.setCompletedAt(LocalDateTime.now());
+                subscription.setStatus(ACTIVE);
+                subscription.setCompletedAt(LocalDateTime.now(MARKET_ZONE));
+                subscription.setLastMessage(response.getMessage() + " Strategy remains active and will reset for the next trading day unless cancelled.");
             }
             repository.save(subscription);
         } catch (Exception e) {
@@ -125,6 +146,13 @@ public class StrategySubscriptionService {
             repository.save(subscription);
             log.warn("Strategy subscription {} evaluation failed: {}", subscription.getId(), e.getMessage());
         }
+    }
+
+    private boolean triggeredToday(StrategySubscriptionEntity subscription) {
+        if (subscription == null || subscription.getCompletedAt() == null) {
+            return false;
+        }
+        return subscription.getCompletedAt().toLocalDate().equals(LocalDateTime.now(MARKET_ZONE).toLocalDate());
     }
 
     private void validate(StrategyApplyRequest request) {
