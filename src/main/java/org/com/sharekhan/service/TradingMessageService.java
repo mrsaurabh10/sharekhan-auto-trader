@@ -154,6 +154,15 @@ public class TradingMessageService {
             } catch (NumberFormatException ignored) {
             }
         }
+        Object expiryMonth = parsed.get("expiryMonth");
+        if (expiryMonth instanceof Number num) {
+            request.setExpiryMonth(num.intValue());
+        } else if (expiryMonth != null) {
+            try {
+                request.setExpiryMonth(Integer.parseInt(expiryMonth.toString()));
+            } catch (NumberFormatException ignored) {
+            }
+        }
         request.setIntraday(true);
         request.setSource(source != null ? source : "telegram-atr");
 

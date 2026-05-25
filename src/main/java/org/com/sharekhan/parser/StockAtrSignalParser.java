@@ -1,5 +1,6 @@
 package org.com.sharekhan.parser;
 
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -15,6 +16,14 @@ public class StockAtrSignalParser implements TradingSignalParser {
 
     private static final Pattern KEY_VALUE = Pattern.compile("\\b([A-Za-z][A-Za-z0-9_]*)\\s*[:=]\\s*([^\\n,]+)");
     private static final Pattern LOTS = Pattern.compile("\\b(?:LOTS?|QTY|QUANTITY)\\s*[:=]?\\s*(\\d+)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern EXPIRY_MONTH_AFTER = Pattern.compile(
+            "\\b(JANUARY|JAN|FEBRUARY|FEB|MARCH|MAR|APRIL|APR|MAY|JUNE|JUN|JULY|JUL|AUGUST|AUG|SEPTEMBER|SEP|OCTOBER|OCT|NOVEMBER|NOV|DECEMBER|DEC)\\s+EXPIRY\\b",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern EXPIRY_MONTH_BEFORE = Pattern.compile(
+            "\\bEXPIRY\\s*[:=]?\\s*(JANUARY|JAN|FEBRUARY|FEB|MARCH|MAR|APRIL|APR|MAY|JUNE|JUN|JULY|JUL|AUGUST|AUG|SEPTEMBER|SEP|OCTOBER|OCT|NOVEMBER|NOV|DECEMBER|DEC)\\b",
+            Pattern.CASE_INSENSITIVE
+    );
 
     @Override
     public Map<String, Object> parse(String text) {
@@ -29,7 +38,8 @@ public class StockAtrSignalParser implements TradingSignalParser {
                     oneLineMatcher.group(1),
                     oneLineMatcher.group(3),
                     oneLineMatcher.group(2),
-                    extractLots(normalized)
+                    extractLots(normalized),
+                    extractExpiryMonth(normalized)
             );
         }
 
@@ -47,10 +57,10 @@ public class StockAtrSignalParser implements TradingSignalParser {
             return null;
         }
 
-        return buildResult(stock, entry, direction, extractLots(text));
+        return buildResult(stock, entry, direction, extractLots(text), extractExpiryMonth(text, fields));
     }
 
-    private Map<String, Object> buildResult(String stock, String entry, String direction, Integer lots) {
+    private Map<String, Object> buildResult(String stock, String entry, String direction, Integer lots, Integer expiryMonth) {
         Double entryPrice = parseDouble(entry);
         if (stock == null || direction == null || entryPrice == null) {
             return null;
@@ -65,6 +75,9 @@ public class StockAtrSignalParser implements TradingSignalParser {
         result.put("intraday", true);
         if (lots != null && lots > 0) {
             result.put("quantity", lots);
+        }
+        if (expiryMonth != null) {
+            result.put("expiryMonth", expiryMonth);
         }
         return result;
     }
@@ -102,6 +115,55 @@ public class StockAtrSignalParser implements TradingSignalParser {
         } catch (NumberFormatException ignored) {
             return null;
         }
+    }
+
+    private Integer extractExpiryMonth(String text) {
+        return extractExpiryMonth(text, Map.of());
+    }
+
+    private Integer extractExpiryMonth(String text, Map<String, String> fields) {
+        String explicitExpiry = firstPresent(fields, "expiry", "expirymonth");
+        Integer fieldMonth = parseMonth(explicitExpiry);
+        if (fieldMonth != null) {
+            return fieldMonth;
+        }
+
+        Matcher afterMatcher = EXPIRY_MONTH_AFTER.matcher(text);
+        if (afterMatcher.find()) {
+            return parseMonth(afterMatcher.group(1));
+        }
+
+        Matcher beforeMatcher = EXPIRY_MONTH_BEFORE.matcher(text);
+        if (beforeMatcher.find()) {
+            return parseMonth(beforeMatcher.group(1));
+        }
+
+        return null;
+    }
+
+    private Integer parseMonth(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String token = value.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z]", "");
+        return monthMap().get(token);
+    }
+
+    private Map<String, Integer> monthMap() {
+        Map<String, Integer> months = new HashMap<>();
+        months.put("JANUARY", 1); months.put("JAN", 1);
+        months.put("FEBRUARY", 2); months.put("FEB", 2);
+        months.put("MARCH", 3); months.put("MAR", 3);
+        months.put("APRIL", 4); months.put("APR", 4);
+        months.put("MAY", 5);
+        months.put("JUNE", 6); months.put("JUN", 6);
+        months.put("JULY", 7); months.put("JUL", 7);
+        months.put("AUGUST", 8); months.put("AUG", 8);
+        months.put("SEPTEMBER", 9); months.put("SEP", 9);
+        months.put("OCTOBER", 10); months.put("OCT", 10);
+        months.put("NOVEMBER", 11); months.put("NOV", 11);
+        months.put("DECEMBER", 12); months.put("DEC", 12);
+        return months;
     }
 
     private Double parseDouble(String value) {
