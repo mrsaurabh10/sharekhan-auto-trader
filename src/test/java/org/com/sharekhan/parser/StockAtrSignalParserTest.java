@@ -12,7 +12,7 @@ class StockAtrSignalParserTest {
 
     @Test
     void parsesOneLineAtrSignal() {
-        Map<String, Object> result = parser.parse("ATR TATASTEEL LONG 150.5 LOTS 2");
+        Map<String, Object> result = parser.parse("ATR TATASTEEL LONG 150.5 LOTS 2 JUNE EXPIRY");
 
         assertNotNull(result);
         assertEquals(true, result.get("stockAtrTrade"));
@@ -20,6 +20,7 @@ class StockAtrSignalParserTest {
         assertEquals(150.5, (Double) result.get("entry"), 0.01);
         assertEquals("LONG", result.get("direction"));
         assertEquals(2, result.get("quantity"));
+        assertEquals(6, result.get("expiryMonth"));
     }
 
     @Test
@@ -29,6 +30,7 @@ class StockAtrSignalParserTest {
                 STOCK: BAJAJ-AUTO
                 ENTRY: 10100
                 DIRECTION: SHORT
+                EXPIRY: OCTOBER
                 LOTS: 1
                 """;
 
@@ -39,5 +41,6 @@ class StockAtrSignalParserTest {
         assertEquals(10100.0, (Double) result.get("entry"), 0.01);
         assertEquals("SHORT", result.get("direction"));
         assertEquals(1, result.get("quantity"));
+        assertEquals(10, result.get("expiryMonth"));
     }
 }

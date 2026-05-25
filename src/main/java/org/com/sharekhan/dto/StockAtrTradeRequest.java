@@ -8,6 +8,7 @@ public class StockAtrTradeRequest {
     private Double entryPrice;
     private String direction;
     private Integer lots;
+    private Integer expiryMonth;
     private Boolean intraday;
     private String source;
 }

@@ -13,9 +13,11 @@ import org.springframework.util.StringUtils;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.Month;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.format.TextStyle;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -64,7 +66,7 @@ public class StockAtrTradeService {
                 : entry - (5.0d * atr);
         double target3 = calculateTarget3(entry, direction, atr, atr15m, target2);
 
-        String expiry = nearestExpiry(stock, optionType);
+        String expiry = nearestExpiry(stock, optionType, request.getExpiryMonth());
         double atmReferencePrice = entry;
         double strike = nearestStrike(stock, optionType, expiry, atmReferencePrice);
 
@@ -238,7 +240,11 @@ public class StockAtrTradeService {
                 .thenComparing(c -> c.time() != null ? c.time() : LocalTime.MIN);
     }
 
-    private String nearestExpiry(String stock, String optionType) {
+    String nearestExpiry(String stock, String optionType, Integer requestedMonth) {
+        if (requestedMonth != null && (requestedMonth < 1 || requestedMonth > 12)) {
+            throw new IllegalArgumentException("expiryMonth must be between 1 and 12");
+        }
+
         LocalDateTime now = LocalDateTime.now(MARKET_ZONE);
         LocalTime expiryCutoff = LocalTime.of(15, 30);
         return scriptMasterRepository.findAllOptionExpiriesByTradingSymbolAndOptionType(stock, optionType)
@@ -248,9 +254,11 @@ public class StockAtrTradeService {
                 .filter(Objects::nonNull)
                 .filter(expiry -> expiry.isAfter(now.toLocalDate())
                         || (expiry.isEqual(now.toLocalDate()) && now.toLocalTime().isBefore(expiryCutoff)))
+                .filter(expiry -> requestedMonth == null || expiry.getMonthValue() == requestedMonth)
                 .min(Comparator.naturalOrder())
                 .map(EXPIRY_FORMAT::format)
-                .orElseThrow(() -> new IllegalArgumentException("No valid option expiry found for " + stock + " " + optionType));
+                .orElseThrow(() -> new IllegalArgumentException("No valid option expiry found for " + stock + " " + optionType
+                        + (requestedMonth != null ? " in " + Month.of(requestedMonth).getDisplayName(TextStyle.FULL, Locale.ENGLISH) : "")));
     }
 
     private double nearestStrike(String stock, String optionType, String expiry, double entryPrice) {
