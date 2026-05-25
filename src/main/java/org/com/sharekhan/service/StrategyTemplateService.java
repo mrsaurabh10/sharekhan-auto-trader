@@ -242,6 +242,11 @@ public class StrategyTemplateService {
     private CandleLoad loadCandles(ScriptMasterEntity spotScript) {
         try {
             String symbol = spotScript != null ? spotScript.getTradingSymbol() : null;
+            HardcodedMStockIndex hardcodedIndex = hardcodedMStockIndex(spotScript);
+            if (hardcodedIndex != null) {
+                return loadHardcodedIndexCandles(hardcodedIndex, symbol);
+            }
+
             Optional<String> keyOpt = mStockInstrumentResolver.resolveInstrumentKey(spotScript);
             if (keyOpt.isEmpty()) {
                 String reason = "Unable to resolve MStock instrument key for symbol=" + symbol
@@ -316,6 +321,64 @@ public class StrategyTemplateService {
             printDiagnostic(reason);
             return new CandleLoad(List.of(), false, reason);
         }
+    }
+
+    private CandleLoad loadHardcodedIndexCandles(HardcodedMStockIndex index, String symbol) {
+        String key = index.exchange() + ":" + index.script();
+        printDiagnostic("Loading hardcoded index candles symbol=" + symbol
+                + ", key=" + key
+                + ", exchange=" + index.exchange()
+                + ", symbolToken=" + index.exchangeToken()
+                + ", name=" + index.name()
+                + ", interval=5minute");
+        List<StrategyCandle> candles = mStockIntradayCandleService
+                .getIntradayCandles(index.exchange(), index.exchangeToken(), "5minute")
+                .stream()
+                .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
+                .toList();
+        if (!candles.isEmpty()) {
+            printDiagnostic("Loaded " + candles.size()
+                    + " hardcoded index candles for symbol=" + symbol
+                    + ", key=" + key
+                    + ", exchange=" + index.exchange()
+                    + ", symbolToken=" + index.exchangeToken()
+                    + ", dates=" + summarizeCandleDates(candles));
+            return new CandleLoad(candles, candles.stream().anyMatch(StrategyCandle::hasVolume), null);
+        }
+
+        String reason = "MStock intraday API returned zero valid candles for hardcoded index key=" + key
+                + ", exchange=" + index.exchange()
+                + ", symbolToken=" + index.exchangeToken()
+                + ", interval=5minute";
+        log.warn(reason);
+        printDiagnostic(reason);
+        return new CandleLoad(List.of(), false, reason);
+    }
+
+    private HardcodedMStockIndex hardcodedMStockIndex(ScriptMasterEntity spotScript) {
+        if (spotScript == null) {
+            return null;
+        }
+        String symbol = normalizeSymbolKey(spotScript.getTradingSymbol());
+        Integer scripCode = spotScript.getScripCode();
+
+        if ("NIFTY".equals(symbol) || "NIFTY50".equals(symbol) || Integer.valueOf(20000).equals(scripCode)) {
+            return new HardcodedMStockIndex("NIFTY50", "26000", "Nifty 50", "NSE");
+        }
+        if ("BANKNIFTY".equals(symbol) || "NIFTYBANK".equals(symbol) || Integer.valueOf(26009).equals(scripCode)) {
+            return new HardcodedMStockIndex("NIFTYBANK", "26009", "Nifty Bank", "NSE");
+        }
+        if ("SENSEX".equals(symbol) || Integer.valueOf(51).equals(scripCode)) {
+            return new HardcodedMStockIndex("SENSEX", "51", "SENSEX", "BSE");
+        }
+        return null;
+    }
+
+    private String normalizeSymbolKey(String symbol) {
+        if (!StringUtils.hasText(symbol)) {
+            return "";
+        }
+        return symbol.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
     }
 
     private String summarizeCandleDates(List<StrategyCandle> candles) {
@@ -539,6 +602,9 @@ public class StrategyTemplateService {
     }
 
     private record CandleLoad(List<StrategyCandle> candles, boolean hasVolume, String reason) {
+    }
+
+    private record HardcodedMStockIndex(String script, String exchangeToken, String name, String exchange) {
     }
 
     private record StrategyCandle(LocalDate date,
