@@ -4,22 +4,26 @@ import jakarta.websocket.Session;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-
 @Slf4j
 @Component
 public class WebSocketConnector {
 
-    private Session session;
+    private final Object sendLock = new Object();
+    private volatile Session session;
 
     public void setSession(Session session) {
         this.session = session;
     }
 
     public void send(String message) {
-        if (session != null && session.isOpen()) {
+        Session currentSession = this.session;
+        if (currentSession != null && currentSession.isOpen()) {
             try {
-                session.getAsyncRemote().sendText(message);
+                synchronized (sendLock) {
+                    if (currentSession.isOpen()) {
+                        currentSession.getBasicRemote().sendText(message);
+                    }
+                }
             } catch (Exception e) {
                 log.error("❌ Failed to send WebSocket message: {}", e.getMessage(), e);
             }

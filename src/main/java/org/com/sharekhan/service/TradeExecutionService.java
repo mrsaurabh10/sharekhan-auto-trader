@@ -470,8 +470,7 @@ public class TradeExecutionService {
         if (entity.getSpotScripCode() != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(entity.getSpotScripCode());
             if (spotScript != null) {
-                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                webSocketSubscriptionService.subscribeToScrip(spotKey);
+                subscribeToSpotFeed(spotScript);
             }
         }
         
@@ -684,8 +683,7 @@ public class TradeExecutionService {
         if (spotScripCode != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(spotScripCode);
             if (spotScript != null) {
-                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                webSocketSubscriptionService.subscribeToScrip(spotKey);
+                subscribeToSpotFeed(spotScript);
             }
         }
 
@@ -913,8 +911,7 @@ public class TradeExecutionService {
         if (trade.getSpotScripCode() != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(trade.getSpotScripCode());
             if (spotScript != null) {
-                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                webSocketSubscriptionService.subscribeToScrip(spotKey);
+                subscribeToSpotFeed(spotScript);
             }
         }
 
@@ -1904,6 +1901,28 @@ public class TradeExecutionService {
         return null;
     }
 
+    private void subscribeToSpotFeed(ScriptMasterEntity spotScript) {
+        if (spotScript == null || spotScript.getScripCode() == null) {
+            return;
+        }
+        String spotKey = spotFeedKey(spotScript);
+        if (isSharekhanIndexSpot(spotScript)) {
+            webSocketSubscriptionService.subscribeToScripLtp(spotKey);
+        } else {
+            webSocketSubscriptionService.subscribeToScrip(spotKey);
+        }
+    }
+
+    private String spotFeedKey(ScriptMasterEntity spotScript) {
+        return spotScript.getExchange() + spotScript.getScripCode();
+    }
+
+    private boolean isSharekhanIndexSpot(ScriptMasterEntity spotScript) {
+        Integer scripCode = spotScript.getScripCode();
+        return "NC".equalsIgnoreCase(spotScript.getExchange())
+                && (Integer.valueOf(20000).equals(scripCode) || Integer.valueOf(26009).equals(scripCode));
+    }
+
     private Integer resolveSpotScripFromExchange(String instrumentName, String exchange) {
         try {
             Optional<ScriptMasterEntity> spotOpt =
@@ -2792,8 +2811,10 @@ public class TradeExecutionService {
                 if (request.getSpotScripCode() != null) {
                     ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(request.getSpotScripCode());
                     if (spotScript != null) {
-                        String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                        if (webSocketSubscriptionService.subscribeToScrip(spotKey)) {
+                        String spotKey = spotFeedKey(spotScript);
+                        if (isSharekhanIndexSpot(spotScript)
+                                ? webSocketSubscriptionService.subscribeToScripLtp(spotKey)
+                                : webSocketSubscriptionService.subscribeToScrip(spotKey)) {
                             log.info("🔁 Subscribed to spot LTP for request {} on scrip {} with spot key {}", request.getId(), scripCode, spotKey);
                         } else {
                             log.debug("Already subscribed to spot LTP for request {} on scrip {} with spot key {}", request.getId(), scripCode, spotKey);
@@ -2841,8 +2862,10 @@ public class TradeExecutionService {
                     if (tradeSetupEntity.getSpotScripCode() != null) {
                         ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(tradeSetupEntity.getSpotScripCode());
                         if (spotScript != null) {
-                            String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                            if (webSocketSubscriptionService.subscribeToScrip(spotKey)) {
+                            String spotKey = spotFeedKey(spotScript);
+                            if (isSharekhanIndexSpot(spotScript)
+                                    ? webSocketSubscriptionService.subscribeToScripLtp(spotKey)
+                                    : webSocketSubscriptionService.subscribeToScrip(spotKey)) {
                                 log.info("🔁 Subscribed to spot LTP for executed trade {} on scrip {} with spot key {}", tradeSetupEntity.getId(), scripCode, spotKey);
                             } else {
                                 log.debug("Already subscribed to spot LTP for executed trade {} on scrip {} with spot key {}", tradeSetupEntity.getId(), scripCode, spotKey);

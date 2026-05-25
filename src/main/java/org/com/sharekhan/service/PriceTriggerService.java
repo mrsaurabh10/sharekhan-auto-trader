@@ -638,7 +638,11 @@ public class PriceTriggerService {
                 ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(remainingTrade.getSpotScripCode());
                 if (spotScript != null) {
                     String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                    webSocketSubscriptionService.subscribeToScrip(spotKey);
+                    if (isSharekhanIndexSpot(spotScript)) {
+                        webSocketSubscriptionService.subscribeToScripLtp(spotKey);
+                    } else {
+                        webSocketSubscriptionService.subscribeToScrip(spotKey);
+                    }
                 }
             }
 
@@ -716,6 +720,12 @@ public class PriceTriggerService {
             return trade.getTarget3();
         }
         return null;
+    }
+
+    private boolean isSharekhanIndexSpot(ScriptMasterEntity spotScript) {
+        Integer scripCode = spotScript.getScripCode();
+        return "NC".equalsIgnoreCase(spotScript.getExchange())
+                && (Integer.valueOf(20000).equals(scripCode) || Integer.valueOf(26009).equals(scripCode));
     }
 
     private int resolveCurrentLots(TriggeredTradeSetupEntity trade) {
