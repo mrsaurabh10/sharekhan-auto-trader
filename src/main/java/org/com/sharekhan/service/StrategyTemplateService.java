@@ -64,7 +64,6 @@ public class StrategyTemplateService {
     private final ScriptMasterRepository scriptMasterRepository;
     private final MStockInstrumentResolver mStockInstrumentResolver;
     private final MStockInstrumentRepository mStockInstrumentRepository;
-    private final MStockLtpService mStockLtpService;
     private final MStockIntradayCandleService mStockIntradayCandleService;
     private final TradeExecutionService tradeExecutionService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
@@ -235,11 +234,15 @@ public class StrategyTemplateService {
             if (keyOpt.isPresent()) {
                 String key = keyOpt.get();
                 Optional<MStockInstrumentEntity> instrumentOpt = mStockInstrumentRepository.findByInstrumentKey(key);
-                Long token = instrumentOpt.map(MStockInstrumentEntity::getInstrumentToken).orElseGet(() -> resolveTokenViaLtp(key));
-                if (token != null) {
+                String symbolToken = instrumentOpt
+                        .map(MStockInstrumentEntity::getExchangeToken)
+                        .filter(StringUtils::hasText)
+                        .map(String::trim)
+                        .orElse(null);
+                if (StringUtils.hasText(symbolToken)) {
                     String exchange = key.contains(":") ? key.substring(0, key.indexOf(':')) : normalizeMStockExchange(spotScript.getExchange());
                     List<StrategyCandle> candles = mStockIntradayCandleService
-                            .getIntradayCandles(exchange, token, "5minute")
+                            .getIntradayCandles(exchange, symbolToken, "5minute")
                             .stream()
                             .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
                             .toList();
@@ -254,19 +257,6 @@ public class StrategyTemplateService {
         }
 
         return new CandleLoad(List.of(), false);
-    }
-
-    private Long resolveTokenViaLtp(String instrumentKey) {
-        try {
-            Map<String, Object> payload = mStockLtpService.fetchLtpForInstrument(instrumentKey);
-            Object token = payload != null ? payload.get("instrument_token") : null;
-            if (token instanceof Number number) {
-                return number.longValue();
-            }
-        } catch (Exception ex) {
-            log.debug("Unable to resolve mStock token via LTP for {}: {}", instrumentKey, ex.getMessage());
-        }
-        return null;
     }
 
     private boolean isBreakout(String optionType, StrategyCandle candle, double orh, double orl) {
