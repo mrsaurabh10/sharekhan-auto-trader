@@ -1,12 +1,15 @@
 package org.com.sharekhan.controller;
 
+import com.sharekhan.http.exceptions.SharekhanAPIException;
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.ExchangeResponse;
 import org.com.sharekhan.dto.InstrumentResponse;
 import org.com.sharekhan.dto.StrikeResponse;
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.service.ScriptMasterCacheService;
 import org.com.sharekhan.service.ScriptMasterService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -23,6 +26,7 @@ import java.util.Optional;
 public class ScriptMasterController {
 
     private final ScriptMasterService service;
+    private final ScriptMasterCacheService cacheService;
 
     @GetMapping("/exchanges")
     public ResponseEntity<ExchangeResponse> getExchanges() {
@@ -105,6 +109,30 @@ public class ScriptMasterController {
         Map<String,Object> resp = new HashMap<>();
         resp.put("rows", out);
         return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/refresh")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> refreshSharekhanScriptMaster(
+            @RequestParam(name = "exchange", required = false) List<String> exchanges) {
+        try {
+            long rows = cacheService.refreshScriptMaster(exchanges);
+            Map<String, Object> resp = new HashMap<>();
+            resp.put("status", "success");
+            resp.put("message", "Sharekhan script master refreshed");
+            resp.put("rows", rows);
+            resp.put("exchanges", exchanges == null || exchanges.isEmpty()
+                    ? List.of("NF", "NC", "BF", "BC", "MX")
+                    : exchanges);
+            return ResponseEntity.ok(resp);
+        } catch (Exception e) {
+            Map<String, Object> err = new HashMap<>();
+            err.put("status", "error");
+            err.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(err);
+        } catch (SharekhanAPIException e) {
+            throw new RuntimeException(e);
+        }
     }
 
 

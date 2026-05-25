@@ -165,6 +165,21 @@ public class StrategyTemplateService {
             }
 
             TriggerRequest trigger = buildTriggerRequest(request, definition, symbol, spotScript, breakout, nextCandle.get());
+            log.info("ORB strategy breakout confirmed template={} symbol={} direction={} breakoutTime={} breakoutClose={} ORH={} ORL={} spotEntry={} spotSL={} target1={} target2={} target3={} volumeSkipped={} vwapSkipped={}",
+                    definition.id(),
+                    symbol,
+                    definition.optionType(),
+                    breakout.time(),
+                    roundPrice(breakout.close()),
+                    roundPrice(orh),
+                    roundPrice(orl),
+                    trigger.getEntryPrice(),
+                    trigger.getStopLoss(),
+                    trigger.getTarget1(),
+                    trigger.getTarget2(),
+                    trigger.getTarget3(),
+                    filters.volumeSkipped(),
+                    filters.vwapSkipped());
             TriggerTradeRequestEntity existing = findExisting(trigger);
             if (existing != null) {
                 return StrategyApplyResponse.builder()
@@ -188,10 +203,10 @@ public class StrategyTemplateService {
                         .build();
             }
 
-            TriggerTradeRequestEntity saved = tradeExecutionService.executeTrade(trigger);
+            TriggerTradeRequestEntity saved = tradeExecutionService.executeTriggeredTrade(trigger);
             return StrategyApplyResponse.builder()
                     .status("triggered")
-                    .message("ORB breakout confirmed and trade request created.")
+                    .message("ORB breakout confirmed and strategy entry triggered immediately.")
                     .templateId(definition.id())
                     .symbol(symbol)
                     .direction(definition.optionType())

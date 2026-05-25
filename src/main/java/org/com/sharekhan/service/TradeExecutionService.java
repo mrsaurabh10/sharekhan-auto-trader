@@ -470,8 +470,7 @@ public class TradeExecutionService {
         if (entity.getSpotScripCode() != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(entity.getSpotScripCode());
             if (spotScript != null) {
-                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                webSocketSubscriptionService.subscribeToScrip(spotKey);
+                subscribeToSpotFeed(spotScript);
             }
         }
         
@@ -684,8 +683,7 @@ public class TradeExecutionService {
         if (spotScripCode != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(spotScripCode);
             if (spotScript != null) {
-                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                webSocketSubscriptionService.subscribeToScrip(spotKey);
+                subscribeToSpotFeed(spotScript);
             }
         }
 
@@ -706,6 +704,72 @@ public class TradeExecutionService {
         triggerTradeRequestRepository.save(saved);
 
         return executed;
+    }
+
+    public TriggerTradeRequestEntity executeTriggeredTrade(TriggerRequest request) {
+        if (request == null) {
+            throw new InvalidTradeRequestException("Trade request cannot be null");
+        }
+
+        final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
+        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
+
+        if (!isNoStrikeExchange) {
+            Double optionLtp = ltpCacheService.getLtp(script.getScripCode());
+            if (optionLtp == null) {
+                log.debug("Immediate trigger LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.",
+                        script.getScripCode(), request.getInstrument());
+                optionLtp = fetchLtpViaMStockFallback(script.getScripCode(), "executeTriggeredTrade");
+            }
+            if (optionLtp == null) {
+                throw new InvalidTradeRequestException("Option LTP unavailable for immediate strategy execution; will retry on next evaluation");
+            }
+        }
+
+        TriggerTradeRequestEntity saved = executeTrade(request);
+        int claimed = triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                TriggeredTradeStatus.TRIGGERED.name());
+        if (claimed == 1) {
+            saved.setStatus(TriggeredTradeStatus.TRIGGERED);
+        } else {
+            saved = triggerTradeRequestRepository.findById(saved.getId()).orElse(saved);
+            if (!TriggeredTradeStatus.TRIGGERED.equals(saved.getStatus())) {
+                throw new InvalidTradeRequestException("Strategy request could not be claimed for immediate execution");
+            }
+        }
+
+        TriggeredTradeSetupEntity executed = executeTradeFromEntity(saved);
+        if (executed == null) {
+            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.REJECTED.name());
+            saved.setStatus(TriggeredTradeStatus.REJECTED);
+            triggerTradeRequestRepository.save(saved);
+            throw new InvalidTradeRequestException("Strategy entry could not be executed immediately after breakout");
+        }
+
+        if (TriggeredTradeStatus.REJECTED.equals(executed.getStatus())) {
+            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.REJECTED.name());
+            saved.setStatus(TriggeredTradeStatus.REJECTED);
+            triggerTradeRequestRepository.save(saved);
+            throw new InvalidTradeRequestException("Strategy entry order was rejected: " + executed.getExitReason());
+        }
+
+        if (TriggeredTradeStatus.EXECUTED.equals(executed.getStatus())) {
+            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.EXECUTED.name());
+            saved.setStatus(TriggeredTradeStatus.EXECUTED);
+            triggerTradeRequestRepository.save(saved);
+        }
+
+        log.info("✅ Strategy-triggered trade request {} moved to {} with live trade {} status={}",
+                saved.getId(), saved.getStatus(), executed.getId(), executed.getStatus());
+        return saved;
     }
 
     public TriggeredTradeSetupEntity createExecutedTrade(TriggerRequest request) {
@@ -913,8 +977,7 @@ public class TradeExecutionService {
         if (trade.getSpotScripCode() != null) {
             ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(trade.getSpotScripCode());
             if (spotScript != null) {
-                String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                webSocketSubscriptionService.subscribeToScrip(spotKey);
+                subscribeToSpotFeed(spotScript);
             }
         }
 
@@ -1904,6 +1967,28 @@ public class TradeExecutionService {
         return null;
     }
 
+    private void subscribeToSpotFeed(ScriptMasterEntity spotScript) {
+        if (spotScript == null || spotScript.getScripCode() == null) {
+            return;
+        }
+        String spotKey = spotFeedKey(spotScript);
+        if (isSharekhanIndexSpot(spotScript)) {
+            webSocketSubscriptionService.subscribeToScripLtp(spotKey);
+        } else {
+            webSocketSubscriptionService.subscribeToScrip(spotKey);
+        }
+    }
+
+    private String spotFeedKey(ScriptMasterEntity spotScript) {
+        return spotScript.getExchange() + spotScript.getScripCode();
+    }
+
+    private boolean isSharekhanIndexSpot(ScriptMasterEntity spotScript) {
+        Integer scripCode = spotScript.getScripCode();
+        return "NC".equalsIgnoreCase(spotScript.getExchange())
+                && (Integer.valueOf(20000).equals(scripCode) || Integer.valueOf(26009).equals(scripCode));
+    }
+
     private Integer resolveSpotScripFromExchange(String instrumentName, String exchange) {
         try {
             Optional<ScriptMasterEntity> spotOpt =
@@ -2792,8 +2877,10 @@ public class TradeExecutionService {
                 if (request.getSpotScripCode() != null) {
                     ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(request.getSpotScripCode());
                     if (spotScript != null) {
-                        String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                        if (webSocketSubscriptionService.subscribeToScrip(spotKey)) {
+                        String spotKey = spotFeedKey(spotScript);
+                        if (isSharekhanIndexSpot(spotScript)
+                                ? webSocketSubscriptionService.subscribeToScripLtp(spotKey)
+                                : webSocketSubscriptionService.subscribeToScrip(spotKey)) {
                             log.info("🔁 Subscribed to spot LTP for request {} on scrip {} with spot key {}", request.getId(), scripCode, spotKey);
                         } else {
                             log.debug("Already subscribed to spot LTP for request {} on scrip {} with spot key {}", request.getId(), scripCode, spotKey);
@@ -2841,8 +2928,10 @@ public class TradeExecutionService {
                     if (tradeSetupEntity.getSpotScripCode() != null) {
                         ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(tradeSetupEntity.getSpotScripCode());
                         if (spotScript != null) {
-                            String spotKey = spotScript.getExchange() + spotScript.getScripCode();
-                            if (webSocketSubscriptionService.subscribeToScrip(spotKey)) {
+                            String spotKey = spotFeedKey(spotScript);
+                            if (isSharekhanIndexSpot(spotScript)
+                                    ? webSocketSubscriptionService.subscribeToScripLtp(spotKey)
+                                    : webSocketSubscriptionService.subscribeToScrip(spotKey)) {
                                 log.info("🔁 Subscribed to spot LTP for executed trade {} on scrip {} with spot key {}", tradeSetupEntity.getId(), scripCode, spotKey);
                             } else {
                                 log.debug("Already subscribed to spot LTP for executed trade {} on scrip {} with spot key {}", tradeSetupEntity.getId(), scripCode, spotKey);

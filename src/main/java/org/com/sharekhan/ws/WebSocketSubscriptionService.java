@@ -11,12 +11,23 @@ public interface WebSocketSubscriptionService {
     boolean subscribeToScrip(String scripCode);
 
     /**
+     * Subscribe to LTP-only feed for a given scrip key.
+     * Use this for spot/index references where full-depth feed may not publish.
+     */
+    boolean subscribeToScripLtp(String scripCode);
+
+    /**
      * Unsubscribe from LTP for a given scrip key when no more watchers remain.
      * @return true if an underlying WS unsubscribe was sent (transition 1->0),
      *         false if there are still watchers and only a ref-count decrement happened
      *         or if it wasn't subscribed.
      */
     boolean unsubscribeFromScrip(String scripCode);
+
+    /**
+     * Unsubscribe from LTP-only feed for a given scrip key when no more watchers remain.
+     */
+    boolean unsubscribeFromScripLtp(String scripCode);
 
     void subscribeToAck(String customerId);
 

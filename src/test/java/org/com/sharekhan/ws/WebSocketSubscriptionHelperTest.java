@@ -27,6 +27,31 @@ class WebSocketSubscriptionHelperTest {
     }
 
     @Test
+    void ltpSubscriptionSendsLtpFeed() {
+        boolean newSub = helper.subscribeToScripLtp("NC20000");
+
+        assertTrue(newSub, "First LTP subscription should return true");
+        assertEquals(1, connector.lastMessages.size());
+        assertEquals("{\"action\":\"feed\",\"key\":[\"ltp\"],\"value\":[\"NC20000\"]}",
+                connector.lastMessages.get(0));
+        assertTrue(helper.getActiveScripKeys().contains("NC20000"));
+    }
+
+    @Test
+    void fullAndLtpFeedsAreReferenceCountedSeparately() {
+        helper.subscribeToScrip("NC20000");
+        helper.subscribeToScripLtp("NC20000");
+        connector.lastMessages.clear();
+
+        boolean fullUnsub = helper.unsubscribeFromScrip("NC20000");
+
+        assertTrue(fullUnsub, "Full feed should unsubscribe independently");
+        assertEquals("{\"action\":\"unsubscribe\",\"key\":[\"full\"],\"value\":[\"NC20000\"]}",
+                connector.lastMessages.get(0));
+        assertTrue(helper.getActiveScripKeys().contains("NC20000"));
+    }
+
+    @Test
     void subsequentSubscriptionsDoNotResend() {
         helper.subscribeToScrip("NC22");
         connector.lastMessages.clear();
@@ -71,4 +96,3 @@ class WebSocketSubscriptionHelperTest {
         }
     }
 }
-

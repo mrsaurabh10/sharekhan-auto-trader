@@ -129,6 +129,18 @@ public class ScriptMasterCacheService {
         repository.deleteAll();
     }
 
+    public long refreshScriptMaster(List<String> exchanges) throws IOException, SharekhanAPIException {
+        List<String> effectiveExchanges = (exchanges == null || exchanges.isEmpty())
+                ? List.of("NF", "NC", "BF", "BC", "MX")
+                : exchanges;
+        scriptCache.clear();
+        repository.deleteAllInBatch();
+        for (String exchange : effectiveExchanges) {
+            getScriptCache(exchange);
+        }
+        return repository.count();
+    }
+
     public ScriptMasterEntity convertToEntity(JSONObject json, String exchange) throws SharekhanAPIException {
         return ScriptMasterEntity.builder()
                 .scripCode(json.optInt("scripCode"))

@@ -109,7 +109,7 @@ public class WebSocketClientService  {
 
     private void sendSubscribeMessage() {
         String subscribeMsg = "{\"action\":\"subscribe\",\"key\":[\"feed\",\"ack\"],\"value\":[\"\"]}";
-        session.getAsyncRemote().sendText(subscribeMsg);
+        webSocketConnector.send(subscribeMsg);
         // NOTE: Per-customer ACK subscriptions will be created when trades are placed.
         log.info("📡 Sent initial subscribe message (ACK subscriptions will be created per customer when trades are placed)");
     }
@@ -120,7 +120,7 @@ public class WebSocketClientService  {
         if (subscribedScrips.contains(scripCode)) return;
 
         String feedMsg = String.format("{\"action\":\"feed\",\"key\":[\"ltp\"],\"value\":[\"%s\"]}", scripCode);
-        session.getAsyncRemote().sendText(feedMsg);
+        webSocketConnector.send(feedMsg);
         subscribedScrips.add(scripCode);
         log.info("📡 Subscribed to LTP for {}", scripCode);
     }
@@ -141,20 +141,13 @@ public class WebSocketClientService  {
                  if (data == null) {
                     log.debug("Received feed message without data");
                  } else {
-                    // Try various common field names for scripCode and ltp
-                    Integer scripCode = null;
-                    Double ltp = null;
-
-                    // scripCode may be number or string field named scripCode, scrip, ScripCode
-                    if (data.has("scripCode") && data.get("scripCode").canConvertToInt()) scripCode = data.get("scripCode").asInt();
-                    else if (data.has("scrip") && data.get("scrip").canConvertToInt()) scripCode = data.get("scrip").asInt();
-                    else if (data.has("ScripCode") && data.get("ScripCode").canConvertToInt()) scripCode = data.get("ScripCode").asInt();
-                    else if (data.has("scripCode") && data.get("scripCode").isTextual()) {
-                        try { scripCode = Integer.parseInt(data.get("scripCode").asText()); } catch (NumberFormatException ignored) {}
-                    }
+                    // Try various common field names for scripCode and ltp.
+                    Integer scripCode = extractFirstInt(data,
+                            "scripCode", "ScripCode", "scripcode", "scrip_code",
+                            "scrip", "token", "instrumentToken", "instrument_token");
 
                     // ltp may be number or string under 'ltp' or 'last_price' or 'lastPrice'
-                    ltp = extractFirstDouble(data, "ltp", "last_price", "lastPrice", "lastTradedPrice");
+                    Double ltp = extractFirstDouble(data, "ltp", "LTP", "last_price", "lastPrice", "lastTradedPrice");
                     BidAsk bidAsk = QuotePayloadParser.extractBestBidAsk(data);
                     Double bestBid = bidAsk.bid();
                     Double bestAsk = bidAsk.ask();
@@ -295,6 +288,38 @@ public class WebSocketClientService  {
             if (node.isTextual()) {
                 try {
                     return Double.parseDouble(node.asText());
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private Integer extractFirstInt(JsonNode data, String... fields) {
+        if (data == null) {
+            return null;
+        }
+        for (String field : fields) {
+            if (!data.has(field)) {
+                continue;
+            }
+            JsonNode node = data.get(field);
+            if (node == null || node.isNull()) {
+                continue;
+            }
+            if (node.canConvertToInt()) {
+                return node.asInt();
+            }
+            if (node.isTextual()) {
+                String value = node.asText();
+                if (value != null) {
+                    value = value.replaceAll("[^0-9]", "");
+                }
+                if (value == null || value.isBlank()) {
+                    continue;
+                }
+                try {
+                    return Integer.parseInt(value);
                 } catch (NumberFormatException ignored) {
                 }
             }

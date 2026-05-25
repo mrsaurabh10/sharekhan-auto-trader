@@ -38,6 +38,8 @@
     if (content) content.style.marginLeft = isAdmin ? '240px' : '0';
     const triggerAllBtn = document.getElementById('triggerForAllUsersBtn');
     if (triggerAllBtn) triggerAllBtn.style.display = isAdmin ? 'inline-block' : 'none';
+    const scriptMasterPanel = document.getElementById('scriptMasterPanel');
+    if (scriptMasterPanel) scriptMasterPanel.style.display = isAdmin ? 'block' : 'none';
     const placeOrderHeading = document.querySelector('#placeOrderPanel h4');
     if (placeOrderHeading) placeOrderHeading.innerText = isAdmin ? 'Place Order (Admin)' : 'Place Order';
   }
@@ -1269,7 +1271,7 @@
         if (cell) {
           let btn = document.getElementById('reloadInstrumentsBtn');
           if (!btn) { btn = document.createElement('button'); btn.id = 'reloadInstrumentsBtn'; btn.className = 'btn'; btn.type = 'button'; btn.textContent = 'Reload'; try { cell.appendChild(btn); } catch (e) {} }
-          if (btn && !btn.__wired) { btn.__wired = true; btn.addEventListener('click', async function () { const ex = (exSel.value || '').trim(); if (!ex) { alert('Select exchange first'); return; } try { const instruments = await fetchInstrumentsForExchange(ex); populateInstruments(instruments || []); } catch (e) { } }); }
+          if (btn && !btn.__wired) { btn.__wired = true; btn.addEventListener('click', async function () { await reloadInstrumentsForCurrentExchange(); }); }
         }
     } catch (e) {}
     if (instrSel) {
@@ -1289,6 +1291,24 @@
     if (strikeSel) { strikeSel.addEventListener('change', async function () { const strike = (this.value || '').trim(); const instrument = instrSel ? (instrSel.value || '').trim() : ''; const ex = (exSel.value || '').trim(); if (!strike) return; try { const expiries = await fetchExpiries(ex, instrument, strike); if (Array.isArray(expiries) && expirySel) { expirySel.innerHTML = '<option value="">Select Expiry</option>' + expiries.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join(''); expirySel.disabled = false; fetchOptionLtpAndPopulateEntry(); } } catch (e) { } }); }
     if (expirySel) expirySel.addEventListener('change', function () { fetchOptionLtpAndPopulateEntry(); });
     if (optionTypeSel) optionTypeSel.addEventListener('change', function () { fetchOptionLtpAndPopulateEntry(); });
+  }
+
+  async function reloadInstrumentsForCurrentExchange() {
+    const exSel = document.getElementById('exchange');
+    const instrSel = document.getElementById('instrument');
+    const ex = exSel ? (exSel.value || '').trim() : '';
+    if (!ex) {
+      return;
+    }
+    if (instrSel) {
+      instrSel.disabled = true;
+      instrSel.innerHTML = '<option value="">Loading...</option>';
+    }
+    const instruments = await fetchInstrumentsForExchange(ex);
+    populateInstruments(instruments || []);
+    if (instrSel) {
+      instrSel.disabled = false;
+    }
   }
 
   // --- Place Order wiring ---
@@ -1365,6 +1385,50 @@
     } catch (e) {
       select.innerHTML = '<option value="">Strategies unavailable</option>';
       console.debug('Failed to load strategy templates', e);
+    }
+  }
+
+  async function refreshScriptMaster(kind) {
+    const result = document.getElementById('scriptMasterResult');
+    const mstockBtn = document.getElementById('refreshMStockMasterBtn');
+    const sharekhanBtn = document.getElementById('refreshSharekhanMasterBtn');
+    const errDiv = document.getElementById('serverError');
+    const isMStock = kind === 'mstock';
+    const btn = isMStock ? mstockBtn : sharekhanBtn;
+    if (result) result.innerText = (isMStock ? 'mStock' : 'Sharekhan') + ' refresh started...';
+    if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
+    if (mstockBtn) mstockBtn.disabled = true;
+    if (sharekhanBtn) sharekhanBtn.disabled = true;
+    try {
+      await ensureCsrf();
+      const url = isMStock ? '/api/mstock/instruments/refresh' : '/api/scripts/refresh';
+      const resp = await fetchJson(url, { method: 'POST' });
+      const rows = resp && resp.rows != null ? ' Rows: ' + resp.rows + '.' : '';
+      if (result) result.innerText = (resp && resp.message ? resp.message : 'Refresh completed.') + rows;
+      await reloadInstrumentsForCurrentExchange().catch(function(){});
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      if (result) result.innerText = 'Refresh failed.';
+      if (errDiv) { errDiv.style.display = 'block'; errDiv.innerText = msg; } else alert(msg);
+    } finally {
+      if (mstockBtn) mstockBtn.disabled = false;
+      if (sharekhanBtn) sharekhanBtn.disabled = false;
+      if (btn) btn.focus();
+    }
+  }
+
+  function wireScriptMasterPanel() {
+    const mstockBtn = document.getElementById('refreshMStockMasterBtn');
+    const sharekhanBtn = document.getElementById('refreshSharekhanMasterBtn');
+    if (mstockBtn) {
+      mstockBtn.addEventListener('click', function () {
+        refreshScriptMaster('mstock');
+      });
+    }
+    if (sharekhanBtn) {
+      sharekhanBtn.addEventListener('click', function () {
+        refreshScriptMaster('sharekhan');
+      });
     }
   }
 
@@ -1526,6 +1590,7 @@
     wireAdminForm();
     wireBrokersUI();
     wireAccountUI();
+    wireScriptMasterPanel();
     wirePlaceOrderForm();
     await loadStrategyTemplates();
     wireStrategyPanel();
