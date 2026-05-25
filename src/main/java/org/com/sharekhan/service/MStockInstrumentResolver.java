@@ -132,6 +132,11 @@ public class MStockInstrumentResolver {
     public Optional<String> resolveInstrumentKey(ScriptMasterEntity script) {
         if (script == null) return Optional.empty();
 
+        Optional<String> hardcodedIndexKey = hardcodedIndexInstrumentKey(script);
+        if (hardcodedIndexKey.isPresent()) {
+            return cacheAndReturn(script, hardcodedIndexKey.get(), true);
+        }
+
         String normalizedExchange = normalizeExchangeForApi(script.getExchange());
         boolean derivativeInstrument = isDerivativeInstrument(script, normalizedExchange);
         if (!derivativeInstrument && isSpotInstrument(script)) {
@@ -661,6 +666,25 @@ public class MStockInstrumentResolver {
 
     private boolean isIndexSpotScript(ScriptMasterEntity script) {
         return script != null && INDEX_SYMBOL_KEYS.contains(normalizeSymbolKey(script.getTradingSymbol()));
+    }
+
+    private Optional<String> hardcodedIndexInstrumentKey(ScriptMasterEntity script) {
+        if (script == null) {
+            return Optional.empty();
+        }
+        String symbol = normalizeSymbolKey(script.getTradingSymbol());
+        Integer scripCode = script.getScripCode();
+
+        if ("NIFTY".equals(symbol) || "NIFTY50".equals(symbol) || Integer.valueOf(20000).equals(scripCode)) {
+            return Optional.of("NSE:NIFTY50");
+        }
+        if ("BANKNIFTY".equals(symbol) || "NIFTYBANK".equals(symbol) || Integer.valueOf(26009).equals(scripCode)) {
+            return Optional.of("NSE:NIFTYBANK");
+        }
+        if ("SENSEX".equals(symbol) || Integer.valueOf(51).equals(scripCode)) {
+            return Optional.of("BSE:SENSEX");
+        }
+        return Optional.empty();
     }
 
     private static String normalizeSymbolKey(String symbol) {
