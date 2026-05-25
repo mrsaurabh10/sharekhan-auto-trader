@@ -706,6 +706,72 @@ public class TradeExecutionService {
         return executed;
     }
 
+    public TriggerTradeRequestEntity executeTriggeredTrade(TriggerRequest request) {
+        if (request == null) {
+            throw new InvalidTradeRequestException("Trade request cannot be null");
+        }
+
+        final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
+        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
+
+        if (!isNoStrikeExchange) {
+            Double optionLtp = ltpCacheService.getLtp(script.getScripCode());
+            if (optionLtp == null) {
+                log.debug("Immediate trigger LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.",
+                        script.getScripCode(), request.getInstrument());
+                optionLtp = fetchLtpViaMStockFallback(script.getScripCode(), "executeTriggeredTrade");
+            }
+            if (optionLtp == null) {
+                throw new InvalidTradeRequestException("Option LTP unavailable for immediate strategy execution; will retry on next evaluation");
+            }
+        }
+
+        TriggerTradeRequestEntity saved = executeTrade(request);
+        int claimed = triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                TriggeredTradeStatus.TRIGGERED.name());
+        if (claimed == 1) {
+            saved.setStatus(TriggeredTradeStatus.TRIGGERED);
+        } else {
+            saved = triggerTradeRequestRepository.findById(saved.getId()).orElse(saved);
+            if (!TriggeredTradeStatus.TRIGGERED.equals(saved.getStatus())) {
+                throw new InvalidTradeRequestException("Strategy request could not be claimed for immediate execution");
+            }
+        }
+
+        TriggeredTradeSetupEntity executed = executeTradeFromEntity(saved);
+        if (executed == null) {
+            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.REJECTED.name());
+            saved.setStatus(TriggeredTradeStatus.REJECTED);
+            triggerTradeRequestRepository.save(saved);
+            throw new InvalidTradeRequestException("Strategy entry could not be executed immediately after breakout");
+        }
+
+        if (TriggeredTradeStatus.REJECTED.equals(executed.getStatus())) {
+            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.REJECTED.name());
+            saved.setStatus(TriggeredTradeStatus.REJECTED);
+            triggerTradeRequestRepository.save(saved);
+            throw new InvalidTradeRequestException("Strategy entry order was rejected: " + executed.getExitReason());
+        }
+
+        if (TriggeredTradeStatus.EXECUTED.equals(executed.getStatus())) {
+            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.EXECUTED.name());
+            saved.setStatus(TriggeredTradeStatus.EXECUTED);
+            triggerTradeRequestRepository.save(saved);
+        }
+
+        log.info("✅ Strategy-triggered trade request {} moved to {} with live trade {} status={}",
+                saved.getId(), saved.getStatus(), executed.getId(), executed.getStatus());
+        return saved;
+    }
+
     public TriggeredTradeSetupEntity createExecutedTrade(TriggerRequest request) {
         // Reuse logic to resolve script and calculate quantity
         // We can call executeTrade to get the request entity, but we need to intercept it before saving or modify it after
