@@ -8,9 +8,11 @@ import org.com.sharekhan.auth.AuthTokenResult;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.enums.Broker;
+import org.com.sharekhan.service.MStockInstrumentCacheService;
 import org.com.sharekhan.service.MStockInstrumentResolver;
 import org.com.sharekhan.service.MStockLtpService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -26,6 +28,7 @@ public class MStockController {
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
     private final MStockInstrumentResolver instrumentResolver;
+    private final MStockInstrumentCacheService instrumentCacheService;
 
     @GetMapping("/ltp")
     public ResponseEntity<Map<String, Object>> getLtp(@RequestParam(name = "i") List<String> instruments) {
@@ -176,6 +179,30 @@ public class MStockController {
         } catch (Exception e) {
             log.error("MStock verify failed", e);
             Map<String, Object> err = new HashMap<>();
+            err.put("status", "error");
+            err.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(err);
+        }
+    }
+
+    @PostMapping("/instruments/refresh")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Map<String, Object>> refreshInstrumentMaster() {
+        try {
+            boolean refreshed = instrumentCacheService.refreshInstrumentMaster();
+            long rows = instrumentCacheService.instrumentCount();
+            Map<String, Object> resp = new LinkedHashMap<>();
+            resp.put("status", refreshed ? "success" : "error");
+            resp.put("message", refreshed
+                    ? "MStock script master refreshed"
+                    : "MStock script master refresh did not complete. Check credentials/token and server logs.");
+            resp.put("rows", rows);
+            return refreshed
+                    ? ResponseEntity.ok(resp)
+                    : ResponseEntity.status(500).body(resp);
+        } catch (Exception e) {
+            log.error("Failed to refresh MStock instrument master", e);
+            Map<String, Object> err = new LinkedHashMap<>();
             err.put("status", "error");
             err.put("message", e.getMessage());
             return ResponseEntity.status(500).body(err);

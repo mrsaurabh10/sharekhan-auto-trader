@@ -81,6 +81,10 @@ public class MStockInstrumentCacheService {
         return false;
     }
 
+    public long instrumentCount() {
+        return repository.count();
+    }
+
     private Optional<Credentials> resolveCredentials() {
         TokenStoreService.TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK);
         String accessToken = null;
