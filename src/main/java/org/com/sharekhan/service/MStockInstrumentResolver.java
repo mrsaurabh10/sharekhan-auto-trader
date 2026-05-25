@@ -56,6 +56,16 @@ public class MStockInstrumentResolver {
             "BSE", "NC"
     );
 
+    private static final Map<String, List<String>> INDEX_SYMBOL_ALIASES = Map.of(
+            "NIFTY", List.of("NIFTY 50"),
+            "NIFTY50", List.of("NIFTY 50", "NIFTY"),
+            "BANKNIFTY", List.of("NIFTY BANK", "NIFTYBANK"),
+            "NIFTYBANK", List.of("NIFTY BANK", "BANKNIFTY"),
+            "NIFTY BANK", List.of("NIFTYBANK", "BANKNIFTY"),
+            "FINNIFTY", List.of("NIFTY FIN SERVICE", "NIFTY FINANCIAL SERVICES"),
+            "MIDCPNIFTY", List.of("NIFTY MID SELECT", "NIFTY MIDCAP SELECT")
+    );
+
     private static final DateTimeFormatter DISPLAY_EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
     private static final List<DateTimeFormatter> FUTURE_EXPIRY_FORMATS = List.of(
@@ -149,6 +159,13 @@ public class MStockInstrumentResolver {
                 return cacheAndReturn(script, resolvedKey, true);
             }
         }
+        log.warn("Unable to resolve MStock key for scripCode={} tradingSymbol={} exchange={} normalizedExchange={} candidates={}",
+                script.getScripCode(), script.getTradingSymbol(), script.getExchange(), normalizedExchange, candidateSymbols);
+        printDiagnostic("Unable to resolve key scripCode=" + script.getScripCode()
+                + ", tradingSymbol=" + script.getTradingSymbol()
+                + ", exchange=" + script.getExchange()
+                + ", normalizedExchange=" + normalizedExchange
+                + ", candidates=" + candidateSymbols);
 
         if (!isInstrumentMasterPopulated() && !candidateSymbols.isEmpty()) {
             String fallbackSymbol = candidateSymbols.get(0);
@@ -251,6 +268,11 @@ public class MStockInstrumentResolver {
         if (StringUtils.hasText(baseSymbol) && !candidates.contains(baseSymbol)) {
             candidates.add(baseSymbol);
         }
+        for (String alias : indexAliases(baseSymbol)) {
+            if (StringUtils.hasText(alias) && !candidates.contains(alias)) {
+                candidates.add(alias);
+            }
+        }
 
         // For spot symbols, also consider variants without hyphen.
         if (StringUtils.hasText(built) && built.contains("-")) {
@@ -261,6 +283,13 @@ public class MStockInstrumentResolver {
         }
 
         return candidates;
+    }
+
+    private List<String> indexAliases(String symbol) {
+        if (!StringUtils.hasText(symbol)) {
+            return List.of();
+        }
+        return INDEX_SYMBOL_ALIASES.getOrDefault(symbol.trim().toUpperCase(Locale.ROOT), List.of());
     }
 
     private Optional<String> lookupInstrumentKey(String exchange, String symbol) {
@@ -680,5 +709,9 @@ public class MStockInstrumentResolver {
         if (!StringUtils.hasText(exchange)) return null;
         String trimmed = exchange.trim().toUpperCase(Locale.ROOT);
         return LOOKUP_EXCHANGE_CODES.getOrDefault(trimmed, trimmed);
+    }
+
+    private void printDiagnostic(String message) {
+        System.out.println("[MSTOCK-RESOLVER] " + message);
     }
 }
