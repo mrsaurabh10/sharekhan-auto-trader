@@ -277,6 +277,10 @@ public class TradeExecutionService {
         return trigger.getTriggerRequestId() != null ? trigger.getTriggerRequestId() : trigger.getId();
     }
 
+    private boolean isSharekhanSource(String source) {
+        return "Sharekhan".equalsIgnoreCase(source);
+    }
+
 
 
     // Backwards compatible public API - by default allow service to compute quantity if missing
@@ -772,6 +776,48 @@ public class TradeExecutionService {
         return saved;
     }
 
+    public Optional<Integer> warmUpOptionLtp(TriggerRequest request, String reason) {
+        if (request == null) {
+            return Optional.empty();
+        }
+        try {
+            ScriptMasterEntity script = resolveScriptForRequest(request, false);
+            if (script == null || script.getScripCode() == null || !hasOptionType(script.getOptionType())) {
+                return Optional.empty();
+            }
+
+            String feedKey = script.getExchange() + script.getScripCode();
+            if (!webSocketSubscriptionService.getActiveScripKeys().contains(feedKey)) {
+                boolean subscribed = webSocketSubscriptionService.subscribeToScrip(feedKey);
+                if (subscribed) {
+                    log.info("🔁 Warmed option LTP subscription for {} {} {} {} scrip={} reason={}",
+                            request.getInstrument(),
+                            request.getStrikePrice(),
+                            request.getOptionType(),
+                            request.getExpiry(),
+                            feedKey,
+                            reason);
+                }
+            } else {
+                log.debug("Option LTP subscription already active for {} reason={}", feedKey, reason);
+            }
+
+            if (ltpCacheService.getLtp(script.getScripCode()) == null) {
+                fetchLtpViaMStockFallback(script.getScripCode(), "strategyOptionWarmup");
+            }
+            return Optional.of(script.getScripCode());
+        } catch (Exception e) {
+            log.warn("Unable to warm option LTP subscription for {} {} {} {}: {}",
+                    request.getInstrument(),
+                    request.getStrikePrice(),
+                    request.getOptionType(),
+                    request.getExpiry(),
+                    e.getMessage());
+            log.debug("Option LTP warmup failed", e);
+            return Optional.empty();
+        }
+    }
+
     public TriggeredTradeSetupEntity createExecutedTrade(TriggerRequest request) {
         // Reuse logic to resolve script and calculate quantity
         // We can call executeTrade to get the request entity, but we need to intercept it before saving or modify it after
@@ -1217,9 +1263,10 @@ public class TradeExecutionService {
                     // Robust check for spot entry
                     boolean isSpotEntry = Boolean.TRUE.equals(triggeredTradeSetupEntity.getUseSpotForEntry()) 
                             || (triggeredTradeSetupEntity.getUseSpotForEntry() == null && Boolean.TRUE.equals(triggeredTradeSetupEntity.getUseSpotPrice()));
+                    boolean isSharekhanSource = isSharekhanSource(triggeredTradeSetupEntity.getSource());
 
-                    // Only adjust SL/Targets and update entryPrice if NOT using spot for entry
-                    if (!isSpotEntry) {
+                    // Sharekhan signals carry source-defined entry/SL/target levels, so keep them unchanged after fill.
+                    if (!isSpotEntry && !isSharekhanSource) {
                         if (originalEntryPrice != null && executedPrice != null) {
                             double diff = executedPrice - originalEntryPrice;
                             if (Math.abs(diff) > 0.0001) {
@@ -1240,6 +1287,9 @@ public class TradeExecutionService {
                             }
                         }
                         triggeredTradeSetupEntity.setEntryPrice(executedPrice);
+                    } else if (isSharekhanSource) {
+                        log.info("Preserving Sharekhan source entry/SL/targets for trade {} after immediate execution. OriginalEntry={}, Executed={}",
+                                triggeredTradeSetupEntity.getId(), originalEntryPrice, executedPrice);
                     }
                 }
                 triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
@@ -2709,17 +2759,19 @@ public class TradeExecutionService {
                         // Robust check for spot entry
                         boolean isSpotEntry = Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForEntry()) 
                                 || (tradeSetupEntity.getUseSpotForEntry() == null && Boolean.TRUE.equals(tradeSetupEntity.getUseSpotPrice()));
+                        boolean isSharekhanSource = isSharekhanSource(tradeSetupEntity.getSource());
 
                         // For non-spot trades, update entryPrice to executed price for consistency
                         // and to allow existing SL/TGT adjustment logic to work as-is.
                         // For spot trades, entryPrice remains the spot trigger price.
-                        if (!isSpotEntry) {
+                        // For Sharekhan source signals, entry/SL/target levels are preserved from the source.
+                        if (!isSpotEntry && !isSharekhanSource) {
                             tradeSetupEntity.setEntryPrice(price);
                         }
 
                         // New logic: Adjust SL and Targets based on actual entry price difference (slippage)
                         // This should only apply to non-spot trades where the trigger price was for the option itself.
-                        if (!isSpotEntry) {
+                        if (!isSpotEntry && !isSharekhanSource) {
                             if (originalTriggerPrice != null && price != null) {
                                 double diff = price - originalTriggerPrice;
                                 if (Math.abs(diff) > 0.0001) { // if there is a significant difference
@@ -2740,6 +2792,9 @@ public class TradeExecutionService {
                                     }
                                  }
                             }
+                        } else if (isSharekhanSource) {
+                            log.info("Preserving Sharekhan source entry/SL/targets for trade {} after execution confirmation. OriginalEntry={}, Executed={}",
+                                    tradeSetupEntity.getId(), originalTriggerPrice, price);
                         }
 
                     } else if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())

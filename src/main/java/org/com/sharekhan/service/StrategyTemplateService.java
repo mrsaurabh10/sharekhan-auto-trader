@@ -87,8 +87,8 @@ public class StrategyTemplateService {
         ScriptMasterEntity spotScript = resolveSpotScript(symbol);
         LocalDate today = LocalDate.now(MARKET_ZONE);
         LocalDateTime now = LocalDateTime.now(MARKET_ZONE);
-        if (now.toLocalTime().isBefore(OR_END.plusMinutes(CANDLE_MINUTES))) {
-            return waiting(definition, symbol, "Waiting for at least one completed 5-minute candle after 9:30.");
+        if (now.toLocalTime().isBefore(OR_END)) {
+            return waiting(definition, symbol, "Waiting for opening range 9:15-9:30 to complete.");
         }
 
         CandleLoad candleLoad = loadCandles(spotScript);
@@ -126,6 +126,22 @@ public class StrategyTemplateService {
 
         double orh = openingRange.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
         double orl = openingRange.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
+        warmUpAtmOptionLtp(request, definition, symbol, orh, orl);
+
+        if (now.toLocalTime().isBefore(OR_END.plusMinutes(CANDLE_MINUTES))) {
+            return StrategyApplyResponse.builder()
+                    .status("waiting")
+                    .message("Opening range complete; ATM option LTP subscription warmed. Waiting for first completed 5-minute candle after 9:30.")
+                    .templateId(definition.id())
+                    .symbol(symbol)
+                    .direction(definition.optionType())
+                    .openingRangeHigh(roundPrice(orh))
+                    .openingRangeLow(roundPrice(orl))
+                    .volumeFilterSkipped(!candleLoad.hasVolume())
+                    .vwapFilterSkipped(!candleLoad.hasVolume())
+                    .build();
+        }
+
         List<StrategyCandle> completedBreakoutCandidates = candles.stream()
                 .filter(c -> !c.time().isBefore(OR_END))
                 .filter(c -> !c.time().plusMinutes(CANDLE_MINUTES).isAfter(now.toLocalTime()))
@@ -534,6 +550,33 @@ public class StrategyTemplateService {
             trigger.setLots(request.getLots());
         }
         return trigger;
+    }
+
+    private void warmUpAtmOptionLtp(StrategyApplyRequest request,
+                                    StrategyDefinition definition,
+                                    String symbol,
+                                    double orh,
+                                    double orl) {
+        try {
+            String expiry = nearestExpiry(symbol, definition.optionType());
+            double referencePrice = "PE".equalsIgnoreCase(definition.optionType()) ? orl : orh;
+            double strike = nearestStrike(symbol, definition.optionType(), expiry, referencePrice);
+
+            TriggerRequest warmup = new TriggerRequest();
+            warmup.setInstrument(symbol);
+            warmup.setStrikePrice(strike);
+            warmup.setOptionType(definition.optionType());
+            warmup.setExpiry(expiry);
+            warmup.setUserId(request.getUserId());
+            warmup.setBrokerCredentialsId(request.getBrokerCredentialsId());
+            warmup.setSource(StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + definition.id());
+
+            tradeExecutionService.warmUpOptionLtp(warmup, "ORB opening range complete");
+        } catch (Exception e) {
+            log.warn("Unable to warm ATM option LTP for strategy template={} symbol={} direction={}: {}",
+                    definition.id(), symbol, definition.optionType(), e.getMessage());
+            log.debug("Strategy ATM option warmup failed", e);
+        }
     }
 
     private TriggerTradeRequestEntity findExisting(TriggerRequest trigger) {
