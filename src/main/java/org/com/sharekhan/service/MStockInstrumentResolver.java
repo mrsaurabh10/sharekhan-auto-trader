@@ -28,6 +28,9 @@ public class MStockInstrumentResolver {
     private final Map<Integer, String> instrumentKeyCache = new ConcurrentHashMap<>();
     private volatile Boolean instrumentMasterPopulated;
 
+    private static final String NIFTY_50_LTP_KEY = "NSE:Nifty 50";
+    private static final String NIFTY_BANK_LTP_KEY = "NSE:Nifty Bank";
+
     private static final Map<String, String> API_EXCHANGE_CODES = Map.of(
             "NC", "NSE",
             "BC", "BSE",
@@ -107,6 +110,10 @@ public class MStockInstrumentResolver {
             return false;
         }
 
+        if (isSpotInstrument(script) && isValidSpotKey(script, cachedKey)) {
+            return false;
+        }
+
         if (Boolean.TRUE.equals(instrumentMasterPopulated)) {
             Optional<MStockInstrumentEntity> existing = mStockInstrumentRepository.findByInstrumentKey(cachedKey);
             if (existing.isEmpty()) {
@@ -180,14 +187,6 @@ public class MStockInstrumentResolver {
                 return cacheAndReturn(script, resolvedKey, true);
             }
         }
-        log.warn("Unable to resolve MStock key for scripCode={} tradingSymbol={} exchange={} normalizedExchange={} candidates={}",
-                script.getScripCode(), script.getTradingSymbol(), script.getExchange(), normalizedExchange, candidateSymbols);
-        printDiagnostic("Unable to resolve key scripCode=" + script.getScripCode()
-                + ", tradingSymbol=" + script.getTradingSymbol()
-                + ", exchange=" + script.getExchange()
-                + ", normalizedExchange=" + normalizedExchange
-                + ", candidates=" + candidateSymbols);
-
         if (!isInstrumentMasterPopulated() && !candidateSymbols.isEmpty()) {
             String fallbackSymbol = candidateSymbols.get(0);
             String fallbackKey = buildNormalizedKey(normalizedExchange, fallbackSymbol);
@@ -196,6 +195,19 @@ public class MStockInstrumentResolver {
                 return cacheAndReturn(script, fallbackKey, false);
             }
         }
+
+        Optional<String> spotFallback = heuristicSpotFallback(script, normalizedExchange, candidateSymbols);
+        if (spotFallback.isPresent()) {
+            return spotFallback;
+        }
+
+        log.warn("Unable to resolve MStock key for scripCode={} tradingSymbol={} exchange={} normalizedExchange={} candidates={}",
+                script.getScripCode(), script.getTradingSymbol(), script.getExchange(), normalizedExchange, candidateSymbols);
+        printDiagnostic("Unable to resolve key scripCode=" + script.getScripCode()
+                + ", tradingSymbol=" + script.getTradingSymbol()
+                + ", exchange=" + script.getExchange()
+                + ", normalizedExchange=" + normalizedExchange
+                + ", candidates=" + candidateSymbols);
 
         if (derivativeInstrument) {
             Optional<String> patternMatch = lookupDerivativeByPattern(normalizedExchange, script.getTradingSymbol());
@@ -676,10 +688,10 @@ public class MStockInstrumentResolver {
         Integer scripCode = script.getScripCode();
 
         if ("NIFTY".equals(symbol) || "NIFTY50".equals(symbol) || Integer.valueOf(20000).equals(scripCode)) {
-            return Optional.of("NSE:NIFTY50");
+            return Optional.of(NIFTY_50_LTP_KEY);
         }
         if ("BANKNIFTY".equals(symbol) || "NIFTYBANK".equals(symbol) || Integer.valueOf(26009).equals(scripCode)) {
-            return Optional.of("NSE:NIFTYBANK");
+            return Optional.of(NIFTY_BANK_LTP_KEY);
         }
         if ("SENSEX".equals(symbol) || Integer.valueOf(51).equals(scripCode)) {
             return Optional.of("BSE:SENSEX");
@@ -706,6 +718,27 @@ public class MStockInstrumentResolver {
             return "A";
         }
         return null;
+    }
+
+    private Optional<String> heuristicSpotFallback(ScriptMasterEntity script,
+                                                   String normalizedExchange,
+                                                   List<String> candidateSymbols) {
+        if (script == null || !isSpotInstrument(script) || candidateSymbols == null || candidateSymbols.isEmpty()) {
+            return Optional.empty();
+        }
+        if (!"NSE".equalsIgnoreCase(normalizedExchange) && !"BSE".equalsIgnoreCase(normalizedExchange)) {
+            return Optional.empty();
+        }
+
+        for (String candidate : candidateSymbols) {
+            String fallbackKey = buildNormalizedKey(normalizedExchange, candidate);
+            if (StringUtils.hasText(fallbackKey) && isValidSpotKey(script, fallbackKey)) {
+                log.warn("MStock instrument master missing spot symbol for scripCode={} tradingSymbol={}; using heuristic fallback {}",
+                        script.getScripCode(), script.getTradingSymbol(), fallbackKey);
+                return cacheAndReturn(script, fallbackKey, false);
+            }
+        }
+        return Optional.empty();
     }
 
     private Optional<ScriptMasterEntity> findAlternateSpotScript(String tradingSymbol, String exchangeCode) {

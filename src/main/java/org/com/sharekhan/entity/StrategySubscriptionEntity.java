@@ -33,6 +33,7 @@ public class StrategySubscriptionEntity {
     @Column(nullable = false)
     private String status;
 
+    @Column(length = 4096)
     private String lastMessage;
     private String lastEvaluationStatus;
     private Long generatedTradeRequestId;
