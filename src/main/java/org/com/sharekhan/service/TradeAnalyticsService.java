@@ -125,6 +125,11 @@ public class TradeAnalyticsService {
                 .filter(trade -> isWithin(eventTime(trade), start, end))
                 .count();
 
+        List<TriggeredTradeSetupEntity> fundedTrades = candidateTrades.stream()
+                .filter(this::usesFunds)
+                .filter(trade -> overlapsFundUseWindow(trade, start, end))
+                .toList();
+
         return TradeAnalyticsResponse.builder()
                 .filters(TradeAnalyticsResponse.Filters.builder()
                         .userId(userId)
@@ -137,7 +142,7 @@ public class TradeAnalyticsService {
                         .brokerCredentialsId(brokerCredentialsId)
                         .intraday(intraday)
                         .build())
-                .summary(buildSummary(realizedTrades, openTrades, rejectedTrades, failedTrades))
+                .summary(buildSummary(realizedTrades, openTrades, fundedTrades, start, end, rejectedTrades, failedTrades))
                 .bySymbol(buildBySymbol(realizedTrades))
                 .byDay(buildByDay(realizedTrades))
                 .recentClosedTrades(buildRecentClosedTrades(realizedTrades))
@@ -253,6 +258,9 @@ public class TradeAnalyticsService {
 
     private TradeAnalyticsResponse.Summary buildSummary(List<TriggeredTradeSetupEntity> realizedTrades,
                                                         List<TriggeredTradeSetupEntity> openTrades,
+                                                        List<TriggeredTradeSetupEntity> fundedTrades,
+                                                        LocalDateTime start,
+                                                        LocalDateTime end,
                                                         int rejectedTrades,
                                                         int failedTrades) {
         double realizedPnl = realizedTrades.stream().mapToDouble(TriggeredTradeSetupEntity::getPnl).sum();
@@ -270,6 +278,7 @@ public class TradeAnalyticsService {
                 .count();
         double grossProfit = wins.stream().mapToDouble(Double::doubleValue).sum();
         double grossLoss = losses.stream().mapToDouble(Double::doubleValue).sum();
+        PeakFundUse peakFundUse = peakFundUse(fundedTrades, start, end);
 
         return TradeAnalyticsResponse.Summary.builder()
                 .realizedPnl(round(realizedPnl))
@@ -284,6 +293,9 @@ public class TradeAnalyticsService {
                 .averageLoss(losses.isEmpty() ? null : round(losses.stream().mapToDouble(Double::doubleValue).average().orElse(0)))
                 .bestTradePnl(realizedTrades.stream().map(TriggeredTradeSetupEntity::getPnl).max(Double::compareTo).map(this::round).orElse(null))
                 .worstTradePnl(realizedTrades.stream().map(TriggeredTradeSetupEntity::getPnl).min(Double::compareTo).map(this::round).orElse(null))
+                .maxFundUseAtTime(round(peakFundUse.amount()))
+                .maxFundUseAt(peakFundUse.at())
+                .activeTradesAtMaxFundUse(peakFundUse.activeTrades())
                 .openTrades(openTrades.size())
                 .openQuantity(openTrades.stream().map(TriggeredTradeSetupEntity::getQuantity).filter(Objects::nonNull).mapToLong(Long::longValue).sum())
                 .rejectedTrades(rejectedTrades)
@@ -313,6 +325,65 @@ public class TradeAnalyticsService {
                 })
                 .sorted(Comparator.comparing(TradeAnalyticsResponse.SymbolAnalytics::getRealizedPnl).reversed())
                 .toList();
+    }
+
+    private PeakFundUse peakFundUse(List<TriggeredTradeSetupEntity> fundedTrades,
+                                    LocalDateTime rangeStart,
+                                    LocalDateTime rangeEnd) {
+        Map<LocalDateTime, FundUseEvent> eventsByTime = fundedTrades.stream()
+                .flatMap(trade -> fundUseEvents(trade, rangeStart, rangeEnd).stream())
+                .collect(Collectors.toMap(
+                        FundUseEvent::at,
+                        event -> event,
+                        (left, right) -> new FundUseEvent(
+                                left.at(),
+                                left.deltaAmount() + right.deltaAmount(),
+                                left.deltaActiveTrades() + right.deltaActiveTrades()
+                        )
+                ));
+        double activeAmount = 0.0d;
+        int activeTrades = 0;
+        PeakFundUse peak = new PeakFundUse(null, 0.0d, 0);
+        for (FundUseEvent event : eventsByTime.values().stream()
+                .sorted(Comparator.comparing(FundUseEvent::at))
+                .toList()) {
+            activeAmount += event.deltaAmount();
+            activeTrades += event.deltaActiveTrades();
+            if (activeAmount > peak.amount()) {
+                peak = new PeakFundUse(event.at(), activeAmount, activeTrades);
+            }
+        }
+        return peak;
+    }
+
+    private List<FundUseEvent> fundUseEvents(TriggeredTradeSetupEntity trade,
+                                             LocalDateTime rangeStart,
+                                             LocalDateTime rangeEnd) {
+        LocalDateTime start = fundUseTime(trade);
+        LocalDateTime end = fundReleaseTime(trade);
+        LocalDateTime effectiveStart = start.isBefore(rangeStart) ? rangeStart : start;
+        double amount = fundUseAmount(trade);
+        if (end == null || end.isAfter(rangeEnd)) {
+            return List.of(new FundUseEvent(effectiveStart, amount, 1));
+        }
+        return List.of(
+                new FundUseEvent(effectiveStart, amount, 1),
+                new FundUseEvent(end, -amount, -1)
+        );
+    }
+
+    private boolean overlapsFundUseWindow(TriggeredTradeSetupEntity trade,
+                                          LocalDateTime rangeStart,
+                                          LocalDateTime rangeEnd) {
+        LocalDateTime start = fundUseTime(trade);
+        LocalDateTime end = fundReleaseTime(trade);
+        return start != null
+                && !start.isAfter(rangeEnd)
+                && (end == null || !end.isBefore(rangeStart));
+    }
+
+    private LocalDateTime fundReleaseTime(TriggeredTradeSetupEntity trade) {
+        return trade.getStatus() == TriggeredTradeStatus.EXITED_SUCCESS ? trade.getExitedAt() : null;
     }
 
     private List<TradeAnalyticsResponse.DailyAnalytics> buildByDay(List<TriggeredTradeSetupEntity> realizedTrades) {
@@ -358,6 +429,27 @@ public class TradeAnalyticsService {
                 && trade.getExitedAt() != null;
     }
 
+    private boolean usesFunds(TriggeredTradeSetupEntity trade) {
+        return trade.getQuantity() != null
+                && trade.getQuantity() > 0
+                && effectiveEntryPrice(trade) != null
+                && trade.getStatus() != null
+                && (trade.getStatus() == TriggeredTradeStatus.EXITED_SUCCESS || OPEN_STATUSES.contains(trade.getStatus()))
+                && fundUseTime(trade) != null;
+    }
+
+    private double fundUseAmount(TriggeredTradeSetupEntity trade) {
+        return effectiveEntryPrice(trade) * trade.getQuantity();
+    }
+
+    private Double effectiveEntryPrice(TriggeredTradeSetupEntity trade) {
+        return trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+    }
+
+    private LocalDateTime fundUseTime(TriggeredTradeSetupEntity trade) {
+        return trade.getEntryAt() != null ? trade.getEntryAt() : trade.getTriggeredAt();
+    }
+
     private LocalDateTime eventTime(TriggeredTradeSetupEntity trade) {
         if (trade.getExitedAt() != null) return trade.getExitedAt();
         if (trade.getEntryAt() != null) return trade.getEntryAt();
@@ -376,5 +468,11 @@ public class TradeAnalyticsService {
     private Double round(Double value) {
         if (value == null) return null;
         return Math.round(value * 100.0d) / 100.0d;
+    }
+
+    private record FundUseEvent(LocalDateTime at, double deltaAmount, int deltaActiveTrades) {
+    }
+
+    private record PeakFundUse(LocalDateTime at, Double amount, Integer activeTrades) {
     }
 }

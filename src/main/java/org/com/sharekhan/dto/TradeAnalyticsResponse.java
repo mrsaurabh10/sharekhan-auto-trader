@@ -46,6 +46,9 @@ public class TradeAnalyticsResponse {
         private Double averageLoss;
         private Double bestTradePnl;
         private Double worstTradePnl;
+        private Double maxFundUseAtTime;
+        private LocalDateTime maxFundUseAt;
+        private Integer activeTradesAtMaxFundUse;
         private Integer openTrades;
         private Long openQuantity;
         private Integer rejectedTrades;

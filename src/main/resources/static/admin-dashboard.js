@@ -232,6 +232,7 @@
       ['Average Win', formatAnalyticsNumber(summary.averageWin), summary.averageWin],
       ['Average Loss', formatAnalyticsNumber(summary.averageLoss), summary.averageLoss],
       ['Best/Worst', formatAnalyticsNumber(summary.bestTradePnl) + ' / ' + formatAnalyticsNumber(summary.worstTradePnl), null],
+      ['Max Funds In Use', formatAnalyticsNumber(summary.maxFundUseAtTime) + (summary.activeTradesAtMaxFundUse != null ? ' / Trades ' + summary.activeTradesAtMaxFundUse : '') + (summary.maxFundUseAt ? ' at ' + String(summary.maxFundUseAt).replace('T', ' ') : ''), null],
       ['Open Trades', String(summary.openTrades != null ? summary.openTrades : 0) + ' / Qty ' + String(summary.openQuantity != null ? summary.openQuantity : 0), null]
     ];
     cards.innerHTML = cardDefs.map(def =>
