@@ -56,7 +56,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             if (response != null && response.has("data")) {
                 JSONObject data = response.getJSONObject("data");
                 String respOrderId = data.optString("orderId", data.optString("orsOrderId", null));
-                if (respOrderId != null && !respOrderId.isBlank()) {
+                if (isUsableOrderId(respOrderId)) {
                     updatedOrderId = respOrderId;
                 }
                 String respStatus = data.optString("orderStatus", "").toLowerCase();
@@ -167,7 +167,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                 if (response != null && response.has("data")) {
                     JSONObject d = response.getJSONObject("data");
                     String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
-                    if (respOrderId != null && !respOrderId.isBlank()) {
+                    if (isUsableOrderId(respOrderId)) {
                         orderId = respOrderId;
                         log.info("{}_BROKER_ATTEMPT_ACCEPTED | tradeId={} | attempt={} | attemptedPrice={} | orderId={}",
                                 stage, trade.getId(), attempt, price, orderId);
@@ -240,6 +240,16 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                     .status("Rejected")
                     .build();
         }
+    }
+
+    private boolean isUsableOrderId(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            return false;
+        }
+        String normalized = orderId.trim();
+        return !"0".equals(normalized)
+                && !"NA".equalsIgnoreCase(normalized)
+                && !"null".equalsIgnoreCase(normalized);
     }
 
     private Double resolveEntryPriceForPnl(TriggeredTradeSetupEntity trade) {

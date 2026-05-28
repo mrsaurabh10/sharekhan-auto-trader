@@ -85,4 +85,18 @@ class TradeExecutionServiceExitPriceValidationTest {
 
         assertThat(service.hasUsableTradedExitPrice(trade, 34.2)).isTrue();
     }
+
+    @Test
+    void rejectsPlaceholderBrokerOrderIds() {
+        assertThat(service.isUsableBrokerOrderId(null)).isFalse();
+        assertThat(service.isUsableBrokerOrderId("")).isFalse();
+        assertThat(service.isUsableBrokerOrderId("0")).isFalse();
+        assertThat(service.isUsableBrokerOrderId("NA")).isFalse();
+        assertThat(service.isUsableBrokerOrderId("null")).isFalse();
+    }
+
+    @Test
+    void acceptsRealBrokerOrderId() {
+        assertThat(service.isUsableBrokerOrderId("182038823")).isTrue();
+    }
 }

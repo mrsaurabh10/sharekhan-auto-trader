@@ -1189,6 +1189,9 @@ public class TradeExecutionService {
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
                 rejected.setSource(trigger.getSource());
+                if (isUsableBrokerOrderId(result.getOrderId())) {
+                    rejected.setOrderId(result.getOrderId());
+                }
                 try {
                     triggeredTradeRepo.save(rejected);
                     webSocketSubscriptionService.unsubscribeFromScrip(trigger.getExchange() + trigger.getScripCode());
@@ -1572,7 +1575,7 @@ public class TradeExecutionService {
             OrderPlacementResult result;
             if (attempt == 0) {
                 result = brokerService.placeOrder(trigger, ctx, price);
-                if (result != null && result.getOrderId() != null && !result.getOrderId().isBlank()) {
+                if (result != null && isUsableBrokerOrderId(result.getOrderId())) {
                     orderId = result.getOrderId();
                     trigger.setOrderId(orderId);
                 }
@@ -1593,13 +1596,15 @@ public class TradeExecutionService {
                 result.setAttemptedPrice(price);
             }
 
-            if (result != null && result.getOrderId() != null && !result.getOrderId().isBlank()) {
+            if (result != null && isUsableBrokerOrderId(result.getOrderId())) {
                 orderId = result.getOrderId();
                 trigger.setOrderId(orderId);
+            } else if (result != null && isUsableBrokerOrderId(orderId)) {
+                result.setOrderId(orderId);
             }
 
             if (result != null && result.isSuccess()) {
-                log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, triggerLogId(trigger), result.getOrderId());
+                log.info("✅ Entry attempt {} succeeded for trigger {} orderId={}", attempt + 1, triggerLogId(trigger), orderId);
 
                 if (isOrderPlacementFilled(result)) {
                     return result;
@@ -1626,9 +1631,20 @@ public class TradeExecutionService {
                     }
 
                     log.warn("⏱️ Entry order {} not filled after final attempt. Initiating cancellation.", orderId);
+                    String cancelledOrderId = orderId;
                     if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker) {
-                        modifiableEntryBroker.cancelEntryOrder(trigger, ctx, orderId);
-                        log.info("🚫 Cancelled entry order {} for trigger {} after pending final status", orderId, triggerLogId(trigger));
+                        modifiableEntryBroker.cancelEntryOrder(trigger, ctx, cancelledOrderId);
+                        log.info("🚫 Cancelled entry order {} for trigger {} after pending final status", cancelledOrderId, triggerLogId(trigger));
+                        latestStatus = fetchEntryOrderStatus(trigger, ctx, cancelledOrderId);
+                        if (isOrderFilled(latestStatus)) {
+                            log.warn("Entry order {} filled while cancellation was being confirmed; treating trigger {} as executed.",
+                                    cancelledOrderId, triggerLogId(trigger));
+                            return OrderPlacementResult.builder()
+                                    .success(true)
+                                    .orderId(cancelledOrderId)
+                                    .status("Fully Executed")
+                                    .build();
+                        }
                         orderId = null;
                     } else {
                         log.warn("⚠️ Broker service {} cannot cancel pending entry order {}", brokerService.getClass().getSimpleName(), orderId);
@@ -1636,7 +1652,7 @@ public class TradeExecutionService {
 
                     lastResult = OrderPlacementResult.builder()
                             .success(false)
-                            .orderId(result.getOrderId())
+                            .orderId(cancelledOrderId)
                             .status("Cancelled")
                             .rejectionReason("ENTRY_NOT_FILLED_AFTER_RETRIES")
                             .build();
@@ -1750,6 +1766,16 @@ public class TradeExecutionService {
                 && result.isSuccess()
                 && result.getStatus() != null
                 && result.getStatus().trim().toLowerCase(Locale.ROOT).contains("executed");
+    }
+
+    boolean isUsableBrokerOrderId(String orderId) {
+        if (orderId == null || orderId.isBlank()) {
+            return false;
+        }
+        String normalized = orderId.trim();
+        return !"0".equals(normalized)
+                && !"NA".equalsIgnoreCase(normalized)
+                && !"null".equalsIgnoreCase(normalized);
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {

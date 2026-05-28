@@ -54,6 +54,9 @@ class TradeAnalyticsServiceTest {
         assertThat(response.getSummary().getAverageLoss()).isEqualTo(-400.0);
         assertThat(response.getSummary().getBestTradePnl()).isEqualTo(1000.0);
         assertThat(response.getSummary().getWorstTradePnl()).isEqualTo(-400.0);
+        assertThat(response.getSummary().getMaxFundUseAtTime()).isEqualTo(5000.0);
+        assertThat(response.getSummary().getMaxFundUseAt()).isEqualTo(LocalDateTime.of(2026, 4, 3, 9, 0));
+        assertThat(response.getSummary().getActiveTradesAtMaxFundUse()).isEqualTo(1);
         assertThat(response.getSummary().getOpenTrades()).isEqualTo(1);
         assertThat(response.getSummary().getOpenQuantity()).isEqualTo(75L);
         assertThat(response.getSummary().getRejectedTrades()).isEqualTo(1);
@@ -82,8 +85,50 @@ class TradeAnalyticsServiceTest {
         assertThat(response.getSummary().getWinRate()).isEqualTo(0.0);
         assertThat(response.getSummary().getLossRate()).isEqualTo(0.0);
         assertThat(response.getSummary().getProfitFactor()).isNull();
+        assertThat(response.getSummary().getMaxFundUseAtTime()).isEqualTo(0.0);
+        assertThat(response.getSummary().getMaxFundUseAt()).isNull();
+        assertThat(response.getSummary().getActiveTradesAtMaxFundUse()).isZero();
         assertThat(response.getBySymbol()).isEmpty();
         assertThat(response.getByDay()).isEmpty();
+    }
+
+    @Test
+    void calculatesPeakFundUseAndActiveTradeCountAtATime() {
+        TriggeredTradeSetupEntity first = closed(1L, "NIFTY", 100.0, LocalDateTime.of(2026, 4, 3, 15, 20));
+        first.setEntryAt(LocalDateTime.of(2026, 4, 2, 10, 0));
+        first.setActualEntryPrice(125.50);
+        first.setQuantity(20L);
+        TriggeredTradeSetupEntity second = closed(2L, "BANKNIFTY", 200.0, LocalDateTime.of(2026, 4, 3, 15, 25));
+        second.setEntryAt(LocalDateTime.of(2026, 4, 3, 10, 30));
+        second.setEntryPrice(300.0);
+        second.setQuantity(10L);
+        TriggeredTradeSetupEntity third = closed(3L, "FINNIFTY", 300.0, LocalDateTime.of(2026, 4, 4, 15, 25));
+        third.setEntryAt(LocalDateTime.of(2026, 4, 4, 10, 30));
+        third.setEntryPrice(400.0);
+        third.setQuantity(10L);
+        TriggeredTradeSetupEntity rejected = health(4L, TriggeredTradeStatus.REJECTED, LocalDateTime.of(2026, 4, 4, 10, 30));
+        rejected.setEntryPrice(500.0);
+        rejected.setQuantity(100L);
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq(null), eq(null), eq(null))).thenReturn(List.of(
+                first,
+                second,
+                third,
+                rejected
+        ));
+
+        TradeAnalyticsResponse response = service.getTradeAnalytics(
+                1L,
+                LocalDate.of(2026, 4, 1),
+                LocalDate.of(2026, 4, 30),
+                null,
+                null,
+                null,
+                null
+        );
+
+        assertThat(response.getSummary().getMaxFundUseAtTime()).isEqualTo(5510.0);
+        assertThat(response.getSummary().getMaxFundUseAt()).isEqualTo(LocalDateTime.of(2026, 4, 3, 10, 30));
+        assertThat(response.getSummary().getActiveTradesAtMaxFundUse()).isEqualTo(2);
     }
 
     @Test
