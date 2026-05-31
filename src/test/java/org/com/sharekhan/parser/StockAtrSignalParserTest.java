@@ -15,6 +15,7 @@ class StockAtrSignalParserTest {
         Map<String, Object> result = parser.parse("ATR TATASTEEL LONG 150.5 LOTS 2 JUNE EXPIRY");
 
         assertNotNull(result);
+        assertEquals("atr-signal", result.get("source"));
         assertEquals(true, result.get("stockAtrTrade"));
         assertEquals("TATASTEEL", result.get("stock"));
         assertEquals(150.5, (Double) result.get("entry"), 0.01);
