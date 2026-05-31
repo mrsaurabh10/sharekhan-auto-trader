@@ -113,7 +113,7 @@ public class TradingMessageService {
         if (parsed != null) {
             System.out.println("✅ Parsed message: " + parsed);
             if (Boolean.TRUE.equals(parsed.get("stockAtrTrade"))) {
-                handleStockAtrMessage(parsed, source);
+                handleStockAtrMessage(parsed);
                 System.out.println("✅ ATR stock message handled" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
                 return;
             }
@@ -137,7 +137,7 @@ public class TradingMessageService {
         }
     }
 
-    private void handleStockAtrMessage(Map<String, Object> parsed, String source) {
+    private void handleStockAtrMessage(Map<String, Object> parsed) {
         StockAtrTradeRequest request = new StockAtrTradeRequest();
         request.setStock((String) parsed.get("stock"));
         request.setEntryPrice(parseDouble(parsed.get("entry")));
@@ -164,7 +164,8 @@ public class TradingMessageService {
             }
         }
         request.setIntraday(true);
-        request.setSource(source != null ? source : "telegram-atr");
+        Object parsedSource = parsed.get("source");
+        request.setSource(parsedSource != null ? parsedSource.toString() : "atr-signal");
 
         TriggerRequest triggerRequest = stockAtrTradeService.buildTriggerRequest(request);
         placeForAllSharekhanCustomers(triggerRequest);

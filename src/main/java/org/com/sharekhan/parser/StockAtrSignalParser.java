@@ -67,7 +67,7 @@ public class StockAtrSignalParser implements TradingSignalParser {
         }
 
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("source", "telegram-atr");
+        result.put("source", "atr-signal");
         result.put("stockAtrTrade", true);
         result.put("stock", stock.trim().toUpperCase(Locale.ROOT));
         result.put("entry", entryPrice);
