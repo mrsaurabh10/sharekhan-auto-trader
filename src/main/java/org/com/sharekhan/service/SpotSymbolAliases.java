@@ -7,7 +7,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-final class SpotSymbolAliases {
+public final class SpotSymbolAliases {
 
     private static final Map<String, String> ALIASES = Map.of(
             "BANKNIFTY", "NiftyBank"
@@ -16,7 +16,7 @@ final class SpotSymbolAliases {
     private SpotSymbolAliases() {
     }
 
-    static List<String> candidates(String symbol) {
+    public static List<String> candidates(String symbol) {
         if (!StringUtils.hasText(symbol)) {
             return List.of();
         }
