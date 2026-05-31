@@ -58,7 +58,7 @@ public class StrategySubscriptionService {
                 .brokerCredentialsId(request.getBrokerCredentialsId())
                 .source(StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + templateId)
                 .status(ACTIVE)
-                .lastMessage("Strategy started and waiting for ORB confirmation.")
+                .lastMessage("Strategy started and waiting for confirmation.")
                 .build();
         return repository.save(entity);
     }
