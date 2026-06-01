@@ -11,6 +11,8 @@
   let currentExecPage = 0;
   const execPageSize = 10;
   let execLoadSeq = 0;
+  let pnlSummaryLoadSeq = 0;
+  let dayPnlSummaryState = { userId: null, scope: null, marketDate: null, openTrades: [], bookedPnl: null, runningPnl: null };
   window.currentSession = null;
   window.isAdminSession = false;
 
@@ -159,6 +161,179 @@
     } else {
       element.style.color = '';
       element.style.fontWeight = 'normal';
+    }
+  }
+
+  function marketDateIso() {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).formatToParts(new Date());
+      const get = function(type) {
+        const p = parts.find(function(x) { return x.type === type; });
+        return p ? p.value : '';
+      };
+      return get('year') + '-' + get('month') + '-' + get('day');
+    } catch (e) { console.debug('marketDateIso failed', e); }
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function formatSignedNumber(value) {
+    if (value == null || Number.isNaN(Number(value))) return '-';
+    return Number(value).toFixed(2);
+  }
+
+  function setSignedSummaryValue(el, value) {
+    if (!el) return;
+    const n = Number(value);
+    if (value == null || Number.isNaN(n)) {
+      el.innerText = '-';
+      el.style.color = '';
+      return;
+    }
+    el.innerText = formatSignedNumber(n);
+    el.style.color = n > 0 ? 'green' : (n < 0 ? 'red' : '');
+  }
+
+  function updateDayPnlSummaryUi() {
+    const runningTargets = [
+      document.getElementById('todayRunningPnl'),
+      document.getElementById('analyticsTodayRunningPnl')
+    ];
+    const bookedTargets = [
+      document.getElementById('todayBookedPnl'),
+      document.getElementById('analyticsTodayBookedPnl')
+    ];
+    const noteTargets = [
+      document.getElementById('todayPnlSummaryNote'),
+      document.getElementById('analyticsTodayPnlSummaryNote')
+    ];
+    const openTrades = Array.isArray(dayPnlSummaryState.openTrades) ? dayPnlSummaryState.openTrades : [];
+    const totalOpen = openTrades.length;
+    let priced = 0;
+    for (const t of openTrades) {
+      const key = deriveTradeLtpKey(t);
+      const sc = t && (t.scripCode || t.scrip_code || t.scrip || t.tradingScripCode);
+      const ltp = resolveCachedLtpValue(key, sc);
+      if (ltp != null && !Number.isNaN(Number(ltp))) priced += 1;
+    }
+    const datePart = dayPnlSummaryState.marketDate || marketDateIso();
+    const noteText = 'Uses today\'s trades, independent of status filter. Open: ' + totalOpen + ', priced: ' + priced + ' (' + datePart + ')';
+    runningTargets.forEach(function(el) { setSignedSummaryValue(el, dayPnlSummaryState.runningPnl); });
+    bookedTargets.forEach(function(el) { setSignedSummaryValue(el, dayPnlSummaryState.bookedPnl); });
+    noteTargets.forEach(function(el) { if (el) el.innerText = noteText; });
+  }
+
+  function tradeDateIsoForSummary(trade) {
+    if (!trade || typeof trade !== 'object') return null;
+    const stamp = trade.triggeredAt || trade.entryAt || trade.exitedAt || null;
+    if (typeof stamp === 'string' && stamp.length >= 10) return stamp.slice(0, 10);
+    return null;
+  }
+
+  function deriveTradeLtpKey(row) {
+    if (!row || typeof row !== 'object') return null;
+    const symbol = row.instrument || row.symbol || row.tradingSymbol || null;
+    const exchange = (row.exchange == null || row.exchange === '' || row.exchange === 'null') ? null : row.exchange;
+    if (!symbol || !exchange) return symbol ? ('NSE:' + symbol) : null;
+    const strike = row.strikePrice != null ? row.strikePrice : (row.strike || '');
+    const optType = row.optionType || row.option_type || '';
+    const expiry = row.expiry || '';
+    const ex = String(exchange).toUpperCase();
+    const underlyingMap = { NF: 'NSE', BF: 'BSE', NC: 'NSE', BC: 'BSE' };
+    const optionMap = { NF: 'NFO', BF: 'BFO' };
+    if (strike && strike !== '') {
+      const mapped = (optionMap[ex] || ex);
+      return mapped + ':' + symbol + expiry + strike + optType;
+    }
+    return (underlyingMap[ex] || ex) + ':' + symbol;
+  }
+
+  function recomputeRunningPnlSummary() {
+    const openTrades = Array.isArray(dayPnlSummaryState.openTrades) ? dayPnlSummaryState.openTrades : [];
+    let running = 0.0;
+    let counted = 0;
+    for (const t of openTrades) {
+      const entry = Number(t && (t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : t.entry)));
+      const qty = Number(t && t.quantity);
+      if (Number.isNaN(entry) || Number.isNaN(qty)) continue;
+      const key = deriveTradeLtpKey(t);
+      const sc = t && (t.scripCode || t.scrip_code || t.scrip || t.tradingScripCode);
+      const ltp = resolveCachedLtpValue(key, sc);
+      if (ltp == null || Number.isNaN(Number(ltp))) continue;
+      running += qty * (Number(ltp) - entry);
+      counted += 1;
+    }
+    dayPnlSummaryState.runningPnl = counted > 0 ? running : null;
+    updateDayPnlSummaryUi();
+  }
+
+  async function fetchOpenTradesForDay(userId, scope, marketDate) {
+    const statuses = ['EXECUTED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED'];
+    const all = [];
+    let page = 0;
+    const size = 100;
+    for (let i = 0; i < 10; i++) {
+      let url = '/api/orders/executed?userId=' + encodeURIComponent(userId) +
+        '&scope=' + encodeURIComponent(scope || currentTradeScope()) +
+        '&page=' + page + '&size=' + size;
+      statuses.forEach(function(s) { url += '&status=' + encodeURIComponent(s); });
+      const res = await fetchJson(url);
+      const content = res && Array.isArray(res.content) ? res.content : (Array.isArray(res) ? res : []);
+      if (!content.length) break;
+      content.forEach(function(t) {
+        if (tradeDateIsoForSummary(t) === marketDate) all.push(t);
+      });
+      if (res && res.last === true) break;
+      const totalPages = Number(res && res.totalPages);
+      if (!Number.isNaN(totalPages) && totalPages > 0 && page >= (totalPages - 1)) break;
+      page += 1;
+    }
+    return all;
+  }
+
+  async function refreshDayPnlSummary(userId, scope, forceReload) {
+    const hasAnySummaryTarget = document.getElementById('todayRunningPnl') || document.getElementById('analyticsTodayRunningPnl');
+    if (!hasAnySummaryTarget) return;
+    const uid = userId || window.selectedUserId;
+    if (!uid) {
+      dayPnlSummaryState = { userId: null, scope: null, marketDate: null, openTrades: [], bookedPnl: null, runningPnl: null };
+      updateDayPnlSummaryUi();
+      return;
+    }
+    const currentScope = scope || currentTradeScope();
+    const mDate = marketDateIso();
+    const seq = ++pnlSummaryLoadSeq;
+    if (!forceReload && dayPnlSummaryState.userId === uid && dayPnlSummaryState.scope === currentScope && dayPnlSummaryState.marketDate === mDate) {
+      recomputeRunningPnlSummary();
+      return;
+    }
+
+    dayPnlSummaryState = { userId: uid, scope: currentScope, marketDate: mDate, openTrades: [], bookedPnl: null, runningPnl: null };
+    updateDayPnlSummaryUi();
+
+    try {
+      const params = new URLSearchParams();
+      params.set('userId', uid);
+      params.set('scope', currentScope);
+      params.set('from', mDate);
+      params.set('to', mDate);
+
+      const result = await Promise.allSettled([
+        fetchJson('/api/analytics/trades?' + params.toString()),
+        fetchOpenTradesForDay(uid, currentScope, mDate)
+      ]);
+      if (seq !== pnlSummaryLoadSeq) return;
+      const analytics = result[0].status === 'fulfilled' ? result[0].value : null;
+      const openTrades = result[1].status === 'fulfilled' ? result[1].value : [];
+      dayPnlSummaryState.bookedPnl = analytics && analytics.summary ? analytics.summary.realizedPnl : null;
+      dayPnlSummaryState.openTrades = Array.isArray(openTrades) ? openTrades : [];
+      recomputeRunningPnlSummary();
+    } catch (e) {
+      console.error('Failed to refresh day pnl summary', e);
     }
   }
 
@@ -346,6 +521,7 @@
       if (useGemini) params.set('ai', 'true');
       const data = await fetchJson('/api/analytics/trades?' + params.toString());
       renderAnalytics(data);
+      refreshDayPnlSummary(uid, analyticsScope, false).catch(function(){});
     } catch (e) {
       console.error('Failed to load analytics', e);
       renderAnalyticsEmpty('Error loading analytics');
@@ -713,7 +889,12 @@
           data = responseData;
       }
 
-      if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="15">No executed trades</td></tr>'; updatePaginationUI(pageInfo); return; }
+      if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="15">No executed trades</td></tr>';
+        refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
+        updatePaginationUI(pageInfo);
+        return;
+      }
 
       const seen = new Set(); const uniq = [];
       for (const t of data) { const tid = t && (t.id || t.tradeId); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
@@ -865,6 +1046,7 @@
         const map = await batchFetchMstockLtp(Array.from(keySet));
         applyLtpMap(map);
       }
+      refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
       updatePaginationUI(pageInfo);
     } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
@@ -1018,6 +1200,7 @@
         const scripCode = tr ? tr.getAttribute('data-scrip-code') : null;
         applyCachedPnlToElement(el, key, scripCode);
       });
+      recomputeRunningPnlSummary();
     } catch (e) { console.debug('applyLtpMap failed', e); }
   }
 
