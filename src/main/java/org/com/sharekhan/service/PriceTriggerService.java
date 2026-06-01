@@ -169,14 +169,22 @@ public class PriceTriggerService {
         }
 
         Optional<ReferencePrice> openPrice = getTodayOpenReferencePrice(referenceScrip);
-        if (openPrice.isPresent() && rejectIfReferencePriceInvalid(
-                trigger,
-                openPrice.get().label(),
-                openPrice.get().price(),
-                entryPrice,
-                toleranceMultiplier,
-                downsideEntry)) {
-            return true;
+        if (openPrice.isPresent()) {
+            ReferencePrice open = openPrice.get();
+            if (isComparableToEntryPrice(open.price(), entryPrice)) {
+                if (rejectIfReferencePriceInvalid(
+                        trigger,
+                        open.label(),
+                        open.price(),
+                        entryPrice,
+                        toleranceMultiplier,
+                        downsideEntry)) {
+                    return true;
+                }
+            } else {
+                log.warn("Skipping entry-gap validation against {}={} for trigger {} because it is not comparable with entryPrice={}",
+                        open.label(), open.price(), trigger.getId(), entryPrice);
+            }
         }
 
         return rejectIfReferencePriceInvalid(
@@ -252,6 +260,18 @@ public class PriceTriggerService {
         }
 
         return false;
+    }
+
+    /**
+     * Open/reference price and entry should be in a similar scale for option contracts.
+     * Guard against mismatched feeds (e.g. spot/index value used for option trigger).
+     */
+    private boolean isComparableToEntryPrice(double referencePrice, double entryPrice) {
+        if (!Double.isFinite(referencePrice) || !Double.isFinite(entryPrice) || referencePrice <= 0d || entryPrice <= 0d) {
+            return false;
+        }
+        double ratio = referencePrice / entryPrice;
+        return ratio >= 0.1d && ratio <= 10d;
     }
 
     private record ReferencePrice(String label, double price) {
@@ -832,7 +852,23 @@ public class PriceTriggerService {
             }
 
             Double exitPrice = saved.getExitPrice();
-            if (exitPrice == null) exitPrice = ltp;
+            if (exitPrice == null) {
+                if (!canUseLtpAsSyntheticExit(saved)) {
+                    log.debug("Skipping synthetic PnL persistence for trade {} because no executed exit price is available yet (orderId={}, source={})",
+                            saved.getId(), saved.getOrderId(), saved.getSource());
+                    return;
+                }
+                if (!Double.isFinite(ltp) || ltp <= 0d) {
+                    log.debug("Skipping synthetic PnL persistence for trade {} because fallback LTP is invalid: {}", saved.getId(), ltp);
+                    return;
+                }
+                if (isImplausibleOptionPrice(saved, ltp)) {
+                    log.warn("Skipping synthetic PnL persistence for trade {} because fallback LTP {} looks implausible for option trade",
+                            saved.getId(), ltp);
+                    return;
+                }
+                exitPrice = ltp;
+            }
 
             try {
                 java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(exitPrice);
@@ -869,6 +905,37 @@ public class PriceTriggerService {
             return null;
         }
         return trade.getEntryPrice();
+    }
+
+    private boolean canUseLtpAsSyntheticExit(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return false;
+        }
+        String orderId = trade.getOrderId();
+        if (orderId != null && orderId.startsWith("SIM-")) {
+            return true;
+        }
+        String source = trade.getSource();
+        return source != null && "simulator".equalsIgnoreCase(source.trim());
+    }
+
+    private boolean isImplausibleOptionPrice(TriggeredTradeSetupEntity trade, double candidatePrice) {
+        if (trade == null || candidatePrice <= 0d) {
+            return false;
+        }
+        String optionType = trade.getOptionType();
+        if (optionType == null || optionType.trim().isEmpty()) {
+            return false;
+        }
+        if (candidatePrice > 10000d) {
+            return true;
+        }
+        Double entryReference = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+        if (entryReference == null || entryReference <= 0d) {
+            return false;
+        }
+        double ratio = candidatePrice / entryReference;
+        return ratio > 20d || ratio < 0.02d;
     }
 
     private boolean usesSpotForTarget(TriggeredTradeSetupEntity trade) {

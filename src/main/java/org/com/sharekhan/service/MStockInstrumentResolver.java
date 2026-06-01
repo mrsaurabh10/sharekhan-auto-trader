@@ -141,6 +141,11 @@ public class MStockInstrumentResolver {
 
         Optional<String> hardcodedIndexKey = hardcodedIndexInstrumentKey(script);
         if (hardcodedIndexKey.isPresent()) {
+            if (shouldTraceDerivativeResolution(script)) {
+                log.info("MStock resolver trace: scripCode={} symbol={} exchange={} optionType={} strike={} expiry={} -> hardcodedKey={}",
+                        script.getScripCode(), script.getTradingSymbol(), script.getExchange(),
+                        script.getOptionType(), script.getStrikePrice(), script.getExpiry(), hardcodedIndexKey.get());
+            }
             return cacheAndReturn(script, hardcodedIndexKey.get(), true);
         }
 
@@ -158,7 +163,12 @@ public class MStockInstrumentResolver {
         Optional<String> attributeMatch = lookupByAttributes(script, normalizedExchange);
         if (attributeMatch.isPresent()) {
             String key = attributeMatch.get();
-            if (isValidSpotKey(script, key)) {
+            if (isValidResolvedKey(script, key, normalizedExchange, derivativeInstrument)) {
+                if (shouldTraceDerivativeResolution(script)) {
+                    log.info("MStock resolver trace: scripCode={} symbol={} exchange={} optionType={} strike={} expiry={} -> attributeKey={}",
+                            script.getScripCode(), script.getTradingSymbol(), script.getExchange(),
+                            script.getOptionType(), script.getStrikePrice(), script.getExpiry(), key);
+                }
                 return cacheAndReturn(script, key, true);
             }
         }
@@ -176,13 +186,18 @@ public class MStockInstrumentResolver {
             Optional<String> key = lookupInstrumentKey(normalizedExchange, symbol);
             if (key.isPresent()) {
                 String resolvedKey = key.get();
-                if (!isValidSpotKey(script, resolvedKey)) {
-                    log.warn("Resolved MStock key {} for scripCode={} tradingSymbol={} but rejected by spot validation.",
+                if (!isValidResolvedKey(script, resolvedKey, normalizedExchange, derivativeInstrument)) {
+                    log.warn("Resolved MStock key {} for scripCode={} tradingSymbol={} but rejected by validation.",
                             resolvedKey, script.getScripCode(), script.getTradingSymbol());
                     printDiagnostic("Rejected resolved key=" + resolvedKey
                             + " for scripCode=" + script.getScripCode()
                             + ", tradingSymbol=" + script.getTradingSymbol());
                     continue;
+                }
+                if (shouldTraceDerivativeResolution(script)) {
+                    log.info("MStock resolver trace: scripCode={} symbol={} exchange={} optionType={} strike={} expiry={} -> symbolKey={}",
+                            script.getScripCode(), script.getTradingSymbol(), script.getExchange(),
+                            script.getOptionType(), script.getStrikePrice(), script.getExpiry(), resolvedKey);
                 }
                 return cacheAndReturn(script, resolvedKey, true);
             }
@@ -190,7 +205,7 @@ public class MStockInstrumentResolver {
         if (!isInstrumentMasterPopulated() && !candidateSymbols.isEmpty()) {
             String fallbackSymbol = candidateSymbols.get(0);
             String fallbackKey = buildNormalizedKey(normalizedExchange, fallbackSymbol);
-            if (StringUtils.hasText(fallbackKey) && isValidSpotKey(script, fallbackKey)) {
+            if (StringUtils.hasText(fallbackKey) && isValidResolvedKey(script, fallbackKey, normalizedExchange, derivativeInstrument)) {
                 log.warn("MStock instrument master not populated; using heuristic fallback {}", fallbackKey);
                 return cacheAndReturn(script, fallbackKey, false);
             }
@@ -213,7 +228,7 @@ public class MStockInstrumentResolver {
             Optional<String> patternMatch = lookupDerivativeByPattern(normalizedExchange, script.getTradingSymbol());
             if (patternMatch.isPresent()) {
                 String key = patternMatch.get();
-                if (isValidSpotKey(script, key)) {
+                if (isValidResolvedKey(script, key, normalizedExchange, true)) {
                     return cacheAndReturn(script, key, true);
                 }
             }
@@ -501,6 +516,35 @@ public class MStockInstrumentResolver {
             return symbol.endsWith("-A");
         }
         return true;
+    }
+
+    private boolean isValidResolvedKey(ScriptMasterEntity script,
+                                       String key,
+                                       String normalizedExchange,
+                                       boolean derivativeInstrument) {
+        if (!isValidSpotKey(script, key)) {
+            return false;
+        }
+        if (!derivativeInstrument) {
+            return true;
+        }
+        return isValidDerivativeKey(key, normalizedExchange);
+    }
+
+    private boolean isValidDerivativeKey(String key, String normalizedExchange) {
+        if (!StringUtils.hasText(key)) {
+            return false;
+        }
+        int colonIndex = key.indexOf(':');
+        if (colonIndex <= 0 || colonIndex == key.length() - 1) {
+            return false;
+        }
+        String exchange = key.substring(0, colonIndex).trim().toUpperCase(Locale.ROOT);
+        String symbol = key.substring(colonIndex + 1).trim().toUpperCase(Locale.ROOT);
+        if (StringUtils.hasText(normalizedExchange) && !exchange.equalsIgnoreCase(normalizedExchange)) {
+            return false;
+        }
+        return looksLikeDerivativeSymbol(symbol);
     }
 
     private String buildNormalizedKey(String exchange, String symbol) {
@@ -796,6 +840,17 @@ public class MStockInstrumentResolver {
         if (!StringUtils.hasText(exchange)) return null;
         String trimmed = exchange.trim().toUpperCase(Locale.ROOT);
         return LOOKUP_EXCHANGE_CODES.getOrDefault(trimmed, trimmed);
+    }
+
+    private boolean shouldTraceDerivativeResolution(ScriptMasterEntity script) {
+        if (script == null) {
+            return false;
+        }
+        String symbol = script.getTradingSymbol();
+        if (symbol == null || !"SENSEX".equalsIgnoreCase(symbol.trim())) {
+            return false;
+        }
+        return isOptionInstrument(script) || isFutureInstrument(script);
     }
 
     private void printDiagnostic(String message) {
