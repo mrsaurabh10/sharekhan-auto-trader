@@ -42,8 +42,7 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         ScriptMasterEntity spotScript = support.resolveSpotScript(symbol);
         LocalDate today = LocalDate.now(StrategySupport.MARKET_ZONE);
         LocalDateTime now = LocalDateTime.now(StrategySupport.MARKET_ZONE);
-        int requiredCandles = Math.max(50, indicatorService.minimumCandles());
-        CandleLoad candleLoad = support.loadCandlesWithHistoricalFallback(spotScript, requiredCandles);
+        CandleLoad candleLoad = support.loadCandles(spotScript);
         List<StrategyCandle> completedCandles = candleLoad.candles().stream()
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
                 .filter(c -> isCompleted(c, today, now))
@@ -59,9 +58,9 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         if (completedToday.isEmpty()) {
             return support.waiting(metadata, symbol, "Waiting for first completed 5-minute candle for " + symbol + " today.");
         }
-        if (completedCandles.size() < requiredCandles) {
+        if (completedCandles.size() < indicatorService.minimumCandles()) {
             return support.waiting(metadata, symbol, "Waiting for enough 5-minute candles to compute Supertrend, RSI, 50 EMA, and ADX. Have "
-                    + completedCandles.size() + ", need at least " + requiredCandles
+                    + completedCandles.size() + ", need at least " + indicatorService.minimumCandles()
                     + ". Today's completed candles: " + completedToday.size() + ".");
         }
 
@@ -183,8 +182,7 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         trigger.setStrikePrice(strike);
         trigger.setOptionType(metadata.optionType());
         trigger.setExpiry(expiry);
-        // ADX strategy is always intraday by design.
-        trigger.setIntraday(true);
+        trigger.setIntraday(request.getIntraday() != null ? request.getIntraday() : true);
         trigger.setSource(StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + metadata.id());
         trigger.setUseSpotPrice(true);
         trigger.setUseSpotForEntry(true);

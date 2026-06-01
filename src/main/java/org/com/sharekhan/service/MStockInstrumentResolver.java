@@ -141,6 +141,11 @@ public class MStockInstrumentResolver {
 
         Optional<String> hardcodedIndexKey = hardcodedIndexInstrumentKey(script);
         if (hardcodedIndexKey.isPresent()) {
+            if (shouldTraceDerivativeResolution(script)) {
+                log.info("MStock resolver trace: scripCode={} symbol={} exchange={} optionType={} strike={} expiry={} -> hardcodedKey={}",
+                        script.getScripCode(), script.getTradingSymbol(), script.getExchange(),
+                        script.getOptionType(), script.getStrikePrice(), script.getExpiry(), hardcodedIndexKey.get());
+            }
             return cacheAndReturn(script, hardcodedIndexKey.get(), true);
         }
 
@@ -159,6 +164,11 @@ public class MStockInstrumentResolver {
         if (attributeMatch.isPresent()) {
             String key = attributeMatch.get();
             if (isValidResolvedKey(script, key, normalizedExchange, derivativeInstrument)) {
+                if (shouldTraceDerivativeResolution(script)) {
+                    log.info("MStock resolver trace: scripCode={} symbol={} exchange={} optionType={} strike={} expiry={} -> attributeKey={}",
+                            script.getScripCode(), script.getTradingSymbol(), script.getExchange(),
+                            script.getOptionType(), script.getStrikePrice(), script.getExpiry(), key);
+                }
                 return cacheAndReturn(script, key, true);
             }
         }
@@ -183,6 +193,11 @@ public class MStockInstrumentResolver {
                             + " for scripCode=" + script.getScripCode()
                             + ", tradingSymbol=" + script.getTradingSymbol());
                     continue;
+                }
+                if (shouldTraceDerivativeResolution(script)) {
+                    log.info("MStock resolver trace: scripCode={} symbol={} exchange={} optionType={} strike={} expiry={} -> symbolKey={}",
+                            script.getScripCode(), script.getTradingSymbol(), script.getExchange(),
+                            script.getOptionType(), script.getStrikePrice(), script.getExpiry(), resolvedKey);
                 }
                 return cacheAndReturn(script, resolvedKey, true);
             }
@@ -825,6 +840,17 @@ public class MStockInstrumentResolver {
         if (!StringUtils.hasText(exchange)) return null;
         String trimmed = exchange.trim().toUpperCase(Locale.ROOT);
         return LOOKUP_EXCHANGE_CODES.getOrDefault(trimmed, trimmed);
+    }
+
+    private boolean shouldTraceDerivativeResolution(ScriptMasterEntity script) {
+        if (script == null) {
+            return false;
+        }
+        String symbol = script.getTradingSymbol();
+        if (symbol == null || !"SENSEX".equalsIgnoreCase(symbol.trim())) {
+            return false;
+        }
+        return isOptionInstrument(script) || isFutureInstrument(script);
     }
 
     private void printDiagnostic(String message) {
