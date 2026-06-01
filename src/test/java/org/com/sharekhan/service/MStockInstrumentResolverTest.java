@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.repository.MStockInstrumentRepository;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -70,6 +71,47 @@ class MStockInstrumentResolverTest {
         assertThat(resolver.resolveInstrumentKey(1333)).contains("NSE:HDFCBANK-EQ");
 
         verify(mStockInstrumentRepository, never()).findByInstrumentKey(anyString());
+    }
+
+    @Test
+    void rejectsSpotLikeAttributeMatchForDerivativeAndResolvesByExactOptionSymbol() {
+        ScriptMasterEntity sensexOption = ScriptMasterEntity.builder()
+                .scripCode(1127917)
+                .tradingSymbol("SENSEX")
+                .exchange("BF")
+                .instrumentType("IO")
+                .optionType("PE")
+                .strikePrice(74000.0)
+                .expiry("04/06/2026")
+                .build();
+
+        MStockInstrumentEntity looseNameMatch = MStockInstrumentEntity.builder()
+                .instrumentToken(1L)
+                .instrumentKey("BFO:SENSEX")
+                .tradingSymbol("SENSEX")
+                .name("SENSEX")
+                .exchange("BFO")
+                .instrumentType("IDX")
+                .fetchedAt(java.time.LocalDateTime.now())
+                .build();
+
+        MStockInstrumentEntity exactDerivative = MStockInstrumentEntity.builder()
+                .instrumentToken(2L)
+                .instrumentKey("BFO:SENSEX04JUN2674000PE")
+                .tradingSymbol("SENSEX04JUN2674000PE")
+                .name("SENSEX")
+                .exchange("BFO")
+                .instrumentType("PE")
+                .fetchedAt(java.time.LocalDateTime.now())
+                .build();
+
+        when(mStockInstrumentRepository.findByExchangeIgnoreCaseAndNameIgnoreCase("BFO", "SENSEX"))
+                .thenReturn(List.of(looseNameMatch));
+        when(mStockInstrumentRepository.findByInstrumentKey("BFO:SENSEX04JUN2674000PE"))
+                .thenReturn(Optional.of(exactDerivative));
+
+        assertThat(resolver.resolveInstrumentKey(sensexOption))
+                .contains("BFO:SENSEX04JUN2674000PE");
     }
 
     private ScriptMasterEntity spotScript(Integer scripCode, String tradingSymbol, String exchange) {

@@ -113,6 +113,11 @@ public class MStockLtpPollingService {
                 Integer scripCode = mStockKeyToScripCodeCache.get(mstockKey);
                 if (scripCode == null) continue;
 
+                if (shouldTraceSensexMapping(mstockKey, scripCode)) {
+                    log.info("MStock poll trace: scripCode={} mstockKey={} last_price={}",
+                            scripCode, mstockKey, newLtp);
+                }
+
                 Double cachedLtp = ltpCacheService.getLtp(scripCode);
                 if (cachedLtp != null && Double.compare(cachedLtp, newLtp) == 0) {
                     continue;
@@ -210,6 +215,9 @@ public class MStockLtpPollingService {
             } else if (!StringUtils.hasText(previous)) {
                 mStockKeyToScripCodeCache.put(resolvedKey, scripCode);
             }
+            if (shouldTraceSensexMapping(resolvedKey, scripCode)) {
+                log.info("MStock key trace: scripCode={} resolvedKey={}", scripCode, resolvedKey);
+            }
             return resolvedKey;
         }
 
@@ -218,5 +226,12 @@ public class MStockLtpPollingService {
             mStockKeyToScripCodeCache.remove(previous);
         }
         return null;
+    }
+
+    private boolean shouldTraceSensexMapping(String mstockKey, Integer scripCode) {
+        if (mstockKey != null && mstockKey.toUpperCase().contains("SENSEX")) {
+            return true;
+        }
+        return Integer.valueOf(999901).equals(scripCode);
     }
 }
