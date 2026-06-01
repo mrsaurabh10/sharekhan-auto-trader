@@ -383,7 +383,14 @@ public class TradeAnalyticsService {
     }
 
     private LocalDateTime fundReleaseTime(TriggeredTradeSetupEntity trade) {
-        return trade.getStatus() == TriggeredTradeStatus.EXITED_SUCCESS ? trade.getExitedAt() : null;
+        if (trade.getStatus() != TriggeredTradeStatus.EXITED_SUCCESS) {
+            return null;
+        }
+        if (trade.getExitedAt() != null) {
+            return trade.getExitedAt();
+        }
+        // Defensive fallback for historical rows with EXITED_SUCCESS but missing exitedAt.
+        return fundUseTime(trade);
     }
 
     private List<TradeAnalyticsResponse.DailyAnalytics> buildByDay(List<TriggeredTradeSetupEntity> realizedTrades) {
@@ -443,7 +450,23 @@ public class TradeAnalyticsService {
     }
 
     private Double effectiveEntryPrice(TriggeredTradeSetupEntity trade) {
-        return trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+        if (trade.getActualEntryPrice() != null) {
+            return trade.getActualEntryPrice();
+        }
+        if (usesSpotReferenceForEntry(trade)) {
+            return null;
+        }
+        return trade.getEntryPrice();
+    }
+
+    private boolean usesSpotReferenceForEntry(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(trade.getUseSpotForEntry())) {
+            return true;
+        }
+        return trade.getUseSpotForEntry() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
     }
 
     private LocalDateTime fundUseTime(TriggeredTradeSetupEntity trade) {
