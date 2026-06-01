@@ -566,15 +566,15 @@ public class PriceTriggerService {
         }
 
         int lotsToBook = Math.min(step.lotsToBook(), currentLots);
+        Double optionEntryPrice = resolveOptionCost(trade);
         Double newStopLoss = trade.getStopLoss();
         boolean newStopLossUsesTradedInstrument = false;
         boolean target1Hit = isTargetHit(trade, referenceLtp, 1);
         Double t1OptionStopLoss = resolveT1OptionStopLoss(trade, target1Hit, tradedLtp);
 
         if (step.targetNumber() == 1) {
-            Double optionCost = resolveOptionCost(trade);
-            if (optionCost != null) {
-                newStopLoss = optionCost;
+            if (optionEntryPrice != null) {
+                newStopLoss = optionEntryPrice;
                 newStopLossUsesTradedInstrument = true;
             }
         } else if (step.targetNumber() == 2 && t1OptionStopLoss != null) {
@@ -615,7 +615,7 @@ public class PriceTriggerService {
             remainingTrade.setOptionType(trade.getOptionType());
             remainingTrade.setExpiry(trade.getExpiry());
             remainingTrade.setEntryPrice(trade.getEntryPrice());
-            remainingTrade.setActualEntryPrice(trade.getActualEntryPrice());
+            remainingTrade.setActualEntryPrice(optionEntryPrice);
             remainingTrade.setStopLoss(newStopLoss); // Updated SL
             remainingTrade.setTarget1(trade.getTarget1());
             remainingTrade.setTarget2(trade.getTarget2());
@@ -792,10 +792,23 @@ public class PriceTriggerService {
         if (trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d) {
             return trade.getActualEntryPrice();
         }
+        if (usesSpotForEntry(trade)) {
+            return null;
+        }
         if (trade.getEntryPrice() != null && trade.getEntryPrice() > 0d) {
             return trade.getEntryPrice();
         }
         return null;
+    }
+
+    private boolean usesSpotForEntry(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return false;
+        }
+        if (Boolean.TRUE.equals(trade.getUseSpotForEntry())) {
+            return true;
+        }
+        return trade.getUseSpotForEntry() == null && Boolean.TRUE.equals(trade.getUseSpotPrice());
     }
 
     private Double resolveT1OptionStopLoss(TriggeredTradeSetupEntity trade, boolean target1Hit, double tradedLtp) {
