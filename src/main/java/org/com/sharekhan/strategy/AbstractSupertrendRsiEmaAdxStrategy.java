@@ -44,18 +44,24 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         LocalDateTime now = LocalDateTime.now(StrategySupport.MARKET_ZONE);
         CandleLoad candleLoad = support.loadCandles(spotScript);
         List<StrategyCandle> completedCandles = candleLoad.candles().stream()
-                .filter(c -> today.equals(c.date()))
-                .filter(c -> !c.time().plusMinutes(StrategySupport.CANDLE_MINUTES).isAfter(now.toLocalTime()))
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
+                .filter(c -> isCompleted(c, today, now))
+                .toList();
+        List<StrategyCandle> completedToday = completedCandles.stream()
+                .filter(c -> today.equals(c.date()))
                 .toList();
 
         if (completedCandles.isEmpty()) {
             String detail = StringUtils.hasText(candleLoad.reason()) ? " Reason: " + candleLoad.reason() : "";
             return support.waiting(metadata, symbol, "No completed 5-minute candles available for " + symbol + "." + detail);
         }
+        if (completedToday.isEmpty()) {
+            return support.waiting(metadata, symbol, "Waiting for first completed 5-minute candle for " + symbol + " today.");
+        }
         if (completedCandles.size() < indicatorService.minimumCandles()) {
             return support.waiting(metadata, symbol, "Waiting for enough 5-minute candles to compute Supertrend, RSI, 50 EMA, and ADX. Have "
-                    + completedCandles.size() + ", need at least " + indicatorService.minimumCandles() + ".");
+                    + completedCandles.size() + ", need at least " + indicatorService.minimumCandles()
+                    + ". Today's completed candles: " + completedToday.size() + ".");
         }
 
         IndicatorSnapshot indicator = indicatorService.computeSnapshot(completedCandles);
@@ -202,6 +208,16 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
             return BANKNIFTY_ADX_THRESHOLD;
         }
         return NIFTY_ADX_THRESHOLD;
+    }
+
+    private boolean isCompleted(StrategyCandle candle, LocalDate today, LocalDateTime now) {
+        if (candle.date().isBefore(today)) {
+            return true;
+        }
+        if (!today.equals(candle.date())) {
+            return false;
+        }
+        return !candle.time().plusMinutes(StrategySupport.CANDLE_MINUTES).isAfter(now.toLocalTime());
     }
 
     private record DirectionalSignal(boolean passed, String reason) {

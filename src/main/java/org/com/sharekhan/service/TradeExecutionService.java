@@ -1397,9 +1397,16 @@ public class TradeExecutionService {
         TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + trade.getId()));
 
-        if (!hasUsableTradedExitPrice(persisted, exitPrice)) {
-            log.warn("Square-off delayed for trade {} because exitPrice={} looks like spot, not the traded option LTP. Waiting for correct option LTP.",
+        Double sanitizedRequestedExitPrice = sanitizeExitPriceCandidate(persisted, exitPrice, "SQUARE_OFF_REQUEST");
+        if (sanitizedRequestedExitPrice == null) {
+            log.warn("Square-off delayed for trade {} because exitPrice={} is implausible for this instrument. Waiting for a valid traded option price.",
                     persisted.getId(), exitPrice);
+            return;
+        }
+
+        if (!hasUsableTradedExitPrice(persisted, sanitizedRequestedExitPrice)) {
+            log.warn("Square-off delayed for trade {} because exitPrice={} looks like spot, not the traded option LTP. Waiting for correct option LTP.",
+                    persisted.getId(), sanitizedRequestedExitPrice);
             return;
         }
 
@@ -1448,12 +1455,20 @@ public class TradeExecutionService {
         persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found after claim: " + trade.getId()));
 
-        ExitDiagnostics exitDiagnostics = analyseExit(persisted, exitPrice, exitReason);
-        logExitDiagnostics(persisted, exitDiagnostics, exitPrice);
+        ExitDiagnostics exitDiagnostics = analyseExit(persisted, sanitizedRequestedExitPrice, exitReason);
+        logExitDiagnostics(persisted, exitDiagnostics, sanitizedRequestedExitPrice);
 
         Double resolvedExitPrice = exitDiagnostics.recommendedLimit() != null
                 ? exitDiagnostics.recommendedLimit()
-                : exitPrice;
+                : sanitizedRequestedExitPrice;
+        resolvedExitPrice = sanitizeExitPriceCandidate(persisted, resolvedExitPrice, "SQUARE_OFF_RESOLVED");
+        if (resolvedExitPrice == null) {
+            log.warn("Square-off delayed for trade {} because resolved exit price is implausible. trigger={} requested={}",
+                    persisted.getId(),
+                    formatPrice(exitDiagnostics.triggerPrice()),
+                    formatPrice(sanitizedRequestedExitPrice));
+            return;
+        }
 
         // Resolve customerId from broker credentials if available; fallback to default
         OrderPlacementResult result = placeExitOrderAndPersist(persisted, resolvedExitPrice, exitReason, placedStatus);
@@ -1461,7 +1476,7 @@ public class TradeExecutionService {
         if (result == null || !result.isSuccess()) {
             String rejectionReason = result != null ? result.getRejectionReason() : "Unknown error";
             if (result == null) {
-                TradeEventLogger.logOrderRejected("EXIT", persisted, rejectionReason, exitPrice);
+                TradeEventLogger.logOrderRejected("EXIT", persisted, rejectionReason, sanitizedRequestedExitPrice);
             }
             log.error("❌ Exit place order failed for trade {}. Reason: {}", persisted.getId(), rejectionReason);
             try {
@@ -1480,7 +1495,7 @@ public class TradeExecutionService {
                 body.append("Instrument: ").append(persisted.getSymbol()).append("\n");
                 body.append("Exchange: ").append(persisted.getExchange()).append("\n");
                 body.append("Attempted Qty: ").append(persisted.getQuantity()).append("\n");
-                body.append("Attempted Price: ").append(exitPrice).append("\n");
+                body.append("Attempted Price: ").append(sanitizedRequestedExitPrice).append("\n");
                 body.append("TradeId: ").append(persisted.getId()).append("\n");
                 body.append("Reason: ").append(rejectionReason);
                 telegramNotificationService.sendTradeMessageForUser(persisted.getAppUserId(), title, body.toString());
@@ -1887,7 +1902,10 @@ public class TradeExecutionService {
         if (!state.bufferedAttempted) {
             state.bufferedAttempted = true;
             if (stopLoss != null && stopLoss > 0) {
-                return roundPrice(stopLoss * 0.9975d);
+                Double candidate = sanitizeExitPriceCandidate(trade, stopLoss * 0.9975d, "EXIT_CHASE_BUFFER");
+                if (candidate != null) {
+                    return candidate;
+                }
             }
         }
 
@@ -1900,12 +1918,18 @@ public class TradeExecutionService {
         }
 
         if (bid != null && bid > 0) {
-            return roundPrice(bid);
+            Double candidate = sanitizeExitPriceCandidate(trade, bid, "EXIT_CHASE_BID");
+            if (candidate != null) {
+                return candidate;
+            }
         }
 
         Double ltp = ltpCacheService.getLtp(trade.getScripCode());
         if (ltp != null && ltp > 0) {
-            return roundPrice(ltp);
+            Double candidate = sanitizeExitPriceCandidate(trade, ltp, "EXIT_CHASE_LTP");
+            if (candidate != null) {
+                return candidate;
+            }
         }
 
         return null;
@@ -2189,24 +2213,34 @@ public class TradeExecutionService {
             throw new IllegalStateException("No broker service found for: " + exitCtx.getBrokerName());
         }
 
-        TradeEventLogger.logOrderAttempt("EXIT", persisted, 1, "PLACE", exitPrice, persisted.getExitOrderId());
-        OrderPlacementResult result = brokerService.placeExitOrder(persisted, exitCtx, exitPrice);
+        Double safeExitPrice = sanitizeExitPriceCandidate(persisted, exitPrice, "EXIT_PLACE");
+        if (safeExitPrice == null) {
+            return OrderPlacementResult.builder()
+                    .success(false)
+                    .status("Rejected")
+                    .rejectionReason("Implausible exit price for instrument")
+                    .attemptedPrice(exitPrice)
+                    .build();
+        }
+
+        TradeEventLogger.logOrderAttempt("EXIT", persisted, 1, "PLACE", safeExitPrice, persisted.getExitOrderId());
+        OrderPlacementResult result = brokerService.placeExitOrder(persisted, exitCtx, safeExitPrice);
         if (result == null) {
             result = OrderPlacementResult.builder()
                     .success(false)
                     .status("Rejected")
                     .rejectionReason("Broker returned no exit placement result")
-                    .attemptedPrice(exitPrice)
+                    .attemptedPrice(safeExitPrice)
                     .build();
         } else if (result.getAttemptedPrice() == null) {
-            result.setAttemptedPrice(exitPrice);
+            result.setAttemptedPrice(safeExitPrice);
         }
         if (!result.isSuccess()) {
-            TradeEventLogger.logOrderRejected("EXIT", persisted, result.getRejectionReason(), exitPrice, result.getAttemptedPrice());
+            TradeEventLogger.logOrderRejected("EXIT", persisted, result.getRejectionReason(), safeExitPrice, result.getAttemptedPrice());
             return result;
         }
 
-        TradeEventLogger.logOrderAccepted("EXIT", persisted, result, exitPrice);
+        TradeEventLogger.logOrderAccepted("EXIT", persisted, result, safeExitPrice);
 
         // Persist exitOrderId using a native update first to avoid concurrency issues
         java.time.LocalDateTime placedAt = java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
@@ -2347,6 +2381,41 @@ public class TradeExecutionService {
                 && looksLikeSpotPriceForSpotBasedOptionTrade(trade.getEntryPrice(), trade.getActualEntryPrice(), true)
                 && !exitLooksSpot;
         return !exitLooksSpot && !entryLooksSpotWhileExitLooksOption;
+    }
+
+    private Double sanitizeExitPriceCandidate(TriggeredTradeSetupEntity trade, Double candidatePrice, String reason) {
+        if (candidatePrice == null || !Double.isFinite(candidatePrice) || candidatePrice <= 0d) {
+            return null;
+        }
+        double rounded = roundPrice(candidatePrice);
+        if (isImplausibleOptionPriceCandidate(trade, rounded)) {
+            log.warn("Ignoring implausible option exit price {} for trade {} (reason={}) entry={} actualEntry={}",
+                    rounded,
+                    trade != null ? trade.getId() : null,
+                    reason,
+                    trade != null ? formatPrice(trade.getEntryPrice()) : "NA",
+                    trade != null ? formatPrice(trade.getActualEntryPrice()) : "NA");
+            return null;
+        }
+        return rounded;
+    }
+
+    private boolean isImplausibleOptionPriceCandidate(TriggeredTradeSetupEntity trade, double candidatePrice) {
+        if (trade == null || !hasOptionType(trade.getOptionType()) || candidatePrice <= 0d) {
+            return false;
+        }
+
+        if (candidatePrice > 10000d) {
+            return true;
+        }
+
+        Double entryReference = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+        if (entryReference == null || entryReference <= 0d) {
+            return false;
+        }
+
+        double ratio = candidatePrice / entryReference;
+        return ratio > 20d || ratio < 0.02d;
     }
 
     private boolean looksLikeSpotPriceForSpotBasedOptionTrade(Double spotReferencePrice,
@@ -2573,6 +2642,13 @@ public class TradeExecutionService {
             return new ModifyExitOrderResult(false, "No exit order is currently active for this trade.");
         }
 
+        Double safeNewPrice = sanitizeExitPriceCandidate(trade, newPrice, "EXIT_MODIFY_" + (exitReason != null ? exitReason : "UNKNOWN"));
+        if (safeNewPrice == null) {
+            String msg = String.format("Modify exit order skipped for trade %s due to implausible price %.2f", trade.getId(), newPrice);
+            log.warn(msg);
+            return new ModifyExitOrderResult(false, "Exit modify rejected: implausible price for this instrument.");
+        }
+
         BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
         if (ctx == null || ctx.getBrokerName() == null) {
             String msg = String.format("Unable to resolve broker context for modifying exit order of trade %s", trade.getId());
@@ -2590,7 +2666,7 @@ public class TradeExecutionService {
         }
 
         if (broker == Broker.SIMULATOR) {
-            TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", newPrice, trade.getExitOrderId());
+            TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", safeNewPrice, trade.getExitOrderId());
             trade.setExitReason(exitReason);
             if (postStatus != null) {
                 trade.setStatus(postStatus);
@@ -2602,7 +2678,7 @@ public class TradeExecutionService {
                 log.warn(msg);
                 return new ModifyExitOrderResult(false, "Simulator exit modification failed to persist.");
             }
-            log.info("✏️ Simulator exit order {} updated locally for trade {} to price {}", trade.getExitOrderId(), trade.getId(), newPrice);
+            log.info("✏️ Simulator exit order {} updated locally for trade {} to price {}", trade.getExitOrderId(), trade.getId(), safeNewPrice);
             return new ModifyExitOrderResult(true, "Simulator exit order price updated.");
         }
 
@@ -2623,9 +2699,9 @@ public class TradeExecutionService {
                 return new ModifyExitOrderResult(false, "Sharekhan token unavailable. Please re-authenticate and retry.");
             }
 
-            TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", newPrice, trade.getExitOrderId());
+            TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", safeNewPrice, trade.getExitOrderId());
             com.sharekhan.SharekhanConnect sharekhanConnect = new com.sharekhan.SharekhanConnect(null, ctx.getApiKey(), accessToken);
-            JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, newPrice, ctx.getCustomerId(), ctx.getClientCode());
+            JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, safeNewPrice, ctx.getCustomerId(), ctx.getClientCode());
 
             if (response == null) {
                 String msg = String.format("Modify order returned null for trade %s", trade.getId());
@@ -2638,7 +2714,7 @@ public class TradeExecutionService {
                 trade.setStatus(postStatus);
             }
             triggeredTradeRepo.save(trade);
-            log.info("✏️ Modified exit order {} for trade {} to price {}", trade.getExitOrderId(), trade.getId(), newPrice);
+            log.info("✏️ Modified exit order {} for trade {} to price {}", trade.getExitOrderId(), trade.getId(), safeNewPrice);
             return new ModifyExitOrderResult(true, "Sharekhan modify submitted successfully.");
         } catch (SharekhanAPIException e) {
             log.warn("Sharekhan modify rejected for trade {}: {}", trade.getId(), e.getMessage());

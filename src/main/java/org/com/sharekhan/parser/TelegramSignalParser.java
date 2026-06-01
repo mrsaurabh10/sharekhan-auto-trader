@@ -5,6 +5,18 @@ import java.util.regex.*;
 import java.util.stream.Collectors;
 
 public class TelegramSignalParser implements TradingSignalParser {
+    private static final Pattern QUICK_PATTERN = Pattern.compile(
+            "^(?:(BUY|SELL)\\s+)?([A-Z0-9_\\-]+)\\s+([\\d\\.]+)\\s+(CE|PE|FUT|CALL|PUT)\\b.*$",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern TRADE_PATTERN = Pattern.compile(
+            "^(?:BUY|SELL)?\\s*([A-Z0-9_\\-\\s]+?)\\s+([\\d\\.]+)\\s+(CE|PE)\\s+(above|abive|abv|abve|below|belwo|blow)\\s+([\\d\\.]+)",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern BREAKOUT_KEYWORD_PATTERN = Pattern.compile(
+            "\\b(above|abive|abv|abve|below|belwo|blow)\\b",
+            Pattern.CASE_INSENSITIVE
+    );
 
     @Override
     public Map<String, Object> parse(String text) {
@@ -22,9 +34,8 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .collect(Collectors.toList());
 
         String normalizedForQuick = cleanedText.replace("\n", " ").replaceAll("\\s+", " ").trim();
-        if (!normalizedForQuick.isEmpty() && !normalizedForQuick.toLowerCase(Locale.ROOT).contains("above")) {
-            Pattern quickPattern = Pattern.compile("^(?:(BUY|SELL)\\s+)?([A-Z0-9_\\-]+)\\s+([\\d\\.]+)\\s+(CE|PE|FUT|CALL|PUT)\\b.*$", Pattern.CASE_INSENSITIVE);
-            Matcher quickMatcher = quickPattern.matcher(normalizedForQuick);
+        if (!normalizedForQuick.isEmpty() && !containsBreakoutKeyword(normalizedForQuick)) {
+            Matcher quickMatcher = QUICK_PATTERN.matcher(normalizedForQuick);
             if (quickMatcher.matches()) {
                 String actionQuick = quickMatcher.group(1);
                 if (actionQuick == null || actionQuick.isBlank()) {
@@ -66,9 +77,8 @@ public class TelegramSignalParser implements TradingSignalParser {
 
         // Find the first line that matches the trade regex
         // Updated regex to handle optional BUY/SELL prefix, capture symbol correctly, and handle decimal strike
-        Pattern tradePattern = Pattern.compile("^(?:BUY|SELL)?\\s*([A-Z0-9_\\-\\s]+?)\\s+([\\d\\.]+)\\s+(CE|PE)\\s+above\\s+([\\d\\.]+)", Pattern.CASE_INSENSITIVE);
         String tradeLine = lines.stream()
-                .filter(line -> tradePattern.matcher(line).find())
+                .filter(line -> TRADE_PATTERN.matcher(line).find())
                 .findFirst()
                 .orElse(null);
 
@@ -76,7 +86,7 @@ public class TelegramSignalParser implements TradingSignalParser {
             return null; // no valid trade info found
         }
 
-        Matcher matcher = tradePattern.matcher(tradeLine);
+        Matcher matcher = TRADE_PATTERN.matcher(tradeLine);
         if (!matcher.find()) {
             return null;
         }
@@ -88,8 +98,8 @@ public class TelegramSignalParser implements TradingSignalParser {
         String strike = matcher.group(2);
         // Group 3 is Option Type
         String optionType = matcher.group(3).toUpperCase();
-        // Group 4 is Entry Price
-        Double entry = tryParseDouble(matcher.group(4));
+        // Group 5 is Entry Price
+        Double entry = tryParseDouble(matcher.group(5));
 
         // Updated filter to include lines starting with "TARGET" as well as "TGT"
         Optional<String> targetLine = lines.stream()
@@ -101,6 +111,7 @@ public class TelegramSignalParser implements TradingSignalParser {
 
         String target1 = null;
         String target2 = null;
+        String target3 = null;
 
         if (targetLine.isPresent()) {
             String targetLineVal = targetLine.get();
@@ -112,6 +123,7 @@ public class TelegramSignalParser implements TradingSignalParser {
             String[] targets = targetsStr.split("[/\\s]+"); // Split by slash or space
             target1 = targets.length > 0 ? targets[0].trim() : null;
             target2 = targets.length > 1 ? targets[1].trim() : null;
+            target3 = targets.length > 2 ? targets[2].trim() : null;
         }
 
         Optional<String> slLine = lines.stream()
@@ -132,22 +144,20 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .findFirst()
                 .orElse(null);
         
-        // --- NEW: Parse Lots ---
+        // Parse Lots from dedicated LOTS line
         Optional<String> lotsLine = lines.stream()
                 .filter(l -> l.toUpperCase().startsWith("LOTS"))
                 .findFirst();
-        
+
         Integer quantity = null;
         if (lotsLine.isPresent()) {
             String lotsVal = lotsLine.get();
-            // e.g., "Lots 2" -> 2
             String lotsStr = lotsVal.replaceAll("(?i)^LOTS[\\s:\\-]*", "").trim();
             Double d = tryParseDouble(lotsStr);
             if (d != null) {
                 quantity = d.intValue();
             }
         }
-        // -----------------------
 
         String expiryFormatted = parseExpiry(expiryRaw, symbol);
 
@@ -168,6 +178,7 @@ public class TelegramSignalParser implements TradingSignalParser {
         result.put("entry", entry);
         result.put("target1", target1);
         result.put("target2", target2);
+        result.put("target3", target3);
         result.put("stopLoss", stopLoss);
         result.put("expiry", expiryFormatted);
         result.put("exchange", null);
@@ -182,6 +193,13 @@ public class TelegramSignalParser implements TradingSignalParser {
         }
 
         return result;
+    }
+
+    private boolean containsBreakoutKeyword(String text) {
+        if (text == null || text.isBlank()) {
+            return false;
+        }
+        return BREAKOUT_KEYWORD_PATTERN.matcher(text).find();
     }
 
     private boolean isExpiryLine(String line) {
