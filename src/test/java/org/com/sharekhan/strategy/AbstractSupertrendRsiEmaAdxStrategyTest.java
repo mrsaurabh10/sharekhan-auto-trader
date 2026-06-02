@@ -14,6 +14,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
@@ -39,7 +40,7 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
         candles.add(candle(today, completedTime, 200));
 
         when(support.resolveSpotScript("NIFTY")).thenReturn(spotScript("NIFTY"));
-        when(support.loadCandles(any())).thenReturn(new CandleLoad(candles, false, null));
+        when(support.loadCandlesWithHistoricalFallback(any(), anyInt())).thenReturn(new CandleLoad(candles, false, null));
         when(indicatorService.minimumCandles()).thenReturn(50);
         when(support.waiting(any(), anyString(), anyString()))
                 .thenReturn(StrategyApplyResponse.builder().status("waiting").build());
@@ -58,15 +59,15 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
         LocalDate previousDay = today.minusDays(1);
         LocalTime completedTime = LocalTime.now(StrategySupport.MARKET_ZONE).minusMinutes(10);
 
-        List<StrategyCandle> candles = List.of(
-                candle(previousDay, LocalTime.of(15, 20), 101),
-                candle(previousDay, LocalTime.of(15, 25), 102),
-                candle(today, completedTime, 103)
-        );
+        List<StrategyCandle> candles = new ArrayList<>();
+        for (int i = 0; i < 49; i++) {
+            candles.add(candle(previousDay, LocalTime.of(9, 15).plusMinutes(i * 5L), 100 + i));
+        }
+        candles.add(candle(today, completedTime, 200));
 
         when(support.resolveSpotScript("NIFTY")).thenReturn(spotScript("NIFTY"));
-        when(support.loadCandles(any())).thenReturn(new CandleLoad(candles, false, null));
-        when(indicatorService.minimumCandles()).thenReturn(3);
+        when(support.loadCandlesWithHistoricalFallback(any(), anyInt())).thenReturn(new CandleLoad(candles, false, null));
+        when(indicatorService.minimumCandles()).thenReturn(50);
         when(indicatorService.computeSnapshot(anyList()))
                 .thenThrow(new IllegalStateException("stop-after-capture"));
 
@@ -77,10 +78,10 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
         ArgumentCaptor<List<StrategyCandle>> candlesCaptor = ArgumentCaptor.forClass(List.class);
         verify(indicatorService).computeSnapshot(candlesCaptor.capture());
         List<StrategyCandle> usedCandles = candlesCaptor.getValue();
-        assertThat(usedCandles).hasSize(3);
+        assertThat(usedCandles).hasSize(50);
         assertThat(usedCandles.get(0).date()).isEqualTo(previousDay);
-        assertThat(usedCandles.get(1).date()).isEqualTo(previousDay);
-        assertThat(usedCandles.get(2).date()).isEqualTo(today);
+        assertThat(usedCandles.get(48).date()).isEqualTo(previousDay);
+        assertThat(usedCandles.get(49).date()).isEqualTo(today);
     }
 
     private StrategyApplyRequest request(String symbol) {

@@ -14,6 +14,7 @@ import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.service.MStockInstrumentResolver;
 import org.com.sharekhan.service.MStockIntradayCandleService;
+import org.com.sharekhan.service.SharekhanHistoricalService;
 import org.com.sharekhan.service.SpotSymbolAliases;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.stereotype.Component;
@@ -25,11 +26,14 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 
 @Slf4j
 @Component
@@ -50,6 +54,7 @@ public class StrategySupport {
     private final MStockInstrumentResolver mStockInstrumentResolver;
     private final MStockInstrumentRepository mStockInstrumentRepository;
     private final MStockIntradayCandleService mStockIntradayCandleService;
+    private final SharekhanHistoricalService sharekhanHistoricalService;
     private final TradeExecutionService tradeExecutionService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
 
@@ -145,6 +150,32 @@ public class StrategySupport {
             printDiagnostic(reason);
             return new CandleLoad(List.of(), false, reason);
         }
+    }
+
+    public CandleLoad loadCandlesWithHistoricalFallback(ScriptMasterEntity spotScript, int minimumCandles) {
+        CandleLoad intradayLoad = loadCandles(spotScript);
+        int required = Math.max(0, minimumCandles);
+        if (required == 0 || intradayLoad.candles().size() >= required) {
+            return intradayLoad;
+        }
+
+        List<StrategyCandle> historical = loadHistoricalCandles(spotScript);
+        if (historical.isEmpty()) {
+            return intradayLoad;
+        }
+
+        List<StrategyCandle> merged = mergeByTimestamp(historical, intradayLoad.candles(), required);
+        if (merged.isEmpty()) {
+            return intradayLoad;
+        }
+
+        printDiagnostic("Combined candles using Sharekhan historical fallback: intraday=" + intradayLoad.candles().size()
+                + ", historical=" + historical.size()
+                + ", merged=" + merged.size()
+                + ", required=" + required
+                + ", symbol=" + (spotScript != null ? spotScript.getTradingSymbol() : null));
+
+        return new CandleLoad(merged, intradayLoad.hasVolume(), intradayLoad.reason());
     }
 
     public TriggerTradeRequestEntity executeTriggeredTrade(TriggerRequest trigger) {
@@ -350,6 +381,58 @@ public class StrategySupport {
 
     private void printDiagnostic(String message) {
         System.out.println("[MSTOCK-STRATEGY] " + message);
+    }
+
+    private List<StrategyCandle> loadHistoricalCandles(ScriptMasterEntity spotScript) {
+        if (spotScript == null || spotScript.getScripCode() == null) {
+            return List.of();
+        }
+        LocalDate today = LocalDate.now(MARKET_ZONE);
+        LocalDate from = today.minusDays(10);
+        List<SharekhanHistoricalService.HistoricalCandle> historical = sharekhanHistoricalService
+                .getHistoricalCandles(spotScript.getScripCode(), "5minute", from, today);
+
+        if (historical.isEmpty()) {
+            return List.of();
+        }
+
+        return historical.stream()
+                .filter(c -> c.date() != null && c.time() != null)
+                .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), null))
+                .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
+                .toList();
+    }
+
+    private List<StrategyCandle> mergeByTimestamp(List<StrategyCandle> historical,
+                                                  List<StrategyCandle> intraday,
+                                                  int maxCandles) {
+        Map<LocalDateTime, StrategyCandle> mergedMap = new TreeMap<>();
+
+        for (StrategyCandle candle : historical) {
+            LocalDateTime key = candleKey(candle);
+            if (key != null) {
+                mergedMap.put(key, candle);
+            }
+        }
+        for (StrategyCandle candle : intraday) {
+            LocalDateTime key = candleKey(candle);
+            if (key != null) {
+                mergedMap.put(key, candle);
+            }
+        }
+
+        List<StrategyCandle> merged = new ArrayList<>(mergedMap.values());
+        if (maxCandles > 0 && merged.size() > maxCandles) {
+            return merged.subList(merged.size() - maxCandles, merged.size());
+        }
+        return merged;
+    }
+
+    private LocalDateTime candleKey(StrategyCandle candle) {
+        if (candle == null || candle.date() == null || candle.time() == null) {
+            return null;
+        }
+        return LocalDateTime.of(candle.date(), candle.time());
     }
 
     private record HardcodedMStockIndex(String script, String exchangeToken, String name, String exchange) {
