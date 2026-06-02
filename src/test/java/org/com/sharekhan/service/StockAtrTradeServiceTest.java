@@ -21,9 +21,7 @@ class StockAtrTradeServiceTest {
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
         StockAtrTradeService service = new StockAtrTradeService(
                 scriptMasterRepository,
-                mock(MStockInstrumentResolver.class),
-                mock(org.com.sharekhan.repository.MStockInstrumentRepository.class),
-                mock(MStockIntradayCandleService.class));
+                mock(SharekhanHistoricalService.class));
 
         YearMonth nearerMonth = YearMonth.from(LocalDate.now().plusMonths(1));
         YearMonth requestedYearMonth = YearMonth.from(LocalDate.now().plusMonths(2));
