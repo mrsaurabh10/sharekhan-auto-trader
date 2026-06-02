@@ -5,9 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.dto.StockAtrTradeRequest;
 import org.com.sharekhan.dto.StockAtrTradeResponse;
 import org.com.sharekhan.dto.TriggerRequest;
-import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.entity.ScriptMasterEntity;
-import org.com.sharekhan.repository.MStockInstrumentRepository;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -40,9 +38,7 @@ public class StockAtrTradeService {
     private static final DateTimeFormatter EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
     private final ScriptMasterRepository scriptMasterRepository;
-    private final MStockInstrumentResolver mStockInstrumentResolver;
-    private final MStockInstrumentRepository mStockInstrumentRepository;
-    private final MStockIntradayCandleService mStockIntradayCandleService;
+    private final SharekhanHistoricalService historicalService;
 
     public StockAtrTradeResponse triggerForAllUsers(StockAtrTradeRequest request) {
         TriggerRequest triggerRequest = buildTriggerRequest(request);
@@ -182,44 +178,26 @@ public class StockAtrTradeService {
 
     private double calculateAtr(Integer spotScripCode, String candleInterval) {
         LocalDate today = LocalDate.now(MARKET_ZONE);
-        ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(spotScripCode);
-        if (spotScript == null) {
-            throw new IllegalArgumentException("Spot script not found for scripCode " + spotScripCode);
-        }
-
-        MStockInstrumentEntity instrument = resolveMStockInstrument(spotScript);
-        String exchange = StringUtils.hasText(instrument.getExchange())
-                ? instrument.getExchange().trim()
-                : spotScript.getExchange();
-        String symbolToken = StringUtils.hasText(instrument.getExchangeToken())
-                ? instrument.getExchangeToken().trim()
-                : null;
-        if (!StringUtils.hasText(symbolToken)) {
-            throw new IllegalArgumentException("MStock exchangeToken missing for spot scripCode " + spotScripCode);
-        }
-
-        List<MStockIntradayCandleService.IntradayCandle> candles = mStockIntradayCandleService
-                .getIntradayCandles(exchange, symbolToken, candleInterval)
+        int requiredCandles = ATR_PERIOD + 1;
+        List<SharekhanHistoricalService.HistoricalCandle> candles = historicalService
+                .getHistoricalCandles(spotScripCode, candleInterval, today.minusDays(10), today)
                 .stream()
                 .filter(Objects::nonNull)
                 .filter(c -> c.high() > 0d && c.low() > 0d && c.close() > 0d)
                 .sorted(candleComparator())
                 .toList();
-
-        log.info("📐 ATR candle load | spotScrip={} interval={} period={} candles={} exchange={} symbolToken={} asOfDate={}",
-                spotScripCode, candleInterval, ATR_PERIOD, candles.size(), exchange, symbolToken, today);
-
-        int requiredCandles = ATR_PERIOD + 1;
         if (candles.size() < requiredCandles) {
             throw new IllegalArgumentException("Not enough " + candleInterval + " candles to compute ATR(" + ATR_PERIOD + "). Required "
                     + requiredCandles + ", found " + candles.size());
         }
+        log.info("📐 ATR candle load | source=sharekhan spotScrip={} interval={} period={} candles={} asOfDate={}",
+                spotScripCode, candleInterval, ATR_PERIOD, candles.size(), today);
 
-        List<MStockIntradayCandleService.IntradayCandle> tail = candles.subList(candles.size() - requiredCandles, candles.size());
+        List<SharekhanHistoricalService.HistoricalCandle> tail = candles.subList(candles.size() - requiredCandles, candles.size());
         double trueRangeSum = 0d;
         for (int i = 1; i < tail.size(); i++) {
-            MStockIntradayCandleService.IntradayCandle current = tail.get(i);
-            MStockIntradayCandleService.IntradayCandle previous = tail.get(i - 1);
+            SharekhanHistoricalService.HistoricalCandle current = tail.get(i);
+            SharekhanHistoricalService.HistoricalCandle previous = tail.get(i - 1);
             double highLow = current.high() - current.low();
             double highPrevClose = Math.abs(current.high() - previous.close());
             double lowPrevClose = Math.abs(current.low() - previous.close());
@@ -231,25 +209,16 @@ public class StockAtrTradeService {
             throw new IllegalArgumentException("Unable to compute a valid ATR(" + ATR_PERIOD + ")");
         }
         double roundedAtr = roundPrice(atr);
-        MStockIntradayCandleService.IntradayCandle last = tail.get(tail.size() - 1);
-        log.info("📐 ATR computed | spotScrip={} interval={} period={} trueRangeSum={} atr={} roundedAtr={} lastCandleDate={} lastCandleTime={} lastClose={}",
+        SharekhanHistoricalService.HistoricalCandle last = tail.get(tail.size() - 1);
+        log.info("📐 ATR computed | source=sharekhan spotScrip={} interval={} period={} trueRangeSum={} atr={} roundedAtr={} lastCandleDate={} lastCandleTime={} lastClose={}",
                 spotScripCode, candleInterval, ATR_PERIOD, roundPrice(trueRangeSum), atr, roundedAtr,
                 last.date(), last.time(), last.close());
         return roundedAtr;
     }
 
-    private MStockInstrumentEntity resolveMStockInstrument(ScriptMasterEntity spotScript) {
-        String key = mStockInstrumentResolver.resolveInstrumentKey(spotScript)
-                .orElseThrow(() -> new IllegalArgumentException("Unable to resolve MStock key for spot symbol "
-                        + spotScript.getTradingSymbol() + " (scripCode " + spotScript.getScripCode() + ")"));
-        return mStockInstrumentRepository.findByInstrumentKey(key)
-                .orElseThrow(() -> new IllegalArgumentException("MStock instrument not found for key " + key
-                        + " (spot scripCode " + spotScript.getScripCode() + ")"));
-    }
-
-    private Comparator<MStockIntradayCandleService.IntradayCandle> candleComparator() {
+    private Comparator<SharekhanHistoricalService.HistoricalCandle> candleComparator() {
         return Comparator
-                .comparing((MStockIntradayCandleService.IntradayCandle c) -> c.date() != null ? c.date() : LocalDate.MIN)
+                .comparing((SharekhanHistoricalService.HistoricalCandle c) -> c.date() != null ? c.date() : LocalDate.MIN)
                 .thenComparing(c -> c.time() != null ? c.time() : LocalTime.MIN);
     }
 
