@@ -1290,6 +1290,9 @@ public class TradeExecutionService {
             }
         }
 
+        handleEntryOrderExecution(saved);
+        saved = triggeredTradeRepo.findById(saved.getId()).orElse(saved);
+
         log.info("✅ Manually added executed trade: {}", saved.getId());
         return saved;
     }
@@ -1620,7 +1623,10 @@ public class TradeExecutionService {
     }
 
     public boolean forceCloseByScripCode(int scripCode, Double price) {
-        java.util.List<TriggeredTradeSetupEntity> trades = triggeredTradeRepo.findByScripCodeAndStatus(scripCode, TriggeredTradeStatus.EXECUTED);
+        java.util.List<TriggeredTradeSetupEntity> trades = triggeredTradeRepo.findByScripCodeAndStatusIn(
+                scripCode,
+                java.util.List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED)
+        );
 
         if (trades != null && !trades.isEmpty()) {
             TriggeredTradeSetupEntity trade = trades.get(0);
