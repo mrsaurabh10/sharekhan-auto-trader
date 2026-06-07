@@ -3,6 +3,8 @@ package org.com.sharekhan.service;
 import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.dto.TriggerRequest;
+import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
@@ -15,12 +17,15 @@ import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.broker.BrokerServiceFactory;
+import org.com.sharekhan.service.broker.ModifiableEntryBrokerService;
 import org.com.sharekhan.service.broker.TriggerPriceEntryBrokerService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.context.ApplicationEventPublisher;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -28,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -83,6 +89,66 @@ class TradeExecutionServiceBrokerSideEntryTest {
         verify(ctx.eventPublisher, never()).publishEvent(any());
     }
 
+    @Test
+    void createExecutedTradePlacesTargetOrderForNonSpotTarget() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder()
+                .success(true)
+                .orderId("182038823")
+                .status("Pending")
+                .build());
+        when(ctx.broker.placeExitOrder(any(), any(BrokerContext.class), eq(150.0)))
+                .thenReturn(OrderPlacementResult.builder()
+                        .success(true)
+                        .orderId("TARGET-ORDER-1")
+                        .status("Pending")
+                        .attemptedPrice(150.0)
+                        .build());
+
+        TriggeredTradeSetupEntity created = ctx.service.createExecutedTrade(optionRequest());
+
+        assertThat(created.getStatus()).isEqualTo(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        assertThat(created.getExitOrderId()).isEqualTo("TARGET-ORDER-1");
+        verify(ctx.broker).placeExitOrder(any(), any(BrokerContext.class), eq(150.0));
+    }
+
+    @Test
+    void manualTriggerPlacesEntryAtBidAskMidAndStartsEntryChase() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder()
+                .success(true)
+                .orderId("182038823")
+                .status("Pending")
+                .build());
+        QuoteCacheService.QuoteSnapshot quote = QuoteCacheService.QuoteSnapshot.builder()
+                .scripCode(123456)
+                .bestBid(120.0)
+                .bestAsk(130.0)
+                .lastTradedPrice(124.0)
+                .midPrice(125.0)
+                .spreadAbsolute(10.0)
+                .spreadPercent(8.0)
+                .updatedAt(Instant.now())
+                .build();
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(124.0);
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(quote));
+        when(ctx.quoteCache.isStale(any(), any(Duration.class))).thenReturn(false);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), eq(125.0)))
+                .thenReturn(OrderPlacementResult.builder()
+                        .success(true)
+                        .orderId("ENTRY-ORDER-1")
+                        .status("Pending")
+                        .attemptedPrice(125.0)
+                        .build());
+
+        TriggeredTradeSetupEntity created = ctx.service.executeTradeFromEntity(triggerRequestEntity(), true);
+
+        assertThat(created.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(created.getOrderId()).isEqualTo("ENTRY-ORDER-1");
+        assertThat(ctx.service.isEntryOrderChaseActive(created.getId())).isTrue();
+        verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(125.0));
+
+        ctx.service.stopEntryOrderChase(created.getId());
+    }
+
     private TriggerRequest optionRequest() {
         TriggerRequest request = new TriggerRequest();
         request.setInstrument("NIFTY");
@@ -103,13 +169,39 @@ class TradeExecutionServiceBrokerSideEntryTest {
         return request;
     }
 
+    private TriggerTradeRequestEntity triggerRequestEntity() {
+        return TriggerTradeRequestEntity.builder()
+                .id(77L)
+                .symbol("NIFTY")
+                .scripCode(123456)
+                .exchange("NF")
+                .instrumentType("OI")
+                .strikePrice(25000.0)
+                .optionType("CE")
+                .expiry("30/06/2026")
+                .entryPrice(123.45)
+                .stopLoss(100.0)
+                .target1(150.0)
+                .quantity(50L)
+                .lots(1)
+                .brokerCredentialsId(55L)
+                .appUserId(9L)
+                .useSpotForEntry(false)
+                .useSpotForSl(false)
+                .useSpotForTarget(false)
+                .spotScripCode(20000)
+                .build();
+    }
+
     private static class TestContext {
         private final TriggerTradeRequestRepository triggerRepo = mock(TriggerTradeRequestRepository.class);
         private final TriggeredTradeSetupRepository triggeredRepo = mock(TriggeredTradeSetupRepository.class);
         private final ScriptMasterRepository scriptRepo = mock(ScriptMasterRepository.class);
         private final BrokerCredentialsRepository brokerCredentialsRepo = mock(BrokerCredentialsRepository.class);
         private final BrokerServiceFactory brokerServiceFactory = mock(BrokerServiceFactory.class);
-        private final TriggerPriceEntryBrokerService broker = mock(TriggerPriceEntryBrokerService.class);
+        private final TestBrokerService broker = mock(TestBrokerService.class);
+        private final LtpCacheService ltpCache = mock(LtpCacheService.class);
+        private final QuoteCacheService quoteCache = mock(QuoteCacheService.class);
         private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         private final WebSocketSubscriptionService subscriptionService = mock(WebSocketSubscriptionService.class);
         private final WebSocketSubscriptionHelper subscriptionHelper = mock(WebSocketSubscriptionHelper.class);
@@ -139,6 +231,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 return entity;
             });
             when(triggerRepo.findById(77L)).thenAnswer(invocation -> Optional.ofNullable(savedRequest.get()));
+            when(triggeredRepo.findById(88L)).thenAnswer(invocation -> Optional.ofNullable(savedTrade.get()));
             when(triggerRepo.claimIfStatusEquals(
                     77L,
                     TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
@@ -179,8 +272,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     triggeredRepo,
                     triggerRepo,
                     null,
-                    null,
-                    null,
+                    ltpCache,
+                    quoteCache,
                     eventPublisher,
                     subscriptionService,
                     subscriptionHelper,
@@ -194,5 +287,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     null
             );
         }
+    }
+
+    private interface TestBrokerService extends TriggerPriceEntryBrokerService, ModifiableEntryBrokerService {
     }
 }

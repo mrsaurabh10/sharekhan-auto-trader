@@ -117,7 +117,7 @@ public class AdminController {
             }
         }
 
-        var executed = tradeExecutionService.executeTradeFromEntity(r);
+        var executed = tradeExecutionService.executeTradeFromEntity(r, true);
         // If the order was rejected (e.g., broker returned orderId=0), remove the request so it disappears from Trading Requests
         if (executed != null && executed.getStatus() == TriggeredTradeStatus.REJECTED) {
             try {

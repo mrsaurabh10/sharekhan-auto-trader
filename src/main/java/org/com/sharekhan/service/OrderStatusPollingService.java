@@ -255,6 +255,7 @@ public class OrderStatusPollingService {
                         currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
                         webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
                     } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
+                        tradeExecutionService.stopEntryOrderChase(currentTrade.getId());
                         currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
                     }
 
@@ -333,6 +334,7 @@ public class OrderStatusPollingService {
                     if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(currentTrade.getStatus())) {
                         currentTrade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                     } else {
+                        tradeExecutionService.stopEntryOrderChase(currentTrade.getId());
                         currentTrade.setStatus(TriggeredTradeStatus.REJECTED);
                     }
                     tradeRepo.save(currentTrade);
