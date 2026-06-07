@@ -130,6 +130,12 @@ public class TradeExecutionService {
         return t;
     });
     private final ConcurrentMap<Long, ScheduledFuture<?>> exitChaseFutures = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService entryChaseScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "entry-chase-scheduler");
+        t.setDaemon(true);
+        return t;
+    });
+    private final ConcurrentMap<Long, ScheduledFuture<?>> entryChaseFutures = new ConcurrentHashMap<>();
 
     private static final class ExitChaseState {
         private boolean bufferedAttempted;
@@ -137,6 +143,13 @@ public class TradeExecutionService {
     }
 
     private final ConcurrentMap<Long, ExitChaseState> exitChaseStates = new ConcurrentHashMap<>();
+
+    private static final class EntryChaseState {
+        private int modifyAttempts;
+        private Double lastPrice;
+    }
+
+    private final ConcurrentMap<Long, EntryChaseState> entryChaseStates = new ConcurrentHashMap<>();
 
     @Autowired
     private UserConfigService userConfigService;
@@ -172,6 +185,9 @@ public class TradeExecutionService {
     private EntryDiagnostics analyseEntry(TriggeredTradeSetupEntity trigger, Double ltp) {
         if (trigger == null || trigger.getScripCode() == null) {
             return new EntryDiagnostics(true, "NO_SCRIP_CODE", null, null, null, null, null);
+        }
+        if (quoteCacheService == null) {
+            return new EntryDiagnostics(true, "NO_QUOTE_CACHE", null, ltp, null, null, null);
         }
 
         Optional<QuoteCacheService.QuoteSnapshot> snapshotOpt = quoteCacheService.getSnapshot(trigger.getScripCode());
@@ -1317,10 +1333,17 @@ public class TradeExecutionService {
 
     // New overload: allow caller to pass exact triggeredAt (time when entry condition met)
     public TriggeredTradeSetupEntity execute(TriggeredTradeSetupEntity trigger, double ltp, java.time.LocalDateTime triggeredAt) {
+        return execute(trigger, ltp, triggeredAt, false);
+    }
+
+    private TriggeredTradeSetupEntity execute(TriggeredTradeSetupEntity trigger,
+                                             double ltp,
+                                             java.time.LocalDateTime triggeredAt,
+                                             boolean chaseEntryUntilExecuted) {
         String lockKey = buildEntryLockKey(trigger);
         try {
             return orderPlacementGuard.withLock(lockKey, ORDER_LOCK_TIMEOUT,
-                    () -> executeWithoutLock(trigger, ltp, triggeredAt));
+                    () -> executeWithoutLock(trigger, ltp, triggeredAt, chaseEntryUntilExecuted));
         } catch (OrderPlacementGuard.LockAcquisitionException e) {
             log.warn("⚠️ Duplicate entry placement prevented for triggerId={}, symbol={}: {}",
                     triggerLogId(trigger),
@@ -1331,6 +1354,13 @@ public class TradeExecutionService {
     }
 
     private TriggeredTradeSetupEntity executeWithoutLock(TriggeredTradeSetupEntity trigger, double ltp, java.time.LocalDateTime triggeredAt) {
+        return executeWithoutLock(trigger, ltp, triggeredAt, false);
+    }
+
+    private TriggeredTradeSetupEntity executeWithoutLock(TriggeredTradeSetupEntity trigger,
+                                                        double ltp,
+                                                        java.time.LocalDateTime triggeredAt,
+                                                        boolean chaseEntryUntilExecuted) {
         try {
             // Safety guard: do not attempt broker placement if quantity is null/zero
             if (trigger.getQuantity() == null || trigger.getQuantity() <= 0L) {
@@ -1427,7 +1457,7 @@ public class TradeExecutionService {
                 throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
             }
 
-            OrderPlacementResult result = attemptEntryPlacement(trigger, ltp, ctx, brokerService);
+            OrderPlacementResult result = attemptEntryPlacement(trigger, ltp, ctx, brokerService, chaseEntryUntilExecuted);
 
             if (!result.isSuccess()) {
                 TradeEventLogger.logOrderRejected("ENTRY", trigger, result.getRejectionReason(), ltp, result.getAttemptedPrice());
@@ -1582,6 +1612,9 @@ public class TradeExecutionService {
             }
 
             log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
+            if (chaseEntryUntilExecuted) {
+                scheduleEntryOrderChase(triggeredTradeSetupEntity);
+            }
             if (triggeredTradeSetupEntity.getExitOrderId() != null) {
                 scheduleExitOrderChase(triggeredTradeSetupEntity);
             }
@@ -1598,6 +1631,7 @@ public class TradeExecutionService {
                 .orElseThrow(() -> new RuntimeException("Trade not found"));
 
         trade.setStatus(TriggeredTradeStatus.REJECTED);
+        stopEntryOrderChase(trade.getId());
         triggeredTradeRepo.save(trade);
         webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
 
@@ -1782,11 +1816,20 @@ public class TradeExecutionService {
                                                        double ltp,
                                                        BrokerContext ctx,
                                                        BrokerService brokerService) {
+        return attemptEntryPlacement(trigger, ltp, ctx, brokerService, false);
+    }
+
+    private OrderPlacementResult attemptEntryPlacement(TriggeredTradeSetupEntity trigger,
+                                                       double ltp,
+                                                       BrokerContext ctx,
+                                                       BrokerService brokerService,
+                                                       boolean chaseEntryUntilExecuted) {
         OrderPlacementResult lastResult = null;
         String orderId = null;
         TradeStatus latestStatus = TradeStatus.NO_RECORDS;
+        int maxAttempts = chaseEntryUntilExecuted ? 1 : MAX_ENTRY_ATTEMPTS;
 
-        for (int attempt = 0; attempt < MAX_ENTRY_ATTEMPTS; attempt++) {
+        for (int attempt = 0; attempt < maxAttempts; attempt++) {
             if (attempt > 0 && orderId != null && !orderId.isBlank()) {
                 latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
                 log.info("📊 Entry status snapshot for trade {} attempt {}: {}", triggerLogId(trigger), attempt + 1, latestStatus);
@@ -1809,7 +1852,7 @@ public class TradeExecutionService {
             EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
             logEntryDiagnostics(trigger, entryDiagnostics, ltp);
 
-            if (!entryDiagnostics.shouldPlace()) {
+            if (!entryDiagnostics.shouldPlace() && !chaseEntryUntilExecuted) {
                 log.info("🚫 Entry placement skipped for trigger {} reason={} spread={} bid={} ask={} mid={}",
                         triggerLogId(trigger),
                         entryDiagnostics.reason(),
@@ -1850,6 +1893,15 @@ public class TradeExecutionService {
                         .status("Rejected")
                         .rejectionReason(entryDiagnostics.reason())
                         .build();
+            }
+            if (!entryDiagnostics.shouldPlace()) {
+                log.info("🧵 Manual entry trigger overriding spread check for trigger {} reason={} spread={} bid={} ask={} mid={}",
+                        triggerLogId(trigger),
+                        entryDiagnostics.reason(),
+                        formatPercent(entryDiagnostics.spreadPercent()),
+                        formatPrice(entryDiagnostics.bestBid()),
+                        formatPrice(entryDiagnostics.bestAsk()),
+                        formatPrice(entryDiagnostics.recommendedLimit()));
             }
 
             double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp);
@@ -1894,6 +1946,10 @@ public class TradeExecutionService {
                     return result;
                 }
 
+                if (chaseEntryUntilExecuted) {
+                    return result;
+                }
+
                 if (orderId != null && !orderId.isBlank()) {
                     try {
                         Thread.sleep(FINAL_STATUS_CHECK_DELAY_MS);
@@ -1909,7 +1965,7 @@ public class TradeExecutionService {
                         return result;
                     }
 
-                    if (attempt < MAX_ENTRY_ATTEMPTS - 1) {
+                    if (attempt < maxAttempts - 1) {
                         log.info("⏱️ Entry order {} still pending after attempt {}. Preparing next attempt.", orderId, attempt + 1);
                         continue;
                     }
@@ -1949,7 +2005,7 @@ public class TradeExecutionService {
             String reason = result != null ? result.getRejectionReason() : "unknown";
             log.warn("⚠️ Entry attempt {} failed for trigger {} reason={}", attempt + 1, triggerLogId(trigger), reason);
 
-            if (attempt < MAX_ENTRY_ATTEMPTS - 1) {
+            if (attempt < maxAttempts - 1) {
                 if (orderId != null && !orderId.isBlank()) {
                     latestStatus = fetchEntryOrderStatus(trigger, ctx, orderId);
                     log.info("📊 Entry status snapshot post attempt {} for trade {}: {}", attempt + 1, triggerLogId(trigger), latestStatus);
@@ -1982,7 +2038,8 @@ public class TradeExecutionService {
             }
         }
 
-        if (brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker
+        if (!chaseEntryUntilExecuted
+                && brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker
                 && orderId != null && !orderId.isBlank()
                 && !isOrderFilled(latestStatus)) {
             log.info("🚫 Cancelled pending entry order {} for trigger {}", orderId, triggerLogId(trigger));
@@ -2060,6 +2117,155 @@ public class TradeExecutionService {
         return !"0".equals(normalized)
                 && !"NA".equalsIgnoreCase(normalized)
                 && !"null".equalsIgnoreCase(normalized);
+    }
+
+    private void scheduleEntryOrderChase(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getId() == null || !isUsableBrokerOrderId(trade.getOrderId())) {
+            return;
+        }
+        if (!TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(trade.getStatus())) {
+            return;
+        }
+
+        BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+        if (ctx == null || ctx.getBrokerName() == null) {
+            return;
+        }
+
+        BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+        if (!(brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker)) {
+            log.debug("Skipping entry chase for trade {} because broker {} cannot modify entry orders",
+                    trade.getId(), ctx.getBrokerName());
+            return;
+        }
+
+        long tradeId = trade.getId();
+        String orderId = trade.getOrderId();
+        stopEntryOrderChase(tradeId);
+
+        EntryChaseState state = new EntryChaseState();
+        entryChaseStates.put(tradeId, state);
+
+        long delayMillis = "OI".equalsIgnoreCase(trade.getInstrumentType() != null ? trade.getInstrumentType().trim() : "")
+                ? 1000L
+                : 2000L;
+
+        Runnable task = () -> {
+            try {
+                TriggeredTradeSetupEntity latest = triggeredTradeRepo.findById(tradeId).orElse(null);
+                if (latest == null || !TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(latest.getStatus())) {
+                    stopEntryOrderChase(tradeId);
+                    return;
+                }
+
+                String latestOrderId = latest.getOrderId();
+                if (!isUsableBrokerOrderId(latestOrderId)) {
+                    stopEntryOrderChase(tradeId);
+                    return;
+                }
+
+                TradeStatus status = fetchEntryOrderStatus(latest, ctx, latestOrderId);
+                if (isOrderFilled(status)) {
+                    stopEntryOrderChase(tradeId);
+                    return;
+                }
+                if (TradeStatus.REJECTED.equals(status)) {
+                    log.warn("🧵 Entry chase stopping for trade {} — order rejected", tradeId);
+                    stopEntryOrderChase(tradeId);
+                    return;
+                }
+
+                EntryChaseState chaseState = entryChaseStates.computeIfAbsent(tradeId, id -> new EntryChaseState());
+                Double candidatePrice = determineEntryChasePrice(latest, chaseState);
+                if (candidatePrice == null || candidatePrice <= 0) {
+                    return;
+                }
+
+                if (chaseState.lastPrice != null && Math.abs(chaseState.lastPrice - candidatePrice) < 0.01) {
+                    return;
+                }
+
+                TradeEventLogger.logOrderAttempt("ENTRY_CHASE", latest, chaseState.modifyAttempts + 1, "MODIFY", candidatePrice, latestOrderId);
+                OrderPlacementResult modifyResult = modifiableEntryBroker.modifyEntryOrder(latest, ctx, latestOrderId, candidatePrice);
+                if (modifyResult != null && modifyResult.getAttemptedPrice() == null) {
+                    modifyResult.setAttemptedPrice(candidatePrice);
+                }
+
+                if (modifyResult != null && modifyResult.isSuccess()) {
+                    String updatedOrderId = modifyResult.getOrderId();
+                    if (isUsableBrokerOrderId(updatedOrderId) && !updatedOrderId.equals(latestOrderId)) {
+                        latest.setOrderId(updatedOrderId);
+                        triggeredTradeRepo.save(latest);
+                    }
+                    chaseState.lastPrice = candidatePrice;
+                    chaseState.modifyAttempts++;
+                    log.info("🧵 Entry chase adjusting trade {} order {} to {}",
+                            tradeId, updatedOrderId != null ? updatedOrderId : latestOrderId, formatPrice(candidatePrice));
+
+                    if (isOrderPlacementFilled(modifyResult)) {
+                        stopEntryOrderChase(tradeId);
+                    }
+                } else {
+                    log.warn("⚠️ Entry chase modify failed for trade {}: {}",
+                            tradeId,
+                            modifyResult != null ? modifyResult.getRejectionReason() : "No response");
+                    stopEntryOrderChase(tradeId);
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ Entry chase iteration failed for trade {}: {}", tradeId, e.getMessage());
+            }
+        };
+
+        ScheduledFuture<?> future = entryChaseScheduler.scheduleWithFixedDelay(task, delayMillis, delayMillis, TimeUnit.MILLISECONDS);
+        entryChaseFutures.put(tradeId, future);
+        log.info("🧵 Entry chase started for trade {} order {}", tradeId, orderId);
+    }
+
+    public void stopEntryOrderChase(Long tradeId) {
+        if (tradeId == null) {
+            return;
+        }
+        ScheduledFuture<?> future = entryChaseFutures.remove(tradeId);
+        if (future != null) {
+            future.cancel(true);
+            log.info("🧵 Entry chase completed for trade {}", tradeId);
+        }
+        entryChaseStates.remove(tradeId);
+    }
+
+    boolean isEntryOrderChaseActive(Long tradeId) {
+        return tradeId != null && entryChaseFutures.containsKey(tradeId);
+    }
+
+    private Double determineEntryChasePrice(TriggeredTradeSetupEntity trade, EntryChaseState state) {
+        if (trade == null) {
+            return null;
+        }
+
+        Double fallbackLtp = null;
+        if (ltpCacheService != null && trade.getScripCode() != null) {
+            fallbackLtp = ltpCacheService.getLtp(trade.getScripCode());
+        }
+        if (fallbackLtp == null || fallbackLtp <= 0) {
+            fallbackLtp = trade.getEntryPrice();
+        }
+        if (fallbackLtp == null || fallbackLtp <= 0) {
+            return null;
+        }
+
+        EntryDiagnostics diagnostics = analyseEntry(trade, fallbackLtp);
+        if (!diagnostics.shouldPlace()) {
+            log.info("🧵 Entry chase continuing despite spread check for trade {} reason={} spread={} bid={} ask={} mid={}",
+                    trade.getId(),
+                    diagnostics.reason(),
+                    formatPercent(diagnostics.spreadPercent()),
+                    formatPrice(diagnostics.bestBid()),
+                    formatPrice(diagnostics.bestAsk()),
+                    formatPrice(diagnostics.recommendedLimit()));
+        }
+
+        int attemptIndex = Math.min(state.modifyAttempts + 1, MAX_ENTRY_ATTEMPTS - 1);
+        return resolveEntryAttemptPrice(diagnostics, attemptIndex, fallbackLtp);
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {
@@ -2248,15 +2454,6 @@ public class TradeExecutionService {
     }
 
     private double resolveTickSizeFromDiagnostics(EntryDiagnostics diagnostics) {
-        Double bestBid = diagnostics.bestBid();
-        Double bestAsk = diagnostics.bestAsk();
-        if (bestBid != null && bestAsk != null) {
-            double diff = Math.abs(bestAsk - bestBid);
-            if (diff > 0d) {
-                return Math.max(0.01d, (double) Math.round(diff * 100.0d) / 100.0d);
-            }
-        }
-
         return 0.05d;
     }
 
@@ -3420,6 +3617,11 @@ public class TradeExecutionService {
      * Admin helper: execute a saved TriggerTradeRequestEntity (re-use existing execute flow)
      */
     public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity) {
+        return executeTradeFromEntity(requestEntity, false);
+    }
+
+    public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
+                                                            boolean chaseEntryUntilExecuted) {
         // If the saved request is missing broker credentials, resolve a sensible default
         try {
             if (requestEntity.getBrokerCredentialsId() == null) {
@@ -3563,7 +3765,7 @@ public class TradeExecutionService {
         String requestLockKey = buildEntryLockKey(requestEntity);
         try {
             return orderPlacementGuard.withLock(requestLockKey, ORDER_LOCK_TIMEOUT,
-                    () -> execute(temp, executionLtp));
+                    () -> execute(temp, executionLtp, java.time.LocalDateTime.now(), chaseEntryUntilExecuted));
         } catch (OrderPlacementGuard.LockAcquisitionException e) {
             log.warn("⚠️ Duplicate entry placement prevented for request {} (symbol={}): {}",
                     requestEntity != null ? requestEntity.getId() : null,

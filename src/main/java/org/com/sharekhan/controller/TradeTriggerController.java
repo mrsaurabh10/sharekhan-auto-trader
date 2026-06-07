@@ -158,7 +158,7 @@ public class TradeTriggerController {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: request does not belong to user");
             }
         }
-        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(request);
+        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(request, true);
         if (executed != null) {
             triggerTradeRequestRepository.delete(request);
         }
