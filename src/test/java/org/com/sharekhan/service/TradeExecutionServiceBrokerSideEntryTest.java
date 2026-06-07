@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -81,6 +82,28 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
         verify(ctx.triggeredRepo, never()).save(any());
         verify(ctx.eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void createExecutedTradePlacesTargetOrderForNonSpotTarget() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder()
+                .success(true)
+                .orderId("182038823")
+                .status("Pending")
+                .build());
+        when(ctx.broker.placeExitOrder(any(), any(BrokerContext.class), eq(150.0)))
+                .thenReturn(OrderPlacementResult.builder()
+                        .success(true)
+                        .orderId("TARGET-ORDER-1")
+                        .status("Pending")
+                        .attemptedPrice(150.0)
+                        .build());
+
+        TriggeredTradeSetupEntity created = ctx.service.createExecutedTrade(optionRequest());
+
+        assertThat(created.getStatus()).isEqualTo(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        assertThat(created.getExitOrderId()).isEqualTo("TARGET-ORDER-1");
+        verify(ctx.broker).placeExitOrder(any(), any(BrokerContext.class), eq(150.0));
     }
 
     private TriggerRequest optionRequest() {
@@ -139,6 +162,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 return entity;
             });
             when(triggerRepo.findById(77L)).thenAnswer(invocation -> Optional.ofNullable(savedRequest.get()));
+            when(triggeredRepo.findById(88L)).thenAnswer(invocation -> Optional.ofNullable(savedTrade.get()));
             when(triggerRepo.claimIfStatusEquals(
                     77L,
                     TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
