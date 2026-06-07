@@ -27,6 +27,7 @@ import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.service.broker.BrokerService;
 import org.com.sharekhan.service.broker.BrokerServiceFactory;
 import org.com.sharekhan.service.broker.ModifiableEntryBrokerService;
+import org.com.sharekhan.service.broker.TriggerPriceEntryBrokerService;
 import org.com.sharekhan.util.CryptoService;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
 import org.com.sharekhan.util.SharekhanConsoleSilencer;
@@ -290,7 +291,12 @@ public class TradeExecutionService {
 
     // New overload: if requireQuantity==true, throw an exception and send telegram when quantity is null
     public TriggerTradeRequestEntity executeTrade(TriggerRequest request, boolean requireQuantity) {
+        return executeTrade(request, requireQuantity, true);
+    }
 
+    private TriggerTradeRequestEntity executeTrade(TriggerRequest request,
+                                                   boolean requireQuantity,
+                                                   boolean attemptBrokerSideEntryOrder) {
 
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
@@ -477,8 +483,265 @@ public class TradeExecutionService {
                 subscribeToSpotFeed(spotScript);
             }
         }
+
+        if (attemptBrokerSideEntryOrder) {
+            tryPlaceBrokerSideEntryOrder(saved);
+        }
         
         return saved;
+    }
+
+    private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {
+        if (!isBrokerSideEntryTriggerEligible(requestEntity)) {
+            return;
+        }
+
+        BrokerContext ctx = resolveBrokerContext(requestEntity.getBrokerCredentialsId(), requestEntity.getAppUserId());
+        if (ctx == null || ctx.getBrokerName() == null || ctx.getApiKey() == null || ctx.getCustomerId() == null) {
+            log.debug("Skipping broker-side entry trigger for request {} because broker context is unavailable",
+                    requestEntity.getId());
+            return;
+        }
+
+        Broker broker;
+        try {
+            broker = Broker.fromDisplayName(ctx.getBrokerName());
+        } catch (Exception e) {
+            log.debug("Skipping broker-side entry trigger for request {} because broker {} is unsupported",
+                    requestEntity.getId(), ctx.getBrokerName());
+            return;
+        }
+
+        if (broker != Broker.SHAREKHAN) {
+            log.debug("Skipping broker-side entry trigger for request {} because broker {} does not support Sharekhan triggerPrice orders here",
+                    requestEntity.getId(), broker.getDisplayName());
+            return;
+        }
+
+        BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+        if (!(brokerService instanceof TriggerPriceEntryBrokerService triggerPriceEntryBroker)) {
+            log.debug("Skipping broker-side entry trigger for request {} because broker service {} does not support trigger-price entries",
+                    requestEntity.getId(), brokerService != null ? brokerService.getClass().getSimpleName() : "null");
+            return;
+        }
+
+        String requestLockKey = buildEntryLockKey(requestEntity);
+        try {
+            orderPlacementGuard.withLock(requestLockKey, ORDER_LOCK_TIMEOUT, () -> {
+                placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker);
+                return null;
+            });
+        } catch (OrderPlacementGuard.LockAcquisitionException e) {
+            log.warn("⚠️ Broker-side entry trigger skipped for request {} because another entry placement is in progress: {}",
+                    requestEntity.getId(), e.getMessage());
+        } catch (Exception e) {
+            log.warn("⚠️ Broker-side entry trigger attempt failed for request {}. Keeping earlier trigger flow active: {}",
+                    requestEntity.getId(), e.getMessage());
+            log.debug("Broker-side entry trigger failure", e);
+        }
+    }
+
+    private void placeBrokerSideEntryOrderWithClaim(TriggerTradeRequestEntity requestEntity,
+                                                    BrokerContext ctx,
+                                                    TriggerPriceEntryBrokerService brokerService) {
+        TriggerTradeRequestEntity latest = triggerTradeRequestRepository.findById(requestEntity.getId()).orElse(requestEntity);
+        if (!isBrokerSideEntryTriggerEligible(latest)) {
+            return;
+        }
+
+        int claimed = triggerTradeRequestRepository.claimIfStatusEquals(
+                latest.getId(),
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                TriggeredTradeStatus.TRIGGERED.name());
+        if (claimed != 1) {
+            log.debug("Broker-side entry trigger request {} was not claimable; current flow will handle it", latest.getId());
+            return;
+        }
+
+        latest.setStatus(TriggeredTradeStatus.TRIGGERED);
+        requestEntity.setStatus(TriggeredTradeStatus.TRIGGERED);
+        boolean brokerAccepted = false;
+
+        try {
+            double entryPrice = roundPrice(latest.getEntryPrice());
+            TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now());
+            TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", entryPrice, null);
+
+            OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice);
+            if (result != null && result.getAttemptedPrice() == null) {
+                result.setAttemptedPrice(entryPrice);
+            }
+
+            if (result == null || !result.isSuccess() || !isUsableBrokerOrderId(result.getOrderId())) {
+                String reason = result != null && result.getRejectionReason() != null
+                        ? result.getRejectionReason()
+                        : "Broker-side entry trigger was not accepted";
+                TradeEventLogger.logOrderRejected(
+                        "ENTRY_TRIGGER",
+                        pendingTrade,
+                        reason,
+                        entryPrice,
+                        result != null ? result.getAttemptedPrice() : entryPrice);
+                revertBrokerSideEntryClaim(latest, requestEntity);
+                log.warn("⚠️ Broker-side entry trigger rejected for request {}. Continuing earlier websocket trigger flow. Reason={}",
+                        latest.getId(), reason);
+                return;
+            }
+
+            brokerAccepted = true;
+            pendingTrade.setOrderId(result.getOrderId());
+
+            if (isOrderPlacementFilled(result)) {
+                applyImmediateEntryExecution(pendingTrade, result);
+            }
+
+            TriggeredTradeSetupEntity savedTrade = triggeredTradeRepo.save(pendingTrade);
+            TradeEventLogger.logOrderAccepted("ENTRY_TRIGGER", savedTrade, result, entryPrice);
+
+            if (TriggeredTradeStatus.EXECUTED.equals(savedTrade.getStatus())) {
+                TradeEventLogger.logOrderExecuted("ENTRY", savedTrade, result.getExecutedPrice(), result.getStatus());
+                handleEntryOrderExecution(savedTrade);
+            } else {
+                publishOrderPlaced(savedTrade);
+            }
+
+            log.info("✅ Broker-side entry trigger placed for request {} orderId={} entryPrice={}",
+                    latest.getId(), result.getOrderId(), formatPrice(entryPrice));
+        } catch (Exception e) {
+            if (!brokerAccepted) {
+                revertBrokerSideEntryClaim(latest, requestEntity);
+                log.warn("⚠️ Broker-side entry trigger failed before broker acceptance for request {}. Earlier trigger flow remains active: {}",
+                        latest.getId(), e.getMessage());
+                return;
+            }
+            log.error("❌ Broker-side entry trigger was accepted for request {}, but local persistence/monitoring failed: {}",
+                    latest.getId(), e.getMessage(), e);
+        }
+    }
+
+    private boolean isBrokerSideEntryTriggerEligible(TriggerTradeRequestEntity requestEntity) {
+        return requestEntity != null
+                && requestEntity.getId() != null
+                && TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(requestEntity.getStatus())
+                && requestEntity.getEntryPrice() != null
+                && requestEntity.getEntryPrice() > 0d
+                && hasOptionType(requestEntity.getOptionType())
+                && !usesSpotForEntry(requestEntity);
+    }
+
+    private boolean usesSpotForEntry(TriggerTradeRequestEntity requestEntity) {
+        if (requestEntity == null) {
+            return false;
+        }
+        return Boolean.TRUE.equals(requestEntity.getUseSpotForEntry())
+                || (requestEntity.getUseSpotForEntry() == null && Boolean.TRUE.equals(requestEntity.getUseSpotPrice()));
+    }
+
+    private void revertBrokerSideEntryClaim(TriggerTradeRequestEntity latest,
+                                            TriggerTradeRequestEntity originalReference) {
+        if (latest == null || latest.getId() == null) {
+            return;
+        }
+        int reverted = triggerTradeRequestRepository.claimIfStatusEquals(
+                latest.getId(),
+                TriggeredTradeStatus.TRIGGERED.name(),
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
+        if (reverted == 1) {
+            latest.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            if (originalReference != null) {
+                originalReference.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            }
+        } else {
+            log.warn("Unable to revert broker-side entry trigger claim for request {}. It may have been handled by another flow.",
+                    latest.getId());
+        }
+    }
+
+    private TriggeredTradeSetupEntity buildPendingEntryTradeFromRequest(TriggerTradeRequestEntity requestEntity,
+                                                                        LocalDateTime triggeredAt) {
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setTriggerRequestId(requestEntity.getId());
+        trade.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        trade.setTriggeredAt(triggeredAt != null ? triggeredAt : LocalDateTime.now());
+        trade.setScripCode(requestEntity.getScripCode());
+        trade.setBrokerCredentialsId(requestEntity.getBrokerCredentialsId());
+        trade.setAppUserId(requestEntity.getAppUserId());
+        trade.setExchange(requestEntity.getExchange());
+        trade.setSymbol(requestEntity.getSymbol());
+        trade.setQuantity(requestEntity.getQuantity());
+        trade.setLots(requestEntity.getLots());
+        trade.setTslEnabled(requestEntity.getTslEnabled());
+        trade.setInstrumentType(requestEntity.getInstrumentType());
+        trade.setStrikePrice(requestEntity.getStrikePrice());
+        trade.setOptionType(requestEntity.getOptionType());
+        trade.setExpiry(requestEntity.getExpiry());
+        trade.setIntraday(requestEntity.getIntraday());
+        trade.setEntryPrice(requestEntity.getEntryPrice());
+        trade.setStopLoss(requestEntity.getStopLoss());
+        trade.setTarget1(requestEntity.getTarget1());
+        trade.setTarget2(requestEntity.getTarget2());
+        trade.setTarget3(requestEntity.getTarget3());
+        trade.setTrailingSl(requestEntity.getTrailingSl());
+        trade.setUseSpotForEntry(requestEntity.getUseSpotForEntry());
+        trade.setUseSpotForSl(requestEntity.getUseSpotForSl());
+        trade.setUseSpotForTarget(requestEntity.getUseSpotForTarget());
+        trade.setUseSpotPrice(requestEntity.getUseSpotPrice());
+        trade.setSpotScripCode(requestEntity.getSpotScripCode());
+        trade.setSource(requestEntity.getSource());
+        return trade;
+    }
+
+    private void applyImmediateEntryExecution(TriggeredTradeSetupEntity trade,
+                                              OrderPlacementResult result) {
+        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+        trade.setEntryAt(LocalDateTime.now());
+
+        Double executedPrice = result != null && result.getExecutedPrice() != null
+                ? result.getExecutedPrice()
+                : trade.getEntryPrice();
+        if (executedPrice == null) {
+            return;
+        }
+
+        Double originalEntryPrice = trade.getEntryPrice();
+        trade.setActualEntryPrice(executedPrice);
+
+        boolean isSharekhanSource = isSharekhanSource(trade.getSource());
+        if (!isSharekhanSource) {
+            if (originalEntryPrice != null) {
+                double diff = executedPrice - originalEntryPrice;
+                if (Math.abs(diff) > 0.0001) {
+                    log.info("Adjusting SL and Targets for broker-side entry trade due to immediate execution price difference: {}. OriginalEntry={}, Executed={}",
+                            diff, originalEntryPrice, executedPrice);
+                    if (trade.getStopLoss() != null) {
+                        trade.setStopLoss(trade.getStopLoss() + diff);
+                    }
+                    if (trade.getTarget1() != null) {
+                        trade.setTarget1(trade.getTarget1() + diff);
+                    }
+                    if (trade.getTarget2() != null) {
+                        trade.setTarget2(trade.getTarget2() + diff);
+                    }
+                    if (trade.getTarget3() != null) {
+                        trade.setTarget3(trade.getTarget3() + diff);
+                    }
+                }
+            }
+            trade.setEntryPrice(executedPrice);
+        }
+    }
+
+    private void publishOrderPlaced(TriggeredTradeSetupEntity trade) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    eventPublisher.publishEvent(new OrderPlacedEvent(trade));
+                }
+            });
+        } else {
+            eventPublisher.publishEvent(new OrderPlacedEvent(trade));
+        }
     }
 
     private ScriptMasterEntity resolveScriptForRequest(TriggerRequest request, boolean isNoStrikeExchange) {
@@ -731,7 +994,7 @@ public class TradeExecutionService {
             }
         }
 
-        TriggerTradeRequestEntity saved = executeTrade(request);
+        TriggerTradeRequestEntity saved = executeTrade(request, false, false);
         int claimed = triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
                 TriggeredTradeStatus.TRIGGERED.name());
@@ -2370,9 +2633,18 @@ public class TradeExecutionService {
     }
 
     public boolean hasUsableTradedExitPrice(TriggeredTradeSetupEntity trade, double exitPrice) {
-        if (trade == null || trade.getEntryPrice() == null) {
+        if (trade == null) {
             return true;
         }
+
+        if (isImplausibleOptionPriceCandidate(trade, exitPrice)) {
+            return false;
+        }
+
+        if (trade.getEntryPrice() == null) {
+            return true;
+        }
+
         if (!usesSpotReference(trade)) {
             return true;
         }
