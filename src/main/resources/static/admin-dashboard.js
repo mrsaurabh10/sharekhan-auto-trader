@@ -136,6 +136,10 @@
            '>' + escapeHtml(meta.label) + '</span></td>';
   }
 
+  function booleanLabel(value) {
+    return value === true || String(value).toLowerCase() === 'true' ? 'Yes' : 'No';
+  }
+
   function currentTradeScope() {
     return window.currentUserTab === 'simulator' ? 'simulator' : 'own';
   }
