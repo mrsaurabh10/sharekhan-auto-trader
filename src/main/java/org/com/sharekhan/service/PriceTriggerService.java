@@ -289,6 +289,12 @@ public class PriceTriggerService {
 
             for (TriggeredTradeSetupEntity trade : trades) {
                 try {
+                    if (isSpotTickForOptionTrade(scripCode, trade)) {
+                        log.warn("Skipping trade {} in traded-instrument monitor branch because scripCode {} is the spot scrip for option trade. Waiting for traded option scrip {}.",
+                                trade.getId(), scripCode, trade.getScripCode());
+                        continue;
+                    }
+
                     // If any spot flag is true, we might need spot price.
                     // If spotScripCode is present, fetch spot LTP.
                     Double spotLtp = null;
@@ -321,12 +327,7 @@ public class PriceTriggerService {
             );
              for (TriggeredTradeSetupEntity trade : spotTrades) {
                 try {
-                     // We have the spot LTP (ltp argument). We need the traded instrument LTP for execution.
-                     Double tradedLtp = ltpCacheService.getLtp(trade.getScripCode());
-                     
-                     if (tradedLtp == null) {
-                         tradedLtp = fetchLtpFromMStock(trade.getScripCode(), trade.getId(), "traded");
-                     }
+                     Double tradedLtp = resolveTradedLtpForSpotTick(trade, scripCode);
 
                      if (tradedLtp != null) {
                          handleTradeWithLock(trade.getId(), tradedLtp, ltp);
@@ -341,6 +342,37 @@ public class PriceTriggerService {
         } catch (Exception e) {
             log.error("❌ Error monitoring open trades for scripCode {}: {}", scripCode, e.getMessage(), e);
         }
+    }
+
+    private Double resolveTradedLtpForSpotTick(TriggeredTradeSetupEntity trade, Integer spotTickScripCode) {
+        if (trade == null || trade.getScripCode() == null) {
+            return null;
+        }
+
+        if (isSpotTickForOptionTrade(spotTickScripCode, trade)) {
+            Integer tradedScripCode = trade.getScripCode();
+            if (tradedScripCode.equals(spotTickScripCode)) {
+                log.warn("Cannot monitor option trade {} from spot tick {} because traded scrip and spot scrip are identical. Refusing to use spot LTP as order price.",
+                        trade.getId(), spotTickScripCode);
+                return null;
+            }
+        }
+
+        Double tradedLtp = ltpCacheService.getLtp(trade.getScripCode());
+
+        if (tradedLtp == null) {
+            tradedLtp = fetchLtpFromMStock(trade.getScripCode(), trade.getId(), "traded");
+        }
+
+        return tradedLtp;
+    }
+
+    private boolean isSpotTickForOptionTrade(Integer scripCode, TriggeredTradeSetupEntity trade) {
+        return scripCode != null
+                && trade != null
+                && hasOptionType(trade.getOptionType())
+                && trade.getSpotScripCode() != null
+                && scripCode.equals(trade.getSpotScripCode());
     }
 
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
@@ -392,9 +424,7 @@ public class PriceTriggerService {
                 }
 
                 if (slHit) {
-                    if (!tradeExecutionService.hasUsableTradedExitPrice(persisted, tradedLtp)) {
-                        log.warn("SL hit for trade {} on reference price {}, but traded LTP {} looks invalid for the option. Waiting for correct option LTP.",
-                                tradeId, slRefPrice, tradedLtp);
+                    if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, slRefPrice, "SL")) {
                         return 0;
                     }
                     int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
@@ -410,9 +440,7 @@ public class PriceTriggerService {
                     if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
                         int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
                         if (lotsToBook > 0) {
-                            if (!tradeExecutionService.hasUsableTradedExitPrice(persisted, tradedLtp)) {
-                                log.warn("Target hit for trade {} on reference price {}, but traded LTP {} looks invalid for the option. Waiting for correct option LTP.",
-                                        tradeId, targetRefPrice, tradedLtp);
+                            if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
                                 return 0;
                             }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
@@ -440,9 +468,7 @@ public class PriceTriggerService {
                         }
                         
                         if (targetHit) {
-                            if (!tradeExecutionService.hasUsableTradedExitPrice(persisted, tradedLtp)) {
-                                log.warn("Target hit for trade {} on reference price {}, but traded LTP {} looks invalid for the option. Waiting for correct option LTP.",
-                                        tradeId, targetRefPrice, tradedLtp);
+                            if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
                                 return 0;
                             }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
@@ -746,6 +772,59 @@ public class PriceTriggerService {
         Integer scripCode = spotScript.getScripCode();
         return "NC".equalsIgnoreCase(spotScript.getExchange())
                 && (Integer.valueOf(20000).equals(scripCode) || Integer.valueOf(26009).equals(scripCode));
+    }
+
+    private boolean hasSafeTradedExitPrice(TriggeredTradeSetupEntity trade,
+                                           double tradedLtp,
+                                           Double spotLtp,
+                                           Double referencePrice,
+                                           String actionLabel) {
+        if (!tradeExecutionService.hasUsableTradedExitPrice(trade, tradedLtp)) {
+            log.warn("{} hit for trade {} on reference price {}, but traded LTP {} looks invalid for the option. Waiting for correct option LTP.",
+                    actionLabel,
+                    trade != null ? trade.getId() : null,
+                    referencePrice,
+                    tradedLtp);
+            return false;
+        }
+
+        if (looksLikeSpotLtpForOptionTrade(trade, tradedLtp, spotLtp)) {
+            log.warn("{} hit for trade {} on reference price {}, but traded LTP {} matches spot LTP {}. Waiting for correct option LTP.",
+                    actionLabel,
+                    trade != null ? trade.getId() : null,
+                    referencePrice,
+                    tradedLtp,
+                    spotLtp);
+            return false;
+        }
+
+        return true;
+    }
+
+    private boolean looksLikeSpotLtpForOptionTrade(TriggeredTradeSetupEntity trade, double tradedLtp, Double spotLtp) {
+        if (trade == null || !hasOptionType(trade.getOptionType())) {
+            return false;
+        }
+        if (spotLtp == null || !Double.isFinite(spotLtp) || spotLtp <= 0d || !Double.isFinite(tradedLtp) || tradedLtp <= 0d) {
+            return false;
+        }
+
+        double spotDistance = Math.abs(tradedLtp - spotLtp) / spotLtp;
+        if (spotDistance > 0.02d) {
+            return false;
+        }
+
+        Double optionReference = resolveOptionCost(trade);
+        if (optionReference == null || optionReference <= 0d) {
+            return tradedLtp > 1000d;
+        }
+
+        double optionDistance = Math.abs(tradedLtp - optionReference) / optionReference;
+        return optionDistance > 0.50d;
+    }
+
+    private boolean hasOptionType(String optionType) {
+        return optionType != null && !optionType.trim().isEmpty();
     }
 
     private int resolveCurrentLots(TriggeredTradeSetupEntity trade) {

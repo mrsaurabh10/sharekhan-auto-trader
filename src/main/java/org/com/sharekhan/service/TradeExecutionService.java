@@ -2369,9 +2369,18 @@ public class TradeExecutionService {
     }
 
     public boolean hasUsableTradedExitPrice(TriggeredTradeSetupEntity trade, double exitPrice) {
-        if (trade == null || trade.getEntryPrice() == null) {
+        if (trade == null) {
             return true;
         }
+
+        if (isImplausibleOptionPriceCandidate(trade, exitPrice)) {
+            return false;
+        }
+
+        if (trade.getEntryPrice() == null) {
+            return true;
+        }
+
         if (!usesSpotReference(trade)) {
             return true;
         }

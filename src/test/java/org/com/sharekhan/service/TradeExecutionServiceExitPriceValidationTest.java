@@ -91,6 +91,38 @@ class TradeExecutionServiceExitPriceValidationTest {
     }
 
     @Test
+    void rejectsIndexSpotExitPriceForNonSpotOptionTrade() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(5209L)
+                .symbol("NIFTY")
+                .entryPrice(110.0)
+                .actualEntryPrice(111.2)
+                .optionType("PE")
+                .useSpotForEntry(false)
+                .useSpotForSl(false)
+                .useSpotForTarget(false)
+                .build();
+
+        assertThat(service.hasUsableTradedExitPrice(trade, 23357.0)).isFalse();
+    }
+
+    @Test
+    void acceptsOptionLikeExitPriceForNonSpotOptionTrade() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(5209L)
+                .symbol("NIFTY")
+                .entryPrice(110.0)
+                .actualEntryPrice(111.2)
+                .optionType("PE")
+                .useSpotForEntry(false)
+                .useSpotForSl(false)
+                .useSpotForTarget(false)
+                .build();
+
+        assertThat(service.hasUsableTradedExitPrice(trade, 76.05)).isTrue();
+    }
+
+    @Test
     void rejectsPlaceholderBrokerOrderIds() {
         assertThat(service.isUsableBrokerOrderId(null)).isFalse();
         assertThat(service.isUsableBrokerOrderId("")).isFalse();
