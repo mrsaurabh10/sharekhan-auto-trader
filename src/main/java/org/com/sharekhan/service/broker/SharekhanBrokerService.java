@@ -19,7 +19,7 @@ import java.util.Set;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class SharekhanBrokerService implements ModifiableEntryBrokerService {
+public class SharekhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService {
 
     private final TokenStoreService tokenStoreService;
 
@@ -31,6 +31,13 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
     @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
         return executeSharekhanOrder(trade, context, ltp, "B", "NEW");
+    }
+
+    @Override
+    public OrderPlacementResult placeTriggerPriceEntryOrder(TriggeredTradeSetupEntity trade,
+                                                            BrokerContext context,
+                                                            double entryPrice) {
+        return executeSharekhanOrder(trade, context, entryPrice, "B", "NEW", entryPrice);
     }
 
     @Override
@@ -114,7 +121,20 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
         }
     }
 
-    private OrderPlacementResult executeSharekhanOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double price, String transactionType, String requestType) {
+    private OrderPlacementResult executeSharekhanOrder(TriggeredTradeSetupEntity trade,
+                                                       BrokerContext context,
+                                                       double price,
+                                                       String transactionType,
+                                                       String requestType) {
+        return executeSharekhanOrder(trade, context, price, transactionType, requestType, null);
+    }
+
+    private OrderPlacementResult executeSharekhanOrder(TriggeredTradeSetupEntity trade,
+                                                       BrokerContext context,
+                                                       double price,
+                                                       String transactionType,
+                                                       String requestType,
+                                                       Double triggerPrice) {
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
@@ -128,6 +148,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             order.transactionType = transactionType;
             order.quantity = trade.getQuantity();
             order.price = String.valueOf(price);
+            if (triggerPrice != null) {
+                order.triggerPrice = String.valueOf(triggerPrice);
+            }
             order.orderType = "NORMAL";
             order.productType = "INVESTMENT";
             order.instrumentType = trade.getInstrumentType();
@@ -152,16 +175,18 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             String orderId = null;
             final int maxAttempts = 3;
             long[] backoffMs = new long[]{300L, 700L, 1500L};
-            String stage = "S".equalsIgnoreCase(transactionType) ? "EXIT" : "ENTRY";
+            String stage = "S".equalsIgnoreCase(transactionType)
+                    ? "EXIT"
+                    : triggerPrice != null ? "ENTRY_TRIGGER" : "ENTRY";
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++) {
                 try {
-                    log.info("{}_BROKER_ATTEMPT | tradeId={} | symbol={} | attempt={} | requestType={} | transactionType={} | attemptedPrice={}",
-                            stage, trade.getId(), trade.getSymbol(), attempt, requestType, transactionType, price);
+                    log.info("{}_BROKER_ATTEMPT | tradeId={} | symbol={} | attempt={} | requestType={} | transactionType={} | attemptedPrice={} | triggerPrice={}",
+                            stage, trade.getId(), trade.getSymbol(), attempt, requestType, transactionType, price, order.triggerPrice);
                     response = SharekhanConsoleSilencer.call(() -> sharekhanConnect.placeOrder(order));
                 } catch (Exception e) {
-                    log.warn("{}_BROKER_ATTEMPT_FAILED | tradeId={} | attempt={} | attemptedPrice={} | reason={}",
-                            stage, trade.getId(), attempt, price, e.getMessage());
+                    log.warn("{}_BROKER_ATTEMPT_FAILED | tradeId={} | attempt={} | attemptedPrice={} | triggerPrice={} | reason={}",
+                            stage, trade.getId(), attempt, price, order.triggerPrice, e.getMessage());
                 }
 
                 if (response != null && response.has("data")) {
