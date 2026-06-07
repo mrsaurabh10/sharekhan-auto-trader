@@ -136,6 +136,10 @@
            '>' + escapeHtml(meta.label) + '</span></td>';
   }
 
+  function booleanLabel(value) {
+    return value === true || String(value).toLowerCase() === 'true' ? 'Yes' : 'No';
+  }
+
   function currentTradeScope() {
     return window.currentUserTab === 'simulator' ? 'simulator' : 'own';
   }
@@ -873,7 +877,7 @@
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="15">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="16">No user selected</td></tr>'; updatePaginationUI(null); return; }
 
     try {
       let url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(tradeScope) + '&page=' + currentExecPage + '&size=' + execPageSize;
@@ -890,7 +894,7 @@
       }
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="15">No executed trades</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="16">No executed trades</td></tr>';
         refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
         updatePaginationUI(pageInfo);
         return;
@@ -982,6 +986,7 @@
                        '<td>' + escapeHtml(String(sl)) + '</td>' +
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
                        '<td>' + escapeHtml(String(qty)) + '</td>' +
+                       '<td>' + escapeHtml(booleanLabel(t.intraday)) + '</td>' +
                        '<td>' + escapeHtml(String(status)) + '</td>';
         tr.appendChild(actionCell);
 
@@ -1048,7 +1053,7 @@
       }
       refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
       updatePaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="16">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
