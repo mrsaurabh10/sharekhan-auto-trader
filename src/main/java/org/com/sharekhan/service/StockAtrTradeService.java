@@ -15,9 +15,11 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.Month;
 import java.time.ZoneId;
+import java.time.DayOfWeek;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.time.format.TextStyle;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -177,15 +179,10 @@ public class StockAtrTradeService {
     }
 
     private double calculateAtr(Integer spotScripCode, String candleInterval) {
-        LocalDate today = LocalDate.now(MARKET_ZONE);
         int requiredCandles = ATR_PERIOD + 1;
-        List<SharekhanHistoricalService.HistoricalCandle> candles = historicalService
-                .getHistoricalCandles(spotScripCode, candleInterval, today.minusDays(10), today)
-                .stream()
-                .filter(Objects::nonNull)
-                .filter(c -> c.high() > 0d && c.low() > 0d && c.close() > 0d)
-                .sorted(candleComparator())
-                .toList();
+        LocalDate today = LocalDate.now(MARKET_ZONE);
+        List<SharekhanHistoricalService.HistoricalCandle> candles = loadAtrCandlesWithFallback(
+                spotScripCode, candleInterval, requiredCandles, today);
         if (candles.size() < requiredCandles) {
             throw new IllegalArgumentException("Not enough " + candleInterval + " candles to compute ATR(" + ATR_PERIOD + "). Required "
                     + requiredCandles + ", found " + candles.size());
@@ -216,11 +213,62 @@ public class StockAtrTradeService {
         return roundedAtr;
     }
 
+    private List<SharekhanHistoricalService.HistoricalCandle> loadAtrCandlesWithFallback(Integer spotScripCode,
+                                                                                         String candleInterval,
+                                                                                         int requiredCandles,
+                                                                                         LocalDate today) {
+        List<DateRange> attempts = atrDateRanges(today);
+        List<SharekhanHistoricalService.HistoricalCandle> best = List.of();
+        for (DateRange attempt : attempts) {
+            List<SharekhanHistoricalService.HistoricalCandle> candles = historicalService
+                    .getHistoricalCandles(spotScripCode, candleInterval, attempt.from(), attempt.to())
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .filter(c -> c.high() > 0d && c.low() > 0d && c.close() > 0d)
+                    .sorted(candleComparator())
+                    .toList();
+
+            if (candles.size() > best.size()) {
+                best = candles;
+            }
+            if (candles.size() >= requiredCandles) {
+                if (!attempt.primary()) {
+                    log.info("📐 ATR candle load recovered with fallback range | spotScrip={} interval={} from={} to={} candles={}",
+                            spotScripCode, candleInterval, attempt.from(), attempt.to(), candles.size());
+                }
+                return candles;
+            }
+            log.debug("ATR candle load returned too few candles | spotScrip={} interval={} from={} to={} required={} found={}",
+                    spotScripCode, candleInterval, attempt.from(), attempt.to(), requiredCandles, candles.size());
+        }
+        return best;
+    }
+
+    private List<DateRange> atrDateRanges(LocalDate today) {
+        LocalDate previousTradingDay = previousTradingDay(today);
+        List<DateRange> ranges = new ArrayList<>();
+        ranges.add(new DateRange(today.minusDays(10), today, true));
+        ranges.add(new DateRange(previousTradingDay.minusDays(10), previousTradingDay, false));
+        ranges.add(new DateRange(today.minusDays(30), today, false));
+        ranges.add(new DateRange(previousTradingDay.minusDays(30), previousTradingDay, false));
+        return ranges.stream().distinct().toList();
+    }
+
+    private LocalDate previousTradingDay(LocalDate date) {
+        LocalDate candidate = date.minusDays(1);
+        while (candidate.getDayOfWeek() == DayOfWeek.SATURDAY || candidate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            candidate = candidate.minusDays(1);
+        }
+        return candidate;
+    }
+
     private Comparator<SharekhanHistoricalService.HistoricalCandle> candleComparator() {
         return Comparator
                 .comparing((SharekhanHistoricalService.HistoricalCandle c) -> c.date() != null ? c.date() : LocalDate.MIN)
                 .thenComparing(c -> c.time() != null ? c.time() : LocalTime.MIN);
     }
+
+    private record DateRange(LocalDate from, LocalDate to, boolean primary) { }
 
     String nearestExpiry(String stock, String optionType, Integer requestedMonth) {
         if (requestedMonth != null && (requestedMonth < 1 || requestedMonth > 12)) {

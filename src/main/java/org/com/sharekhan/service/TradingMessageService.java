@@ -113,8 +113,9 @@ public class TradingMessageService {
         if (parsed != null) {
             System.out.println("✅ Parsed message: " + parsed);
             if (Boolean.TRUE.equals(parsed.get("stockAtrTrade"))) {
-                handleStockAtrMessage(parsed);
-                System.out.println("✅ ATR stock message handled" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
+                boolean handled = handleStockAtrMessage(parsed);
+                System.out.println((handled ? "✅ ATR stock message handled" : "⚠️ ATR stock message skipped")
+                        + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
                 return;
             }
             TriggerRequest base = mapToTriggerRequest(parsed);
@@ -137,7 +138,7 @@ public class TradingMessageService {
         }
     }
 
-    private void handleStockAtrMessage(Map<String, Object> parsed) {
+    private boolean handleStockAtrMessage(Map<String, Object> parsed) {
         StockAtrTradeRequest request = new StockAtrTradeRequest();
         request.setStock((String) parsed.get("stock"));
         request.setEntryPrice(parseDouble(parsed.get("entry")));
@@ -167,8 +168,33 @@ public class TradingMessageService {
         Object parsedSource = parsed.get("source");
         request.setSource(parsedSource != null ? parsedSource.toString() : "atr-signal");
 
-        TriggerRequest triggerRequest = stockAtrTradeService.buildTriggerRequest(request);
-        placeForAllSharekhanCustomers(triggerRequest);
+        try {
+            TriggerRequest triggerRequest = stockAtrTradeService.buildTriggerRequest(request);
+            placeForAllSharekhanCustomers(triggerRequest);
+            return true;
+        } catch (IllegalArgumentException e) {
+            System.err.println("ATR stock signal skipped: " + e.getMessage());
+            notifyStockAtrFailure(request, e.getMessage());
+        } catch (Exception e) {
+            System.err.println("ATR stock signal failed: " + e.getMessage());
+            notifyStockAtrFailure(request, e.getMessage());
+        }
+        return false;
+    }
+
+    private void notifyStockAtrFailure(StockAtrTradeRequest request, String reason) {
+        if (telegramNotificationService == null) {
+            return;
+        }
+        try {
+            telegramNotificationService.sendTradeMessage(
+                    "ATR Stock Signal Skipped",
+                    "Stock: " + (request != null ? request.getStock() : null)
+                            + "\nDirection: " + (request != null ? request.getDirection() : null)
+                            + "\nEntry: " + (request != null ? request.getEntryPrice() : null)
+                            + "\nReason: " + reason
+            );
+        } catch (Exception ignored) {}
     }
 
     private boolean handleSharekhanUpdateClose(String message, String uniqueId) {
