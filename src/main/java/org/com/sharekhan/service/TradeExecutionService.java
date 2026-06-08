@@ -40,6 +40,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
@@ -3447,31 +3448,38 @@ public class TradeExecutionService {
         if (statuses != null && !statuses.isEmpty()) {
             List<String> statusNames = statuses.stream().map(Enum::name).collect(java.util.stream.Collectors.toList());
             if (isSimulatorDashboardScope(scope)) {
-                return triggeredTradeRepo.findBySimulatorAndStatusIn(Broker.SIMULATOR.getDisplayName(), statusNames, pageable);
+                return triggeredTradeRepo.findBySimulatorAndStatusIn(Broker.SIMULATOR.getDisplayName(), statusNames, unsortedPageable(pageable));
             }
             if (userId == null) {
                 return triggeredTradeRepo.findByStatusIn(statuses, pageable);
             } else if (isUserDashboardScope(scope)) {
                 return triggeredTradeRepo.findByAppUserIdAndStatusIn(userId, statuses, pageable);
             } else if (isAllDashboardScope(scope)) {
-                return triggeredTradeRepo.findByAppUserIdOrSimulatorAndStatusIn(userId, Broker.SIMULATOR.getDisplayName(), statusNames, pageable);
+                return triggeredTradeRepo.findByAppUserIdOrSimulatorAndStatusIn(userId, Broker.SIMULATOR.getDisplayName(), statusNames, unsortedPageable(pageable));
             } else {
-                return triggeredTradeRepo.findByAppUserIdExcludingSimulatorAndStatusIn(userId, Broker.SIMULATOR.getDisplayName(), statusNames, pageable);
+                return triggeredTradeRepo.findByAppUserIdExcludingSimulatorAndStatusIn(userId, Broker.SIMULATOR.getDisplayName(), statusNames, unsortedPageable(pageable));
             }
         } else {
             if (isSimulatorDashboardScope(scope)) {
-                return triggeredTradeRepo.findBySimulator(Broker.SIMULATOR.getDisplayName(), pageable);
+                return triggeredTradeRepo.findBySimulator(Broker.SIMULATOR.getDisplayName(), unsortedPageable(pageable));
             }
             if (userId == null) {
                 return triggeredTradeRepo.findAll(pageable);
             } else if (isUserDashboardScope(scope)) {
                 return triggeredTradeRepo.findByAppUserId(userId, pageable);
             } else if (isAllDashboardScope(scope)) {
-                return triggeredTradeRepo.findByAppUserIdOrSimulator(userId, Broker.SIMULATOR.getDisplayName(), pageable);
+                return triggeredTradeRepo.findByAppUserIdOrSimulator(userId, Broker.SIMULATOR.getDisplayName(), unsortedPageable(pageable));
             } else {
-                return triggeredTradeRepo.findByAppUserIdExcludingSimulator(userId, Broker.SIMULATOR.getDisplayName(), pageable);
+                return triggeredTradeRepo.findByAppUserIdExcludingSimulator(userId, Broker.SIMULATOR.getDisplayName(), unsortedPageable(pageable));
             }
         }
+    }
+
+    private Pageable unsortedPageable(Pageable pageable) {
+        if (pageable == null || pageable.isUnpaged()) {
+            return Pageable.unpaged();
+        }
+        return PageRequest.of(pageable.getPageNumber(), pageable.getPageSize());
     }
 
     private boolean isSimulatorDashboardScope(String scope) {
