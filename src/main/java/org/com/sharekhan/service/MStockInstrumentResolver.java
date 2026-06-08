@@ -158,7 +158,7 @@ public class MStockInstrumentResolver {
         Optional<String> attributeMatch = lookupByAttributes(script, normalizedExchange);
         if (attributeMatch.isPresent()) {
             String key = attributeMatch.get();
-            if (isValidSpotKey(script, key)) {
+            if (isValidResolvedKey(script, key, normalizedExchange, derivativeInstrument)) {
                 return cacheAndReturn(script, key, true);
             }
         }
@@ -176,8 +176,8 @@ public class MStockInstrumentResolver {
             Optional<String> key = lookupInstrumentKey(normalizedExchange, symbol);
             if (key.isPresent()) {
                 String resolvedKey = key.get();
-                if (!isValidSpotKey(script, resolvedKey)) {
-                    log.warn("Resolved MStock key {} for scripCode={} tradingSymbol={} but rejected by spot validation.",
+                if (!isValidResolvedKey(script, resolvedKey, normalizedExchange, derivativeInstrument)) {
+                    log.warn("Resolved MStock key {} for scripCode={} tradingSymbol={} but rejected by instrument validation.",
                             resolvedKey, script.getScripCode(), script.getTradingSymbol());
                     printDiagnostic("Rejected resolved key=" + resolvedKey
                             + " for scripCode=" + script.getScripCode()
@@ -190,7 +190,7 @@ public class MStockInstrumentResolver {
         if (!isInstrumentMasterPopulated() && !candidateSymbols.isEmpty()) {
             String fallbackSymbol = candidateSymbols.get(0);
             String fallbackKey = buildNormalizedKey(normalizedExchange, fallbackSymbol);
-            if (StringUtils.hasText(fallbackKey) && isValidSpotKey(script, fallbackKey)) {
+            if (StringUtils.hasText(fallbackKey) && isValidResolvedKey(script, fallbackKey, normalizedExchange, derivativeInstrument)) {
                 log.warn("MStock instrument master not populated; using heuristic fallback {}", fallbackKey);
                 return cacheAndReturn(script, fallbackKey, false);
             }
@@ -213,7 +213,7 @@ public class MStockInstrumentResolver {
             Optional<String> patternMatch = lookupDerivativeByPattern(normalizedExchange, script.getTradingSymbol());
             if (patternMatch.isPresent()) {
                 String key = patternMatch.get();
-                if (isValidSpotKey(script, key)) {
+                if (isValidResolvedKey(script, key, normalizedExchange, true)) {
                     return cacheAndReturn(script, key, true);
                 }
             }
@@ -503,6 +503,32 @@ public class MStockInstrumentResolver {
         return true;
     }
 
+    private boolean isValidResolvedKey(ScriptMasterEntity script,
+                                       String key,
+                                       String normalizedExchange,
+                                       boolean derivativeInstrument) {
+        if (derivativeInstrument) {
+            return isValidDerivativeKey(key, normalizedExchange);
+        }
+        return isValidSpotKey(script, key);
+    }
+
+    private boolean isValidDerivativeKey(String key, String normalizedExchange) {
+        if (!StringUtils.hasText(key) || !StringUtils.hasText(normalizedExchange)) {
+            return false;
+        }
+        String upperKey = key.trim().toUpperCase(Locale.ROOT);
+        String expectedPrefix = normalizedExchange.trim().toUpperCase(Locale.ROOT) + ":";
+        if (!upperKey.startsWith(expectedPrefix)) {
+            return false;
+        }
+        int colonIndex = upperKey.indexOf(':');
+        if (colonIndex < 0 || colonIndex + 1 >= upperKey.length()) {
+            return false;
+        }
+        return looksLikeDerivativeSymbol(upperKey.substring(colonIndex + 1));
+    }
+
     private String buildNormalizedKey(String exchange, String symbol) {
         if (!StringUtils.hasText(exchange) || !StringUtils.hasText(symbol)) {
             return null;
@@ -682,6 +708,9 @@ public class MStockInstrumentResolver {
 
     private Optional<String> hardcodedIndexInstrumentKey(ScriptMasterEntity script) {
         if (script == null) {
+            return Optional.empty();
+        }
+        if (isDerivativeInstrument(script, normalizeExchangeForApi(script.getExchange()))) {
             return Optional.empty();
         }
         String symbol = normalizeSymbolKey(script.getTradingSymbol());
