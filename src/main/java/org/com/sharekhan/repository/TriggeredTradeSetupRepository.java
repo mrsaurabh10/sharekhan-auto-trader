@@ -94,6 +94,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                     LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
                     WHERE t.app_user_id = :appUserId
                        OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
                     """,
             countQuery = """
                     SELECT COUNT(*)
@@ -116,6 +117,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                     LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
                     WHERE t.app_user_id = :appUserId
                       AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
+                    ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
                     """,
             countQuery = """
                     SELECT COUNT(*)
@@ -137,6 +139,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                     FROM triggered_trade_setups t
                     LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
                     WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
+                    ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
                     """,
             countQuery = """
                     SELECT COUNT(*)
@@ -161,6 +164,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                     LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
                     WHERE (t.app_user_id = :appUserId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
                       AND t.status IN (:statuses)
+                    ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
                     """,
             countQuery = """
                     SELECT COUNT(*)
@@ -185,6 +189,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                     WHERE t.app_user_id = :appUserId
                       AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName))
                       AND t.status IN (:statuses)
+                    ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
                     """,
             countQuery = """
                     SELECT COUNT(*)
@@ -209,6 +214,7 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                     LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
                     WHERE LOWER(b.broker_name) = LOWER(:simulatorBrokerName)
                       AND t.status IN (:statuses)
+                    ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
                     """,
             countQuery = """
                     SELECT COUNT(*)
