@@ -2,6 +2,10 @@ package org.com.sharekhan.service;
 
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.util.ShareKhanOrderUtil;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -130,5 +134,43 @@ class TradeExecutionServiceExitPriceValidationTest {
     @Test
     void acceptsRealBrokerOrderId() {
         assertThat(service.isUsableBrokerOrderId("182038823")).isTrue();
+    }
+
+    @Test
+    void statusNormalizerRequiresFullyExecutedForFilledState() {
+        assertThat(ShareKhanOrderUtil.isFullyExecutedStatus("Fully Executed")).isTrue();
+        assertThat(ShareKhanOrderUtil.isFullyExecutedStatus("Partially Executed")).isFalse();
+        assertThat(ShareKhanOrderUtil.isFullyExecutedStatus("Executed")).isFalse();
+        assertThat(ShareKhanOrderUtil.isPartiallyExecutedStatus("Partially Executed")).isTrue();
+    }
+
+    @Test
+    void treatsPartiallyExecutedEntryOrderHistoryAsPending() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(4471L)
+                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                .entryPrice(100.0)
+                .stopLoss(90.0)
+                .target1(110.0)
+                .quantity(100L)
+                .build();
+
+        TradeExecutionService.TradeStatus status = service.evaluateOrderFinalStatus(
+                trade,
+                orderHistory("Partially Executed", "101.25")
+        );
+
+        assertThat(status).isEqualTo(TradeExecutionService.TradeStatus.PENDING);
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(trade.getEntryAt()).isNull();
+        assertThat(trade.getActualEntryPrice()).isNull();
+        assertThat(trade.getEntryPrice()).isEqualTo(100.0);
+    }
+
+    private JSONObject orderHistory(String orderStatus, String avgPrice) {
+        JSONObject row = new JSONObject()
+                .put("orderStatus", orderStatus)
+                .put("avgPrice", avgPrice);
+        return new JSONObject().put("data", new JSONArray().put(row));
     }
 }

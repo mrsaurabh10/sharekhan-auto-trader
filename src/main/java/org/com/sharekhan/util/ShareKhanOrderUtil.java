@@ -10,8 +10,33 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.Locale;
 
 public class ShareKhanOrderUtil {
+
+    public static boolean isFullyExecutedStatus(String rawStatus) {
+        String normalized = normalizeOrderStatus(rawStatus);
+        if (normalized.isBlank() || isPartiallyExecutedStatus(normalized)) {
+            return false;
+        }
+        return normalized.contains("fully") && normalized.contains("executed");
+    }
+
+    public static boolean isPartiallyExecutedStatus(String rawStatus) {
+        String normalized = normalizeOrderStatus(rawStatus);
+        return normalized.contains("partial") && normalized.contains("executed");
+    }
+
+    private static String normalizeOrderStatus(String rawStatus) {
+        if (rawStatus == null) {
+            return "";
+        }
+        return rawStatus.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
 
     public static boolean isAfterHours() {
         LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
