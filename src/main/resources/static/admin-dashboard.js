@@ -691,7 +691,7 @@
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="15">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="14">No user selected</td></tr>'; updatePaginationUI(null); return; }
 
     try {
       let url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(tradeScope) + '&page=' + currentExecPage + '&size=' + execPageSize;
@@ -707,7 +707,7 @@
           data = responseData;
       }
 
-      if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="15">No executed trades</td></tr>'; updatePaginationUI(pageInfo); return; }
+      if (data.length === 0) { tbody.innerHTML = '<tr><td colspan="14">No executed trades</td></tr>'; updatePaginationUI(pageInfo); return; }
 
       const seen = new Set(); const uniq = [];
       for (const t of data) { const tid = t && (t.id || t.tradeId); if (!tid) { uniq.push(t); continue; } if (seen.has(tid)) continue; seen.add(tid); uniq.push(t); }
@@ -735,7 +735,7 @@
         const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
 
         const actionCell = document.createElement('td');
-        const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXITED_FAILURE', 'EXITED']);
+        const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXIT_FAILED', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(statusUpper)) {
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.innerText = 'Edit';
           editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); await loadAnalyticsForUser(uid); }); }); actionCell.appendChild(editBtn);
@@ -794,8 +794,7 @@
                        '<td>' + escapeHtml(String(entry)) + '</td>' +
                        '<td>' + escapeHtml(String(sl)) + '</td>' +
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
-                       '<td>' + escapeHtml(String(qty)) + '</td>' +
-                       '<td>' + escapeHtml(String(status)) + '</td>';
+                       '<td>' + escapeHtml(String(qty)) + '</td>';
         tr.appendChild(actionCell);
 
         const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
@@ -854,7 +853,7 @@
         applyLtpMap(map);
       }
       updatePaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="14">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
