@@ -73,7 +73,7 @@ public class AccessTokenPersistenceService {
 
     @Transactional
     public void replaceToken(String brokerDisplayName, String token, Instant expiry) {
-        repository.deleteAllByBrokerName(brokerDisplayName);
+        repository.deleteAllByBrokerNameAndBrokerCredentialsIdIsNullAndUserIdIsNull(brokerDisplayName);
         String encrypted = token != null ? cryptoService.encrypt(token) : null;
         repository.save(AccessTokenEntity.builder()
                 .token(encrypted)

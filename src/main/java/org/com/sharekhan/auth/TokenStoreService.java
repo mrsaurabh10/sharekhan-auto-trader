@@ -9,6 +9,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.entity.AccessTokenEntity;
+import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.enums.Broker;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -309,6 +310,82 @@ public class TokenStoreService {
         persistenceService.replaceTokenForCustomer(broker.getDisplayName(), customerId, userId, token, expiry);
     }
 
+    public TokenInfo refreshToken(Broker broker, TokenInfo currentTokenInfo) {
+        if (broker == null) {
+            return null;
+        }
+
+        BrokerAuthProvider provider = providerRegistry.getProvider(broker);
+        if (provider == null) {
+            log.warn("No auth provider registered for {} - cannot refresh token", broker.getDisplayName());
+            return null;
+        }
+
+        BrokerCredentialsEntity credentials = resolveCredentialsForTokenInfo(broker, currentTokenInfo);
+        try {
+            AuthTokenResult result = credentials != null
+                    ? provider.loginAndFetchToken(credentials)
+                    : provider.loginAndFetchToken();
+            if (result == null || result.token() == null || result.token().isBlank()) {
+                log.warn("Provider returned no token while refreshing {}", broker.getDisplayName());
+                return null;
+            }
+
+            if (credentials != null && credentials.getCustomerId() != null) {
+                updateTokenForCustomer(broker, credentials.getCustomerId(), credentials.getAppUserId(),
+                        result.token(), result.expiresIn());
+                return new TokenInfo(result.token(), credentials.getApiKey(), credentials.getCustomerId(),
+                        credentials.getAppUserId(), credentials.getId());
+            }
+
+            Long customerId = currentTokenInfo != null ? currentTokenInfo.getCustomerId() : null;
+            if (customerId != null) {
+                Long userId = currentTokenInfo.getAppUserId();
+                updateTokenForCustomer(broker, customerId, userId, result.token(), result.expiresIn());
+                return new TokenInfo(result.token(),
+                        currentTokenInfo != null ? currentTokenInfo.getApiKey() : null,
+                        customerId, userId,
+                        currentTokenInfo != null ? currentTokenInfo.getBrokerCredentialsId() : null);
+            }
+
+            updateToken(broker, result.token(), result.expiresIn());
+            return new TokenInfo(result.token(), currentTokenInfo != null ? currentTokenInfo.getApiKey() : null);
+        } catch (Exception e) {
+            log.error("Failed to refresh token for {}: {}", broker.getDisplayName(), e.getMessage(), e);
+            return null;
+        }
+    }
+
+    private BrokerCredentialsEntity resolveCredentialsForTokenInfo(Broker broker, TokenInfo tokenInfo) {
+        if (broker == null || tokenInfo == null) {
+            return null;
+        }
+        Long brokerCredentialsId = tokenInfo.getBrokerCredentialsId();
+        if (brokerCredentialsId != null) {
+            try {
+                Optional<BrokerCredentialsEntity> credentials = brokerCredentialsRepository.findById(brokerCredentialsId);
+                if (credentials.isPresent()) {
+                    return credentials.get();
+                }
+            } catch (Exception e) {
+                log.debug("Unable to load broker credentials id {} for {} refresh: {}",
+                        brokerCredentialsId, broker.getDisplayName(), e.getMessage());
+            }
+        }
+
+        Long customerId = tokenInfo.getCustomerId();
+        if (customerId != null) {
+            try {
+                return brokerCredentialsService.findForBrokerAndCustomer(broker.getDisplayName(), customerId)
+                        .orElse(null);
+            } catch (Exception e) {
+                log.debug("Unable to load broker credentials for {} customer {} refresh: {}",
+                        broker.getDisplayName(), customerId, e.getMessage());
+            }
+        }
+        return null;
+    }
+
     public boolean isExpired() {
         return isExpired(defaultBroker);
     }
@@ -388,7 +465,8 @@ public class TokenStoreService {
                     try {
                         AuthTokenResult res = provider.loginAndFetchToken(credsOpt.get());
                         if (res != null && res.token() != null) {
-                            updateTokenForCustomer(broker, customerId, res.token(), res.expiresIn());
+                            BrokerCredentialsEntity creds = credsOpt.get();
+                            updateTokenForCustomer(broker, customerId, creds.getAppUserId(), res.token(), res.expiresIn());
                             return res.token();
                         }
                     } catch (Exception e) {
@@ -479,11 +557,72 @@ public class TokenStoreService {
         }
     }
 
-    @lombok.Data
-    @lombok.AllArgsConstructor
     public static class TokenInfo {
         private String token;
         private String apiKey;
+        private Long customerId;
+        private Long appUserId;
+        private Long brokerCredentialsId;
+
+        public TokenInfo(String token, String apiKey) {
+            this(token, apiKey, null, null, null);
+        }
+
+        public TokenInfo(String token, String apiKey, Long customerId, Long appUserId, Long brokerCredentialsId) {
+            this.token = token;
+            this.apiKey = apiKey;
+            this.customerId = customerId;
+            this.appUserId = appUserId;
+            this.brokerCredentialsId = brokerCredentialsId;
+        }
+
+        public String getToken() {
+            return token;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public Long getCustomerId() {
+            return customerId;
+        }
+
+        public Long getAppUserId() {
+            return appUserId;
+        }
+
+        public Long getBrokerCredentialsId() {
+            return brokerCredentialsId;
+        }
+    }
+
+    public TokenInfo getTokenInfo(Broker broker, Long customerId) {
+        if (customerId == null) {
+            return getFirstNonExpiredTokenInfo(broker);
+        }
+
+        String token = getValidTokenOrNull(broker, customerId);
+        if (token == null || token.isBlank()) {
+            return null;
+        }
+
+        String customerKey = broker.getDisplayName() + ":" + customerId;
+        if (!tokenByCustomer.containsKey(customerKey)) {
+            return new TokenInfo(token, null);
+        }
+
+        try {
+            Optional<BrokerCredentialsEntity> creds = brokerCredentialsService.findForBrokerAndCustomer(broker.getDisplayName(), customerId);
+            if (creds.isPresent()) {
+                BrokerCredentialsEntity credential = creds.get();
+                return new TokenInfo(token, credential.getApiKey(), customerId,
+                        credential.getAppUserId(), credential.getId());
+            }
+        } catch (Exception ignored) {
+        }
+
+        return new TokenInfo(token, null, customerId, null, null);
     }
 
     public TokenInfo getFirstNonExpiredTokenInfo(Broker broker) {
@@ -498,15 +637,17 @@ public class TokenStoreService {
                     Instant exp = expiryByCustomer.get(key);
                     String tok = e.getValue();
                     if (tok != null && exp != null && Instant.now().isBefore(exp)) {
-                        String[] parts = key.split(":");
-                        if (parts.length >= 2) {
-                            try {
-                                Long customerId = Long.parseLong(parts[1]);
-                                var creds = brokerCredentialsService.findForBrokerAndCustomer(broker.getDisplayName(), customerId);
-                                if (creds.isPresent() && creds.get().getApiKey() != null) {
-                                    return new TokenInfo(tok, creds.get().getApiKey());
-                                }
-                            } catch (Exception ex) {}
+                        String customerIdPart = key.substring(prefix.length());
+                        try {
+                            Long customerId = Long.parseLong(customerIdPart);
+                            var creds = brokerCredentialsService.findForBrokerAndCustomer(broker.getDisplayName(), customerId);
+                            if (creds.isPresent()) {
+                                BrokerCredentialsEntity credential = creds.get();
+                                return new TokenInfo(tok, credential.getApiKey(), customerId,
+                                        credential.getAppUserId(), credential.getId());
+                            }
+                            return new TokenInfo(tok, null, customerId, null, null);
+                        } catch (Exception ignored) {
                         }
                     }
                 }
@@ -519,10 +660,13 @@ public class TokenStoreService {
             if (latest != null && latest.getExpiry() != null && Instant.now().isBefore(latest.getExpiry()) && latest.getToken() != null) {
                 if (latest.getBrokerCredentialsId() != null) {
                     var creds = brokerCredentialsRepository.findById(latest.getBrokerCredentialsId());
-                    if (creds.isPresent() && creds.get().getApiKey() != null) {
-                        return new TokenInfo(latest.getToken(), creds.get().getApiKey());
+                    if (creds.isPresent()) {
+                        BrokerCredentialsEntity credential = creds.get();
+                        return new TokenInfo(latest.getToken(), credential.getApiKey(),
+                                credential.getCustomerId(), credential.getAppUserId(), credential.getId());
                     }
                 }
+                return new TokenInfo(latest.getToken(), null);
             }
         } catch (Exception ignored) {}
 

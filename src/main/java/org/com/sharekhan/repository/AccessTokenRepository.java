@@ -18,6 +18,8 @@ public interface AccessTokenRepository extends JpaRepository<AccessTokenEntity, 
     // delete tokens for a specific broker
     void deleteAllByBrokerName(String brokerName);
 
+    void deleteAllByBrokerNameAndBrokerCredentialsIdIsNullAndUserIdIsNull(String brokerName);
+
     // broker-customer-scoped methods (mapped to AccessTokenEntity.brokerCredentialsId)
     AccessTokenEntity findTopByBrokerNameAndBrokerCredentialsIdOrderByExpiryDesc(String brokerName, Long brokerCredentialsId);
 

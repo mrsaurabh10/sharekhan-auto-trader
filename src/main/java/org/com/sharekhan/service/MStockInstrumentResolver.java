@@ -187,7 +187,7 @@ public class MStockInstrumentResolver {
             if (key.isPresent()) {
                 String resolvedKey = key.get();
                 if (!isValidResolvedKey(script, resolvedKey, normalizedExchange, derivativeInstrument)) {
-                    log.warn("Resolved MStock key {} for scripCode={} tradingSymbol={} but rejected by validation.",
+                    log.warn("Resolved MStock key {} for scripCode={} tradingSymbol={} but rejected by instrument validation.",
                             resolvedKey, script.getScripCode(), script.getTradingSymbol());
                     printDiagnostic("Rejected resolved key=" + resolvedKey
                             + " for scripCode=" + script.getScripCode()
@@ -522,29 +522,26 @@ public class MStockInstrumentResolver {
                                        String key,
                                        String normalizedExchange,
                                        boolean derivativeInstrument) {
-        if (!isValidSpotKey(script, key)) {
-            return false;
+        if (derivativeInstrument) {
+            return isValidDerivativeKey(key, normalizedExchange);
         }
-        if (!derivativeInstrument) {
-            return true;
-        }
-        return isValidDerivativeKey(key, normalizedExchange);
+        return isValidSpotKey(script, key);
     }
 
     private boolean isValidDerivativeKey(String key, String normalizedExchange) {
-        if (!StringUtils.hasText(key)) {
+        if (!StringUtils.hasText(key) || !StringUtils.hasText(normalizedExchange)) {
             return false;
         }
-        int colonIndex = key.indexOf(':');
-        if (colonIndex <= 0 || colonIndex == key.length() - 1) {
+        String upperKey = key.trim().toUpperCase(Locale.ROOT);
+        String expectedPrefix = normalizedExchange.trim().toUpperCase(Locale.ROOT) + ":";
+        if (!upperKey.startsWith(expectedPrefix)) {
             return false;
         }
-        String exchange = key.substring(0, colonIndex).trim().toUpperCase(Locale.ROOT);
-        String symbol = key.substring(colonIndex + 1).trim().toUpperCase(Locale.ROOT);
-        if (StringUtils.hasText(normalizedExchange) && !exchange.equalsIgnoreCase(normalizedExchange)) {
+        int colonIndex = upperKey.indexOf(':');
+        if (colonIndex < 0 || colonIndex + 1 >= upperKey.length()) {
             return false;
         }
-        return looksLikeDerivativeSymbol(symbol);
+        return looksLikeDerivativeSymbol(upperKey.substring(colonIndex + 1));
     }
 
     private String buildNormalizedKey(String exchange, String symbol) {
@@ -726,6 +723,9 @@ public class MStockInstrumentResolver {
 
     private Optional<String> hardcodedIndexInstrumentKey(ScriptMasterEntity script) {
         if (script == null) {
+            return Optional.empty();
+        }
+        if (isDerivativeInstrument(script, normalizeExchangeForApi(script.getExchange()))) {
             return Optional.empty();
         }
         String symbol = normalizeSymbolKey(script.getTradingSymbol());

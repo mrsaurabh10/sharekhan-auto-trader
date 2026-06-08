@@ -221,14 +221,14 @@
                         <option value="EXIT_ORDER_PLACED">EXIT_ORDER_PLACED</option>
                         <option value="TARGET_ORDER_PLACED">TARGET_ORDER_PLACED</option>
                         <option value="EXITED_SUCCESS">EXITED_SUCCESS</option>
-                        <option value="EXITED_FAILURE">EXITED_FAILURE</option>
+                        <option value="EXIT_FAILED">EXIT_FAILED</option>
                         <option value="REJECTED">REJECTED</option>
-                        <option value="PLACED_PENDING_CONFIRMATION">PENDING</option>
+                        <option value="PLACED_PENDING_CONFIRMATION">PLACED_PENDING_CONFIRMATION</option>
                     </select>
                     <button id="applyStatusFilterBtn" class="btn">Apply Filter</button>
                 </div>
                 <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
-                    <thead><tr><th>ID</th><th>Scope</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Intraday</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>PNL</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Type</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>PNL</th></tr></thead>
                     <tbody></tbody>
                 </table>
                 <div id="executed-pagination" style="margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px;">
