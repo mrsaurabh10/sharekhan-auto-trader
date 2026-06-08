@@ -767,7 +767,8 @@
         const cancelBtn = document.createElement('button'); cancelBtn.className = 'btn small danger'; cancelBtn.style.marginRight = '6px'; cancelBtn.innerText = 'Cancel';
         cancelBtn.addEventListener('click', async function () { if (!confirm('Cancel request id ' + id + '?')) return; await ensureCsrf(); await fetchJson('/api/trades/cancel-request/' + id + '?userId=' + encodeURIComponent(uid), { method: 'POST' }); await loadRequestedOrdersForUser(uid); }); actionCell.appendChild(cancelBtn);
 
-        if (String(status).toUpperCase() !== 'TRIGGERED' && String(status).toUpperCase() !== 'EXECUTED') {
+        // Keep manual trigger available so same request can be re-triggered if needed.
+        if (String(status).toUpperCase() !== 'EXECUTED') {
           const trig = document.createElement('button'); trig.className = 'btn small'; trig.innerText = 'Trigger';
           trig.addEventListener('click', async function () {
             trig.disabled = true;
@@ -826,12 +827,17 @@
 
         if (spotKey) {
             spotLtpTd.setAttribute('data-ltp-key', spotKey);
+            const spotScripCode = r.spotScripCode || r.spot_scrip_code || r.underlyingScripCode || r.underlying_scrip_code || null;
+            if (spotScripCode != null && spotScripCode !== '') spotLtpTd.setAttribute('data-ltp-scrip', String(spotScripCode));
             keySet.add(spotKey);
         }
         if (tradedKey) {
             ltpTd.setAttribute('data-ltp-key', tradedKey);
+            if (rowScripCode != null && rowScripCode !== '') ltpTd.setAttribute('data-ltp-scrip', String(rowScripCode));
             keySet.add(tradedKey);
         }
+        applyCachedLtpToCell(ltpTd, tradedKey, rowScripCode);
+        applyCachedLtpToCell(spotLtpTd, spotKey, r.spotScripCode || r.spot_scrip_code || r.underlyingScripCode || r.underlying_scrip_code || null);
 
         tbody.appendChild(tr);
       }
@@ -1021,14 +1027,20 @@
 
         if (spotKey) {
             spotLtpTd.setAttribute('data-ltp-key', spotKey);
+            const spotScripCode = t.spotScripCode || t.spot_scrip_code || t.underlyingScripCode || t.underlying_scrip_code || null;
+            if (spotScripCode != null && spotScripCode !== '') spotLtpTd.setAttribute('data-ltp-scrip', String(spotScripCode));
             keySet.add(spotKey);
         }
         if (tradedKey) {
             ltpTd.setAttribute('data-ltp-key', tradedKey);
+            if (rowScripCode != null && rowScripCode !== '') ltpTd.setAttribute('data-ltp-scrip', String(rowScripCode));
             // PNL always uses traded key
             pnlTd.setAttribute('data-pnl-key', tradedKey);
             keySet.add(tradedKey);
         }
+        applyCachedLtpToCell(ltpTd, tradedKey, rowScripCode);
+        applyCachedLtpToCell(spotLtpTd, spotKey, t.spotScripCode || t.spot_scrip_code || t.underlyingScripCode || t.underlying_scrip_code || null);
+        applyCachedPnlToElement(pnlTd, tradedKey, rowScripCode);
 
         tbody.appendChild(tr);
       }
@@ -1107,6 +1119,48 @@
     return null;
   }
 
+  function resolveCachedLtpValue(key, scripCode) {
+    try {
+      if (key && ltpCache && ltpCache[key] && ltpCache[key].last_price != null) {
+        return Number(ltpCache[key].last_price);
+      }
+      if (scripCode != null) {
+        const sc = String(scripCode);
+        if (ltpCache && ltpCache[sc] && ltpCache[sc].last_price != null) {
+          return Number(ltpCache[sc].last_price);
+        }
+      }
+    } catch (e) { console.debug('resolveCachedLtpValue failed', e); }
+    return null;
+  }
+
+  function applyCachedLtpToCell(el, key, scripCode) {
+    try {
+      if (!el) return;
+      const ltpNum = resolveCachedLtpValue(key, scripCode);
+      if (!Number.isNaN(ltpNum) && ltpNum != null) {
+        el.innerText = Number(ltpNum).toFixed(2);
+      }
+    } catch (e) { console.debug('applyCachedLtpToCell failed', e); }
+  }
+
+  function applyCachedPnlToElement(el, key, scripCode) {
+    try {
+      if (!el) return;
+      const tr = el.closest('tr');
+      if (!tr) return;
+      const status = (tr.getAttribute('data-status') || '').toUpperCase();
+      if (!LIVE_PNL_STATUSES.has(status)) return;
+      const entry = parseFloat(tr.getAttribute('data-entry') || '');
+      const qty = parseFloat(tr.getAttribute('data-qty') || '');
+      const ltpNum = resolveCachedLtpValue(key, scripCode || tr.getAttribute('data-scrip-code'));
+      if (Number.isNaN(entry) || Number.isNaN(qty) || Number.isNaN(ltpNum) || ltpNum == null) return;
+      const pnl = qty * (ltpNum - entry);
+      el.innerText = Number(pnl).toFixed(2);
+      updatePnlStyle(el, pnl);
+    } catch (e) { console.debug('applyCachedPnlToElement failed', e); }
+  }
+
   function fetchMStockLtp(params) {
       if (!params || typeof params !== 'object') return Promise.resolve(null);
       const url = new URL('/api/mstock/ltp/by-script', window.location.origin);
@@ -1133,31 +1187,21 @@
       // Update elements bound by key
       document.querySelectorAll('[data-ltp-key]').forEach(function(el) {
         const key = el.getAttribute('data-ltp-key');
-        if (key && ltpCache[key] && ltpCache[key].last_price != null) {
-            const val = Number(ltpCache[key].last_price).toFixed(2);
-            if (el.innerText !== val) el.innerText = val;
+        const tr = el.closest('tr');
+        const scripCode = el.getAttribute('data-ltp-scrip') || (tr ? tr.getAttribute('data-scrip-code') : null);
+        const ltpNum = resolveCachedLtpValue(key, scripCode);
+        if (ltpNum != null && !Number.isNaN(ltpNum)) {
+          const val = Number(ltpNum).toFixed(2);
+          if (el.innerText !== val) el.innerText = val;
         }
       });
 
       // Update PNL elements bound by key
       document.querySelectorAll('[data-pnl-key]').forEach(function(el) {
         const key = el.getAttribute('data-pnl-key');
-        if (key && ltpCache[key] && ltpCache[key].last_price != null) {
-            const ltpNum = Number(ltpCache[key].last_price);
-            const tr = el.closest('tr');
-            if (tr) {
-                const status = (tr.getAttribute('data-status') || '').toUpperCase();
-                if (LIVE_PNL_STATUSES.has(status)) {
-                    const entry = parseFloat(tr.getAttribute('data-entry') || '');
-                    const qty = parseFloat(tr.getAttribute('data-qty') || '');
-                    if (!Number.isNaN(entry) && !Number.isNaN(qty) && !Number.isNaN(ltpNum)) {
-                        const pnl = qty * (ltpNum - entry);
-                        el.innerText = Number(pnl).toFixed(2);
-                        updatePnlStyle(el, pnl);
-                    }
-                }
-            }
-        }
+        const tr = el.closest('tr');
+        const scripCode = tr ? tr.getAttribute('data-scrip-code') : null;
+        applyCachedPnlToElement(el, key, scripCode);
       });
       recomputeRunningPnlSummary();
     } catch (e) { console.debug('applyLtpMap failed', e); }
