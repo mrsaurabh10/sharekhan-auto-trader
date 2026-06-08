@@ -2,9 +2,6 @@ package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.auth.AuthTokenResult;
-import org.com.sharekhan.auth.BrokerAuthProvider;
-import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.util.CryptoService;
@@ -58,7 +55,6 @@ public class MStockIntradayCandleService {
     );
 
     private final TokenStoreService tokenStoreService;
-    private final BrokerAuthProviderRegistry providerRegistry;
     private final CryptoService cryptoService;
 
     @Value("${app.mstock.api-key:}")
@@ -95,13 +91,13 @@ public class MStockIntradayCandleService {
 
         HttpResult result = doRequest(url, accessToken, effectiveApiKey);
         if (result.code == 401 || indicatesTokenException(result.body)) {
-            BrokerAuthProvider provider = providerRegistry.getProvider(Broker.MSTOCK);
-            if (provider != null) {
-                AuthTokenResult refreshed = provider.loginAndFetchToken();
-                if (refreshed != null && StringUtils.hasText(refreshed.token())) {
-                    tokenStoreService.updateToken(Broker.MSTOCK, refreshed.token(), refreshed.expiresIn());
-                    result = doRequest(url, refreshed.token(), effectiveApiKey);
+            TokenStoreService.TokenInfo refreshed = tokenStoreService.refreshToken(Broker.MSTOCK, tokenInfo);
+            if (refreshed != null && StringUtils.hasText(refreshed.getToken())) {
+                accessToken = refreshed.getToken();
+                if (StringUtils.hasText(refreshed.getApiKey())) {
+                    effectiveApiKey = decryptIfNeeded(refreshed.getApiKey());
                 }
+                result = doRequest(url, accessToken, effectiveApiKey);
             }
         }
 

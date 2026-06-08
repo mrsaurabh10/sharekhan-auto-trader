@@ -2,9 +2,6 @@ package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.auth.AuthTokenResult;
-import org.com.sharekhan.auth.BrokerAuthProvider;
-import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.config.MStockProperties;
 import org.com.sharekhan.entity.MStockInstrumentEntity;
@@ -42,7 +39,6 @@ public class MStockInstrumentCacheService {
 
     private final MStockInstrumentRepository repository;
     private final TokenStoreService tokenStoreService;
-    private final BrokerAuthProviderRegistry providerRegistry;
     private final CryptoService cryptoService;
     private final MStockProperties mStockProperties;
 
@@ -69,7 +65,7 @@ public class MStockInstrumentCacheService {
 
         if (result == DownloadResult.UNAUTHORIZED) {
             log.warn("🔄 MStock script master request returned unauthorized. Attempting token refresh.");
-            if (attemptTokenRefresh()) {
+            if (attemptTokenRefresh(credentials.tokenInfo())) {
                 credentialsOpt = resolveCredentials();
                 if (credentialsOpt.isPresent()) {
                     DownloadResult retry = downloadAndPersist(credentialsOpt.get());
@@ -111,22 +107,16 @@ public class MStockInstrumentCacheService {
             return Optional.empty();
         }
 
-        return Optional.of(new Credentials(apiKey, accessToken));
+        return Optional.of(new Credentials(apiKey, accessToken, tokenInfo));
     }
 
-    private boolean attemptTokenRefresh() {
-        BrokerAuthProvider provider = providerRegistry.getProvider(Broker.MSTOCK);
-        if (provider == null) {
-            log.warn("⚠️ No MStock auth provider registered; cannot refresh token.");
-            return false;
-        }
+    private boolean attemptTokenRefresh(TokenStoreService.TokenInfo tokenInfo) {
         try {
-            AuthTokenResult authTokenResult = provider.loginAndFetchToken();
-            if (authTokenResult == null || !StringUtils.hasText(authTokenResult.token())) {
+            TokenStoreService.TokenInfo refreshed = tokenStoreService.refreshToken(Broker.MSTOCK, tokenInfo);
+            if (refreshed == null || !StringUtils.hasText(refreshed.getToken())) {
                 log.warn("⚠️ MStock auth provider returned empty token.");
                 return false;
             }
-            tokenStoreService.updateToken(Broker.MSTOCK, authTokenResult.token(), authTokenResult.expiresIn());
             log.info("✅ MStock token refreshed successfully.");
             return true;
         } catch (Exception ex) {
@@ -491,6 +481,6 @@ public class MStockInstrumentCacheService {
         FAILED
     }
 
-    private record Credentials(String apiKey, String accessToken) {
+    private record Credentials(String apiKey, String accessToken, TokenStoreService.TokenInfo tokenInfo) {
     }
 }
