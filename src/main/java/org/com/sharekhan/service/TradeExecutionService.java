@@ -1764,8 +1764,7 @@ public class TradeExecutionService {
     private boolean isOrderPlacementFilled(OrderPlacementResult result) {
         return result != null
                 && result.isSuccess()
-                && result.getStatus() != null
-                && result.getStatus().trim().toLowerCase(Locale.ROOT).contains("executed");
+                && ShareKhanOrderUtil.isFullyExecutedStatus(result.getStatus());
     }
 
     boolean isUsableBrokerOrderId(String orderId) {
@@ -2741,17 +2740,17 @@ public class TradeExecutionService {
             JSONObject trade = trades.getJSONObject(i);
             String statusRaw = trade.optString("orderStatus", "").trim();
             String status = statusRaw;
-            String normalized = statusRaw.toLowerCase();
+            String normalized = statusRaw.toLowerCase(Locale.ROOT);
 
             // Normalize known statuses
-            if (normalized.contains("fully") || normalized.contains("executed")) {
+            if (ShareKhanOrderUtil.isPartiallyExecutedStatus(statusRaw)) {
+                status = "Pending"; // wait until all entry quantity is filled before marking EXECUTED
+            } else if (ShareKhanOrderUtil.isFullyExecutedStatus(statusRaw)) {
                 status = "Fully Executed";
             } else if (normalized.contains("reject") || normalized.contains("rejected")) {
                 status = "Rejected";
             } else if (normalized.contains("pending") || normalized.contains("process")) {
                 status = "Pending";
-            } else if (normalized.contains("partially")) {
-                status = "Pending"; // treat partially executed as pending for now
             }else{
                 status = "Pending"; // treat unknown as pending for safety
             }

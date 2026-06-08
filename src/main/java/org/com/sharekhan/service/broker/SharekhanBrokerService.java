@@ -59,8 +59,8 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
                 if (isUsableOrderId(respOrderId)) {
                     updatedOrderId = respOrderId;
                 }
-                String respStatus = data.optString("orderStatus", "").toLowerCase();
-                if (respStatus.contains("fully") || respStatus.contains("executed")) {
+                String respStatus = data.optString("orderStatus", "");
+                if (ShareKhanOrderUtil.isFullyExecutedStatus(respStatus)) {
                     status = "Fully Executed";
                     String avgPrice = data.optString("avgPrice", "").trim();
                     if (!avgPrice.isBlank()) {
@@ -204,8 +204,8 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService {
             
             if (response.has("data")) {
                 JSONObject d = response.getJSONObject("data");
-                String respStatus = d.optString("orderStatus", "").toLowerCase();
-                if (respStatus.contains("fully") || respStatus.contains("executed")) {
+                String respStatus = d.optString("orderStatus", "");
+                if (ShareKhanOrderUtil.isFullyExecutedStatus(respStatus)) {
                     status = "Fully Executed";
                     String avgPrice = d.optString("avgPrice", "").trim();
                     if (!avgPrice.isBlank()) {
