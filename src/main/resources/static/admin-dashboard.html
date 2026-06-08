@@ -72,10 +72,6 @@
         .trade-scope-badge { display: inline-block; min-width: 58px; padding: 2px 7px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; text-align: center; }
         .trade-scope-own { background: #e8f5ee; color: #12633a; border: 1px solid #b9dec9; }
         .trade-scope-simulator { background: #fff3d6; color: #805400; border: 1px solid #e8c46f; }
-        .pnl-summary { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin:6px 0 8px 0; padding:6px 8px; border:1px solid #dfe4ef; border-radius:6px; background:#fff; font-size:0.9rem; }
-        .pnl-summary-label { color:#555; margin-right:4px; }
-        .pnl-summary-value { font-weight:bold; }
-        .pnl-summary-note { color:#666; font-size:0.82rem; margin-left:auto; }
         @media (max-width: 900px) {
             .analytics-grids { grid-template-columns: 1fr; }
         }
@@ -236,11 +232,6 @@
                     <button id="analyticsRefreshBtn" class="btn small">Refresh</button>
                     <button id="analyticsGeminiBtn" class="btn small primary">Gemini</button>
                 </div>
-                <div id="analyticsDayPnlSummary" class="pnl-summary">
-                    <div><span class="pnl-summary-label">Today Running PNL:</span><span id="analyticsTodayRunningPnl" class="pnl-summary-value">-</span></div>
-                    <div><span class="pnl-summary-label">Today Booked PNL:</span><span id="analyticsTodayBookedPnl" class="pnl-summary-value">-</span></div>
-                    <div id="analyticsTodayPnlSummaryNote" class="pnl-summary-note">Uses today's trades, independent of status filter.</div>
-                </div>
                 <div id="analyticsCards" class="analytics-cards"></div>
                 <div class="analytics-grids">
                     <div>
@@ -275,18 +266,13 @@
                             <option value="EXITED_SUCCESS">EXITED_SUCCESS</option>
                             <option value="EXIT_FAILED">EXIT_FAILED</option>
                             <option value="REJECTED">REJECTED</option>
-                            <option value="PLACED_PENDING_CONFIRMATION">PENDING</option>
+                            <option value="PLACED_PENDING_CONFIRMATION">PLACED_PENDING_CONFIRMATION</option>
                         </select>
                         <button id="applyStatusFilterBtn" class="btn small">Apply</button>
                     </div>
                 </div>
-                <div id="dayPnlSummary" class="pnl-summary">
-                    <div><span class="pnl-summary-label">Today Running PNL:</span><span id="todayRunningPnl" class="pnl-summary-value">-</span></div>
-                    <div><span class="pnl-summary-label">Today Booked PNL:</span><span id="todayBookedPnl" class="pnl-summary-value">-</span></div>
-                    <div id="todayPnlSummaryNote" class="pnl-summary-note">Uses today's trades, independent of status filter.</div>
-                </div>
                 <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
-                    <thead><tr><th>ID</th><th>Type</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Status</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>PNL</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Type</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>PNL</th></tr></thead>
                     <tbody></tbody>
                 </table>
                 <div id="executed-pagination" style="margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px;">

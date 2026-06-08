@@ -65,7 +65,9 @@ public class OrderViewController {
                                          @RequestParam(name = "scope", defaultValue = "own") String scope,
                                          @RequestParam(defaultValue = "0") int page,
                                          @RequestParam(defaultValue = "10") int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by("id").descending());
+        Pageable pageable = PageRequest.of(page, size, Sort.by(
+                Sort.Order.desc("entryAt").nullsLast(),
+                Sort.Order.desc("id")));
         Long scopedUserId = currentUserService.scopedUserId(userId);
         String orderScope = normalizeOrderScopeForSession(scope);
         Page<TriggeredTradeSetupEntity> executions = tradeExecutionService.getRecentExecutionsForUser(scopedUserId, statuses, pageable, orderScope);
