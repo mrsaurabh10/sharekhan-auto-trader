@@ -3,6 +3,7 @@ package org.com.sharekhan.controller;
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.entity.AppUser;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.service.CurrentUserService;
 import org.com.sharekhan.util.CryptoService;
@@ -58,6 +59,8 @@ public class UserController {
                     row.put("clientCode", safeDecrypt(b.getClientCode()));
                     row.put("hasApiKey", b.getApiKey() != null && !b.getApiKey().isBlank());
                     row.put("active", b.getActive() != null ? b.getActive() : Boolean.FALSE);
+                    row.put("tradingEnabled", effectiveTradingEnabled(b));
+                    row.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
                     return row;
                 })
                 .collect(Collectors.toList());
@@ -78,6 +81,16 @@ public class UserController {
         b.setCustomerId(longValue(body.get("customerId")));
         updateSensitiveFields(b, body);
         b.setActive(body.containsKey("active") ? Boolean.valueOf(String.valueOf(body.get("active"))) : Boolean.TRUE);
+        Boolean tradingEnabled = body.containsKey("tradingEnabled") ? Boolean.valueOf(String.valueOf(body.get("tradingEnabled"))) : null;
+        Boolean defaultForOrders = body.containsKey("defaultForOrders") ? Boolean.valueOf(String.valueOf(body.get("defaultForOrders"))) : Boolean.FALSE;
+        if (Boolean.TRUE.equals(defaultForOrders) && tradingEnabled == null) {
+            tradingEnabled = true;
+        }
+        b.setTradingEnabled(tradingEnabled);
+        b.setDefaultForOrders(defaultForOrders);
+        if (Boolean.TRUE.equals(defaultForOrders)) {
+            clearDefaultOrderBrokerForUser(userId, null);
+        }
         deactivateOtherActiveBrokers(userId, b.getBrokerName(), null, b.getActive());
         brokerCredentialsRepository.save(b);
         return ResponseEntity.ok(Map.of("id", b.getId(), "brokerName", b.getBrokerName(), "appUserId", b.getAppUserId()));
@@ -102,6 +115,8 @@ public class UserController {
         resp.put("clientCode", safeDecrypt(b.getClientCode()));
         resp.put("totpSecret", safeDecrypt(b.getTotpSecret()));
         resp.put("secretKey", safeDecrypt(b.getSecretKey()));
+        resp.put("tradingEnabled", effectiveTradingEnabled(b));
+        resp.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
         return ResponseEntity.ok(resp);
     }
 
@@ -120,6 +135,19 @@ public class UserController {
             b.setCustomerId(longValue(body.get("customerId")));
         }
         updateSensitiveFields(b, body);
+        if (body.containsKey("tradingEnabled")) {
+            b.setTradingEnabled(body.get("tradingEnabled") == null ? null : Boolean.valueOf(String.valueOf(body.get("tradingEnabled"))));
+        }
+        if (body.containsKey("defaultForOrders")) {
+            Boolean newDefault = body.get("defaultForOrders") == null ? null : Boolean.valueOf(String.valueOf(body.get("defaultForOrders")));
+            if (Boolean.TRUE.equals(newDefault)) {
+                clearDefaultOrderBrokerForUser(userId, b.getId());
+                if (b.getTradingEnabled() == null || !b.getTradingEnabled()) {
+                    b.setTradingEnabled(true);
+                }
+            }
+            b.setDefaultForOrders(newDefault);
+        }
         if (body.containsKey("active")) {
             b.setActive(body.get("active") == null ? null : Boolean.valueOf(String.valueOf(body.get("active"))));
         }
@@ -180,6 +208,37 @@ public class UserController {
                 other.setActive(false);
                 brokerCredentialsRepository.save(other);
             }
+        }
+    }
+
+    private void clearDefaultOrderBrokerForUser(Long userId, Long exceptBrokerCredentialsId) {
+        if (userId == null) {
+            return;
+        }
+        for (BrokerCredentialsEntity other : brokerCredentialsRepository.findByAppUserId(userId)) {
+            if (other == null || !Boolean.TRUE.equals(other.getDefaultForOrders())) {
+                continue;
+            }
+            if (exceptBrokerCredentialsId != null && exceptBrokerCredentialsId.equals(other.getId())) {
+                continue;
+            }
+            other.setDefaultForOrders(false);
+            brokerCredentialsRepository.save(other);
+        }
+    }
+
+    private boolean effectiveTradingEnabled(BrokerCredentialsEntity brokerCredentials) {
+        if (brokerCredentials == null || Boolean.FALSE.equals(brokerCredentials.getActive())) {
+            return false;
+        }
+        if (brokerCredentials.getTradingEnabled() != null) {
+            return brokerCredentials.getTradingEnabled();
+        }
+        try {
+            Broker broker = Broker.fromDisplayName(brokerCredentials.getBrokerName());
+            return broker == Broker.SHAREKHAN || broker == Broker.SIMULATOR;
+        } catch (Exception e) {
+            return false;
         }
     }
 

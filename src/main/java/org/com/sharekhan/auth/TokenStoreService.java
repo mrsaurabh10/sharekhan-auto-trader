@@ -331,9 +331,15 @@ public class TokenStoreService {
                 return null;
             }
 
-            if (credentials != null && credentials.getCustomerId() != null) {
-                updateTokenForCustomer(broker, credentials.getCustomerId(), credentials.getAppUserId(),
-                        result.token(), result.expiresIn());
+            if (credentials != null) {
+                if (credentials.getCustomerId() != null) {
+                    updateTokenForCustomer(broker, credentials.getCustomerId(), credentials.getAppUserId(),
+                            result.token(), result.expiresIn());
+                } else if (credentials.getId() != null) {
+                    Instant expiry = Instant.now().plusSeconds(result.expiresIn() - 60);
+                    persistenceService.replaceTokenForBrokerCredentials(
+                            broker.getDisplayName(), credentials.getId(), result.token(), expiry);
+                }
                 return new TokenInfo(result.token(), credentials.getApiKey(), credentials.getCustomerId(),
                         credentials.getAppUserId(), credentials.getId());
             }
@@ -623,6 +629,74 @@ public class TokenStoreService {
         }
 
         return new TokenInfo(token, null, customerId, null, null);
+    }
+
+    public TokenInfo getTokenInfoForBrokerCredentials(Broker broker, Long brokerCredentialsId) {
+        if (broker == null || brokerCredentialsId == null) {
+            return null;
+        }
+
+        try {
+            Optional<AccessTokenEntity> latestOpt = persistenceService.findLatestByBrokerAndBrokerCredentialsId(
+                    broker.getDisplayName(), brokerCredentialsId);
+            if (latestOpt.isPresent()) {
+                AccessTokenEntity latest = latestOpt.get();
+                if (latest.getToken() != null && latest.getExpiry() != null && Instant.now().isBefore(latest.getExpiry())) {
+                    Optional<BrokerCredentialsEntity> credentials = brokerCredentialsRepository.findById(brokerCredentialsId);
+                    if (credentials.isPresent()) {
+                        BrokerCredentialsEntity credential = credentials.get();
+                        if (credential.getCustomerId() != null) {
+                            String key = broker.getDisplayName() + ":" + credential.getCustomerId();
+                            tokenByCustomer.put(key, latest.getToken());
+                            expiryByCustomer.put(key, latest.getExpiry());
+                        }
+                        return new TokenInfo(latest.getToken(), credential.getApiKey(),
+                                credential.getCustomerId(), credential.getAppUserId(), credential.getId());
+                    }
+                    return new TokenInfo(latest.getToken(), null, null, null, brokerCredentialsId);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Unable to load token for {} brokerCredentialsId {}: {}",
+                    broker.getDisplayName(), brokerCredentialsId, e.getMessage());
+        }
+
+        Optional<BrokerCredentialsEntity> credentials = brokerCredentialsRepository.findById(brokerCredentialsId);
+        if (credentials.isEmpty()) {
+            return null;
+        }
+
+        BrokerCredentialsEntity credential = credentials.get();
+        BrokerAuthProvider provider = providerRegistry.getProvider(broker);
+        if (provider == null) {
+            log.warn("No auth provider registered for {} - cannot fetch token for broker credentials id {}",
+                    broker.getDisplayName(), brokerCredentialsId);
+            return null;
+        }
+
+        try {
+            AuthTokenResult result = provider.loginAndFetchToken(credential);
+            if (result == null || result.token() == null || result.token().isBlank()) {
+                log.warn("Provider returned no token for {} broker credentials id {}",
+                        broker.getDisplayName(), brokerCredentialsId);
+                return null;
+            }
+
+            Instant expiry = Instant.now().plusSeconds(result.expiresIn() - 60);
+            persistenceService.replaceTokenForBrokerCredentials(
+                    broker.getDisplayName(), brokerCredentialsId, result.token(), expiry);
+            if (credential.getCustomerId() != null) {
+                String key = broker.getDisplayName() + ":" + credential.getCustomerId();
+                tokenByCustomer.put(key, result.token());
+                expiryByCustomer.put(key, expiry);
+            }
+            return new TokenInfo(result.token(), credential.getApiKey(),
+                    credential.getCustomerId(), credential.getAppUserId(), credential.getId());
+        } catch (Exception e) {
+            log.error("Failed to fetch token for {} broker credentials id {}: {}",
+                    broker.getDisplayName(), brokerCredentialsId, e.getMessage(), e);
+            return null;
+        }
     }
 
     public TokenInfo getFirstNonExpiredTokenInfo(Broker broker) {
