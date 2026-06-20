@@ -9,6 +9,7 @@ import org.com.sharekhan.service.ScriptMasterService;
 import org.com.sharekhan.service.SharekhanHistoricalService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -196,6 +197,49 @@ class SharekhanHistoricalControllerTest {
                         .param("scripCode", "99999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.status", is("error")));
+    }
+
+    @Test
+    void rejectsMissingAdminTokenWhenConfigured() throws Exception {
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        ScriptMasterService scriptMasterService = mock(ScriptMasterService.class);
+        SharekhanHistoricalController controller = new SharekhanHistoricalController(
+                historicalService, scriptMasterRepository, scriptMasterService);
+        ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
+        MockMvc mockMvc = mockMvc(controller);
+
+        mockMvc.perform(get("/api/sharekhan/historical/candles")
+                        .param("scripCode", "99999"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.status", is("error")))
+                .andExpect(jsonPath("$.message", is("Invalid or missing X-Admin-Token")));
+    }
+
+    @Test
+    void allowsConfiguredAdminTokenHeader() throws Exception {
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        ScriptMasterService scriptMasterService = mock(ScriptMasterService.class);
+        SharekhanHistoricalController controller = new SharekhanHistoricalController(
+                historicalService, scriptMasterRepository, scriptMasterService);
+        ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
+        MockMvc mockMvc = mockMvc(controller);
+
+        ScriptMasterEntity script = ScriptMasterEntity.builder()
+                .scripCode(12345)
+                .tradingSymbol("NIFTY")
+                .exchange("NC")
+                .build();
+        when(scriptMasterRepository.findByScripCode(12345)).thenReturn(script);
+        when(historicalService.getHistoricalCandles(eq(12345), eq("5minute"), eq(null), eq(null)))
+                .thenReturn(List.of());
+
+        mockMvc.perform(get("/api/sharekhan/historical/candles")
+                        .header("X-Admin-Token", "secret-token")
+                        .param("scripCode", "12345"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("success")));
     }
 
     private MockMvc mockMvc(SharekhanHistoricalController controller) {
