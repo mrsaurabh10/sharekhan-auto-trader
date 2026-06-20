@@ -27,6 +27,7 @@ import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.service.broker.BrokerService;
 import org.com.sharekhan.service.broker.BrokerServiceFactory;
 import org.com.sharekhan.service.broker.ModifiableEntryBrokerService;
+import org.com.sharekhan.service.broker.OrderStatusBrokerService;
 import org.com.sharekhan.service.broker.TriggerPriceEntryBrokerService;
 import org.com.sharekhan.util.CryptoService;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
@@ -83,6 +84,22 @@ public class TradeExecutionService {
             DateTimeFormatter.ofPattern("dd/MM/uuuu"),
             DateTimeFormatter.ISO_LOCAL_DATE,
             DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
+    );
+    private static final LocalTime DEFAULT_OPTION_EXPIRY_CUTOFF = LocalTime.of(15, 30);
+    private static final LocalTime MCX_OPTION_EXPIRY_CUTOFF = LocalTime.MAX;
+    private static final Set<String> MCX_SYMBOLS = Set.of(
+            "ALUMINIUM",
+            "COPPER",
+            "CRUDEOIL",
+            "CRUDEOILM",
+            "GOLD",
+            "GOLDM",
+            "LEAD",
+            "NATGASMINI",
+            "NATURALGAS",
+            "SILVER",
+            "SILVERM",
+            "ZINC"
     );
     private static final int MAX_ENTRY_ATTEMPTS = 3;
     private static final long FINAL_STATUS_CHECK_DELAY_MS = 2000L;
@@ -514,24 +531,17 @@ public class TradeExecutionService {
         }
 
         BrokerContext ctx = resolveBrokerContext(requestEntity.getBrokerCredentialsId(), requestEntity.getAppUserId());
-        if (ctx == null || ctx.getBrokerName() == null || ctx.getApiKey() == null || ctx.getCustomerId() == null) {
+        if (!isBrokerContextUsable(ctx)) {
             log.debug("Skipping broker-side entry trigger for request {} because broker context is unavailable",
                     requestEntity.getId());
             return;
         }
 
-        Broker broker;
         try {
-            broker = Broker.fromDisplayName(ctx.getBrokerName());
+            Broker.fromDisplayName(ctx.getBrokerName());
         } catch (Exception e) {
             log.debug("Skipping broker-side entry trigger for request {} because broker {} is unsupported",
                     requestEntity.getId(), ctx.getBrokerName());
-            return;
-        }
-
-        if (broker != Broker.SHAREKHAN) {
-            log.debug("Skipping broker-side entry trigger for request {} because broker {} does not support Sharekhan triggerPrice orders here",
-                    requestEntity.getId(), broker.getDisplayName());
             return;
         }
 
@@ -776,7 +786,7 @@ public class TradeExecutionService {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         ZoneId zoneId = ZoneId.of("Asia/Kolkata");
         LocalDateTime now = LocalDateTime.now(zoneId);
-        LocalTime cutoff = LocalTime.of(15, 30);
+        LocalTime cutoff = optionExpiryCutoff(request);
 
         if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
             List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
@@ -795,9 +805,7 @@ public class TradeExecutionService {
                     })
                     .filter(Objects::nonNull)
                     .filter(expiryDate -> {
-                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
-                        return expiryDate.isAfter(now.toLocalDate()) ||
-                                (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+                        return isTradableExpiry(expiryDate, now, cutoff);
                     })
                     .min(Comparator.naturalOrder());
 
@@ -845,6 +853,33 @@ public class TradeExecutionService {
                 request.getOptionType(),
                 request.getExpiry()
         ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+    }
+
+    LocalTime optionExpiryCutoff(TriggerRequest request) {
+        return isMcxRequest(request) ? MCX_OPTION_EXPIRY_CUTOFF : DEFAULT_OPTION_EXPIRY_CUTOFF;
+    }
+
+    boolean isTradableExpiry(LocalDate expiryDate, LocalDateTime now, LocalTime cutoff) {
+        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
+        return expiryDate.isAfter(now.toLocalDate()) ||
+                (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+    }
+
+    private boolean isMcxRequest(TriggerRequest request) {
+        if (request == null) {
+            return false;
+        }
+        String exchange = request.getExchange();
+        if (exchange != null && exchange.equalsIgnoreCase("MX")) {
+            return true;
+        }
+        String instrument = request.getInstrument();
+        if (instrument == null || instrument.isBlank()) {
+            return false;
+        }
+        String normalizedInstrument = instrument.replaceAll("[^A-Za-z0-9]", "")
+                .toUpperCase(Locale.ROOT);
+        return MCX_SYMBOLS.contains(normalizedInstrument);
     }
 
     public TriggeredTradeSetupEntity executeQuickTrade(TriggerRequest request) {
@@ -1109,7 +1144,7 @@ public class TradeExecutionService {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         ZoneId zoneId = ZoneId.of("Asia/Kolkata");
         LocalDateTime now = LocalDateTime.now(zoneId);
-        LocalTime cutoff = LocalTime.of(15, 30); // 3:30 PM IST
+        LocalTime cutoff = optionExpiryCutoff(request);
 
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
         final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
@@ -1126,8 +1161,7 @@ public class TradeExecutionService {
                     })
                     .filter(Objects::nonNull)
                     .filter(expiryDate -> {
-                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
-                        return expiryDate.isAfter(now.toLocalDate()) || (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+                        return isTradableExpiry(expiryDate, now, cutoff);
                     })
                     .min(Comparator.naturalOrder());
 
@@ -1449,7 +1483,7 @@ public class TradeExecutionService {
 //            }
 
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
-            if (ctx == null || ctx.getApiKey() == null || ctx.getCustomerId() == null) {
+            if (!isBrokerContextUsable(ctx)) {
                 throw new IllegalStateException("No active broker configured for this user");
             }
 
@@ -2075,23 +2109,12 @@ public class TradeExecutionService {
             return TradeStatus.NO_RECORDS;
         }
 
-        if (broker != Broker.SHAREKHAN) {
-            return TradeStatus.NO_RECORDS;
-        }
-
         try {
-            String accessToken = tokenStoreService.getAccessToken(broker, ctx.getCustomerId());
-            if (accessToken == null) {
-                accessToken = tokenStoreService.getAccessToken(broker);
-            }
-            if (accessToken == null || ctx.getApiKey() == null) {
+            BrokerService brokerService = brokerServiceFactory != null ? brokerServiceFactory.getService(ctx.getBrokerName()) : null;
+            if (!(brokerService instanceof OrderStatusBrokerService orderStatusBrokerService)) {
                 return TradeStatus.NO_RECORDS;
             }
-
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx.getApiKey(), accessToken);
-            JSONObject response = SharekhanConsoleSilencer.call(() ->
-                    sharekhanConnect.orderHistory(trade.getExchange(), ctx.getCustomerId(), orderId)
-            );
+            JSONObject response = orderStatusBrokerService.fetchOrderStatus(trade, ctx, orderId);
             return evaluateOrderFinalStatus(trade, response);
         } catch (Exception e) {
             log.debug("Order status fetch failed for trade {} order {}: {}", trade.getId(), orderId, e.getMessage());
@@ -2295,7 +2318,8 @@ public class TradeExecutionService {
             return;
         }
 
-        if (broker != Broker.SHAREKHAN) {
+        BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+        if (broker != Broker.SHAREKHAN && !(brokerService instanceof ModifiableEntryBrokerService)) {
             return;
         }
 
@@ -3159,7 +3183,29 @@ public class TradeExecutionService {
         }
 
         if (broker != Broker.SHAREKHAN) {
-            log.warn("Modify exit order currently supported only for Sharekhan broker. Trade {}", trade.getId());
+            BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+            if (brokerService instanceof ModifiableEntryBrokerService modifiableBroker) {
+                TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", safeNewPrice, trade.getExitOrderId());
+                OrderPlacementResult result = modifiableBroker.modifyEntryOrder(trade, ctx, trade.getExitOrderId(), safeNewPrice);
+                if (result != null && result.isSuccess()) {
+                    trade.setExitReason(exitReason);
+                    if (postStatus != null) {
+                        trade.setStatus(postStatus);
+                    }
+                    triggeredTradeRepo.save(trade);
+                    log.info("✏️ {} exit order {} modify submitted for trade {} to price {}",
+                            broker.getDisplayName(), trade.getExitOrderId(), trade.getId(), safeNewPrice);
+                    return new ModifyExitOrderResult(true, broker.getDisplayName() + " modify submitted successfully.");
+                }
+
+                String reason = result != null && result.getRejectionReason() != null
+                        ? result.getRejectionReason()
+                        : "Broker returned no modify result";
+                log.warn("{} modify rejected for trade {}: {}", broker.getDisplayName(), trade.getId(), reason);
+                return new ModifyExitOrderResult(false, broker.getDisplayName() + " modify rejected: " + reason);
+            }
+
+            log.warn("Modify exit order currently unsupported for broker {}. Trade {}", broker.getDisplayName(), trade.getId());
             return new ModifyExitOrderResult(false, "Exit order modification is not yet supported for broker " + broker.getDisplayName() + ".");
         }
 
@@ -3290,18 +3336,18 @@ public class TradeExecutionService {
         Set<String> orderStatusSet = new HashSet<>();
         for (int i = 0; i < trades.length(); i++) {
             JSONObject trade = trades.getJSONObject(i);
-            String statusRaw = trade.optString("orderStatus", "").trim();
+            String statusRaw = firstNonBlankJsonString(trade, "orderStatus", "status");
             String status = statusRaw;
             String normalized = statusRaw.toLowerCase(Locale.ROOT);
 
             // Normalize known statuses
-            if (ShareKhanOrderUtil.isPartiallyExecutedStatus(statusRaw)) {
+            if (isPartiallyExecutedBrokerStatus(statusRaw, trade)) {
                 status = "Pending"; // wait until all entry quantity is filled before marking EXECUTED
-            } else if (ShareKhanOrderUtil.isFullyExecutedStatus(statusRaw)) {
+            } else if (isFullyExecutedBrokerStatus(statusRaw, trade)) {
                 status = "Fully Executed";
-            } else if (normalized.contains("reject") || normalized.contains("rejected")) {
+            } else if (normalized.contains("reject") || normalized.contains("cancel")) {
                 status = "Rejected";
-            } else if (normalized.contains("pending") || normalized.contains("process")) {
+            } else if (normalized.contains("pending") || normalized.contains("process") || normalized.contains("trigger")) {
                 status = "Pending";
             }else{
                 status = "Pending"; // treat unknown as pending for safety
@@ -3309,22 +3355,8 @@ public class TradeExecutionService {
 
             // If fully executed, use avgPrice if available else try orderPrice
             if ("Fully Executed".equals(status)) {
-                String avgPrice = trade.optString("avgPrice", "").trim();
-                String execPrice = trade.optString("execPrice", "").trim();
-                String orderPrice = trade.optString("orderPrice", "").trim();
-                Double price = null;
-
-                if (!avgPrice.isBlank()) {
-                    try { price = Double.parseDouble(avgPrice); } catch (Exception ignored) {}
-                }
-
-                if (price == null && !execPrice.isBlank()) {
-                    try { price = Double.parseDouble(execPrice); } catch (Exception ignored) {}
-                }
-
-                if (price == null && !orderPrice.isBlank()) {
-                        try { price = Double.parseDouble(orderPrice); } catch (Exception ignored) {}
-                }
+                Double price = firstDoubleJsonValue(trade,
+                        "avgPrice", "average_price", "execPrice", "orderPrice", "price");
 
                 if (price != null) {
                     if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(tradeSetupEntity.getStatus())) {
@@ -3400,6 +3432,115 @@ public class TradeExecutionService {
         // Still in progress or unknown status
         log.info("⏳ Order status set did not contain final state (seen={}): treating as NO_RECORDS/IN_PROGRESS", orderStatusSet);
         return TradeStatus.NO_RECORDS;
+    }
+
+    private boolean isPartiallyExecutedBrokerStatus(String statusRaw, JSONObject orderRow) {
+        if (ShareKhanOrderUtil.isPartiallyExecutedStatus(statusRaw)) {
+            return true;
+        }
+        String normalized = normalizeBrokerStatus(statusRaw);
+        if (normalized.contains("partly") && normalized.contains("executed")) {
+            return true;
+        }
+        Long filled = firstLongJsonValue(orderRow, "filled_quantity", "execQty");
+        Long pending = firstLongJsonValue(orderRow, "pending_quantity", "openQty");
+        return filled != null && pending != null && filled > 0L && pending > 0L;
+    }
+
+    private boolean isFullyExecutedBrokerStatus(String statusRaw, JSONObject orderRow) {
+        if (ShareKhanOrderUtil.isFullyExecutedStatus(statusRaw)) {
+            return true;
+        }
+        String normalized = normalizeBrokerStatus(statusRaw);
+        if ("complete".equals(normalized)
+                || "completed".equals(normalized)
+                || normalized.contains("complete")
+                || normalized.contains("fully filled")) {
+            return true;
+        }
+
+        Long filled = firstLongJsonValue(orderRow, "filled_quantity", "execQty");
+        Long quantity = firstLongJsonValue(orderRow, "quantity", "orderQty");
+        Long pending = firstLongJsonValue(orderRow, "pending_quantity", "openQty");
+        return filled != null
+                && quantity != null
+                && pending != null
+                && quantity > 0L
+                && filled >= quantity
+                && pending == 0L;
+    }
+
+    private String firstNonBlankJsonString(JSONObject object, String... keys) {
+        if (object == null || keys == null) {
+            return "";
+        }
+        for (String key : keys) {
+            if (key == null || !object.has(key) || object.isNull(key)) {
+                continue;
+            }
+            String value = object.optString(key, "").trim();
+            if (!value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private Double firstDoubleJsonValue(JSONObject object, String... keys) {
+        if (object == null || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            if (key == null || !object.has(key) || object.isNull(key)) {
+                continue;
+            }
+            Object value = object.opt(key);
+            if (value instanceof Number number) {
+                return number.doubleValue();
+            }
+            String text = object.optString(key, "").trim();
+            if (!text.isBlank()) {
+                try {
+                    return Double.parseDouble(text);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private Long firstLongJsonValue(JSONObject object, String... keys) {
+        if (object == null || keys == null) {
+            return null;
+        }
+        for (String key : keys) {
+            if (key == null || !object.has(key) || object.isNull(key)) {
+                continue;
+            }
+            Object value = object.opt(key);
+            if (value instanceof Number number) {
+                return number.longValue();
+            }
+            String text = object.optString(key, "").trim();
+            if (!text.isBlank()) {
+                try {
+                    return Long.parseLong(text);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return null;
+    }
+
+    private String normalizeBrokerStatus(String statusRaw) {
+        if (statusRaw == null) {
+            return "";
+        }
+        return statusRaw.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
     }
 
     public List<TriggeredTradeSetupEntity> getRecentExecutions() {
@@ -3635,42 +3776,16 @@ public class TradeExecutionService {
                 Long resolved = null;
                 Long uid = requestEntity.getAppUserId();
                 if (uid != null) {
-                    // Prefer active Sharekhan credentials for this AppUser, else any Sharekhan for the user
                     List<BrokerCredentialsEntity> list = brokerCredentialsRepository.findByAppUserId(uid);
-                    if (list != null && !list.isEmpty()) {
-                        BrokerCredentialsEntity chosen = null;
-                        for (BrokerCredentialsEntity b : list) {
-                            if (b == null) continue;
-                            if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
-                                    && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
-                        }
-                        if (chosen == null) {
-                            for (BrokerCredentialsEntity b : list) {
-                                if (b == null) continue;
-                                if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
-                            }
-                        }
-                        if (chosen != null) {
-                            resolved = chosen.getId();
-                        }
+                    BrokerCredentialsEntity chosen = choosePreferredBrokerCredential(list);
+                    if (chosen != null) {
+                        resolved = chosen.getId();
                     }
                 }
-                // As a final fallback, if still null, try any active Sharekhan credentials globally (admin/dev environments)
                 if (resolved == null) {
                     try {
                         List<BrokerCredentialsEntity> all = brokerCredentialsRepository.findAll();
-                        BrokerCredentialsEntity chosen = null;
-                        for (BrokerCredentialsEntity b : all) {
-                            if (b == null) continue;
-                            if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
-                                    && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
-                        }
-                        if (chosen == null) {
-                            for (BrokerCredentialsEntity b : all) {
-                                if (b == null) continue;
-                                if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
-                            }
-                        }
+                        BrokerCredentialsEntity chosen = choosePreferredBrokerCredential(all);
                         if (chosen != null) {
                             resolved = chosen.getId();
                         }
@@ -3867,6 +3982,24 @@ public class TradeExecutionService {
                 Objects.toString(trade.getOptionType(), "NA");
     }
 
+    private boolean isBrokerContextUsable(BrokerContext ctx) {
+        if (ctx == null || ctx.getBrokerName() == null) {
+            return false;
+        }
+        try {
+            Broker broker = Broker.fromDisplayName(ctx.getBrokerName());
+            if (broker == Broker.SIMULATOR) {
+                return true;
+            }
+            if (ctx.getApiKey() == null) {
+                return false;
+            }
+            return broker != Broker.SHAREKHAN || ctx.getCustomerId() != null;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     // ---------------- Broker context resolution ----------------
     private BrokerContext resolveBrokerContext(Long brokerCredentialsId, Long appUserId) {
         try {
@@ -3875,36 +4008,12 @@ public class TradeExecutionService {
                 chosen = brokerCredentialsRepository.findById(brokerCredentialsId).orElse(null);
             }
             if (chosen == null && appUserId != null) {
-                // prefer active Sharekhan for this user, else any Sharekhan
                 java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> list = brokerCredentialsRepository.findByAppUserId(appUserId);
-                if (list != null) {
-                    for (var b : list) {
-                        if (b == null) continue;
-                        if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
-                                && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
-                    }
-                    if (chosen == null) {
-                        for (var b : list) {
-                            if (b == null) continue;
-                            if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
-                        }
-                    }
-                }
+                chosen = choosePreferredBrokerCredential(list);
             }
             if (chosen == null) {
-                // global fallback: any active Sharekhan
                 java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> all = brokerCredentialsRepository.findAll();
-                for (var b : all) {
-                    if (b == null) continue;
-                    if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
-                            && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
-                }
-                if (chosen == null) {
-                    for (var b : all) {
-                        if (b == null) continue;
-                        if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
-                    }
-                }
+                chosen = choosePreferredBrokerCredential(all);
             }
             if (chosen == null) return null;
 
@@ -3913,10 +4022,73 @@ public class TradeExecutionService {
             String clientCode = null;
             try { apiKey = cryptoService.decrypt(chosen.getApiKey()); } catch (Exception e) { apiKey = chosen.getApiKey(); }
             try { clientCode = cryptoService.decrypt(chosen.getClientCode()); } catch (Exception e) { clientCode = chosen.getClientCode(); }
-            return new BrokerContext(customerId, apiKey, clientCode, chosen.getBrokerName());
+            return new BrokerContext(customerId, apiKey, clientCode, chosen.getBrokerName(), chosen.getId());
         } catch (Exception e) {
             log.warn("Failed to resolve broker context: {}", e.toString());
             return null;
+        }
+    }
+
+    private BrokerCredentialsEntity choosePreferredBrokerCredential(List<BrokerCredentialsEntity> credentials) {
+        if (credentials == null || credentials.isEmpty()) {
+            return null;
+        }
+        BrokerCredentialsEntity defaultOrderBroker = credentials.stream()
+                .filter(this::isActiveCredential)
+                .filter(this::isOrderRoutingEnabled)
+                .filter(credential -> Boolean.TRUE.equals(credential.getDefaultForOrders()))
+                .findFirst()
+                .orElse(null);
+        if (defaultOrderBroker != null) {
+            return defaultOrderBroker;
+        }
+        BrokerCredentialsEntity activeSharekhan = firstCredential(credentials, Broker.SHAREKHAN, true);
+        if (activeSharekhan != null) {
+            return activeSharekhan;
+        }
+        BrokerCredentialsEntity anySharekhan = firstCredential(credentials, Broker.SHAREKHAN, false);
+        if (anySharekhan != null) {
+            return anySharekhan;
+        }
+        for (BrokerCredentialsEntity credential : credentials) {
+            if (credential != null && Boolean.TRUE.equals(credential.getActive())) {
+                return credential;
+            }
+        }
+        return credentials.stream().filter(Objects::nonNull).findFirst().orElse(null);
+    }
+
+    private BrokerCredentialsEntity firstCredential(List<BrokerCredentialsEntity> credentials,
+                                                    Broker broker,
+                                                    boolean activeOnly) {
+        for (BrokerCredentialsEntity credential : credentials) {
+            if (credential == null || credential.getBrokerName() == null) {
+                continue;
+            }
+            if (credential.getBrokerName().equalsIgnoreCase(broker.getDisplayName())
+                    && (!activeOnly || Boolean.TRUE.equals(credential.getActive()))) {
+                return credential;
+            }
+        }
+        return null;
+    }
+
+    private boolean isActiveCredential(BrokerCredentialsEntity credential) {
+        return credential != null && !Boolean.FALSE.equals(credential.getActive());
+    }
+
+    private boolean isOrderRoutingEnabled(BrokerCredentialsEntity credential) {
+        if (!isActiveCredential(credential)) {
+            return false;
+        }
+        if (credential.getTradingEnabled() != null) {
+            return credential.getTradingEnabled();
+        }
+        try {
+            Broker broker = Broker.fromDisplayName(credential.getBrokerName());
+            return broker == Broker.SHAREKHAN || broker == Broker.SIMULATOR;
+        } catch (Exception e) {
+            return false;
         }
     }
 }

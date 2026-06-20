@@ -31,7 +31,7 @@ public class TradingMessageService {
     private TradeExecutionService tradingExecutorService;
 
     @Autowired
-    private BrokerCredentialsService brokerCredentialsService;
+    private BrokerRoutingService brokerRoutingService;
 
     @Autowired
     private UserConfigService userConfigService;
@@ -123,15 +123,15 @@ public class TradingMessageService {
                 base.setSource(source);
             }
 
-            // Place order for all Sharekhan customers: create a separate request per broker credentials row
+            // Place order for eligible broker credentials: create a separate request per broker credentials row
             try {
-                placeForAllSharekhanCustomers(base);
+                placeForEligibleBrokerCredentials(base);
             } catch (Exception e) {
-                System.err.println("Failed to place order for all Sharekhan customers: " + e.getMessage());
+                System.err.println("Failed to place order for eligible broker credentials: " + e.getMessage());
             }
 
             // Note: Do NOT place a generic trade here without appUser context.
-            // All telegram-triggered placements are handled per-user in placeForAllSharekhanCustomers()
+            // All telegram-triggered placements are handled per-user in placeForEligibleBrokerCredentials()
             System.out.println("✅ Parsed message handled" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
         } else {
             System.out.println("⚠️ No parser matched message" + (uniqueId != null ? " (uid=" + uniqueId + ")" : ""));
@@ -170,7 +170,7 @@ public class TradingMessageService {
 
         try {
             TriggerRequest triggerRequest = stockAtrTradeService.buildTriggerRequest(request);
-            placeForAllSharekhanCustomers(triggerRequest);
+            placeForEligibleBrokerCredentials(triggerRequest);
             return true;
         } catch (IllegalArgumentException e) {
             System.err.println("ATR stock signal skipped: " + e.getMessage());
@@ -337,7 +337,7 @@ public class TradingMessageService {
         } catch (Exception ignored) {}
     }
 
-    private boolean isDuplicateTrade(TriggerRequest req, Long appUserId) {
+    private boolean isDuplicateTrade(TriggerRequest req, Long appUserId, Long brokerCredentialsId) {
         if (!"Sharekhan".equalsIgnoreCase(req.getSource())) {
             return false;
         }
@@ -353,6 +353,7 @@ public class TradingMessageService {
                 );
 
         if (pendingRequests != null && pendingRequests.stream()
+                .filter(p -> sameBrokerCredential(p.getBrokerCredentialsId(), brokerCredentialsId))
                 .anyMatch(p -> matchesContract(requestedStrike, requestedOptionType,
                         p.getStrikePrice(), p.getOptionType()))) {
             return true;
@@ -370,8 +371,16 @@ public class TradingMessageService {
                 );
 
         return activeTrades != null && activeTrades.stream()
+                .filter(t -> sameBrokerCredential(t.getBrokerCredentialsId(), brokerCredentialsId))
                 .anyMatch(t -> matchesContract(requestedStrike, requestedOptionType,
                         t.getStrikePrice(), t.getOptionType()));
+    }
+
+    private boolean sameBrokerCredential(Long existingBrokerCredentialsId, Long requestedBrokerCredentialsId) {
+        if (requestedBrokerCredentialsId == null) {
+            return true;
+        }
+        return Objects.equals(existingBrokerCredentialsId, requestedBrokerCredentialsId);
     }
 
     private boolean matchesContract(Double reqStrike, String reqOptionType,
@@ -397,6 +406,10 @@ public class TradingMessageService {
     }
 
     public void placeForAllSharekhanCustomers(TriggerRequest base) {
+        placeForEligibleBrokerCredentials(base);
+    }
+
+    public void placeForEligibleBrokerCredentials(TriggerRequest base) {
         if (base != null && "Sharekhan".equalsIgnoreCase(base.getSource())) {
             Double sl = base.getStopLoss();
             if (sl != null && sl < 1.0d) {
@@ -404,9 +417,7 @@ public class TradingMessageService {
                 return;
             }
         }
-        // Fetch all broker credentials for SHAREKHAN
-        List<BrokerCredentialsEntity> creds = brokerCredentialsService.findAllForBroker("Sharekhan");
-        creds.addAll(brokerCredentialsService.findAllForBroker("Simulator"));
+        List<BrokerCredentialsEntity> creds = brokerRoutingService.resolveFanOutTargets(base);
         if (creds == null || creds.isEmpty()) return;
 
         // Create an executor that uses virtual threads if available; otherwise fallback to cached thread pool
@@ -463,8 +474,9 @@ public class TradingMessageService {
                     continue;
                 }
 
-                if (isDuplicateTrade(req, c.getAppUserId())) {
-                    System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId() + " and instrument " + req.getInstrument());
+                if (isDuplicateTrade(req, c.getAppUserId(), c.getId())) {
+                    System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId()
+                            + " brokerCredential #" + c.getId() + " and instrument " + req.getInstrument());
                     try {
                         if (telegramNotificationService != null) {
                             String title = "Duplicate Trade Skipped";
@@ -546,8 +558,9 @@ public class TradingMessageService {
                         continue;
                     }
 
-                    if (isDuplicateTrade(req, c.getAppUserId())) {
-                        System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId() + " and instrument " + req.getInstrument());
+                    if (isDuplicateTrade(req, c.getAppUserId(), c.getId())) {
+                        System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId()
+                                + " brokerCredential #" + c.getId() + " and instrument " + req.getInstrument());
                         try {
                             if (telegramNotificationService != null) {
                                 String title = "Duplicate Trade Skipped";
@@ -631,6 +644,11 @@ public class TradingMessageService {
         t.setLots(src.getLots());
         t.setQuickTrade(src.getQuickTrade());
         t.setAction(src.getAction());
+        t.setRoutingMode(src.getRoutingMode());
+        t.setBrokerName(src.getBrokerName());
+        t.setTargetBrokerCredentialsIds(src.getTargetBrokerCredentialsIds() != null
+                ? new ArrayList<>(src.getTargetBrokerCredentialsIds())
+                : null);
         // userId and brokerCredentialsId intentionally left null here; caller sets them
         return t;
     }

@@ -12,4 +12,5 @@ public class BrokerContext {
     private String apiKey;
     private String clientCode;
     private String brokerName;
+    private Long brokerCredentialsId;
 }

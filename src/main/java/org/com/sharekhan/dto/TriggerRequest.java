@@ -3,6 +3,8 @@ package org.com.sharekhan.dto;
 
 import lombok.Data;
 
+import java.util.List;
+
 @Data
 public class TriggerRequest {
     private String instrument;
@@ -24,6 +26,15 @@ public class TriggerRequest {
     private Long userId;
     // optional broker credentials id to use for this request (broker_credentials.id)
     private Long brokerCredentialsId;
+
+    // Optional routing hints for multi-broker fan-out: DEFAULT, ALL_ENABLED, or SELECTED.
+    private String routingMode;
+
+    // Optional broker display name for broker-scoped fan-out, e.g. Sharekhan or MStock.
+    private String brokerName;
+
+    // Optional explicit credential ids for selected multi-broker routing.
+    private List<Long> targetBrokerCredentialsIds;
     
     private Boolean useSpotPrice; // Legacy flag for backward compatibility
     

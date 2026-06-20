@@ -46,4 +46,10 @@ public class BrokerCredentialsEntity {
     @Column(name = "active", nullable = false)
     private Boolean active = true;
 
+    @Column(name = "trading_enabled")
+    private Boolean tradingEnabled;
+
+    @Column(name = "default_for_orders")
+    private Boolean defaultForOrders;
+
 }

@@ -8,6 +8,7 @@ import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.com.sharekhan.service.TradingMessageService;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
@@ -390,15 +391,19 @@ public class AdminController {
             // resolve AppUser -> customerId (UI passes AppUser.id)
             AppUser app = entityManager.find(AppUser.class, userId);
             var list = brokerCredentialsRepository.findByAppUserId(userId).stream()
-                    .map(b -> java.util.Map.of(
-                            "id", b.getId(),
-                            "brokerName", b.getBrokerName(),
-                            "customerId", b.getCustomerId(),
-                            "appUserId", b.getAppUserId(),
-                            "clientCode", b.getClientCode(),
-                            "hasApiKey", b.getApiKey() != null && !b.getApiKey().isBlank(),
-                            "active", b.getActive() != null ? b.getActive() : Boolean.FALSE
-                    )).collect(Collectors.toList());
+                    .map(b -> {
+                        Map<String, Object> row = new java.util.HashMap<>();
+                        row.put("id", b.getId());
+                        row.put("brokerName", b.getBrokerName());
+                        row.put("customerId", b.getCustomerId());
+                        row.put("appUserId", b.getAppUserId());
+                        row.put("clientCode", b.getClientCode());
+                        row.put("hasApiKey", b.getApiKey() != null && !b.getApiKey().isBlank());
+                        row.put("active", b.getActive() != null ? b.getActive() : Boolean.FALSE);
+                        row.put("tradingEnabled", effectiveTradingEnabled(b));
+                        row.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
+                        return row;
+                    }).collect(Collectors.toList());
             return ResponseEntity.ok(list);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to list brokers", "message", e.toString()));
@@ -417,6 +422,8 @@ public class AdminController {
         String totp = (String) body.get("totpSecret");
         String secret = (String) body.get("secretKey");
         Boolean active = body.containsKey("active") ? Boolean.valueOf(String.valueOf(body.get("active"))) : Boolean.TRUE;
+        Boolean tradingEnabled = body.containsKey("tradingEnabled") ? Boolean.valueOf(String.valueOf(body.get("tradingEnabled"))) : null;
+        Boolean defaultForOrders = body.containsKey("defaultForOrders") ? Boolean.valueOf(String.valueOf(body.get("defaultForOrders"))) : Boolean.FALSE;
         Long customerId = body.containsKey("customerId") && body.get("customerId") != null ? Long.valueOf(String.valueOf(body.get("customerId"))) : null;
         if (brokerName == null || brokerName.isBlank()) return ResponseEntity.badRequest().body("brokerName required");
         // resolve AppUser id to customerId
@@ -433,7 +440,15 @@ public class AdminController {
         b.setTotpSecret(totp != null ? cryptoService.encrypt(totp) : null);
         b.setSecretKey(secret != null ? cryptoService.encrypt(secret) : null);
         b.setActive(active != null ? active : Boolean.TRUE);
+        if (Boolean.TRUE.equals(defaultForOrders) && tradingEnabled == null) {
+            tradingEnabled = Boolean.TRUE;
+        }
+        b.setTradingEnabled(tradingEnabled);
+        b.setDefaultForOrders(defaultForOrders);
         if (app != null) b.setAppUserId(app.getId());
+        if (Boolean.TRUE.equals(b.getDefaultForOrders())) {
+            clearDefaultOrderBrokerForUser(userId, null);
+        }
         // if this new broker is marked active, deactivate other brokers for same user+brokerName
         if (b.getActive()) {
             var others = brokerCredentialsRepository.findByAppUserId(userId);
@@ -471,6 +486,8 @@ public class AdminController {
             resp.put("clientCode", b.getClientCode() != null ? cryptoService.decrypt(b.getClientCode()) : null);
             resp.put("totpSecret", b.getTotpSecret() != null ? cryptoService.decrypt(b.getTotpSecret()) : null);
             resp.put("secretKey", b.getSecretKey() != null ? cryptoService.decrypt(b.getSecretKey()) : null);
+            resp.put("tradingEnabled", effectiveTradingEnabled(b));
+            resp.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
             return ResponseEntity.ok(resp);
         } catch (Exception e) {
             return ResponseEntity.status(500).body(java.util.Map.of("error", "failed to decrypt broker", "message", e.toString()));
@@ -484,6 +501,7 @@ public class AdminController {
         var opt = brokerCredentialsRepository.findById(id);
         if (opt.isEmpty()) return ResponseEntity.notFound().build();
         BrokerCredentialsEntity b = opt.get();
+        if (body.containsKey("appUserId")) b.setAppUserId(body.get("appUserId") == null ? null : Long.valueOf(String.valueOf(body.get("appUserId"))));
         if (body.containsKey("brokerName")) b.setBrokerName((String)body.get("brokerName"));
         if (body.containsKey("apiKey")) b.setApiKey(body.get("apiKey") == null ? null : cryptoService.encrypt((String)body.get("apiKey")));
         if (body.containsKey("brokerUsername")) b.setBrokerUsername(body.get("brokerUsername") == null ? null : cryptoService.encrypt((String)body.get("brokerUsername")));
@@ -491,6 +509,17 @@ public class AdminController {
         if (body.containsKey("clientCode")) b.setClientCode(body.get("clientCode") == null ? null : cryptoService.encrypt((String)body.get("clientCode")));
         if (body.containsKey("totpSecret")) b.setTotpSecret(body.get("totpSecret") == null ? null : cryptoService.encrypt((String)body.get("totpSecret")));
         if (body.containsKey("secretKey")) b.setSecretKey(body.get("secretKey") == null ? null : cryptoService.encrypt((String)body.get("secretKey")));
+        if (body.containsKey("tradingEnabled")) b.setTradingEnabled(body.get("tradingEnabled") == null ? null : Boolean.valueOf(String.valueOf(body.get("tradingEnabled"))));
+        if (body.containsKey("defaultForOrders")) {
+            Boolean newDefault = body.get("defaultForOrders") == null ? null : Boolean.valueOf(String.valueOf(body.get("defaultForOrders")));
+            if (Boolean.TRUE.equals(newDefault)) {
+                clearDefaultOrderBrokerForUser(b.getAppUserId(), b.getId());
+                if (b.getTradingEnabled() == null || !b.getTradingEnabled()) {
+                    b.setTradingEnabled(true);
+                }
+            }
+            b.setDefaultForOrders(newDefault);
+        }
         if (body.containsKey("customerId")) { b.setCustomerId(body.get("customerId") == null ? null : Long.valueOf(String.valueOf(body.get("customerId")))); }
         if (body.containsKey("active")) {
             Boolean newActive = body.get("active") == null ? null : Boolean.valueOf(String.valueOf(body.get("active")));
@@ -508,9 +537,40 @@ public class AdminController {
             }
             b.setActive(newActive);
         }
-        if (body.containsKey("appUserId")) b.setAppUserId(body.get("appUserId") == null ? null : Long.valueOf(String.valueOf(body.get("appUserId"))));
         brokerCredentialsRepository.save(b);
         return ResponseEntity.ok("updated");
+    }
+
+    private boolean effectiveTradingEnabled(BrokerCredentialsEntity brokerCredentials) {
+        if (brokerCredentials == null || Boolean.FALSE.equals(brokerCredentials.getActive())) {
+            return false;
+        }
+        if (brokerCredentials.getTradingEnabled() != null) {
+            return brokerCredentials.getTradingEnabled();
+        }
+        try {
+            Broker broker = Broker.fromDisplayName(brokerCredentials.getBrokerName());
+            return broker == Broker.SHAREKHAN || broker == Broker.SIMULATOR;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private void clearDefaultOrderBrokerForUser(Long appUserId, Long exceptBrokerCredentialsId) {
+        if (appUserId == null) {
+            return;
+        }
+        var others = brokerCredentialsRepository.findByAppUserId(appUserId);
+        for (var other : others) {
+            if (other == null || !Boolean.TRUE.equals(other.getDefaultForOrders())) {
+                continue;
+            }
+            if (exceptBrokerCredentialsId != null && exceptBrokerCredentialsId.equals(other.getId())) {
+                continue;
+            }
+            other.setDefaultForOrders(false);
+            brokerCredentialsRepository.save(other);
+        }
     }
 
     // Same fix as above: keep path relative to class-level "/admin"

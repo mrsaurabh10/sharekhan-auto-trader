@@ -1,12 +1,10 @@
 package org.com.sharekhan.service;
 
 import com.sharekhan.http.exceptions.SharekhanAPIException;
-import com.sharekhan.SharekhanConnect;
-import org.com.sharekhan.util.SharekhanConsoleSilencer;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.auth.TokenStoreService;
+import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
@@ -14,6 +12,9 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
+import org.com.sharekhan.service.broker.BrokerService;
+import org.com.sharekhan.service.broker.BrokerServiceFactory;
+import org.com.sharekhan.service.broker.OrderStatusBrokerService;
 import org.com.sharekhan.ws.WebSocketClientService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.json.JSONObject;
@@ -42,12 +43,11 @@ public class OrderStatusPollingService {
     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
      // Track last modify price attempted per orderId to avoid spamming identical modify requests
      private final Map<String, Double> lastModifyPrice = new ConcurrentHashMap<>();
-    private final ConcurrentMap<SharekhanClientKey, SharekhanClientHolder> sharekhanClientCache = new ConcurrentHashMap<>();
     private final WebSocketClientService webSocketClientService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
-    private final TokenStoreService   tokenStoreService;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
+    private final BrokerServiceFactory brokerServiceFactory;
     @Autowired
     private org.com.sharekhan.util.CryptoService cryptoService;
     @Autowired
@@ -59,24 +59,14 @@ public class OrderStatusPollingService {
     @Value("${app.order.poll-delay-ms:2000}")
     private long orderPollDelayMs;
 
-    private record SharekhanClientKey(Long customerId, String apiKey) { }
-
-    private static final class SharekhanClientHolder {
-        private final SharekhanConnect client;
-        private final String accessToken;
-
-        private SharekhanClientHolder(SharekhanConnect client, String accessToken) {
-            this.client = client;
-            this.accessToken = accessToken;
-        }
-    }
-
     // ---- Helper types and resolution for broker context (local copy) ----
     @lombok.Data
     private static class BrokerCtx {
         private final Long customerId;
         private final String apiKey;
         private final String clientCode;
+        private final String brokerName;
+        private final Long brokerCredentialsId;
     }
 
     @PostConstruct
@@ -138,33 +128,11 @@ public class OrderStatusPollingService {
             }
             if (chosen == null && appUserId != null) {
                 java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> list = brokerCredentialsRepository.findByAppUserId(appUserId);
-                if (list != null) {
-                    for (var b : list) {
-                        if (b == null) continue;
-                        if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
-                                && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
-                    }
-                    if (chosen == null) {
-                        for (var b : list) {
-                            if (b == null) continue;
-                            if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
-                        }
-                    }
-                }
+                chosen = choosePreferredBrokerCredential(list);
             }
             if (chosen == null) {
                 java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> all = brokerCredentialsRepository.findAll();
-                for (var b : all) {
-                    if (b == null) continue;
-                    if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")
-                            && Boolean.TRUE.equals(b.getActive())) { chosen = b; break; }
-                }
-                if (chosen == null) {
-                    for (var b : all) {
-                        if (b == null) continue;
-                        if (b.getBrokerName() != null && b.getBrokerName().equalsIgnoreCase("Sharekhan")) { chosen = b; break; }
-                    }
-                }
+                chosen = choosePreferredBrokerCredential(all);
             }
             if (chosen == null) return null;
 
@@ -173,10 +141,73 @@ public class OrderStatusPollingService {
             String clientCode = null;
             try { apiKey = cryptoService.decrypt(chosen.getApiKey()); } catch (Exception e) { apiKey = chosen.getApiKey(); }
             try { clientCode = cryptoService.decrypt(chosen.getClientCode()); } catch (Exception e) { clientCode = chosen.getClientCode(); }
-            return new BrokerCtx(customerId, apiKey, clientCode);
+            return new BrokerCtx(customerId, apiKey, clientCode, chosen.getBrokerName(), chosen.getId());
         } catch (Exception e) {
             log.warn("Broker context resolve failed: {}", e.toString());
             return null;
+        }
+    }
+
+    private BrokerCredentialsEntity choosePreferredBrokerCredential(List<BrokerCredentialsEntity> credentials) {
+        if (credentials == null || credentials.isEmpty()) {
+            return null;
+        }
+        BrokerCredentialsEntity defaultOrderBroker = credentials.stream()
+                .filter(this::isActiveCredential)
+                .filter(this::isOrderRoutingEnabled)
+                .filter(credential -> Boolean.TRUE.equals(credential.getDefaultForOrders()))
+                .findFirst()
+                .orElse(null);
+        if (defaultOrderBroker != null) {
+            return defaultOrderBroker;
+        }
+        BrokerCredentialsEntity activeSharekhan = firstCredential(credentials, Broker.SHAREKHAN, true);
+        if (activeSharekhan != null) {
+            return activeSharekhan;
+        }
+        BrokerCredentialsEntity anySharekhan = firstCredential(credentials, Broker.SHAREKHAN, false);
+        if (anySharekhan != null) {
+            return anySharekhan;
+        }
+        for (BrokerCredentialsEntity credential : credentials) {
+            if (credential != null && Boolean.TRUE.equals(credential.getActive())) {
+                return credential;
+            }
+        }
+        return credentials.stream().filter(Objects::nonNull).findFirst().orElse(null);
+    }
+
+    private BrokerCredentialsEntity firstCredential(List<BrokerCredentialsEntity> credentials,
+                                                    Broker broker,
+                                                    boolean activeOnly) {
+        for (BrokerCredentialsEntity credential : credentials) {
+            if (credential == null || credential.getBrokerName() == null) {
+                continue;
+            }
+            if (credential.getBrokerName().equalsIgnoreCase(broker.getDisplayName())
+                    && (!activeOnly || Boolean.TRUE.equals(credential.getActive()))) {
+                return credential;
+            }
+        }
+        return null;
+    }
+
+    private boolean isActiveCredential(BrokerCredentialsEntity credential) {
+        return credential != null && !Boolean.FALSE.equals(credential.getActive());
+    }
+
+    private boolean isOrderRoutingEnabled(BrokerCredentialsEntity credential) {
+        if (!isActiveCredential(credential)) {
+            return false;
+        }
+        if (credential.getTradingEnabled() != null) {
+            return credential.getTradingEnabled();
+        }
+        try {
+            Broker broker = Broker.fromDisplayName(credential.getBrokerName());
+            return broker == Broker.SHAREKHAN || broker == Broker.SIMULATOR;
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -228,22 +259,13 @@ public class OrderStatusPollingService {
             }
             try {
 
-                // Resolve broker context (apiKey, customerId, clientCode)
                 BrokerCtx ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
-                if (ctx == null || ctx.getCustomerId() == null || ctx.getApiKey() == null) {
-                    throw new IllegalStateException("No active Sharekhan broker configured for this trade");
+                if (!isBrokerContextUsable(ctx)) {
+                    throw new IllegalStateException("No active broker configured for this trade");
                 }
-                String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, ctx.getCustomerId()); // per-customer
-                if (accessToken == null) {
-                    accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-                }
-                SharekhanConnect sharekhanConnect = getSharekhanClient(ctx, accessToken);
-
-                JSONObject response = SharekhanConsoleSilencer.call(() ->
-                        sharekhanConnect.orderHistory(trade.getExchange(), ctx.getCustomerId(), orderIdToMonitor)
-                );
                 // Always operate on the latest persisted trade state
                 TriggeredTradeSetupEntity currentTrade = tradeRepo.findById(trade.getId()).orElse(trade);
+                JSONObject response = fetchBrokerOrderStatus(currentTrade, ctx, orderIdToMonitor);
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
                 if (TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
                     // Determine if this was an exit order or entry order based on which orderId we monitored
@@ -398,15 +420,45 @@ public class OrderStatusPollingService {
 //        }, 2, TimeUnit.MINUTES);
     }
 
-    private SharekhanConnect getSharekhanClient(BrokerCtx ctx, String accessToken) {
-        SharekhanClientKey key = new SharekhanClientKey(ctx.getCustomerId(), ctx.getApiKey());
-        SharekhanClientHolder holder = sharekhanClientCache.compute(key, (k, existing) -> {
-            if (existing == null || !Objects.equals(existing.accessToken, accessToken)) {
-                return new SharekhanClientHolder(new SharekhanConnect(null, ctx.getApiKey(), accessToken), accessToken);
+    private JSONObject fetchBrokerOrderStatus(TriggeredTradeSetupEntity trade,
+                                              BrokerCtx ctx,
+                                              String orderIdToMonitor) {
+        if (ctx == null || ctx.getBrokerName() == null) {
+            return null;
+        }
+        BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+        if (!(brokerService instanceof OrderStatusBrokerService orderStatusBrokerService)) {
+            log.debug("Broker {} does not support status polling for order {}",
+                    ctx.getBrokerName(), orderIdToMonitor);
+            return null;
+        }
+        return orderStatusBrokerService.fetchOrderStatus(trade, toBrokerContext(ctx), orderIdToMonitor);
+    }
+
+    private BrokerContext toBrokerContext(BrokerCtx ctx) {
+        return new BrokerContext(ctx.getCustomerId(),
+                ctx.getApiKey(),
+                ctx.getClientCode(),
+                ctx.getBrokerName(),
+                ctx.getBrokerCredentialsId());
+    }
+
+    private boolean isBrokerContextUsable(BrokerCtx ctx) {
+        if (ctx == null || ctx.getBrokerName() == null) {
+            return false;
+        }
+        try {
+            Broker broker = Broker.fromDisplayName(ctx.getBrokerName());
+            if (broker == Broker.SIMULATOR) {
+                return true;
             }
-            return existing;
-        });
-        return holder.client;
+            if (ctx.getApiKey() == null) {
+                return false;
+            }
+            return broker != Broker.SHAREKHAN || ctx.getCustomerId() != null;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
 

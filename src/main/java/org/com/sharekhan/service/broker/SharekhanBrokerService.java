@@ -19,7 +19,7 @@ import java.util.Set;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class SharekhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService {
+public class SharekhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService, OrderStatusBrokerService {
 
     private final TokenStoreService tokenStoreService;
 
@@ -43,6 +43,30 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
         return executeSharekhanOrder(trade, context, exitPrice, "S", "NEW");
+    }
+
+    @Override
+    public JSONObject fetchOrderStatus(TriggeredTradeSetupEntity trade, BrokerContext context, String orderId) {
+        try {
+            if (trade == null || context == null || orderId == null || orderId.isBlank()) {
+                return null;
+            }
+            String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
+            if (accessToken == null) {
+                accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
+            }
+            if (accessToken == null || context.getApiKey() == null || context.getCustomerId() == null) {
+                return null;
+            }
+            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, context.getApiKey(), accessToken);
+            return SharekhanConsoleSilencer.call(() ->
+                    sharekhanConnect.orderHistory(trade.getExchange(), context.getCustomerId(), orderId)
+            );
+        } catch (Exception e) {
+            log.debug("Sharekhan order status fetch failed for trade {} order {}: {}",
+                    trade != null ? trade.getId() : null, orderId, e.getMessage());
+            return null;
+        }
     }
 
     @Override

@@ -51,10 +51,12 @@ public class SecurityConfig {
                         .requestMatchers("/api/trades/trigger-all", "/api/trades/close-all", "/api/trades/close-all/**").permitAll() // Secure via X-Admin-Token inside the controller
                         .requestMatchers("/api/trades/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/scripts/**", "/api/mstock/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/sharekhan/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/ws/**").hasAnyRole("ADMIN", "USER")
                         .anyRequest().permitAll()
                 )
                 .userDetailsService(adminUserDetailsService)
+                .httpBasic(Customizer.withDefaults())
                 .formLogin(form -> form
                         .loginPage("/login")
                         .loginProcessingUrl("/login")

@@ -167,10 +167,83 @@ class TradeExecutionServiceExitPriceValidationTest {
         assertThat(trade.getEntryPrice()).isEqualTo(100.0);
     }
 
+    @Test
+    void treatsMStockCompleteEntryOrderAsExecutedAndCapturesAveragePrice() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(4472L)
+                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                .entryPrice(100.0)
+                .stopLoss(90.0)
+                .target1(110.0)
+                .quantity(100L)
+                .build();
+
+        TradeExecutionService.TradeStatus status = service.evaluateOrderFinalStatus(
+                trade,
+                mStockOrderDetails("Complete", 101.25, 100, 100, 0)
+        );
+
+        assertThat(status).isEqualTo(TradeExecutionService.TradeStatus.FULLY_EXECUTED);
+        assertThat(trade.getActualEntryPrice()).isEqualTo(101.25);
+        assertThat(trade.getEntryPrice()).isEqualTo(101.25);
+    }
+
+    @Test
+    void treatsMStockPartialQuantityAsPending() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(4473L)
+                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                .entryPrice(100.0)
+                .quantity(100L)
+                .build();
+
+        TradeExecutionService.TradeStatus status = service.evaluateOrderFinalStatus(
+                trade,
+                mStockOrderDetails("Open", 101.25, 100, 40, 60)
+        );
+
+        assertThat(status).isEqualTo(TradeExecutionService.TradeStatus.PENDING);
+        assertThat(trade.getActualEntryPrice()).isNull();
+    }
+
+    @Test
+    void treatsMStockCompleteExitOrderAsExitedAndCalculatesPnl() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(4474L)
+                .status(TriggeredTradeStatus.EXIT_ORDER_PLACED)
+                .entryPrice(100.0)
+                .actualEntryPrice(100.0)
+                .quantity(10L)
+                .build();
+
+        TradeExecutionService.TradeStatus status = service.evaluateOrderFinalStatus(
+                trade,
+                mStockOrderDetails("Complete", 112.5, 10, 10, 0)
+        );
+
+        assertThat(status).isEqualTo(TradeExecutionService.TradeStatus.FULLY_EXECUTED);
+        assertThat(trade.getExitPrice()).isEqualTo(112.5);
+        assertThat(trade.getPnl()).isEqualTo(125.0);
+    }
+
     private JSONObject orderHistory(String orderStatus, String avgPrice) {
         JSONObject row = new JSONObject()
                 .put("orderStatus", orderStatus)
                 .put("avgPrice", avgPrice);
+        return new JSONObject().put("data", new JSONArray().put(row));
+    }
+
+    private JSONObject mStockOrderDetails(String status,
+                                          double averagePrice,
+                                          long quantity,
+                                          long filledQuantity,
+                                          long pendingQuantity) {
+        JSONObject row = new JSONObject()
+                .put("status", status)
+                .put("average_price", averagePrice)
+                .put("quantity", quantity)
+                .put("filled_quantity", filledQuantity)
+                .put("pending_quantity", pendingQuantity);
         return new JSONObject().put("data", new JSONArray().put(row));
     }
 }

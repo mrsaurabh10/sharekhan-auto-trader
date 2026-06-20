@@ -26,6 +26,9 @@ import org.springframework.context.ApplicationEventPublisher;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -87,6 +90,37 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
         verify(ctx.triggeredRepo, never()).save(any());
         verify(ctx.eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
+    void mcxExpiryDateRemainsTradableAfterEquityCutoff() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggerRequest request = new TriggerRequest();
+        request.setInstrument("CRUDEOIL");
+
+        LocalTime cutoff = ctx.service.optionExpiryCutoff(request);
+
+        assertThat(cutoff).isEqualTo(LocalTime.MAX);
+        assertThat(ctx.service.isTradableExpiry(
+                LocalDate.of(2026, 6, 16),
+                LocalDateTime.of(2026, 6, 16, 17, 0),
+                cutoff)).isTrue();
+    }
+
+    @Test
+    void nonMcxExpiryStillExpiresAtEquityCutoff() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggerRequest request = new TriggerRequest();
+        request.setInstrument("NIFTY");
+        request.setExchange("NF");
+
+        LocalTime cutoff = ctx.service.optionExpiryCutoff(request);
+
+        assertThat(cutoff).isEqualTo(LocalTime.of(15, 30));
+        assertThat(ctx.service.isTradableExpiry(
+                LocalDate.of(2026, 6, 16),
+                LocalDateTime.of(2026, 6, 16, 17, 0),
+                cutoff)).isFalse();
     }
 
     @Test
