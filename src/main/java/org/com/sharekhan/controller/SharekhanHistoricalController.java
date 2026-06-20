@@ -5,10 +5,12 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.service.ScriptMasterService;
 import org.com.sharekhan.service.SharekhanHistoricalService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -32,8 +34,12 @@ public class SharekhanHistoricalController {
     private final ScriptMasterRepository scriptMasterRepository;
     private final ScriptMasterService scriptMasterService;
 
+    @Value("${app.admin.token:}")
+    private String adminToken;
+
     @GetMapping("/candles")
     public ResponseEntity<?> getHistoricalCandles(
+            @RequestHeader(value = "X-Admin-Token", required = false) String headerToken,
             @RequestParam(name = "scripCode", required = false) Integer scripCode,
             @RequestParam(name = "exchange", required = false) String exchange,
             @RequestParam(name = "instrument", required = false) String instrument,
@@ -43,6 +49,11 @@ public class SharekhanHistoricalController {
             @RequestParam(name = "interval", required = false) String interval,
             @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
             @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+
+        if (!authorized(headerToken)) {
+            Map<String, Object> err = error("Invalid or missing X-Admin-Token");
+            return ResponseEntity.status(403).body(err);
+        }
 
         String intervalSegment = normalizeInterval(interval);
         if (!StringUtils.hasText(intervalSegment)) {
@@ -111,6 +122,13 @@ public class SharekhanHistoricalController {
     private String normalizeInterval(String interval) {
         String value = StringUtils.hasText(interval) ? interval.trim() : DEFAULT_INTERVAL;
         return INTERVAL_PATTERN.matcher(value).matches() ? value : null;
+    }
+
+    private boolean authorized(String headerToken) {
+        if (!StringUtils.hasText(adminToken)) {
+            return true;
+        }
+        return adminToken.equals(headerToken);
     }
 
     private boolean hasPartialOptionLookup(Double strikePrice, String optionType, String expiry) {
