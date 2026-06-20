@@ -85,6 +85,22 @@ public class TradeExecutionService {
             DateTimeFormatter.ISO_LOCAL_DATE,
             DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
     );
+    private static final LocalTime DEFAULT_OPTION_EXPIRY_CUTOFF = LocalTime.of(15, 30);
+    private static final LocalTime MCX_OPTION_EXPIRY_CUTOFF = LocalTime.MAX;
+    private static final Set<String> MCX_SYMBOLS = Set.of(
+            "ALUMINIUM",
+            "COPPER",
+            "CRUDEOIL",
+            "CRUDEOILM",
+            "GOLD",
+            "GOLDM",
+            "LEAD",
+            "NATGASMINI",
+            "NATURALGAS",
+            "SILVER",
+            "SILVERM",
+            "ZINC"
+    );
     private static final int MAX_ENTRY_ATTEMPTS = 3;
     private static final long FINAL_STATUS_CHECK_DELAY_MS = 2000L;
     private static final double SECOND_ATTEMPT_SPREAD_FRACTION = 0.25;
@@ -770,7 +786,7 @@ public class TradeExecutionService {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         ZoneId zoneId = ZoneId.of("Asia/Kolkata");
         LocalDateTime now = LocalDateTime.now(zoneId);
-        LocalTime cutoff = LocalTime.of(15, 30);
+        LocalTime cutoff = optionExpiryCutoff(request);
 
         if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
             List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
@@ -789,9 +805,7 @@ public class TradeExecutionService {
                     })
                     .filter(Objects::nonNull)
                     .filter(expiryDate -> {
-                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
-                        return expiryDate.isAfter(now.toLocalDate()) ||
-                                (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+                        return isTradableExpiry(expiryDate, now, cutoff);
                     })
                     .min(Comparator.naturalOrder());
 
@@ -839,6 +853,33 @@ public class TradeExecutionService {
                 request.getOptionType(),
                 request.getExpiry()
         ).orElseThrow(() -> new RuntimeException("Script not found in master DB"));
+    }
+
+    LocalTime optionExpiryCutoff(TriggerRequest request) {
+        return isMcxRequest(request) ? MCX_OPTION_EXPIRY_CUTOFF : DEFAULT_OPTION_EXPIRY_CUTOFF;
+    }
+
+    boolean isTradableExpiry(LocalDate expiryDate, LocalDateTime now, LocalTime cutoff) {
+        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
+        return expiryDate.isAfter(now.toLocalDate()) ||
+                (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+    }
+
+    private boolean isMcxRequest(TriggerRequest request) {
+        if (request == null) {
+            return false;
+        }
+        String exchange = request.getExchange();
+        if (exchange != null && exchange.equalsIgnoreCase("MX")) {
+            return true;
+        }
+        String instrument = request.getInstrument();
+        if (instrument == null || instrument.isBlank()) {
+            return false;
+        }
+        String normalizedInstrument = instrument.replaceAll("[^A-Za-z0-9]", "")
+                .toUpperCase(Locale.ROOT);
+        return MCX_SYMBOLS.contains(normalizedInstrument);
     }
 
     public TriggeredTradeSetupEntity executeQuickTrade(TriggerRequest request) {
@@ -1103,7 +1144,7 @@ public class TradeExecutionService {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy");
         ZoneId zoneId = ZoneId.of("Asia/Kolkata");
         LocalDateTime now = LocalDateTime.now(zoneId);
-        LocalTime cutoff = LocalTime.of(15, 30); // 3:30 PM IST
+        LocalTime cutoff = optionExpiryCutoff(request);
 
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
         final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
@@ -1120,8 +1161,7 @@ public class TradeExecutionService {
                     })
                     .filter(Objects::nonNull)
                     .filter(expiryDate -> {
-                        LocalDateTime expiryCutoff = LocalDateTime.of(expiryDate, cutoff);
-                        return expiryDate.isAfter(now.toLocalDate()) || (expiryDate.isEqual(now.toLocalDate()) && now.isBefore(expiryCutoff));
+                        return isTradableExpiry(expiryDate, now, cutoff);
                     })
                     .min(Comparator.naturalOrder());
 
