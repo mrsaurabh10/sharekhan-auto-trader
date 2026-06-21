@@ -1,8 +1,10 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
+import org.com.sharekhan.entity.BacktestReplayResultEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.repository.BacktestReplayResultRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,6 +25,8 @@ import static org.mockito.Mockito.when;
 class TradeAnalyticsServiceTest {
     @Mock
     private TriggeredTradeSetupRepository tradeRepository;
+    @Mock
+    private BacktestReplayResultRepository backtestResultRepository;
 
     @InjectMocks
     private TradeAnalyticsService service;
@@ -229,6 +233,45 @@ class TradeAnalyticsServiceTest {
                 .containsExactly(2L, 1L);
     }
 
+    @Test
+    void includesSavedBacktestReplayAnalytics() {
+        LocalDate from = LocalDate.of(2026, 6, 8);
+        LocalDate to = LocalDate.of(2026, 6, 8);
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq("atr-signal"), eq(null), eq(true)))
+                .thenReturn(List.of());
+        when(backtestResultRepository.findByTradeDateBetween(eq(from), eq(to))).thenReturn(List.of(
+                replay(10L, "1minute", "SUCCESS", 100.0, 50.0),
+                replay(10L, "5minute", "SUCCESS", 130.0, 50.0),
+                replay(11L, "1minute", "SUCCESS", -40.0, -100.0),
+                replay(11L, "5minute", "SUCCESS", -80.0, -100.0),
+                replay(12L, "1minute", "ERROR", null, 0.0),
+                replay(12L, "5minute", "ERROR", null, 0.0)
+        ));
+
+        TradeAnalyticsResponse response = service.getTradeAnalytics(
+                1L,
+                from,
+                to,
+                null,
+                "atr-signal",
+                null,
+                true
+        );
+
+        TradeAnalyticsResponse.BacktestSummary summary = response.getBacktest().getSummary();
+        assertThat(summary.getTotalTrades()).isEqualTo(3);
+        assertThat(summary.getComparableTrades()).isEqualTo(2);
+        assertThat(summary.getActualComparableTrades()).isEqualTo(2);
+        assertThat(summary.getFailedTrades()).isEqualTo(1);
+        assertThat(summary.getActualPnl()).isEqualTo(-50.0);
+        assertThat(summary.getOneMinutePnl()).isEqualTo(60.0);
+        assertThat(summary.getFiveMinutePnl()).isEqualTo(50.0);
+        assertThat(summary.getDiffFiveMinusOne()).isEqualTo(-10.0);
+        assertThat(summary.getOneMinuteCloserToActual()).isEqualTo(1);
+        assertThat(summary.getFiveMinuteCloserToActual()).isEqualTo(1);
+        assertThat(response.getBacktest().getByDay()).hasSize(1);
+    }
+
     private TriggeredTradeSetupEntity closed(Long id, String symbol, Double pnl, LocalDateTime exitedAt) {
         return TriggeredTradeSetupEntity.builder()
                 .id(id)
@@ -259,6 +302,29 @@ class TradeAnalyticsServiceTest {
                 .symbol("NIFTY")
                 .status(status)
                 .triggeredAt(triggeredAt)
+                .build();
+    }
+
+    private BacktestReplayResultEntity replay(Long tradeSetupId,
+                                              String interval,
+                                              String status,
+                                              Double backtestPnl,
+                                              Double actualPnl) {
+        return BacktestReplayResultEntity.builder()
+                .tradeSetupId(tradeSetupId)
+                .appUserId(1L)
+                .source("atr-signal")
+                .symbol("NIFTY")
+                .tradeDate(LocalDate.of(2026, 6, 8))
+                .interval(interval)
+                .triggerPricePolicy("CLOSE")
+                .squareOffTime("15:20")
+                .intradayOnly(true)
+                .status(status)
+                .backtestPnl(backtestPnl)
+                .actualPnl(actualPnl)
+                .runAt(LocalDateTime.of(2026, 6, 8, 16, 0))
+                .updatedAt(LocalDateTime.of(2026, 6, 8, 16, 0))
                 .build();
     }
 }
