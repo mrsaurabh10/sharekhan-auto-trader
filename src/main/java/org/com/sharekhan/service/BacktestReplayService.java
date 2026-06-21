@@ -208,7 +208,7 @@ public class BacktestReplayService {
 
         List<Candle> replayCandles = optionHistory.stream()
                 .filter(c -> tradeDate.equals(c.dateTime().toLocalDate()))
-                .filter(c -> c.dateTime().toLocalTime().plusMinutes(intervalMinutes).isAfter(entryAt.toLocalTime()))
+                .filter(c -> !c.dateTime().isBefore(entryAt))
                 .filter(c -> !c.dateTime().toLocalTime().isAfter(squareOffTime))
                 .sorted(Comparator.comparing(Candle::dateTime))
                 .toList();
