@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.com.sharekhan.dto.backtest.BacktestReplayRequest;
 import org.com.sharekhan.dto.backtest.BacktestReplayResponse;
+import org.com.sharekhan.service.BacktestDailyReplayService;
 import org.com.sharekhan.service.BacktestReplayService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -26,7 +27,7 @@ class BacktestControllerTest {
     @Test
     void rejectsMissingAdminTokenWhenConfigured() throws Exception {
         BacktestReplayService service = mock(BacktestReplayService.class);
-        BacktestController controller = new BacktestController(service);
+        BacktestController controller = new BacktestController(service, mock(BacktestDailyReplayService.class));
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
         mockMvc(controller).perform(post("/api/backtests/trade/1/replay")
@@ -39,7 +40,7 @@ class BacktestControllerTest {
     @Test
     void returnsReplayResponseWhenAdminTokenIsValid() throws Exception {
         BacktestReplayService service = mock(BacktestReplayService.class);
-        BacktestController controller = new BacktestController(service);
+        BacktestController controller = new BacktestController(service, mock(BacktestDailyReplayService.class));
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
         when(service.replayTrade(eq(1L), org.mockito.ArgumentMatchers.any(BacktestReplayRequest.class)))

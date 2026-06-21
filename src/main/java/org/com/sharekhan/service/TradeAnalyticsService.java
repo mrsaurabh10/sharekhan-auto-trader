@@ -2,9 +2,11 @@ package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
+import org.com.sharekhan.entity.BacktestReplayResultEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.repository.BacktestReplayResultRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.stereotype.Service;
 
@@ -18,6 +20,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -35,6 +38,7 @@ public class TradeAnalyticsService {
     );
 
     private final TriggeredTradeSetupRepository tradeRepository;
+    private final BacktestReplayResultRepository backtestResultRepository;
 
     public TradeAnalyticsResponse getTradeAnalytics(Long userId,
                                                     LocalDate from,
@@ -145,6 +149,16 @@ public class TradeAnalyticsService {
                 .summary(buildSummary(realizedTrades, openTrades, fundedTrades, start, end, rejectedTrades, failedTrades))
                 .bySymbol(buildBySymbol(realizedTrades))
                 .byDay(buildByDay(realizedTrades))
+                .backtest(buildBacktestAnalytics(findBacktestResults(
+                        resolvedFrom,
+                        resolvedTo,
+                        userId,
+                        normalizedSymbol,
+                        normalizedSources.isEmpty() ? normalizedSource : null,
+                        normalizedSources,
+                        brokerCredentialsId,
+                        intraday,
+                        scope)))
                 .recentClosedTrades(buildRecentClosedTrades(realizedTrades))
                 .build();
     }
@@ -238,6 +252,50 @@ public class TradeAnalyticsService {
             );
         }
         return tradeRepository.findForAnalytics(userId, symbol, source, brokerCredentialsId, intraday);
+    }
+
+    private List<BacktestReplayResultEntity> findBacktestResults(LocalDate from,
+                                                                 LocalDate to,
+                                                                 Long userId,
+                                                                 String symbol,
+                                                                 String source,
+                                                                 List<String> sources,
+                                                                 Long brokerCredentialsId,
+                                                                 Boolean intraday,
+                                                                 String scope) {
+        List<BacktestReplayResultEntity> results = backtestResultRepository.findByTradeDateBetween(from, to);
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+        List<String> selectedSources = normalizeSources(sources);
+        return results.stream()
+                .filter(result -> matchesBacktestScope(result, userId, scope))
+                .filter(result -> symbol == null || containsIgnoreCase(result.getSymbol(), symbol))
+                .filter(result -> brokerCredentialsId == null || brokerCredentialsId.equals(result.getBrokerCredentialsId()))
+                .filter(result -> intraday == null || intraday.equals(result.getIntradayOnly()))
+                .filter(result -> source == null || containsIgnoreCase(result.getSource(), source))
+                .filter(result -> selectedSources.isEmpty() || matchesAnySource(result.getSource(), selectedSources))
+                .toList();
+    }
+
+    private boolean matchesBacktestScope(BacktestReplayResultEntity result, Long userId, String scope) {
+        if (isSimulatorScope(scope)) {
+            return Boolean.TRUE.equals(result.getSimulator());
+        }
+        if (isOwnScope(scope) && userId != null) {
+            return userId.equals(result.getAppUserId()) && !Boolean.TRUE.equals(result.getSimulator());
+        }
+        if (isAllScope(scope) && userId != null) {
+            return userId.equals(result.getAppUserId()) || Boolean.TRUE.equals(result.getSimulator());
+        }
+        if (userId != null) {
+            return userId.equals(result.getAppUserId()) && !Boolean.TRUE.equals(result.getSimulator());
+        }
+        return true;
+    }
+
+    private boolean containsIgnoreCase(String value, String filter) {
+        return value != null && filter != null && value.toLowerCase().contains(filter.toLowerCase());
     }
 
     private boolean isOwnScope(String scope) {
@@ -413,6 +471,147 @@ public class TradeAnalyticsService {
                 .toList();
     }
 
+    private TradeAnalyticsResponse.BacktestAnalytics buildBacktestAnalytics(List<BacktestReplayResultEntity> results) {
+        List<BacktestTradePair> pairs = backtestPairs(results);
+        BacktestAggregate summary = aggregateBacktestPairs(pairs);
+        return TradeAnalyticsResponse.BacktestAnalytics.builder()
+                .summary(backtestSummary(summary))
+                .byDay(pairs.stream()
+                        .collect(Collectors.groupingBy(BacktestTradePair::tradeDate))
+                        .entrySet()
+                        .stream()
+                        .sorted(Map.Entry.comparingByKey())
+                        .map(entry -> backtestDaily(entry.getKey(), aggregateBacktestPairs(entry.getValue())))
+                        .toList())
+                .build();
+    }
+
+    private List<BacktestTradePair> backtestPairs(List<BacktestReplayResultEntity> results) {
+        return results.stream()
+                .collect(Collectors.groupingBy(BacktestReplayResultEntity::getTradeSetupId))
+                .entrySet()
+                .stream()
+                .map(entry -> new BacktestTradePair(
+                        entry.getKey(),
+                        entry.getValue().stream()
+                                .map(BacktestReplayResultEntity::getTradeDate)
+                                .filter(Objects::nonNull)
+                                .findFirst()
+                                .orElse(null),
+                        latestIntervalResult(entry.getValue(), "1minute").orElse(null),
+                        latestIntervalResult(entry.getValue(), "5minute").orElse(null)))
+                .toList();
+    }
+
+    private Optional<BacktestReplayResultEntity> latestIntervalResult(List<BacktestReplayResultEntity> results, String interval) {
+        return results.stream()
+                .filter(result -> interval.equalsIgnoreCase(result.getInterval()))
+                .max(Comparator.comparing(BacktestReplayResultEntity::getUpdatedAt,
+                        Comparator.nullsFirst(Comparator.naturalOrder())));
+    }
+
+    private BacktestAggregate aggregateBacktestPairs(List<BacktestTradePair> pairs) {
+        BacktestAggregate aggregate = new BacktestAggregate();
+        aggregate.totalTrades = pairs.size();
+        for (BacktestTradePair pair : pairs) {
+            BacktestReplayResultEntity oneMinute = pair.oneMinute();
+            BacktestReplayResultEntity fiveMinute = pair.fiveMinute();
+            if (isBacktestError(oneMinute) || isBacktestError(fiveMinute)) {
+                aggregate.failedTrades++;
+            }
+            aggregate.lastRunAt = latestRunAt(aggregate.lastRunAt, oneMinute);
+            aggregate.lastRunAt = latestRunAt(aggregate.lastRunAt, fiveMinute);
+            if (!isBacktestSuccess(oneMinute) || !isBacktestSuccess(fiveMinute)
+                    || oneMinute.getBacktestPnl() == null || fiveMinute.getBacktestPnl() == null) {
+                continue;
+            }
+
+            aggregate.comparableTrades++;
+            aggregate.oneMinutePnl += oneMinute.getBacktestPnl();
+            aggregate.fiveMinutePnl += fiveMinute.getBacktestPnl();
+            Double actualPnl = firstNonNull(oneMinute.getActualPnl(), fiveMinute.getActualPnl());
+            if (actualPnl == null) {
+                continue;
+            }
+
+            aggregate.actualComparableTrades++;
+            aggregate.actualPnl += actualPnl;
+            double oneMinuteDiff = oneMinute.getBacktestPnl() - actualPnl;
+            double fiveMinuteDiff = fiveMinute.getBacktestPnl() - actualPnl;
+            aggregate.oneMinuteMinusActual += oneMinuteDiff;
+            aggregate.fiveMinuteMinusActual += fiveMinuteDiff;
+            double oneMinuteAbs = Math.abs(oneMinuteDiff);
+            double fiveMinuteAbs = Math.abs(fiveMinuteDiff);
+            aggregate.oneMinuteAbsoluteError += oneMinuteAbs;
+            aggregate.fiveMinuteAbsoluteError += fiveMinuteAbs;
+            if (Double.compare(oneMinuteAbs, fiveMinuteAbs) == 0) {
+                aggregate.closerToActualTies++;
+            } else if (oneMinuteAbs < fiveMinuteAbs) {
+                aggregate.oneMinuteCloserToActual++;
+            } else {
+                aggregate.fiveMinuteCloserToActual++;
+            }
+        }
+        return aggregate;
+    }
+
+    private boolean isBacktestSuccess(BacktestReplayResultEntity result) {
+        return result != null && "SUCCESS".equalsIgnoreCase(result.getStatus());
+    }
+
+    private boolean isBacktestError(BacktestReplayResultEntity result) {
+        return result != null && !"SUCCESS".equalsIgnoreCase(result.getStatus());
+    }
+
+    private LocalDateTime latestRunAt(LocalDateTime current, BacktestReplayResultEntity result) {
+        if (result == null || result.getRunAt() == null) {
+            return current;
+        }
+        return current == null || result.getRunAt().isAfter(current) ? result.getRunAt() : current;
+    }
+
+    private TradeAnalyticsResponse.BacktestSummary backtestSummary(BacktestAggregate aggregate) {
+        return TradeAnalyticsResponse.BacktestSummary.builder()
+                .totalTrades(aggregate.totalTrades)
+                .comparableTrades(aggregate.comparableTrades)
+                .actualComparableTrades(aggregate.actualComparableTrades)
+                .failedTrades(aggregate.failedTrades)
+                .actualPnl(round(aggregate.actualPnl))
+                .oneMinutePnl(round(aggregate.oneMinutePnl))
+                .fiveMinutePnl(round(aggregate.fiveMinutePnl))
+                .diffFiveMinusOne(round(aggregate.fiveMinutePnl - aggregate.oneMinutePnl))
+                .oneMinuteMinusActual(round(aggregate.oneMinuteMinusActual))
+                .fiveMinuteMinusActual(round(aggregate.fiveMinuteMinusActual))
+                .oneMinuteAbsoluteError(round(aggregate.oneMinuteAbsoluteError))
+                .fiveMinuteAbsoluteError(round(aggregate.fiveMinuteAbsoluteError))
+                .oneMinuteCloserToActual(aggregate.oneMinuteCloserToActual)
+                .fiveMinuteCloserToActual(aggregate.fiveMinuteCloserToActual)
+                .closerToActualTies(aggregate.closerToActualTies)
+                .lastRunAt(aggregate.lastRunAt)
+                .build();
+    }
+
+    private TradeAnalyticsResponse.BacktestDailyAnalytics backtestDaily(LocalDate date, BacktestAggregate aggregate) {
+        return TradeAnalyticsResponse.BacktestDailyAnalytics.builder()
+                .date(date)
+                .totalTrades(aggregate.totalTrades)
+                .comparableTrades(aggregate.comparableTrades)
+                .actualComparableTrades(aggregate.actualComparableTrades)
+                .failedTrades(aggregate.failedTrades)
+                .actualPnl(round(aggregate.actualPnl))
+                .oneMinutePnl(round(aggregate.oneMinutePnl))
+                .fiveMinutePnl(round(aggregate.fiveMinutePnl))
+                .diffFiveMinusOne(round(aggregate.fiveMinutePnl - aggregate.oneMinutePnl))
+                .oneMinuteMinusActual(round(aggregate.oneMinuteMinusActual))
+                .fiveMinuteMinusActual(round(aggregate.fiveMinuteMinusActual))
+                .oneMinuteAbsoluteError(round(aggregate.oneMinuteAbsoluteError))
+                .fiveMinuteAbsoluteError(round(aggregate.fiveMinuteAbsoluteError))
+                .oneMinuteCloserToActual(aggregate.oneMinuteCloserToActual)
+                .fiveMinuteCloserToActual(aggregate.fiveMinuteCloserToActual)
+                .closerToActualTies(aggregate.closerToActualTies)
+                .build();
+    }
+
     private List<TradeAnalyticsResponse.RecentClosedTrade> buildRecentClosedTrades(List<TriggeredTradeSetupEntity> realizedTrades) {
         return realizedTrades.stream()
                 .sorted(Comparator.comparing(TriggeredTradeSetupEntity::getExitedAt).reversed())
@@ -491,6 +690,34 @@ public class TradeAnalyticsService {
     private Double round(Double value) {
         if (value == null) return null;
         return Math.round(value * 100.0d) / 100.0d;
+    }
+
+    private Double firstNonNull(Double first, Double second) {
+        return first != null ? first : second;
+    }
+
+    private record BacktestTradePair(Long tradeSetupId,
+                                     LocalDate tradeDate,
+                                     BacktestReplayResultEntity oneMinute,
+                                     BacktestReplayResultEntity fiveMinute) {
+    }
+
+    private static class BacktestAggregate {
+        private int totalTrades;
+        private int comparableTrades;
+        private int actualComparableTrades;
+        private int failedTrades;
+        private double actualPnl;
+        private double oneMinutePnl;
+        private double fiveMinutePnl;
+        private double oneMinuteMinusActual;
+        private double fiveMinuteMinusActual;
+        private double oneMinuteAbsoluteError;
+        private double fiveMinuteAbsoluteError;
+        private int oneMinuteCloserToActual;
+        private int fiveMinuteCloserToActual;
+        private int closerToActualTies;
+        private LocalDateTime lastRunAt;
     }
 
     private record FundUseEvent(LocalDateTime at, double deltaAmount, int deltaActiveTrades) {

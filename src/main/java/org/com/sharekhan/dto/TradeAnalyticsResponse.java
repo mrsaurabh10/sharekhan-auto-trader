@@ -14,6 +14,7 @@ public class TradeAnalyticsResponse {
     private Summary summary;
     private List<SymbolAnalytics> bySymbol;
     private List<DailyAnalytics> byDay;
+    private BacktestAnalytics backtest;
     private List<RecentClosedTrade> recentClosedTrades;
     private String aiNarrative;
 
@@ -72,6 +73,55 @@ public class TradeAnalyticsResponse {
         private Integer closedCount;
         private Double realizedPnl;
         private Double cumulativeRealizedPnl;
+    }
+
+    @Data
+    @Builder
+    public static class BacktestAnalytics {
+        private BacktestSummary summary;
+        private List<BacktestDailyAnalytics> byDay;
+    }
+
+    @Data
+    @Builder
+    public static class BacktestSummary {
+        private Integer totalTrades;
+        private Integer comparableTrades;
+        private Integer actualComparableTrades;
+        private Integer failedTrades;
+        private Double actualPnl;
+        private Double oneMinutePnl;
+        private Double fiveMinutePnl;
+        private Double diffFiveMinusOne;
+        private Double oneMinuteMinusActual;
+        private Double fiveMinuteMinusActual;
+        private Double oneMinuteAbsoluteError;
+        private Double fiveMinuteAbsoluteError;
+        private Integer oneMinuteCloserToActual;
+        private Integer fiveMinuteCloserToActual;
+        private Integer closerToActualTies;
+        private LocalDateTime lastRunAt;
+    }
+
+    @Data
+    @Builder
+    public static class BacktestDailyAnalytics {
+        private LocalDate date;
+        private Integer totalTrades;
+        private Integer comparableTrades;
+        private Integer actualComparableTrades;
+        private Integer failedTrades;
+        private Double actualPnl;
+        private Double oneMinutePnl;
+        private Double fiveMinutePnl;
+        private Double diffFiveMinusOne;
+        private Double oneMinuteMinusActual;
+        private Double fiveMinuteMinusActual;
+        private Double oneMinuteAbsoluteError;
+        private Double fiveMinuteAbsoluteError;
+        private Integer oneMinuteCloserToActual;
+        private Integer fiveMinuteCloserToActual;
+        private Integer closerToActualTies;
     }
 
     @Data
