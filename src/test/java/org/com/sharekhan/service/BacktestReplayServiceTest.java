@@ -208,6 +208,52 @@ class BacktestReplayServiceTest {
     }
 
     @Test
+    void doesNotUsePreEntrySpotCandleForPostEntryTriggerCheck() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setScripCode(1001);
+        trade.setSpotScripCode(2002);
+        trade.setEntryAt(LocalDateTime.of(2026, 6, 20, 9, 8, 20));
+        trade.setTriggeredAt(LocalDateTime.of(2026, 6, 20, 9, 8, 20));
+        trade.setQuantity(75L);
+        trade.setLots(1);
+        trade.setActualEntryPrice(10.0);
+        trade.setEntryPrice(100.0);
+        trade.setStopLoss(99.0);
+        trade.setTarget1(102.0);
+        trade.setUseSpotForEntry(true);
+        trade.setUseSpotForSl(true);
+        trade.setUseSpotForTarget(true);
+        when(tradeRepository.findById(7L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candleWithSeconds("2026-06-20", "09:08:28", 10, 10.5, 9.8, 10.5),
+                        candleWithSeconds("2026-06-20", "09:09:45", 10.5, 11.2, 10.4, 11)
+                ));
+        when(historicalService.getHistoricalCandles(eq(2002), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candleWithSeconds("2026-06-20", "09:07:59", 100, 100.2, 98.0, 98.5),
+                        candleWithSeconds("2026-06-20", "09:08:59", 100.0, 100.5, 99.8, 100.2),
+                        candleWithSeconds("2026-06-20", "09:09:59", 100.2, 103.0, 100.1, 103.0)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        request.setTriggerPricePolicy("CLOSE");
+        BacktestReplayResponse response = service.replayTrade(7L, request);
+
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(response.getBacktest().getExitAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 9, 9, 45));
+        assertThat(response.getBacktest().getExitPrice()).isEqualTo(11.0);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(75.0);
+    }
+
+    @Test
     void skipsCandlesBeforeEntryTime() {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);

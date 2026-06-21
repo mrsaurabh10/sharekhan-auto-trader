@@ -220,7 +220,7 @@ public class BacktestReplayService {
         Candle lastSeen = null;
         for (Candle optionCandle : replayCandles) {
             lastSeen = optionCandle;
-            Candle spotCandle = matchingSpotCandle(spotHistory, optionCandle, intervalMinutes);
+            Candle spotCandle = matchingSpotCandle(spotHistory, optionCandle, entryAt, intervalMinutes);
 
             boolean stopHit = isStopHit(trade, position.stopLoss(), optionCandle, spotCandle, triggerPricePolicy);
             TargetHit targetHit = findTargetHit(trade, position, targets, optionCandle, spotCandle, tslEnabled,
@@ -350,7 +350,10 @@ public class BacktestReplayService {
         return new Simulation(result, events, warnings);
     }
 
-    private Candle matchingSpotCandle(List<Candle> spotHistory, Candle optionCandle, int intervalMinutes) {
+    private Candle matchingSpotCandle(List<Candle> spotHistory,
+                                      Candle optionCandle,
+                                      LocalDateTime entryAt,
+                                      int intervalMinutes) {
         if (spotHistory == null || spotHistory.isEmpty() || optionCandle == null) {
             return null;
         }
@@ -358,6 +361,7 @@ public class BacktestReplayService {
         long toleranceSeconds = Math.max(60L, intervalMinutes * 60L);
         return spotHistory.stream()
                 .filter(c -> c.dateTime().toLocalDate().equals(optionTime.toLocalDate()))
+                .filter(c -> entryAt == null || !c.dateTime().isBefore(entryAt))
                 .filter(c -> Math.abs(Duration.between(c.dateTime(), optionTime).getSeconds()) <= toleranceSeconds)
                 .min(Comparator.comparingLong(c -> Math.abs(Duration.between(c.dateTime(), optionTime).getSeconds())))
                 .orElse(null);
