@@ -58,8 +58,75 @@ class BacktestReplayServiceTest {
         assertThat(response.getBacktest().getExitPrice()).isEqualTo(94.0);
         assertThat(response.getBacktest().getPnl()).isEqualTo(-450.0);
         assertThat(response.getResolved().getStopLoss()).isEqualTo(95.0);
+        assertThat(response.getResolved().getTriggerPricePolicy()).isEqualTo("LTP");
         assertThat(response.getEvents()).extracting(BacktestReplayResponse.Event::getType)
                 .containsExactly("ENTRY", "EXIT");
+    }
+
+    @Test
+    void closeTriggerPolicyRequiresStopLossCloseConfirmation() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(75L);
+        trade.setLots(1);
+        trade.setStopLoss(95.0);
+        trade.setTarget1(120.0);
+        when(tradeRepository.findById(5L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("5minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 104, 98, 102),
+                        candle("2026-06-20", "09:25", 102, 106, 94, 100),
+                        candle("2026-06-20", "09:30", 100, 104, 93, 94)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setTriggerPricePolicy("CLOSE");
+
+        BacktestReplayResponse response = service.replayTrade(5L, request);
+
+        assertThat(response.getResolved().getTriggerPricePolicy()).isEqualTo("CLOSE");
+        assertThat(response.getBacktest().getExitAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 9, 30));
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("STOP_LOSS_HIT");
+        assertThat(response.getBacktest().getExitPrice()).isEqualTo(94.0);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(-450.0);
+    }
+
+    @Test
+    void closeTriggerPolicyRequiresTargetCloseConfirmation() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(75L);
+        trade.setLots(1);
+        trade.setStopLoss(90.0);
+        trade.setTarget1(110.0);
+        when(tradeRepository.findById(6L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("5minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 105, 99, 102),
+                        candle("2026-06-20", "09:25", 102, 111, 101, 108),
+                        candle("2026-06-20", "09:30", 108, 112, 107, 111)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setTriggerPricePolicy("close");
+
+        BacktestReplayResponse response = service.replayTrade(6L, request);
+
+        assertThat(response.getResolved().getTriggerPricePolicy()).isEqualTo("CLOSE");
+        assertThat(response.getBacktest().getExitAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 9, 30));
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(response.getBacktest().getExitPrice()).isEqualTo(111.0);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(825.0);
     }
 
     @Test
