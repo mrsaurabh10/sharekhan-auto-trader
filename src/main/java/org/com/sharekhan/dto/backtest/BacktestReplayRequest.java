@@ -8,6 +8,7 @@ public class BacktestReplayRequest {
     private String interval;
     private String squareOffTime;
     private String sameCandlePolicy;
+    private String triggerPricePolicy;
     private String executionPricePolicy;
     private Overrides overrides;
 

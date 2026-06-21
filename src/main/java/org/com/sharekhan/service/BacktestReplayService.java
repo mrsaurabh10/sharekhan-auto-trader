@@ -51,6 +51,7 @@ public class BacktestReplayService {
         int intervalMinutes = intervalMinutes(interval);
         LocalTime squareOffTime = parseTime(safeRequest.getSquareOffTime(), DEFAULT_SQUARE_OFF_TIME);
         String sameCandlePolicy = normalizeEnum(safeRequest.getSameCandlePolicy(), "PESSIMISTIC");
+        String triggerPricePolicy = normalizeTriggerPricePolicy(safeRequest.getTriggerPricePolicy());
         String executionPricePolicy = normalizeEnum(safeRequest.getExecutionPricePolicy(), "CANDLE_CLOSE");
 
         LocalDateTime entryAt = resolveEntryAt(trade);
@@ -128,6 +129,7 @@ public class BacktestReplayService {
                 trailingSl,
                 squareOffTime,
                 sameCandlePolicy,
+                triggerPricePolicy,
                 executionPricePolicy,
                 intervalMinutes
         );
@@ -137,6 +139,7 @@ public class BacktestReplayService {
                 .intradayOnly(true)
                 .squareOffTime(squareOffTime.toString())
                 .sameCandlePolicy(sameCandlePolicy)
+                .triggerPricePolicy(triggerPricePolicy)
                 .executionPricePolicy(executionPricePolicy)
                 .entryPriceForPnl(round(optionEntryPrice))
                 .stopLoss(levelValue(stopLoss))
@@ -176,6 +179,7 @@ public class BacktestReplayService {
                                 Double trailingSl,
                                 LocalTime squareOffTime,
                                 String sameCandlePolicy,
+                                String triggerPricePolicy,
                                 String executionPricePolicy,
                                 int intervalMinutes) {
         List<BacktestReplayResponse.Event> events = new ArrayList<>();
@@ -218,8 +222,9 @@ public class BacktestReplayService {
             lastSeen = optionCandle;
             Candle spotCandle = matchingSpotCandle(spotHistory, optionCandle, intervalMinutes);
 
-            boolean stopHit = isStopHit(trade, position.stopLoss(), optionCandle, spotCandle);
-            TargetHit targetHit = findTargetHit(trade, position, targets, optionCandle, spotCandle, tslEnabled);
+            boolean stopHit = isStopHit(trade, position.stopLoss(), optionCandle, spotCandle, triggerPricePolicy);
+            TargetHit targetHit = findTargetHit(trade, position, targets, optionCandle, spotCandle, tslEnabled,
+                    triggerPricePolicy);
 
             if (stopHit && targetHit.hit() && !"OPTIMISTIC".equals(sameCandlePolicy)) {
                 Exit exit = exitAll(position, optionCandle, position.stopLoss(), executionPricePolicy,
@@ -406,7 +411,8 @@ public class BacktestReplayService {
                                     List<LevelState> targets,
                                     Candle optionCandle,
                                     Candle spotCandle,
-                                    boolean tslEnabled) {
+                                    boolean tslEnabled,
+                                    String triggerPricePolicy) {
         if (targets == null || targets.isEmpty()) {
             return TargetHit.none();
         }
@@ -416,20 +422,24 @@ public class BacktestReplayService {
                 return TargetHit.none();
             }
             LevelState level = targetAt(targets, step.targetNumber());
-            return isTargetHit(trade, level, optionCandle, spotCandle)
+            return isTargetHit(trade, level, optionCandle, spotCandle, triggerPricePolicy)
                     ? new TargetHit(true, step.targetNumber(), level)
                     : TargetHit.none();
         }
         for (int i = 0; i < targets.size(); i++) {
             LevelState target = targets.get(i);
-            if (isTargetHit(trade, target, optionCandle, spotCandle)) {
+            if (isTargetHit(trade, target, optionCandle, spotCandle, triggerPricePolicy)) {
                 return new TargetHit(true, i + 1, target);
             }
         }
         return TargetHit.none();
     }
 
-    private boolean isStopHit(TriggeredTradeSetupEntity trade, LevelState stopLoss, Candle optionCandle, Candle spotCandle) {
+    private boolean isStopHit(TriggeredTradeSetupEntity trade,
+                              LevelState stopLoss,
+                              Candle optionCandle,
+                              Candle spotCandle,
+                              String triggerPricePolicy) {
         if (stopLoss == null || stopLoss.price() == null || stopLoss.price() <= 0d) {
             return false;
         }
@@ -438,10 +448,17 @@ public class BacktestReplayService {
             return false;
         }
         boolean peSpot = stopLoss.source() == PriceSource.SPOT && "PE".equalsIgnoreCase(trade.getOptionType());
+        if ("CLOSE".equals(triggerPricePolicy)) {
+            return peSpot ? reference.close() >= stopLoss.price() : reference.close() <= stopLoss.price();
+        }
         return peSpot ? reference.high() >= stopLoss.price() : reference.low() <= stopLoss.price();
     }
 
-    private boolean isTargetHit(TriggeredTradeSetupEntity trade, LevelState target, Candle optionCandle, Candle spotCandle) {
+    private boolean isTargetHit(TriggeredTradeSetupEntity trade,
+                                LevelState target,
+                                Candle optionCandle,
+                                Candle spotCandle,
+                                String triggerPricePolicy) {
         if (target == null || target.price() == null || target.price() <= 0d) {
             return false;
         }
@@ -450,6 +467,9 @@ public class BacktestReplayService {
             return false;
         }
         boolean peSpot = target.source() == PriceSource.SPOT && "PE".equalsIgnoreCase(trade.getOptionType());
+        if ("CLOSE".equals(triggerPricePolicy)) {
+            return peSpot ? reference.close() <= target.price() : reference.close() >= target.price();
+        }
         return peSpot ? reference.low() <= target.price() : reference.high() >= target.price();
     }
 
@@ -846,6 +866,20 @@ public class BacktestReplayService {
 
     private String normalizeEnum(String value, String fallback) {
         return StringUtils.hasText(value) ? value.trim().toUpperCase(Locale.ROOT) : fallback;
+    }
+
+    private String normalizeTriggerPricePolicy(String value) {
+        String normalized = normalizeEnum(value, "LTP");
+        if ("LTP".equals(normalized)
+                || "LAST_TRADED_PRICE".equals(normalized)
+                || "HIGH_LOW".equals(normalized)
+                || "INTRABAR".equals(normalized)) {
+            return "LTP";
+        }
+        if ("CLOSE".equals(normalized) || "CANDLE_CLOSE".equals(normalized)) {
+            return "CLOSE";
+        }
+        throw new IllegalArgumentException("Unsupported triggerPricePolicy: " + value + ". Use LTP or CLOSE.");
     }
 
     private LocalTime parseTime(String raw, LocalTime fallback) {

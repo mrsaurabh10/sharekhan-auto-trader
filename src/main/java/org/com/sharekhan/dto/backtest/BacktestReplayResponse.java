@@ -59,6 +59,7 @@ public class BacktestReplayResponse {
         private Boolean intradayOnly;
         private String squareOffTime;
         private String sameCandlePolicy;
+        private String triggerPricePolicy;
         private String executionPricePolicy;
         private Double entryPriceForPnl;
         private Double stopLoss;
