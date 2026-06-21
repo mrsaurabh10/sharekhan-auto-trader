@@ -10,16 +10,15 @@ import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Objects;
 
 @Service
@@ -67,7 +66,6 @@ public class BacktestReplayService {
         List<Candle> spotHistory = trade.getSpotScripCode() != null
                 ? loadCandles(trade.getSpotScripCode(), interval, historyFrom, historyTo)
                 : List.of();
-        Map<LocalDateTime, Candle> spotByTime = indexByTimestamp(spotHistory);
 
         Double optionEntryPrice = resolveOptionEntryPrice(trade, optionHistory, entryAt);
         if (optionEntryPrice == null || optionEntryPrice <= 0d) {
@@ -121,7 +119,7 @@ public class BacktestReplayService {
         Simulation simulation = simulate(
                 trade,
                 optionHistory,
-                spotByTime,
+                spotHistory,
                 entryAt,
                 optionEntryPrice,
                 stopLoss,
@@ -169,7 +167,7 @@ public class BacktestReplayService {
 
     private Simulation simulate(TriggeredTradeSetupEntity trade,
                                 List<Candle> optionHistory,
-                                Map<LocalDateTime, Candle> spotByTime,
+                                List<Candle> spotHistory,
                                 LocalDateTime entryAt,
                                 double optionEntryPrice,
                                 LevelState initialStopLoss,
@@ -218,7 +216,7 @@ public class BacktestReplayService {
         Candle lastSeen = null;
         for (Candle optionCandle : replayCandles) {
             lastSeen = optionCandle;
-            Candle spotCandle = spotByTime.get(optionCandle.dateTime());
+            Candle spotCandle = matchingSpotCandle(spotHistory, optionCandle, intervalMinutes);
 
             boolean stopHit = isStopHit(trade, position.stopLoss(), optionCandle, spotCandle);
             TargetHit targetHit = findTargetHit(trade, position, targets, optionCandle, spotCandle, tslEnabled);
@@ -345,6 +343,19 @@ public class BacktestReplayService {
                 .exitCount(exitCount)
                 .build();
         return new Simulation(result, events, warnings);
+    }
+
+    private Candle matchingSpotCandle(List<Candle> spotHistory, Candle optionCandle, int intervalMinutes) {
+        if (spotHistory == null || spotHistory.isEmpty() || optionCandle == null) {
+            return null;
+        }
+        LocalDateTime optionTime = optionCandle.dateTime();
+        long toleranceSeconds = Math.max(60L, intervalMinutes * 60L);
+        return spotHistory.stream()
+                .filter(c -> c.dateTime().toLocalDate().equals(optionTime.toLocalDate()))
+                .filter(c -> Math.abs(Duration.between(c.dateTime(), optionTime).getSeconds()) <= toleranceSeconds)
+                .min(Comparator.comparingLong(c -> Math.abs(Duration.between(c.dateTime(), optionTime).getSeconds())))
+                .orElse(null);
     }
 
     private boolean requiresSpotCandles(LevelState... levels) {
@@ -627,14 +638,6 @@ public class BacktestReplayService {
                 .map(c -> new Candle(LocalDateTime.of(c.date(), c.time()), c.open(), c.high(), c.low(), c.close()))
                 .sorted(Comparator.comparing(Candle::dateTime))
                 .toList();
-    }
-
-    private Map<LocalDateTime, Candle> indexByTimestamp(List<Candle> candles) {
-        Map<LocalDateTime, Candle> indexed = new LinkedHashMap<>();
-        for (Candle candle : candles) {
-            indexed.put(candle.dateTime(), candle);
-        }
-        return indexed;
     }
 
     private LocalDateTime resolveEntryAt(TriggeredTradeSetupEntity trade) {
