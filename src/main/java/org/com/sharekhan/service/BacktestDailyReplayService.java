@@ -3,6 +3,7 @@ package org.com.sharekhan.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.dto.backtest.BacktestDailyReplayRunResponse;
+import org.com.sharekhan.dto.backtest.BacktestDailyReplayRangeRunResponse;
 import org.com.sharekhan.dto.backtest.BacktestReplayRequest;
 import org.com.sharekhan.dto.backtest.BacktestReplayResponse;
 import org.com.sharekhan.entity.BacktestReplayResultEntity;
@@ -67,6 +68,63 @@ public class BacktestDailyReplayService {
         } finally {
             running.set(false);
         }
+    }
+
+    public BacktestDailyReplayRangeRunResponse runForDateRange(LocalDate from, LocalDate to) {
+        if (!running.compareAndSet(false, true)) {
+            throw new IllegalStateException("ATR backtest daily replay is already running.");
+        }
+        try {
+            return runForDateRangeInternal(from, to);
+        } finally {
+            running.set(false);
+        }
+    }
+
+    private BacktestDailyReplayRangeRunResponse runForDateRangeInternal(LocalDate from, LocalDate to) {
+        LocalDate resolvedTo = to != null ? to : previousAvailableTradeDate(LocalDate.now(MARKET_ZONE));
+        LocalDate resolvedFrom = from != null ? from : resolvedTo;
+        if (resolvedFrom.isAfter(resolvedTo)) {
+            LocalDate previousFrom = resolvedFrom;
+            resolvedFrom = resolvedTo;
+            resolvedTo = previousFrom;
+        }
+
+        List<BacktestDailyReplayRunResponse> days = new ArrayList<>();
+        List<Long> failedTradeSetupIds = new ArrayList<>();
+        int tradeCount = 0;
+        int resultCount = 0;
+        int successCount = 0;
+        int errorCount = 0;
+        for (LocalDate date = resolvedFrom; !date.isAfter(resolvedTo); date = date.plusDays(1)) {
+            if (isWeekend(date)) {
+                continue;
+            }
+            BacktestDailyReplayRunResponse daily = runForDateInternal(date);
+            days.add(daily);
+            tradeCount += valueOrZero(daily.getTradeCount());
+            resultCount += valueOrZero(daily.getResultCount());
+            successCount += valueOrZero(daily.getSuccessCount());
+            errorCount += valueOrZero(daily.getErrorCount());
+            if (daily.getFailedTradeSetupIds() != null) {
+                failedTradeSetupIds.addAll(daily.getFailedTradeSetupIds());
+            }
+        }
+
+        return BacktestDailyReplayRangeRunResponse.builder()
+                .status("success")
+                .from(resolvedFrom)
+                .to(resolvedTo)
+                .source(ATR_SIGNAL_SOURCE)
+                .dayCount(days.size())
+                .tradeCount(tradeCount)
+                .resultCount(resultCount)
+                .successCount(successCount)
+                .errorCount(errorCount)
+                .failedTradeSetupIds(failedTradeSetupIds.stream().distinct().toList())
+                .days(days)
+                .runAt(LocalDateTime.now(MARKET_ZONE))
+                .build();
     }
 
     private BacktestDailyReplayRunResponse runForDateInternal(LocalDate tradeDate) {
@@ -234,10 +292,18 @@ public class BacktestDailyReplayService {
 
     LocalDate previousAvailableTradeDate(LocalDate date) {
         LocalDate candidate = date.minusDays(1);
-        while (candidate.getDayOfWeek() == DayOfWeek.SATURDAY || candidate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+        while (isWeekend(candidate)) {
             candidate = candidate.minusDays(1);
         }
         return candidate;
+    }
+
+    private boolean isWeekend(LocalDate date) {
+        return date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY;
+    }
+
+    private int valueOrZero(Integer value) {
+        return value != null ? value : 0;
     }
 
     private String valueOrDefault(String value, String defaultValue) {

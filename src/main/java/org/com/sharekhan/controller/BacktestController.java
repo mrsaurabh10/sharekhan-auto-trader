@@ -1,6 +1,7 @@
 package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.com.sharekhan.dto.backtest.BacktestDailyReplayRangeRunResponse;
 import org.com.sharekhan.dto.backtest.BacktestDailyReplayRunResponse;
 import org.com.sharekhan.dto.backtest.BacktestReplayRequest;
 import org.com.sharekhan.service.BacktestDailyReplayService;
@@ -57,6 +58,22 @@ public class BacktestController {
         }
         try {
             BacktestDailyReplayRunResponse response = backtestDailyReplayService.runForDate(date);
+            return ResponseEntity.ok(response);
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(error(ex.getMessage()));
+        }
+    }
+
+    @PostMapping("/atr-signal/daily-replay/range")
+    public ResponseEntity<?> replayAtrSignalTradesForRange(
+            @RequestHeader(value = "X-Admin-Token", required = false) String headerToken,
+            @RequestParam(name = "from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(name = "to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        if (!authorized(headerToken)) {
+            return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
+        }
+        try {
+            BacktestDailyReplayRangeRunResponse response = backtestDailyReplayService.runForDateRange(from, to);
             return ResponseEntity.ok(response);
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(error(ex.getMessage()));
