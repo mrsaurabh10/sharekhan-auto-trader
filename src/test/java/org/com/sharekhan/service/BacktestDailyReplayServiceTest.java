@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.backtest.BacktestDailyReplayRunResponse;
+import org.com.sharekhan.dto.backtest.BacktestDailyReplayRangeRunResponse;
 import org.com.sharekhan.dto.backtest.BacktestReplayResponse;
 import org.com.sharekhan.entity.BacktestReplayResultEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
@@ -38,6 +39,35 @@ class BacktestDailyReplayServiceTest {
                 .isEqualTo(LocalDate.of(2026, 6, 19));
         assertThat(service.previousAvailableTradeDate(LocalDate.of(2026, 6, 23)))
                 .isEqualTo(LocalDate.of(2026, 6, 22));
+    }
+
+    @Test
+    void rangeReplayRunsWeekdaysSequentially() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        BacktestDailyReplayService service = new BacktestDailyReplayService(
+                tradeRepository,
+                mock(BacktestReplayService.class),
+                mock(BacktestReplayResultRepository.class),
+                mock(BrokerCredentialsRepository.class));
+        when(tradeRepository.findBySourceForBacktestDate(eq("atr-signal"), any(), any()))
+                .thenReturn(List.of());
+
+        BacktestDailyReplayRangeRunResponse response = service.runForDateRange(
+                LocalDate.of(2026, 6, 12),
+                LocalDate.of(2026, 6, 15));
+
+        assertThat(response.getDayCount()).isEqualTo(2);
+        assertThat(response.getTradeCount()).isZero();
+        org.mockito.Mockito.verify(tradeRepository).findBySourceForBacktestDate(
+                eq("atr-signal"),
+                eq(LocalDateTime.of(2026, 6, 12, 0, 0)),
+                eq(LocalDate.of(2026, 6, 12).atTime(java.time.LocalTime.MAX)));
+        org.mockito.Mockito.verify(tradeRepository).findBySourceForBacktestDate(
+                eq("atr-signal"),
+                eq(LocalDateTime.of(2026, 6, 15, 0, 0)),
+                eq(LocalDate.of(2026, 6, 15).atTime(java.time.LocalTime.MAX)));
+        org.mockito.Mockito.verify(tradeRepository, org.mockito.Mockito.times(2))
+                .findBySourceForBacktestDate(eq("atr-signal"), any(), any());
     }
 
     @Test
