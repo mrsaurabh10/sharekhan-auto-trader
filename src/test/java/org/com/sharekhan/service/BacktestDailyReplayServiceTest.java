@@ -27,6 +27,20 @@ import static org.mockito.Mockito.when;
 class BacktestDailyReplayServiceTest {
 
     @Test
+    void previousAvailableTradeDateSkipsWeekend() {
+        BacktestDailyReplayService service = new BacktestDailyReplayService(
+                mock(TriggeredTradeSetupRepository.class),
+                mock(BacktestReplayService.class),
+                mock(BacktestReplayResultRepository.class),
+                mock(BrokerCredentialsRepository.class));
+
+        assertThat(service.previousAvailableTradeDate(LocalDate.of(2026, 6, 22)))
+                .isEqualTo(LocalDate.of(2026, 6, 19));
+        assertThat(service.previousAvailableTradeDate(LocalDate.of(2026, 6, 23)))
+                .isEqualTo(LocalDate.of(2026, 6, 22));
+    }
+
+    @Test
     void runsAtrSignalTradesForDateAndPersistsSuccessAndErrorResults() {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         BacktestReplayService replayService = mock(BacktestReplayService.class);

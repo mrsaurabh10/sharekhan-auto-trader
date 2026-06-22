@@ -466,17 +466,17 @@
     const dayBody = document.querySelector('#analyticsBacktestDayTable tbody');
     if (!panel || !cards || !dayBody) return;
 
-    const summary = backtest && backtest.summary ? backtest.summary : {};
-    const byDay = Array.isArray(backtest && backtest.byDay) ? backtest.byDay : [];
-    const totalTrades = Number(summary.totalTrades || 0);
-    const hasBacktestData = totalTrades > 0 || byDay.length > 0;
-    panel.style.display = hasBacktestData ? 'block' : 'none';
-    if (!hasBacktestData) {
+    if (!backtest) {
+      panel.style.display = 'none';
       cards.innerHTML = '';
       dayBody.innerHTML = '<tr><td colspan="9">No saved backtest replay data for this filter/range.</td></tr>';
       return;
     }
 
+    const summary = backtest && backtest.summary ? backtest.summary : {};
+    const byDay = Array.isArray(backtest && backtest.byDay) ? backtest.byDay : [];
+    panel.style.display = 'block';
+    const totalTrades = Number(summary.totalTrades || 0);
     const comparableTrades = Number(summary.comparableTrades || 0);
     const actualComparableTrades = Number(summary.actualComparableTrades || 0);
     const failedTrades = Number(summary.failedTrades || 0);

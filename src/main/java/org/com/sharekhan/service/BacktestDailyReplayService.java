@@ -15,6 +15,7 @@ import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -42,9 +43,10 @@ public class BacktestDailyReplayService {
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     @Scheduled(cron = "0 0 16 * * MON-FRI", zone = "Asia/Kolkata")
-    public void runTodayAfterMarketClose() {
+    public void runPreviousAvailableDayAfterMarketClose() {
         try {
-            BacktestDailyReplayRunResponse response = runForDate(LocalDate.now(MARKET_ZONE));
+            LocalDate replayDate = previousAvailableTradeDate(LocalDate.now(MARKET_ZONE));
+            BacktestDailyReplayRunResponse response = runForDate(replayDate);
             log.info("ATR backtest daily replay completed for {}: trades={}, results={}, success={}, errors={}",
                     response.getTradeDate(),
                     response.getTradeCount(),
@@ -68,7 +70,7 @@ public class BacktestDailyReplayService {
     }
 
     private BacktestDailyReplayRunResponse runForDateInternal(LocalDate tradeDate) {
-        LocalDate resolvedDate = tradeDate != null ? tradeDate : LocalDate.now(MARKET_ZONE);
+        LocalDate resolvedDate = tradeDate != null ? tradeDate : previousAvailableTradeDate(LocalDate.now(MARKET_ZONE));
         LocalDateTime start = resolvedDate.atStartOfDay();
         LocalDateTime end = resolvedDate.atTime(LocalTime.MAX);
         LocalDateTime runAt = LocalDateTime.now(MARKET_ZONE);
@@ -228,6 +230,14 @@ public class BacktestDailyReplayService {
     private LocalDate tradeDate(TriggeredTradeSetupEntity trade) {
         LocalDateTime at = trade.getEntryAt() != null ? trade.getEntryAt() : trade.getTriggeredAt();
         return at != null ? at.toLocalDate() : LocalDate.now(MARKET_ZONE);
+    }
+
+    LocalDate previousAvailableTradeDate(LocalDate date) {
+        LocalDate candidate = date.minusDays(1);
+        while (candidate.getDayOfWeek() == DayOfWeek.SATURDAY || candidate.getDayOfWeek() == DayOfWeek.SUNDAY) {
+            candidate = candidate.minusDays(1);
+        }
+        return candidate;
     }
 
     private String valueOrDefault(String value, String defaultValue) {
