@@ -63,6 +63,10 @@
         .analytics-card .value { font-size: 1.05rem; font-weight: bold; }
         .analytics-card .value.positive { color: green; }
         .analytics-card .value.negative { color: red; }
+        .analytics-backtest-panel { border: 1px solid #dfe4ef; border-radius: 6px; padding: 10px; background: #fff; margin-bottom: 10px; }
+        .analytics-backtest-panel h4 { margin: 0 0 8px 0; }
+        .analytics-backtest-table-wrap { overflow-x: auto; }
+        .analytics-backtest-table-wrap table { min-width: 780px; }
         .analytics-grids { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
         .analytics-grids table { font-size: 0.9rem; }
         .analytics-state { color: #666; margin: 6px 0; }
@@ -242,6 +246,16 @@
                     <div id="analyticsTodayPnlSummaryNote" class="pnl-summary-note">Uses today's trades, independent of status filter.</div>
                 </div>
                 <div id="analyticsCards" class="analytics-cards"></div>
+                <div id="analyticsBacktestPanel" class="analytics-backtest-panel" style="display:none">
+                    <h4>Backtest Replay: 1m Close vs 5m Close</h4>
+                    <div id="analyticsBacktestCards" class="analytics-cards"></div>
+                    <div class="analytics-backtest-table-wrap">
+                        <table id="analyticsBacktestDayTable">
+                            <thead><tr><th>Date</th><th>Trades</th><th>Failed</th><th>Actual</th><th>1m Close</th><th>5m Close</th><th>5m - 1m</th><th>1m - Actual</th><th>5m - Actual</th></tr></thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
                 <div class="analytics-grids">
                     <div>
                         <h4 style="margin:0 0 4px 0;">Profitability by Symbol</h4>
@@ -373,6 +387,6 @@
     </div>
 </div>
 
-<script src="/admin-dashboard.js?v=19"></script>
+<script src="/admin-dashboard.js?v=20"></script>
 </body>
 </html>
