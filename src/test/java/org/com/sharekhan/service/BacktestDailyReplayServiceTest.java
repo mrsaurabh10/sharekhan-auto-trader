@@ -97,7 +97,7 @@ class BacktestDailyReplayServiceTest {
                 eq(LocalDate.of(2026, 6, 19).atTime(java.time.LocalTime.MAX))))
                 .thenReturn(List.of(trade));
         when(resultRepository.findByTradeSetupIdAndIntervalAndTriggerPricePolicyAndSquareOffTime(
-                eq(100L), any(), eq("CLOSE"), eq("15:20")))
+                eq(100L), any(), any(), eq("15:20")))
                 .thenReturn(Optional.empty());
         when(replayService.replayTrade(eq(100L), any()))
                 .thenAnswer(invocation -> {
@@ -111,16 +111,17 @@ class BacktestDailyReplayServiceTest {
         BacktestDailyReplayRunResponse response = service.runForDate(LocalDate.of(2026, 6, 19));
 
         assertThat(response.getTradeCount()).isEqualTo(1);
-        assertThat(response.getSuccessCount()).isEqualTo(1);
+        assertThat(response.getSuccessCount()).isEqualTo(2);
         assertThat(response.getErrorCount()).isEqualTo(1);
         assertThat(response.getFailedTradeSetupIds()).containsExactly(100L);
         ArgumentCaptor<BacktestReplayResultEntity> captor = ArgumentCaptor.forClass(BacktestReplayResultEntity.class);
-        org.mockito.Mockito.verify(resultRepository, org.mockito.Mockito.times(2)).save(captor.capture());
+        org.mockito.Mockito.verify(resultRepository, org.mockito.Mockito.times(3)).save(captor.capture());
         assertThat(captor.getAllValues())
                 .extracting(BacktestReplayResultEntity::getStatus)
-                .containsExactly("SUCCESS", "ERROR");
+                .containsExactly("SUCCESS", "ERROR", "SUCCESS");
         assertThat(captor.getAllValues().get(0).getBacktestPnl()).isEqualTo(250.0);
         assertThat(captor.getAllValues().get(1).getMessage()).contains("No candle");
+        assertThat(captor.getAllValues().get(2).getTriggerPricePolicy()).isEqualTo("CLOSE_REENTRY");
     }
 
     private BacktestReplayResponse replayResponse() {

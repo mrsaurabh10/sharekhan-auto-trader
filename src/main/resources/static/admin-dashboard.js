@@ -469,7 +469,7 @@
     if (!backtest) {
       panel.style.display = 'none';
       cards.innerHTML = '';
-      dayBody.innerHTML = '<tr><td colspan="9">No saved backtest replay data for this filter/range.</td></tr>';
+      dayBody.innerHTML = '<tr><td colspan="12">No saved backtest replay data for this filter/range.</td></tr>';
       return;
     }
 
@@ -479,21 +479,26 @@
     const totalTrades = Number(summary.totalTrades || 0);
     const comparableTrades = Number(summary.comparableTrades || 0);
     const actualComparableTrades = Number(summary.actualComparableTrades || 0);
+    const reentryComparableTrades = Number(summary.oneMinuteReentryComparableTrades || 0);
     const failedTrades = Number(summary.failedTrades || 0);
     const closerText = '1m ' + String(summary.oneMinuteCloserToActual || 0)
       + ' / 5m ' + String(summary.fiveMinuteCloserToActual || 0)
       + ' / Tie ' + String(summary.closerToActualTies || 0);
     const coverageText = comparableTrades + ' / ' + totalTrades
       + (actualComparableTrades ? ' / Actual ' + actualComparableTrades : '')
+      + (reentryComparableTrades ? ' / Re-entry ' + reentryComparableTrades : '')
       + (failedTrades ? ' / Failed ' + failedTrades : '');
 
     const cardDefs = [
       ['Actual PnL', formatAnalyticsNumber(summary.actualPnl), summary.actualPnl],
       ['1m Close PnL', formatAnalyticsNumber(summary.oneMinutePnl), summary.oneMinutePnl],
       ['5m Close PnL', formatAnalyticsNumber(summary.fiveMinutePnl), summary.fiveMinutePnl],
+      ['1m Re-entry PnL', formatAnalyticsNumber(summary.oneMinuteReentryPnl), summary.oneMinuteReentryPnl],
       ['5m - 1m', formatAnalyticsNumber(summary.diffFiveMinusOne), summary.diffFiveMinusOne],
+      ['Re-entry - 1m', formatAnalyticsNumber(summary.diffReentryMinusOne), summary.diffReentryMinusOne],
       ['1m - Actual', formatAnalyticsNumber(summary.oneMinuteMinusActual), summary.oneMinuteMinusActual],
       ['5m - Actual', formatAnalyticsNumber(summary.fiveMinuteMinusActual), summary.fiveMinuteMinusActual],
+      ['Re-entry - Actual', formatAnalyticsNumber(summary.oneMinuteReentryMinusActual), summary.oneMinuteReentryMinusActual],
       ['Closer To Actual', closerText, null],
       ['Coverage', coverageText, null],
       ['Last Run', formatAnalyticsDateTime(summary.lastRunAt), null]
@@ -510,11 +515,14 @@
         analyticsPnlCell(row.actualPnl) +
         analyticsPnlCell(row.oneMinutePnl) +
         analyticsPnlCell(row.fiveMinutePnl) +
+        analyticsPnlCell(row.oneMinuteReentryPnl) +
         analyticsPnlCell(row.diffFiveMinusOne) +
+        analyticsPnlCell(row.diffReentryMinusOne) +
         analyticsPnlCell(row.oneMinuteMinusActual) +
         analyticsPnlCell(row.fiveMinuteMinusActual) +
+        analyticsPnlCell(row.oneMinuteReentryMinusActual) +
         '</tr>';
-    }).join('') : '<tr><td colspan="9">No saved backtest replay data for this filter/range.</td></tr>';
+    }).join('') : '<tr><td colspan="12">No saved backtest replay data for this filter/range.</td></tr>';
   }
 
   function selectedAnalyticsSources() {

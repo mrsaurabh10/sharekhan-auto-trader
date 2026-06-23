@@ -10,6 +10,8 @@ public class BacktestReplayRequest {
     private String sameCandlePolicy;
     private String triggerPricePolicy;
     private String executionPricePolicy;
+    private Boolean reEntryOnStopLoss;
+    private Integer maxReEntries;
     private Overrides overrides;
 
     @Data

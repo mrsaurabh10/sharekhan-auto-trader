@@ -34,8 +34,13 @@ public class BacktestDailyReplayService {
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
     private static final String TRIGGER_PRICE_POLICY = "CLOSE";
+    private static final String REENTRY_TRIGGER_PRICE_POLICY = "CLOSE_REENTRY";
     private static final String SQUARE_OFF_TIME = "15:20";
-    private static final List<String> INTERVALS = List.of("1minute", "5minute");
+    private static final List<ReplayScenario> SCENARIOS = List.of(
+            new ReplayScenario("1minute", TRIGGER_PRICE_POLICY, TRIGGER_PRICE_POLICY, false),
+            new ReplayScenario("5minute", TRIGGER_PRICE_POLICY, TRIGGER_PRICE_POLICY, false),
+            new ReplayScenario("1minute", TRIGGER_PRICE_POLICY, REENTRY_TRIGGER_PRICE_POLICY, true)
+    );
 
     private final TriggeredTradeSetupRepository tradeRepository;
     private final BacktestReplayService backtestReplayService;
@@ -141,21 +146,22 @@ public class BacktestDailyReplayService {
         int errorCount = 0;
         List<Long> failedTradeSetupIds = new ArrayList<>();
         for (TriggeredTradeSetupEntity trade : trades) {
-            for (String interval : INTERVALS) {
-                BacktestReplayRequest request = request(interval);
+            for (ReplayScenario scenario : SCENARIOS) {
+                BacktestReplayRequest request = request(scenario);
                 try {
                     BacktestReplayResponse response = backtestReplayService.replayTrade(trade.getId(), request);
-                    saveSuccess(trade, response, interval, runAt);
+                    saveSuccess(trade, response, scenario, runAt);
                     successCount++;
                 } catch (IllegalArgumentException ex) {
-                    saveError(trade, interval, ex.getMessage(), runAt);
+                    saveError(trade, scenario, ex.getMessage(), runAt);
                     errorCount++;
                     failedTradeSetupIds.add(trade.getId());
                 } catch (Exception ex) {
-                    saveError(trade, interval, ex.getMessage(), runAt);
+                    saveError(trade, scenario, ex.getMessage(), runAt);
                     errorCount++;
                     failedTradeSetupIds.add(trade.getId());
-                    log.warn("Backtest replay failed for trade {} interval {}.", trade.getId(), interval, ex);
+                    log.warn("Backtest replay failed for trade {} interval {} policy {}.",
+                            trade.getId(), scenario.interval(), scenario.resultTriggerPricePolicy(), ex);
                 }
             }
         }
@@ -173,26 +179,28 @@ public class BacktestDailyReplayService {
                 .build();
     }
 
-    private BacktestReplayRequest request(String interval) {
+    private BacktestReplayRequest request(ReplayScenario scenario) {
         BacktestReplayRequest request = new BacktestReplayRequest();
         request.setIntradayOnly(true);
-        request.setInterval(interval);
-        request.setTriggerPricePolicy(TRIGGER_PRICE_POLICY);
+        request.setInterval(scenario.interval());
+        request.setTriggerPricePolicy(scenario.executionTriggerPricePolicy());
         request.setSquareOffTime(SQUARE_OFF_TIME);
+        request.setReEntryOnStopLoss(scenario.reEntryOnStopLoss());
+        request.setMaxReEntries(scenario.reEntryOnStopLoss() ? 1 : 0);
         return request;
     }
 
     private void saveSuccess(TriggeredTradeSetupEntity trade,
                              BacktestReplayResponse response,
-                             String interval,
+                             ReplayScenario scenario,
                              LocalDateTime runAt) {
-        BacktestReplayResultEntity result = existingResult(trade.getId(), interval);
+        BacktestReplayResultEntity result = existingResult(trade.getId(), scenario);
         populateTradeSnapshot(result, trade, runAt);
         result.setStatus("SUCCESS");
         result.setMessage(response.getMessage());
         BacktestReplayResponse.ResolvedConfig resolved = response.getResolved();
         if (resolved != null) {
-            result.setTriggerPricePolicy(valueOrDefault(resolved.getTriggerPricePolicy(), TRIGGER_PRICE_POLICY));
+            result.setTriggerPricePolicy(scenario.resultTriggerPricePolicy());
             result.setSquareOffTime(valueOrDefault(resolved.getSquareOffTime(), SQUARE_OFF_TIME));
             result.setIntradayOnly(resolved.getIntradayOnly());
         }
@@ -216,8 +224,8 @@ public class BacktestDailyReplayService {
         resultRepository.save(result);
     }
 
-    private void saveError(TriggeredTradeSetupEntity trade, String interval, String message, LocalDateTime runAt) {
-        BacktestReplayResultEntity result = existingResult(trade.getId(), interval);
+    private void saveError(TriggeredTradeSetupEntity trade, ReplayScenario scenario, String message, LocalDateTime runAt) {
+        BacktestReplayResultEntity result = existingResult(trade.getId(), scenario);
         populateTradeSnapshot(result, trade, runAt);
         result.setStatus("ERROR");
         result.setMessage(message);
@@ -230,17 +238,17 @@ public class BacktestDailyReplayService {
         resultRepository.save(result);
     }
 
-    private BacktestReplayResultEntity existingResult(Long tradeSetupId, String interval) {
+    private BacktestReplayResultEntity existingResult(Long tradeSetupId, ReplayScenario scenario) {
         return resultRepository
                 .findByTradeSetupIdAndIntervalAndTriggerPricePolicyAndSquareOffTime(
                         tradeSetupId,
-                        interval,
-                        TRIGGER_PRICE_POLICY,
+                        scenario.interval(),
+                        scenario.resultTriggerPricePolicy(),
                         SQUARE_OFF_TIME)
                 .orElseGet(() -> BacktestReplayResultEntity.builder()
                         .tradeSetupId(tradeSetupId)
-                        .interval(interval)
-                        .triggerPricePolicy(TRIGGER_PRICE_POLICY)
+                        .interval(scenario.interval())
+                        .triggerPricePolicy(scenario.resultTriggerPricePolicy())
                         .squareOffTime(SQUARE_OFF_TIME)
                         .createdAt(LocalDateTime.now(MARKET_ZONE))
                         .build());
@@ -260,7 +268,7 @@ public class BacktestDailyReplayService {
         result.setStrikePrice(trade.getStrikePrice());
         result.setExpiry(trade.getExpiry());
         result.setInterval(valueOrDefault(result.getInterval(), "1minute"));
-        result.setTriggerPricePolicy(TRIGGER_PRICE_POLICY);
+        result.setTriggerPricePolicy(valueOrDefault(result.getTriggerPricePolicy(), TRIGGER_PRICE_POLICY));
         result.setSquareOffTime(SQUARE_OFF_TIME);
         result.setIntradayOnly(true);
         result.setActualEntryAt(trade.getEntryAt());
@@ -308,5 +316,11 @@ public class BacktestDailyReplayService {
 
     private String valueOrDefault(String value, String defaultValue) {
         return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private record ReplayScenario(String interval,
+                                  String executionTriggerPricePolicy,
+                                  String resultTriggerPricePolicy,
+                                  boolean reEntryOnStopLoss) {
     }
 }
