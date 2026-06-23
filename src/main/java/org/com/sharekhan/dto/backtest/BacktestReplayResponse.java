@@ -61,6 +61,8 @@ public class BacktestReplayResponse {
         private String sameCandlePolicy;
         private String triggerPricePolicy;
         private String executionPricePolicy;
+        private Boolean reEntryOnStopLoss;
+        private Integer maxReEntries;
         private Double entryPriceForPnl;
         private Double stopLoss;
         private Double target1;

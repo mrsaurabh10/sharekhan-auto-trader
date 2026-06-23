@@ -92,14 +92,19 @@ public class TradeAnalyticsResponse {
         private Double actualPnl;
         private Double oneMinutePnl;
         private Double fiveMinutePnl;
+        private Double oneMinuteReentryPnl;
         private Double diffFiveMinusOne;
+        private Double diffReentryMinusOne;
         private Double oneMinuteMinusActual;
         private Double fiveMinuteMinusActual;
+        private Double oneMinuteReentryMinusActual;
         private Double oneMinuteAbsoluteError;
         private Double fiveMinuteAbsoluteError;
+        private Double oneMinuteReentryAbsoluteError;
         private Integer oneMinuteCloserToActual;
         private Integer fiveMinuteCloserToActual;
         private Integer closerToActualTies;
+        private Integer oneMinuteReentryComparableTrades;
         private LocalDateTime lastRunAt;
     }
 
@@ -114,14 +119,19 @@ public class TradeAnalyticsResponse {
         private Double actualPnl;
         private Double oneMinutePnl;
         private Double fiveMinutePnl;
+        private Double oneMinuteReentryPnl;
         private Double diffFiveMinusOne;
+        private Double diffReentryMinusOne;
         private Double oneMinuteMinusActual;
         private Double fiveMinuteMinusActual;
+        private Double oneMinuteReentryMinusActual;
         private Double oneMinuteAbsoluteError;
         private Double fiveMinuteAbsoluteError;
+        private Double oneMinuteReentryAbsoluteError;
         private Integer oneMinuteCloserToActual;
         private Integer fiveMinuteCloserToActual;
         private Integer closerToActualTies;
+        private Integer oneMinuteReentryComparableTrades;
     }
 
     @Data

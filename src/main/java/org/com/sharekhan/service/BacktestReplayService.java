@@ -53,6 +53,10 @@ public class BacktestReplayService {
         String sameCandlePolicy = normalizeEnum(safeRequest.getSameCandlePolicy(), "PESSIMISTIC");
         String triggerPricePolicy = normalizeTriggerPricePolicy(safeRequest.getTriggerPricePolicy());
         String executionPricePolicy = normalizeEnum(safeRequest.getExecutionPricePolicy(), "CANDLE_CLOSE");
+        boolean reEntryOnStopLoss = Boolean.TRUE.equals(safeRequest.getReEntryOnStopLoss());
+        int maxReEntries = reEntryOnStopLoss
+                ? Math.max(1, safeRequest.getMaxReEntries() != null ? safeRequest.getMaxReEntries() : 1)
+                : 0;
 
         LocalDateTime entryAt = resolveEntryAt(trade);
         LocalDate tradeDate = entryAt.toLocalDate();
@@ -131,6 +135,8 @@ public class BacktestReplayService {
                 sameCandlePolicy,
                 triggerPricePolicy,
                 executionPricePolicy,
+                reEntryOnStopLoss,
+                maxReEntries,
                 intervalMinutes
         );
 
@@ -141,6 +147,8 @@ public class BacktestReplayService {
                 .sameCandlePolicy(sameCandlePolicy)
                 .triggerPricePolicy(triggerPricePolicy)
                 .executionPricePolicy(executionPricePolicy)
+                .reEntryOnStopLoss(reEntryOnStopLoss)
+                .maxReEntries(maxReEntries)
                 .entryPriceForPnl(round(optionEntryPrice))
                 .stopLoss(levelValue(stopLoss))
                 .target1(levelValue(target1))
@@ -181,6 +189,8 @@ public class BacktestReplayService {
                                 String sameCandlePolicy,
                                 String triggerPricePolicy,
                                 String executionPricePolicy,
+                                boolean reEntryOnStopLoss,
+                                int maxReEntries,
                                 int intervalMinutes) {
         List<BacktestReplayResponse.Event> events = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
@@ -193,12 +203,14 @@ public class BacktestReplayService {
                 ? Math.max(trade.getOriginalLots(), currentLots)
                 : Math.max(currentLots, 1);
 
-        Position position = new Position(totalQuantity, currentLots, originalLots, initialStopLoss, false);
+        Position position = new Position(totalQuantity, currentLots, originalLots, initialStopLoss, false, optionEntryPrice);
         double pnl = 0d;
         LocalDateTime lastExitAt = null;
         Double lastExitPrice = null;
         String lastExitReason = null;
         int exitCount = 0;
+        int reEntriesUsed = 0;
+        boolean waitingForReEntry = false;
 
         events.add(BacktestReplayResponse.Event.builder()
                 .at(entryAt)
@@ -222,6 +234,27 @@ public class BacktestReplayService {
             lastSeen = optionCandle;
             Candle spotCandle = matchingSpotCandle(spotHistory, optionCandle, entryAt, intervalMinutes);
 
+            if (position.quantity() <= 0L) {
+                if (waitingForReEntry
+                        && reEntriesUsed < maxReEntries
+                        && isReEntryTriggered(optionCandle, optionEntryPrice, triggerPricePolicy)) {
+                    double reEntryPrice = optionCandle.close();
+                    position = new Position(totalQuantity, currentLots, originalLots, initialStopLoss, false, reEntryPrice);
+                    reEntriesUsed++;
+                    waitingForReEntry = false;
+                    events.add(BacktestReplayResponse.Event.builder()
+                            .at(optionCandle.dateTime())
+                            .type("ENTRY")
+                            .reason("RE_ENTRY_AFTER_STOP_LOSS")
+                            .priceSource("OPTION")
+                            .optionPrice(round(reEntryPrice))
+                            .quantity(totalQuantity)
+                            .lots(currentLots)
+                            .build());
+                }
+                continue;
+            }
+
             boolean stopHit = isStopHit(trade, position.stopLoss(), optionCandle, spotCandle, triggerPricePolicy);
             TargetHit targetHit = findTargetHit(trade, position, targets, optionCandle, spotCandle, tslEnabled,
                     triggerPricePolicy);
@@ -229,7 +262,7 @@ public class BacktestReplayService {
             if (stopHit && targetHit.hit() && !"OPTIMISTIC".equals(sameCandlePolicy)) {
                 Exit exit = exitAll(position, optionCandle, position.stopLoss(), executionPricePolicy,
                         position.stopWasTrailed() ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT",
-                        optionEntryPrice);
+                        position.entryPrice());
                 pnl += exit.pnl();
                 lastExitAt = optionCandle.dateTime();
                 lastExitPrice = exit.price();
@@ -237,12 +270,16 @@ public class BacktestReplayService {
                 exitCount++;
                 events.add(exitEvent(optionCandle.dateTime(), exit, position.stopLoss(), position.quantity(), position.currentLots()));
                 position.quantity(0L);
+                if (canWaitForReEntry(reEntryOnStopLoss, reEntriesUsed, maxReEntries, optionCandle, squareOffTime, exit.reason())) {
+                    waitingForReEntry = true;
+                    continue;
+                }
                 break;
             }
 
             if (targetHit.hit()) {
                 if (!tslEnabled || position.currentLots() <= 1) {
-                    Exit exit = exitAll(position, optionCandle, targetHit.level(), executionPricePolicy, "TARGET_HIT", optionEntryPrice);
+                    Exit exit = exitAll(position, optionCandle, targetHit.level(), executionPricePolicy, "TARGET_HIT", position.entryPrice());
                     pnl += exit.pnl();
                     lastExitAt = optionCandle.dateTime();
                     lastExitPrice = exit.price();
@@ -256,7 +293,7 @@ public class BacktestReplayService {
                 BookingStep step = resolveNextBookingStep(position.originalLots(), position.currentLots());
                 if (step == null) {
                     warnings.add("Unable to resolve TSL booking step; exiting full quantity at target.");
-                    Exit exit = exitAll(position, optionCandle, targetHit.level(), executionPricePolicy, "TARGET_HIT", optionEntryPrice);
+                    Exit exit = exitAll(position, optionCandle, targetHit.level(), executionPricePolicy, "TARGET_HIT", position.entryPrice());
                     pnl += exit.pnl();
                     lastExitAt = optionCandle.dateTime();
                     lastExitPrice = exit.price();
@@ -269,7 +306,7 @@ public class BacktestReplayService {
 
                 int lotsToBook = Math.min(step.lotsToBook(), position.currentLots());
                 if (lotsToBook >= position.currentLots()) {
-                    Exit exit = exitAll(position, optionCandle, targetHit.level(), executionPricePolicy, "TARGET_HIT_FULL", optionEntryPrice);
+                    Exit exit = exitAll(position, optionCandle, targetHit.level(), executionPricePolicy, "TARGET_HIT_FULL", position.entryPrice());
                     pnl += exit.pnl();
                     lastExitAt = optionCandle.dateTime();
                     lastExitPrice = exit.price();
@@ -282,7 +319,7 @@ public class BacktestReplayService {
 
                 long quantityToBook = Math.min(position.quantity(), (long) lotsToBook * lotSize);
                 Exit partial = exitPartial(quantityToBook, optionCandle, targetHit.level(), executionPricePolicy,
-                        "TARGET_HIT_PARTIAL", optionEntryPrice);
+                        "TARGET_HIT_PARTIAL", position.entryPrice());
                 pnl += partial.pnl();
                 lastExitAt = optionCandle.dateTime();
                 lastExitPrice = partial.price();
@@ -292,7 +329,7 @@ public class BacktestReplayService {
 
                 position.quantity(position.quantity() - quantityToBook);
                 position.currentLots(position.currentLots() - lotsToBook);
-                position.stopLoss(nextTslStop(position.stopLoss(), targetHit, optionEntryPrice, trailingSl, partial.price()));
+                position.stopLoss(nextTslStop(position.stopLoss(), targetHit, position.entryPrice(), trailingSl, partial.price()));
                 position.stopWasTrailed(true);
                 events.add(BacktestReplayResponse.Event.builder()
                         .at(optionCandle.dateTime())
@@ -309,7 +346,7 @@ public class BacktestReplayService {
             if (stopHit) {
                 Exit exit = exitAll(position, optionCandle, position.stopLoss(), executionPricePolicy,
                         position.stopWasTrailed() ? "TRAILING_SL_HIT" : "STOP_LOSS_HIT",
-                        optionEntryPrice);
+                        position.entryPrice());
                 pnl += exit.pnl();
                 lastExitAt = optionCandle.dateTime();
                 lastExitPrice = exit.price();
@@ -317,6 +354,10 @@ public class BacktestReplayService {
                 exitCount++;
                 events.add(exitEvent(optionCandle.dateTime(), exit, position.stopLoss(), position.quantity(), position.currentLots()));
                 position.quantity(0L);
+                if (canWaitForReEntry(reEntryOnStopLoss, reEntriesUsed, maxReEntries, optionCandle, squareOffTime, exit.reason())) {
+                    waitingForReEntry = true;
+                    continue;
+                }
                 break;
             }
         }
@@ -326,7 +367,7 @@ public class BacktestReplayService {
             if (squareOffCandle == null) {
                 throw new IllegalArgumentException("No candle available to square off remaining quantity.");
             }
-            Exit exit = exitAll(position, squareOffCandle, null, "CANDLE_CLOSE", "SQUARE_OFF", optionEntryPrice);
+            Exit exit = exitAll(position, squareOffCandle, null, "CANDLE_CLOSE", "SQUARE_OFF", position.entryPrice());
             pnl += exit.pnl();
             lastExitAt = squareOffCandle.dateTime();
             lastExitPrice = exit.price();
@@ -475,6 +516,29 @@ public class BacktestReplayService {
             return peSpot ? reference.close() <= target.price() : reference.close() >= target.price();
         }
         return peSpot ? reference.low() <= target.price() : reference.high() >= target.price();
+    }
+
+    private boolean isReEntryTriggered(Candle optionCandle, double originalEntryPrice, String triggerPricePolicy) {
+        if (optionCandle == null || originalEntryPrice <= 0d) {
+            return false;
+        }
+        if ("CLOSE".equals(triggerPricePolicy)) {
+            return optionCandle.close() >= originalEntryPrice;
+        }
+        return optionCandle.high() >= originalEntryPrice;
+    }
+
+    private boolean canWaitForReEntry(boolean reEntryOnStopLoss,
+                                      int reEntriesUsed,
+                                      int maxReEntries,
+                                      Candle optionCandle,
+                                      LocalTime squareOffTime,
+                                      String exitReason) {
+        return reEntryOnStopLoss
+                && reEntriesUsed < maxReEntries
+                && optionCandle != null
+                && optionCandle.dateTime().toLocalTime().isBefore(squareOffTime)
+                && "STOP_LOSS_HIT".equals(exitReason);
     }
 
     private Candle referenceCandle(PriceSource source, Candle optionCandle, Candle spotCandle) {
@@ -952,13 +1016,15 @@ public class BacktestReplayService {
         private final Integer originalLots;
         private LevelState stopLoss;
         private boolean stopWasTrailed;
+        private final Double entryPrice;
 
-        Position(Long quantity, Integer currentLots, Integer originalLots, LevelState stopLoss, boolean stopWasTrailed) {
+        Position(Long quantity, Integer currentLots, Integer originalLots, LevelState stopLoss, boolean stopWasTrailed, Double entryPrice) {
             this.quantity = quantity;
             this.currentLots = currentLots;
             this.originalLots = originalLots;
             this.stopLoss = stopLoss;
             this.stopWasTrailed = stopWasTrailed;
+            this.entryPrice = entryPrice;
         }
 
         Long quantity() {
@@ -995,6 +1061,10 @@ public class BacktestReplayService {
 
         void stopWasTrailed(boolean stopWasTrailed) {
             this.stopWasTrailed = stopWasTrailed;
+        }
+
+        Double entryPrice() {
+            return entryPrice;
         }
     }
 }

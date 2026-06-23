@@ -130,6 +130,84 @@ class BacktestReplayServiceTest {
     }
 
     @Test
+    void reEntersOnceAfterStopLossWhenCloseRecoversEntryPrice() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(75L);
+        trade.setLots(1);
+        trade.setStopLoss(95.0);
+        trade.setTarget1(110.0);
+        when(tradeRepository.findById(8L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 101, 99, 100),
+                        candle("2026-06-20", "09:21", 100, 100, 94, 94),
+                        candle("2026-06-20", "09:22", 94, 100, 93, 99),
+                        candle("2026-06-20", "09:23", 99, 102, 98, 101),
+                        candle("2026-06-20", "09:24", 101, 113, 100, 112)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        request.setTriggerPricePolicy("CLOSE");
+        request.setReEntryOnStopLoss(true);
+        request.setMaxReEntries(1);
+
+        BacktestReplayResponse response = service.replayTrade(8L, request);
+
+        assertThat(response.getResolved().getReEntryOnStopLoss()).isTrue();
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(response.getBacktest().getExitCount()).isEqualTo(2);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(375.0);
+        assertThat(response.getEvents()).extracting(BacktestReplayResponse.Event::getReason)
+                .containsExactly("ORIGINAL_ENTRY", "STOP_LOSS_HIT", "RE_ENTRY_AFTER_STOP_LOSS", "TARGET_HIT");
+    }
+
+    @Test
+    void doesNotReEnterAfterTrailingStopLossHit() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(150L);
+        trade.setLots(2);
+        trade.setOriginalLots(2);
+        trade.setStopLoss(90.0);
+        trade.setTarget1(110.0);
+        trade.setTarget2(120.0);
+        trade.setTslEnabled(true);
+        when(tradeRepository.findById(9L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 105, 99, 102),
+                        candle("2026-06-20", "09:21", 102, 112, 101, 111),
+                        candle("2026-06-20", "09:22", 111, 112, 98, 99),
+                        candle("2026-06-20", "09:23", 99, 112, 98, 111)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        request.setTriggerPricePolicy("CLOSE");
+        request.setReEntryOnStopLoss(true);
+        request.setMaxReEntries(1);
+
+        BacktestReplayResponse response = service.replayTrade(9L, request);
+
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("TRAILING_SL_HIT");
+        assertThat(response.getBacktest().getExitCount()).isEqualTo(2);
+        assertThat(response.getEvents()).extracting(BacktestReplayResponse.Event::getReason)
+                .doesNotContain("RE_ENTRY_AFTER_STOP_LOSS");
+    }
+
+    @Test
     void replaysLiveCompatibleTslPartialBooking() {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);

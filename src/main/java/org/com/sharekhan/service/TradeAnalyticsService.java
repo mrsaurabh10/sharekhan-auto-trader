@@ -498,14 +498,18 @@ public class TradeAnalyticsService {
                                 .filter(Objects::nonNull)
                                 .findFirst()
                                 .orElse(null),
-                        latestIntervalResult(entry.getValue(), "1minute").orElse(null),
-                        latestIntervalResult(entry.getValue(), "5minute").orElse(null)))
+                        latestIntervalResult(entry.getValue(), "1minute", "CLOSE").orElse(null),
+                        latestIntervalResult(entry.getValue(), "5minute", "CLOSE").orElse(null),
+                        latestIntervalResult(entry.getValue(), "1minute", "CLOSE_REENTRY").orElse(null)))
                 .toList();
     }
 
-    private Optional<BacktestReplayResultEntity> latestIntervalResult(List<BacktestReplayResultEntity> results, String interval) {
+    private Optional<BacktestReplayResultEntity> latestIntervalResult(List<BacktestReplayResultEntity> results,
+                                                                     String interval,
+                                                                     String triggerPricePolicy) {
         return results.stream()
                 .filter(result -> interval.equalsIgnoreCase(result.getInterval()))
+                .filter(result -> triggerPricePolicy.equalsIgnoreCase(result.getTriggerPricePolicy()))
                 .max(Comparator.comparing(BacktestReplayResultEntity::getUpdatedAt,
                         Comparator.nullsFirst(Comparator.naturalOrder())));
     }
@@ -516,11 +520,13 @@ public class TradeAnalyticsService {
         for (BacktestTradePair pair : pairs) {
             BacktestReplayResultEntity oneMinute = pair.oneMinute();
             BacktestReplayResultEntity fiveMinute = pair.fiveMinute();
-            if (isBacktestError(oneMinute) || isBacktestError(fiveMinute)) {
+            BacktestReplayResultEntity oneMinuteReentry = pair.oneMinuteReentry();
+            if (isBacktestError(oneMinute) || isBacktestError(fiveMinute) || isBacktestError(oneMinuteReentry)) {
                 aggregate.failedTrades++;
             }
             aggregate.lastRunAt = latestRunAt(aggregate.lastRunAt, oneMinute);
             aggregate.lastRunAt = latestRunAt(aggregate.lastRunAt, fiveMinute);
+            aggregate.lastRunAt = latestRunAt(aggregate.lastRunAt, oneMinuteReentry);
             if (!isBacktestSuccess(oneMinute) || !isBacktestSuccess(fiveMinute)
                     || oneMinute.getBacktestPnl() == null || fiveMinute.getBacktestPnl() == null) {
                 continue;
@@ -529,6 +535,11 @@ public class TradeAnalyticsService {
             aggregate.comparableTrades++;
             aggregate.oneMinutePnl += oneMinute.getBacktestPnl();
             aggregate.fiveMinutePnl += fiveMinute.getBacktestPnl();
+            if (isBacktestSuccess(oneMinuteReentry) && oneMinuteReentry.getBacktestPnl() != null) {
+                aggregate.oneMinuteReentryComparableTrades++;
+                aggregate.oneMinuteReentryPnl += oneMinuteReentry.getBacktestPnl();
+                aggregate.diffReentryMinusOne += oneMinuteReentry.getBacktestPnl() - oneMinute.getBacktestPnl();
+            }
             Double actualPnl = firstNonNull(oneMinute.getActualPnl(), fiveMinute.getActualPnl());
             if (actualPnl == null) {
                 continue;
@@ -544,6 +555,11 @@ public class TradeAnalyticsService {
             double fiveMinuteAbs = Math.abs(fiveMinuteDiff);
             aggregate.oneMinuteAbsoluteError += oneMinuteAbs;
             aggregate.fiveMinuteAbsoluteError += fiveMinuteAbs;
+            if (isBacktestSuccess(oneMinuteReentry) && oneMinuteReentry.getBacktestPnl() != null) {
+                double reentryDiff = oneMinuteReentry.getBacktestPnl() - actualPnl;
+                aggregate.oneMinuteReentryMinusActual += reentryDiff;
+                aggregate.oneMinuteReentryAbsoluteError += Math.abs(reentryDiff);
+            }
             if (Double.compare(oneMinuteAbs, fiveMinuteAbs) == 0) {
                 aggregate.closerToActualTies++;
             } else if (oneMinuteAbs < fiveMinuteAbs) {
@@ -579,14 +595,19 @@ public class TradeAnalyticsService {
                 .actualPnl(round(aggregate.actualPnl))
                 .oneMinutePnl(round(aggregate.oneMinutePnl))
                 .fiveMinutePnl(round(aggregate.fiveMinutePnl))
+                .oneMinuteReentryPnl(round(aggregate.oneMinuteReentryPnl))
                 .diffFiveMinusOne(round(aggregate.fiveMinutePnl - aggregate.oneMinutePnl))
+                .diffReentryMinusOne(round(aggregate.diffReentryMinusOne))
                 .oneMinuteMinusActual(round(aggregate.oneMinuteMinusActual))
                 .fiveMinuteMinusActual(round(aggregate.fiveMinuteMinusActual))
+                .oneMinuteReentryMinusActual(round(aggregate.oneMinuteReentryMinusActual))
                 .oneMinuteAbsoluteError(round(aggregate.oneMinuteAbsoluteError))
                 .fiveMinuteAbsoluteError(round(aggregate.fiveMinuteAbsoluteError))
+                .oneMinuteReentryAbsoluteError(round(aggregate.oneMinuteReentryAbsoluteError))
                 .oneMinuteCloserToActual(aggregate.oneMinuteCloserToActual)
                 .fiveMinuteCloserToActual(aggregate.fiveMinuteCloserToActual)
                 .closerToActualTies(aggregate.closerToActualTies)
+                .oneMinuteReentryComparableTrades(aggregate.oneMinuteReentryComparableTrades)
                 .lastRunAt(aggregate.lastRunAt)
                 .build();
     }
@@ -601,14 +622,19 @@ public class TradeAnalyticsService {
                 .actualPnl(round(aggregate.actualPnl))
                 .oneMinutePnl(round(aggregate.oneMinutePnl))
                 .fiveMinutePnl(round(aggregate.fiveMinutePnl))
+                .oneMinuteReentryPnl(round(aggregate.oneMinuteReentryPnl))
                 .diffFiveMinusOne(round(aggregate.fiveMinutePnl - aggregate.oneMinutePnl))
+                .diffReentryMinusOne(round(aggregate.diffReentryMinusOne))
                 .oneMinuteMinusActual(round(aggregate.oneMinuteMinusActual))
                 .fiveMinuteMinusActual(round(aggregate.fiveMinuteMinusActual))
+                .oneMinuteReentryMinusActual(round(aggregate.oneMinuteReentryMinusActual))
                 .oneMinuteAbsoluteError(round(aggregate.oneMinuteAbsoluteError))
                 .fiveMinuteAbsoluteError(round(aggregate.fiveMinuteAbsoluteError))
+                .oneMinuteReentryAbsoluteError(round(aggregate.oneMinuteReentryAbsoluteError))
                 .oneMinuteCloserToActual(aggregate.oneMinuteCloserToActual)
                 .fiveMinuteCloserToActual(aggregate.fiveMinuteCloserToActual)
                 .closerToActualTies(aggregate.closerToActualTies)
+                .oneMinuteReentryComparableTrades(aggregate.oneMinuteReentryComparableTrades)
                 .build();
     }
 
@@ -699,7 +725,8 @@ public class TradeAnalyticsService {
     private record BacktestTradePair(Long tradeSetupId,
                                      LocalDate tradeDate,
                                      BacktestReplayResultEntity oneMinute,
-                                     BacktestReplayResultEntity fiveMinute) {
+                                     BacktestReplayResultEntity fiveMinute,
+                                     BacktestReplayResultEntity oneMinuteReentry) {
     }
 
     private static class BacktestAggregate {
@@ -710,13 +737,18 @@ public class TradeAnalyticsService {
         private double actualPnl;
         private double oneMinutePnl;
         private double fiveMinutePnl;
+        private double oneMinuteReentryPnl;
+        private double diffReentryMinusOne;
         private double oneMinuteMinusActual;
         private double fiveMinuteMinusActual;
+        private double oneMinuteReentryMinusActual;
         private double oneMinuteAbsoluteError;
         private double fiveMinuteAbsoluteError;
+        private double oneMinuteReentryAbsoluteError;
         private int oneMinuteCloserToActual;
         private int fiveMinuteCloserToActual;
         private int closerToActualTies;
+        private int oneMinuteReentryComparableTrades;
         private LocalDateTime lastRunAt;
     }
 
