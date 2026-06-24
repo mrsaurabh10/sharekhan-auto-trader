@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.dto.backtest.BacktestReplayRequest;
 import org.com.sharekhan.dto.backtest.BacktestReplayResponse;
 import org.com.sharekhan.entity.ScriptMasterEntity;
@@ -23,6 +24,7 @@ import java.util.Objects;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class BacktestReplayService {
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
@@ -33,6 +35,7 @@ public class BacktestReplayService {
     private final TriggeredTradeSetupRepository tradeRepository;
     private final SharekhanHistoricalService historicalService;
     private final ScriptMasterRepository scriptMasterRepository;
+    private final MStockHistoricalService mStockHistoricalService;
 
     public BacktestReplayResponse replayTrade(Long tradeSetupId, BacktestReplayRequest request) {
         if (tradeSetupId == null) {
@@ -719,13 +722,47 @@ public class BacktestReplayService {
         if (scripCode == null) {
             return List.of();
         }
-        return historicalService.getHistoricalCandles(scripCode, interval, from, to).stream()
+        List<Candle> sharekhanCandles = historicalService.getHistoricalCandles(scripCode, interval, from, to).stream()
                 .filter(Objects::nonNull)
                 .filter(c -> c.date() != null && c.time() != null)
                 .filter(c -> Double.isFinite(c.open()) && Double.isFinite(c.high()) && Double.isFinite(c.low()) && Double.isFinite(c.close()))
                 .map(c -> new Candle(LocalDateTime.of(c.date(), c.time()), c.open(), c.high(), c.low(), c.close()))
                 .sorted(Comparator.comparing(Candle::dateTime))
                 .toList();
+        if (!sharekhanCandles.isEmpty()) {
+            return sharekhanCandles;
+        }
+        return loadMStockCandles(scripCode, interval, from, to);
+    }
+
+    private List<Candle> loadMStockCandles(Integer scripCode, String interval, LocalDate from, LocalDate to) {
+        try {
+            MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandles(
+                    scripCode,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    interval,
+                    from.toString(),
+                    to.toString());
+            if (response == null || response.candles() == null) {
+                return List.of();
+            }
+            return response.candles().stream()
+                    .filter(Objects::nonNull)
+                    .filter(c -> c.date() != null && c.time() != null)
+                    .filter(c -> Double.isFinite(c.open()) && Double.isFinite(c.high()) && Double.isFinite(c.low()) && Double.isFinite(c.close()))
+                    .map(c -> new Candle(LocalDateTime.of(c.date(), c.time()), c.open(), c.high(), c.low(), c.close()))
+                    .sorted(Comparator.comparing(Candle::dateTime))
+                    .toList();
+        } catch (Exception ex) {
+            log.warn("MStock historical fallback failed for scripCode={} interval={} from={} to={}: {}",
+                    scripCode, interval, from, to, ex.getMessage());
+            log.debug("MStock historical fallback error", ex);
+            return List.of();
+        }
     }
 
     private LocalDateTime resolveEntryAt(TriggeredTradeSetupEntity trade) {

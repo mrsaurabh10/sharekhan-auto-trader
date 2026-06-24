@@ -28,7 +28,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setQuantity(75L);
@@ -68,7 +68,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setQuantity(75L);
@@ -101,7 +101,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setQuantity(75L);
@@ -134,7 +134,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setQuantity(75L);
@@ -173,7 +173,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setQuantity(150L);
@@ -212,7 +212,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setQuantity(150L);
@@ -245,7 +245,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setScripCode(1001);
@@ -290,7 +290,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setScripCode(1001);
@@ -336,7 +336,7 @@ class BacktestReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
-        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
         trade.setEntryAt(LocalDateTime.of(2026, 6, 20, 9, 18));
@@ -357,6 +357,43 @@ class BacktestReplayServiceTest {
 
         assertThat(response.getBacktest().getExitAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 9, 20));
         assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(response.getBacktest().getPnl()).isEqualTo(825.0);
+    }
+
+    @Test
+    void fallsBackToMStockWhenSharekhanReturnsNoCandles() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        MStockHistoricalService mStockHistoricalService = mock(MStockHistoricalService.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mStockHistoricalService);
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(75L);
+        trade.setLots(1);
+        trade.setStopLoss(95.0);
+        trade.setTarget1(110.0);
+        when(tradeRepository.findById(10L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of());
+        when(mStockHistoricalService.getHistoricalCandles(eq(1001), any(), any(), any(), any(), any(), eq("1minute"), any(), any()))
+                .thenReturn(MStockHistoricalService.HistoricalResponse.builder()
+                        .status("success")
+                        .count(2)
+                        .candles(List.of(
+                                mstockCandle("2026-06-20", "09:20", 100, 101, 99, 100),
+                                mstockCandle("2026-06-20", "09:21", 100, 112, 99, 111)
+                        ))
+                        .build());
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        request.setTriggerPricePolicy("CLOSE");
+        BacktestReplayResponse response = service.replayTrade(10L, request);
+
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(response.getBacktest().getExitPrice()).isEqualTo(111.0);
         assertThat(response.getBacktest().getPnl()).isEqualTo(825.0);
     }
 
@@ -417,5 +454,21 @@ class BacktestReplayServiceTest {
                 low,
                 close
         );
+    }
+
+    private MStockHistoricalService.HistoricalCandle mstockCandle(String date,
+                                                                  String time,
+                                                                  double open,
+                                                                  double high,
+                                                                  double low,
+                                                                  double close) {
+        return MStockHistoricalService.HistoricalCandle.builder()
+                .date(LocalDate.parse(date))
+                .time(LocalTime.parse(time + ":00"))
+                .open(open)
+                .high(high)
+                .low(low)
+                .close(close)
+                .build();
     }
 }
