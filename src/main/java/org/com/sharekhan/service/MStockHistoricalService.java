@@ -41,6 +41,7 @@ public class MStockHistoricalService {
     private static final DateTimeFormatter REQUEST_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
+    private static final int MAX_CANDLES_PER_REQUEST = 1_000;
 
     private final TokenStoreService tokenStoreService;
     private final CryptoService cryptoService;
@@ -99,6 +100,64 @@ public class MStockHistoricalService {
         RequestCredentials credentials = resolveCredentials();
         String normalizedExchange = normalizeExchange(instrument.getExchange());
         String normalizedInterval = normalizeInterval(interval);
+        return getHistoricalCandles(instrument, normalizedExchange, normalizedInterval, from, to, credentials);
+    }
+
+    private HistoricalResponse getHistoricalCandles(MStockInstrumentEntity instrument,
+                                                    String normalizedExchange,
+                                                    String normalizedInterval,
+                                                    LocalDateTime from,
+                                                    LocalDateTime to,
+                                                    RequestCredentials credentials) {
+        List<HistoricalResponse> responses = splitRanges(from, to, normalizedInterval).stream()
+                .map(range -> getHistoricalCandlesSingleRequest(instrument, normalizedExchange, normalizedInterval,
+                        range.from(), range.to(), credentials))
+                .toList();
+
+        Map<LocalDateTime, HistoricalCandle> candlesByTime = new LinkedHashMap<>();
+        List<Map<String, Object>> rawResponses = new ArrayList<>();
+        for (HistoricalResponse response : responses) {
+            if (response.raw() != null) {
+                rawResponses.add(response.raw());
+            }
+            if (response.candles() == null) {
+                continue;
+            }
+            for (HistoricalCandle candle : response.candles()) {
+                if (candle == null || candle.date() == null || candle.time() == null) {
+                    continue;
+                }
+                candlesByTime.put(LocalDateTime.of(candle.date(), candle.time()), candle);
+            }
+        }
+        List<HistoricalCandle> candles = candlesByTime.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(Map.Entry::getValue)
+                .toList();
+        Map<String, Object> raw = new LinkedHashMap<>();
+        raw.put("requestCount", responses.size());
+        raw.put("responses", rawResponses);
+        return HistoricalResponse.builder()
+                .status("success")
+                .exchange(normalizedExchange)
+                .instrumentToken(instrument.getInstrumentToken())
+                .instrumentKey(instrument.getInstrumentKey())
+                .tradingSymbol(instrument.getTradingSymbol())
+                .interval(normalizedInterval)
+                .from(from)
+                .to(to)
+                .count(candles.size())
+                .candles(candles)
+                .raw(raw)
+                .build();
+    }
+
+    private HistoricalResponse getHistoricalCandlesSingleRequest(MStockInstrumentEntity instrument,
+                                                                 String normalizedExchange,
+                                                                 String normalizedInterval,
+                                                                 LocalDateTime from,
+                                                                 LocalDateTime to,
+                                                                 RequestCredentials credentials) {
         String url = HISTORICAL_URL + "/"
                 + encodePath(normalizedExchange) + "/"
                 + encodePath(String.valueOf(instrument.getInstrumentToken())) + "/"
@@ -110,8 +169,7 @@ public class MStockHistoricalService {
         if (result.code() == 401 || indicatesTokenException(result.body())) {
             TokenStoreService.TokenInfo refreshed = tokenStoreService.refreshToken(Broker.MSTOCK, credentials.tokenInfo());
             if (refreshed != null && StringUtils.hasText(refreshed.getToken())) {
-                credentials = new RequestCredentials(refreshed.getToken(), resolveApiKey(refreshed), refreshed);
-                result = doGet(url, credentials);
+                result = doGet(url, new RequestCredentials(refreshed.getToken(), resolveApiKey(refreshed), refreshed));
             }
         }
         if (result.code() < 200 || result.code() >= 300) {
@@ -139,6 +197,43 @@ public class MStockHistoricalService {
                 .candles(candles)
                 .raw(root.toMap())
                 .build();
+    }
+
+    private List<DateTimeRange> splitRanges(LocalDateTime from, LocalDateTime to, String interval) {
+        if (estimatedCandles(from, to, interval) <= MAX_CANDLES_PER_REQUEST) {
+            return List.of(new DateTimeRange(from, to));
+        }
+        List<DateTimeRange> ranges = new ArrayList<>();
+        LocalDate date = from.toLocalDate();
+        LocalDate endDate = to.toLocalDate();
+        while (!date.isAfter(endDate)) {
+            LocalDateTime rangeFrom = date.equals(from.toLocalDate()) ? from : date.atTime(MARKET_OPEN);
+            LocalDateTime rangeTo = date.equals(to.toLocalDate()) ? to : date.atTime(MARKET_CLOSE);
+            if (!rangeFrom.isAfter(rangeTo)) {
+                ranges.add(new DateTimeRange(rangeFrom, rangeTo));
+            }
+            date = date.plusDays(1);
+        }
+        return ranges;
+    }
+
+    private long estimatedCandles(LocalDateTime from, LocalDateTime to, String interval) {
+        long days = Math.max(1, java.time.temporal.ChronoUnit.DAYS.between(from.toLocalDate(), to.toLocalDate()) + 1);
+        int minutes = intervalMinutes(interval);
+        long candlesPerDay = Math.max(1, (java.time.Duration.between(MARKET_OPEN, MARKET_CLOSE).toMinutes() / minutes) + 1);
+        return days * candlesPerDay;
+    }
+
+    private int intervalMinutes(String interval) {
+        if (!StringUtils.hasText(interval) || "minute".equalsIgnoreCase(interval)) {
+            return 1;
+        }
+        String digits = interval.trim().toLowerCase().replace("minute", "").replace("min", "");
+        try {
+            return Math.max(1, Integer.parseInt(digits));
+        } catch (NumberFormatException ex) {
+            return 1;
+        }
     }
 
     private HttpResult doGet(String urlString, RequestCredentials credentials) {
@@ -301,6 +396,9 @@ public class MStockHistoricalService {
     }
 
     private record HttpResult(int code, String body) {
+    }
+
+    private record DateTimeRange(LocalDateTime from, LocalDateTime to) {
     }
 
     @Builder
