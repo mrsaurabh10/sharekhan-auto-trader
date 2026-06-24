@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class BacktestReplayServiceTest {
@@ -361,7 +362,7 @@ class BacktestReplayServiceTest {
     }
 
     @Test
-    void fallsBackToMStockWhenSharekhanReturnsNoCandles() {
+    void usesMStockHistoricalCandlesBeforeSharekhan() {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
@@ -375,8 +376,6 @@ class BacktestReplayServiceTest {
         trade.setTarget1(110.0);
         when(tradeRepository.findById(10L)).thenReturn(Optional.of(trade));
         when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
-        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
-                .thenReturn(List.of());
         when(mStockHistoricalService.getHistoricalCandles(eq(1001), any(), any(), any(), any(), any(), eq("1minute"), any(), any()))
                 .thenReturn(MStockHistoricalService.HistoricalResponse.builder()
                         .status("success")
@@ -395,6 +394,7 @@ class BacktestReplayServiceTest {
         assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
         assertThat(response.getBacktest().getExitPrice()).isEqualTo(111.0);
         assertThat(response.getBacktest().getPnl()).isEqualTo(825.0);
+        verifyNoInteractions(historicalService);
     }
 
     private TriggeredTradeSetupEntity baseTrade() {

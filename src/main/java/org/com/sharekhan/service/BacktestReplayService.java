@@ -722,17 +722,21 @@ public class BacktestReplayService {
         if (scripCode == null) {
             return List.of();
         }
-        List<Candle> sharekhanCandles = historicalService.getHistoricalCandles(scripCode, interval, from, to).stream()
+        List<Candle> mStockCandles = loadMStockCandles(scripCode, interval, from, to);
+        if (!mStockCandles.isEmpty()) {
+            return mStockCandles;
+        }
+        return loadSharekhanCandles(scripCode, interval, from, to);
+    }
+
+    private List<Candle> loadSharekhanCandles(Integer scripCode, String interval, LocalDate from, LocalDate to) {
+        return historicalService.getHistoricalCandles(scripCode, interval, from, to).stream()
                 .filter(Objects::nonNull)
                 .filter(c -> c.date() != null && c.time() != null)
                 .filter(c -> Double.isFinite(c.open()) && Double.isFinite(c.high()) && Double.isFinite(c.low()) && Double.isFinite(c.close()))
                 .map(c -> new Candle(LocalDateTime.of(c.date(), c.time()), c.open(), c.high(), c.low(), c.close()))
                 .sorted(Comparator.comparing(Candle::dateTime))
                 .toList();
-        if (!sharekhanCandles.isEmpty()) {
-            return sharekhanCandles;
-        }
-        return loadMStockCandles(scripCode, interval, from, to);
     }
 
     private List<Candle> loadMStockCandles(Integer scripCode, String interval, LocalDate from, LocalDate to) {
@@ -758,9 +762,9 @@ public class BacktestReplayService {
                     .sorted(Comparator.comparing(Candle::dateTime))
                     .toList();
         } catch (Exception ex) {
-            log.warn("MStock historical fallback failed for scripCode={} interval={} from={} to={}: {}",
+            log.warn("MStock historical primary load failed for scripCode={} interval={} from={} to={}: {}",
                     scripCode, interval, from, to, ex.getMessage());
-            log.debug("MStock historical fallback error", ex);
+            log.debug("MStock historical primary load error", ex);
             return List.of();
         }
     }
