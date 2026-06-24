@@ -10,6 +10,7 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.service.MStockInstrumentCacheService;
 import org.com.sharekhan.service.MStockInstrumentResolver;
+import org.com.sharekhan.service.MStockHistoricalService;
 import org.com.sharekhan.service.MStockLtpService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,6 +30,7 @@ public class MStockController {
     private final BrokerAuthProviderRegistry providerRegistry;
     private final MStockInstrumentResolver instrumentResolver;
     private final MStockInstrumentCacheService instrumentCacheService;
+    private final MStockHistoricalService mStockHistoricalService;
 
     @GetMapping("/ltp")
     public ResponseEntity<Map<String, Object>> getLtp(@RequestParam(name = "i") List<String> instruments) {
@@ -112,6 +114,64 @@ public class MStockController {
             Map<String, Object> err = new HashMap<>();
             err.put("status", "error");
             err.put("message", e.getMessage());
+            return ResponseEntity.status(500).body(err);
+        }
+    }
+
+    @GetMapping("/historical/candles")
+    public ResponseEntity<Map<String, Object>> getHistoricalCandles(
+            @RequestParam(name = "scripCode", required = false) Integer scripCode,
+            @RequestParam(name = "mstockExchange", required = false) String mstockExchange,
+            @RequestParam(name = "instrumentToken", required = false) Long instrumentToken,
+            @RequestParam(name = "exchange", required = false) String exchange,
+            @RequestParam(name = "instrument", required = false) String instrument,
+            @RequestParam(name = "strikePrice", required = false) Double strikePrice,
+            @RequestParam(name = "optionType", required = false) String optionType,
+            @RequestParam(name = "expiry", required = false) String expiry,
+            @RequestParam(name = "interval", defaultValue = "minute") String interval,
+            @RequestParam(name = "from") String from,
+            @RequestParam(name = "to") String to) {
+        if (instrumentToken == null && scripCode == null && (!StringUtils.hasText(exchange) || !StringUtils.hasText(instrument))) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status", "error");
+            err.put("message", "Provide instrumentToken + mstockExchange, scripCode, or exchange + instrument.");
+            return ResponseEntity.badRequest().body(err);
+        }
+        if (instrumentToken != null && !StringUtils.hasText(mstockExchange)) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status", "error");
+            err.put("message", "mstockExchange is required when instrumentToken is provided.");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        try {
+            MStockHistoricalService.HistoricalResponse response = instrumentToken != null
+                    ? mStockHistoricalService.getHistoricalCandlesByToken(mstockExchange, instrumentToken, interval, from, to)
+                    : mStockHistoricalService.getHistoricalCandles(
+                            scripCode, exchange, instrument, strikePrice, optionType, expiry, interval, from, to);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("status", response.status());
+            body.put("exchange", response.exchange());
+            body.put("instrumentToken", response.instrumentToken());
+            body.put("instrumentKey", response.instrumentKey());
+            body.put("tradingSymbol", response.tradingSymbol());
+            body.put("interval", response.interval());
+            body.put("from", response.from());
+            body.put("to", response.to());
+            body.put("count", response.count());
+            body.put("candles", response.candles());
+            body.put("raw", response.raw());
+            return ResponseEntity.ok(body);
+        } catch (IllegalArgumentException ex) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status", "error");
+            err.put("message", ex.getMessage());
+            return ResponseEntity.badRequest().body(err);
+        } catch (Exception ex) {
+            log.error("Failed to fetch MStock historical candles", ex);
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status", "error");
+            err.put("message", ex.getMessage());
             return ResponseEntity.status(500).body(err);
         }
     }
