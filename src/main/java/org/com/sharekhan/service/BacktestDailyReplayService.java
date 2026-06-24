@@ -101,6 +101,7 @@ public class BacktestDailyReplayService {
         int resultCount = 0;
         int successCount = 0;
         int errorCount = 0;
+        int skippedCount = 0;
         for (LocalDate date = resolvedFrom; !date.isAfter(resolvedTo); date = date.plusDays(1)) {
             if (isWeekend(date)) {
                 continue;
@@ -111,6 +112,7 @@ public class BacktestDailyReplayService {
             resultCount += valueOrZero(daily.getResultCount());
             successCount += valueOrZero(daily.getSuccessCount());
             errorCount += valueOrZero(daily.getErrorCount());
+            skippedCount += valueOrZero(daily.getSkippedCount());
             if (daily.getFailedTradeSetupIds() != null) {
                 failedTradeSetupIds.addAll(daily.getFailedTradeSetupIds());
             }
@@ -126,6 +128,7 @@ public class BacktestDailyReplayService {
                 .resultCount(resultCount)
                 .successCount(successCount)
                 .errorCount(errorCount)
+                .skippedCount(skippedCount)
                 .failedTradeSetupIds(failedTradeSetupIds.stream().distinct().toList())
                 .days(days)
                 .runAt(LocalDateTime.now(MARKET_ZONE))
@@ -144,9 +147,15 @@ public class BacktestDailyReplayService {
 
         int successCount = 0;
         int errorCount = 0;
+        int skippedCount = 0;
         List<Long> failedTradeSetupIds = new ArrayList<>();
         for (TriggeredTradeSetupEntity trade : trades) {
             for (ReplayScenario scenario : SCENARIOS) {
+                Optional<BacktestReplayResultEntity> existing = existingResultOptional(trade.getId(), scenario);
+                if (existing.filter(this::isSuccessResult).isPresent()) {
+                    skippedCount++;
+                    continue;
+                }
                 BacktestReplayRequest request = request(scenario);
                 try {
                     BacktestReplayResponse response = backtestReplayService.replayTrade(trade.getId(), request);
@@ -171,9 +180,10 @@ public class BacktestDailyReplayService {
                 .tradeDate(resolvedDate)
                 .source(ATR_SIGNAL_SOURCE)
                 .tradeCount(trades.size())
-                .resultCount(successCount + errorCount)
+                .resultCount(successCount + errorCount + skippedCount)
                 .successCount(successCount)
                 .errorCount(errorCount)
+                .skippedCount(skippedCount)
                 .failedTradeSetupIds(failedTradeSetupIds.stream().distinct().toList())
                 .runAt(runAt)
                 .build();
@@ -239,12 +249,7 @@ public class BacktestDailyReplayService {
     }
 
     private BacktestReplayResultEntity existingResult(Long tradeSetupId, ReplayScenario scenario) {
-        return resultRepository
-                .findByTradeSetupIdAndIntervalAndTriggerPricePolicyAndSquareOffTime(
-                        tradeSetupId,
-                        scenario.interval(),
-                        scenario.resultTriggerPricePolicy(),
-                        SQUARE_OFF_TIME)
+        return existingResultOptional(tradeSetupId, scenario)
                 .orElseGet(() -> BacktestReplayResultEntity.builder()
                         .tradeSetupId(tradeSetupId)
                         .interval(scenario.interval())
@@ -252,6 +257,18 @@ public class BacktestDailyReplayService {
                         .squareOffTime(SQUARE_OFF_TIME)
                         .createdAt(LocalDateTime.now(MARKET_ZONE))
                         .build());
+    }
+
+    private Optional<BacktestReplayResultEntity> existingResultOptional(Long tradeSetupId, ReplayScenario scenario) {
+        return resultRepository.findByTradeSetupIdAndIntervalAndTriggerPricePolicyAndSquareOffTime(
+                tradeSetupId,
+                scenario.interval(),
+                scenario.resultTriggerPricePolicy(),
+                SQUARE_OFF_TIME);
+    }
+
+    private boolean isSuccessResult(BacktestReplayResultEntity result) {
+        return result != null && "SUCCESS".equalsIgnoreCase(result.getStatus());
     }
 
     private void populateTradeSnapshot(BacktestReplayResultEntity result,
