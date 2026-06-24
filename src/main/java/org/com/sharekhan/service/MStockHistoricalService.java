@@ -29,6 +29,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -63,7 +64,7 @@ public class MStockHistoricalService {
                 .orElseThrow(() -> new IllegalArgumentException("Unable to locate script in cache."));
         String instrumentKey = instrumentResolver.resolveInstrumentKey(script)
                 .orElseThrow(() -> new IllegalArgumentException("Unable to resolve MStock instrument key for provided script."));
-        MStockInstrumentEntity mStockInstrument = instrumentRepository.findByInstrumentKey(instrumentKey)
+        MStockInstrumentEntity mStockInstrument = resolveInstrumentMasterRow(instrumentKey)
                 .orElseThrow(() -> new IllegalArgumentException("MStock instrument master row not found for key " + instrumentKey));
         return getHistoricalCandles(mStockInstrument, interval, parseFrom(from), parseTo(to));
     }
@@ -86,6 +87,62 @@ public class MStockHistoricalService {
                 .tradingSymbol(String.valueOf(instrumentToken))
                 .build();
         return getHistoricalCandles(instrument, interval, parseFrom(from), parseTo(to));
+    }
+
+    private Optional<MStockInstrumentEntity> resolveInstrumentMasterRow(String instrumentKey) {
+        if (!StringUtils.hasText(instrumentKey)) {
+            return Optional.empty();
+        }
+        Optional<MStockInstrumentEntity> exact = instrumentRepository.findByInstrumentKey(instrumentKey);
+        if (exact.isPresent()) {
+            return exact;
+        }
+
+        int colon = instrumentKey.indexOf(':');
+        if (colon <= 0 || colon >= instrumentKey.length() - 1) {
+            return Optional.empty();
+        }
+
+        String exchange = instrumentKey.substring(0, colon).trim().toUpperCase(Locale.ROOT);
+        String symbol = instrumentKey.substring(colon + 1).trim().toUpperCase(Locale.ROOT);
+        for (String candidate : symbolCandidates(symbol)) {
+            Optional<MStockInstrumentEntity> bySymbol = instrumentRepository.findByExchangeAndTradingSymbol(exchange, candidate);
+            if (bySymbol.isPresent()) {
+                log.info("Resolved MStock historical instrument key {} via tradingSymbol {}:{}",
+                        instrumentKey, exchange, candidate);
+                return bySymbol;
+            }
+        }
+        return Optional.empty();
+    }
+
+    private List<String> symbolCandidates(String symbol) {
+        if (!StringUtils.hasText(symbol)) {
+            return List.of();
+        }
+        String normalized = symbol.trim().toUpperCase(Locale.ROOT);
+        List<String> candidates = new ArrayList<>();
+        addCandidate(candidates, normalized);
+        if (normalized.endsWith("-EQ")) {
+            String withoutSeries = normalized.substring(0, normalized.length() - 3);
+            addCandidate(candidates, withoutSeries);
+            addCandidate(candidates, withoutSeries + "EQ");
+        }
+        if (normalized.endsWith("-A")) {
+            String withoutSeries = normalized.substring(0, normalized.length() - 2);
+            addCandidate(candidates, withoutSeries);
+            addCandidate(candidates, withoutSeries + "A");
+        }
+        if (normalized.contains("-")) {
+            addCandidate(candidates, normalized.replace("-", ""));
+        }
+        return candidates;
+    }
+
+    private void addCandidate(List<String> candidates, String candidate) {
+        if (StringUtils.hasText(candidate) && !candidates.contains(candidate)) {
+            candidates.add(candidate);
+        }
     }
 
     private HistoricalResponse getHistoricalCandles(MStockInstrumentEntity instrument,

@@ -762,6 +762,12 @@ public class BacktestReplayService {
                     .sorted(Comparator.comparing(Candle::dateTime))
                     .toList();
         } catch (Exception ex) {
+            if (ex instanceof IllegalArgumentException && ex.getMessage() != null
+                    && ex.getMessage().contains("MStock instrument master row not found")) {
+                log.debug("MStock historical primary load skipped for scripCode={} interval={} from={} to={}: {}",
+                        scripCode, interval, from, to, ex.getMessage());
+                return List.of();
+            }
             log.warn("MStock historical primary load failed for scripCode={} interval={} from={} to={}: {}",
                     scripCode, interval, from, to, ex.getMessage());
             log.debug("MStock historical primary load error", ex);
