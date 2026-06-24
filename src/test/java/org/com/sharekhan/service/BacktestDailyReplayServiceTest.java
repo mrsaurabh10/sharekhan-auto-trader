@@ -124,6 +124,64 @@ class BacktestDailyReplayServiceTest {
         assertThat(captor.getAllValues().get(2).getTriggerPricePolicy()).isEqualTo("CLOSE_REENTRY");
     }
 
+    @Test
+    void skipsExistingSuccessfulScenarioInsteadOfOverwritingIt() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        BacktestReplayService replayService = mock(BacktestReplayService.class);
+        BacktestReplayResultRepository resultRepository = mock(BacktestReplayResultRepository.class);
+        BrokerCredentialsRepository brokerCredentialsRepository = mock(BrokerCredentialsRepository.class);
+        BacktestDailyReplayService service = new BacktestDailyReplayService(
+                tradeRepository,
+                replayService,
+                resultRepository,
+                brokerCredentialsRepository);
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(101L)
+                .appUserId(3L)
+                .source("atr-signal")
+                .symbol("ITC")
+                .scripCode(107866)
+                .entryAt(LocalDateTime.of(2026, 6, 19, 15, 8))
+                .build();
+        when(tradeRepository.findBySourceForBacktestDate(
+                eq("atr-signal"),
+                eq(LocalDateTime.of(2026, 6, 19, 0, 0)),
+                eq(LocalDate.of(2026, 6, 19).atTime(java.time.LocalTime.MAX))))
+                .thenReturn(List.of(trade));
+        BacktestReplayResultEntity existingSuccess = BacktestReplayResultEntity.builder()
+                .tradeSetupId(101L)
+                .interval("1minute")
+                .triggerPricePolicy("CLOSE")
+                .squareOffTime("15:20")
+                .status("SUCCESS")
+                .build();
+        when(resultRepository.findByTradeSetupIdAndIntervalAndTriggerPricePolicyAndSquareOffTime(
+                eq(101L), any(), any(), eq("15:20")))
+                .thenAnswer(invocation -> {
+                    String interval = invocation.getArgument(1, String.class);
+                    String policy = invocation.getArgument(2, String.class);
+                    if ("1minute".equals(interval) && "CLOSE".equals(policy)) {
+                        return Optional.of(existingSuccess);
+                    }
+                    return Optional.empty();
+                });
+        when(replayService.replayTrade(eq(101L), any())).thenReturn(replayResponse());
+
+        BacktestDailyReplayRunResponse response = service.runForDate(LocalDate.of(2026, 6, 19));
+
+        assertThat(response.getResultCount()).isEqualTo(3);
+        assertThat(response.getSkippedCount()).isEqualTo(1);
+        assertThat(response.getSuccessCount()).isEqualTo(2);
+        assertThat(response.getErrorCount()).isZero();
+        org.mockito.Mockito.verify(replayService, org.mockito.Mockito.times(2)).replayTrade(eq(101L), any());
+        ArgumentCaptor<BacktestReplayResultEntity> captor = ArgumentCaptor.forClass(BacktestReplayResultEntity.class);
+        org.mockito.Mockito.verify(resultRepository, org.mockito.Mockito.times(2)).save(captor.capture());
+        assertThat(captor.getAllValues()).extracting(BacktestReplayResultEntity::getTriggerPricePolicy)
+                .containsExactly("CLOSE", "CLOSE_REENTRY");
+        assertThat(captor.getAllValues()).extracting(BacktestReplayResultEntity::getInterval)
+                .containsExactly("5minute", "1minute");
+    }
+
     private BacktestReplayResponse replayResponse() {
         return BacktestReplayResponse.builder()
                 .status("success")

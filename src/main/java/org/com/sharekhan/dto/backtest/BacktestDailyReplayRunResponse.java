@@ -17,6 +17,7 @@ public class BacktestDailyReplayRunResponse {
     private Integer resultCount;
     private Integer successCount;
     private Integer errorCount;
+    private Integer skippedCount;
     private List<Long> failedTradeSetupIds;
     private LocalDateTime runAt;
 }
