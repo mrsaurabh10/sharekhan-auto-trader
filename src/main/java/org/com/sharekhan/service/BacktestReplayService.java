@@ -496,6 +496,9 @@ public class BacktestReplayService {
             return false;
         }
         boolean peSpot = stopLoss.source() == PriceSource.SPOT && "PE".equalsIgnoreCase(trade.getOptionType());
+        if (stopLoss.source() == PriceSource.SPOT) {
+            return peSpot ? reference.close() >= stopLoss.price() : reference.close() <= stopLoss.price();
+        }
         if ("CLOSE".equals(triggerPricePolicy)) {
             return peSpot ? reference.close() >= stopLoss.price() : reference.close() <= stopLoss.price();
         }
@@ -515,6 +518,9 @@ public class BacktestReplayService {
             return false;
         }
         boolean peSpot = target.source() == PriceSource.SPOT && "PE".equalsIgnoreCase(trade.getOptionType());
+        if (target.source() == PriceSource.SPOT) {
+            return peSpot ? reference.low() <= target.price() : reference.high() >= target.price();
+        }
         if ("CLOSE".equals(triggerPricePolicy)) {
             return peSpot ? reference.close() <= target.price() : reference.close() >= target.price();
         }
