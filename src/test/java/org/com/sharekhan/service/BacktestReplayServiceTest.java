@@ -271,11 +271,12 @@ class BacktestReplayServiceTest {
         when(historicalService.getHistoricalCandles(eq(2002), eq("1minute"), any(), any()))
                 .thenReturn(List.of(
                         candleWithSeconds("2026-06-20", "09:20:59", 100, 100.4, 99.6, 100.2),
-                        candleWithSeconds("2026-06-20", "09:21:59", 100.2, 101.2, 100.1, 101)
+                        candleWithSeconds("2026-06-20", "09:21:59", 100.2, 101.2, 100.1, 100.8)
                 ));
 
         BacktestReplayRequest request = new BacktestReplayRequest();
         request.setInterval("1minute");
+        request.setTriggerPricePolicy("CLOSE");
         BacktestReplayResponse response = service.replayTrade(3L, request);
 
         assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
@@ -284,6 +285,51 @@ class BacktestReplayServiceTest {
         assertThat(response.getEvents()).extracting(BacktestReplayResponse.Event::getReason)
                 .containsExactly("ORIGINAL_ENTRY", "TARGET_HIT");
         assertThat(response.getEvents().get(1).getPriceSource()).isEqualTo("SPOT");
+    }
+
+    @Test
+    void spotStopLossRequiresCloseConfirmationEvenWhenCandleTouchesStop() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setScripCode(1001);
+        trade.setSpotScripCode(2002);
+        trade.setQuantity(75L);
+        trade.setLots(1);
+        trade.setActualEntryPrice(10.0);
+        trade.setEntryPrice(100.0);
+        trade.setStopLoss(99.0);
+        trade.setTarget1(105.0);
+        trade.setUseSpotForEntry(true);
+        trade.setUseSpotForSl(true);
+        trade.setUseSpotForTarget(true);
+        when(tradeRepository.findById(11L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 10, 10.5, 9.8, 10.2),
+                        candle("2026-06-20", "09:21", 10.2, 10.8, 10.1, 10.5),
+                        candle("2026-06-20", "09:22", 10.5, 10.6, 10.0, 10.1)
+                ));
+        when(historicalService.getHistoricalCandles(eq(2002), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 100.4, 98.5, 99.5),
+                        candle("2026-06-20", "09:21", 99.5, 100.0, 98.4, 99.2),
+                        candle("2026-06-20", "09:22", 99.2, 99.4, 98.3, 98.8)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        request.setTriggerPricePolicy("LTP");
+        BacktestReplayResponse response = service.replayTrade(11L, request);
+
+        assertThat(response.getBacktest().getExitAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 9, 22));
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("STOP_LOSS_HIT");
+        assertThat(response.getBacktest().getExitPrice()).isEqualTo(10.1);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(7.5);
     }
 
     @Test
