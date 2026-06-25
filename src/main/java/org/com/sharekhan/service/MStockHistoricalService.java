@@ -43,6 +43,13 @@ public class MStockHistoricalService {
     private static final LocalTime MARKET_OPEN = LocalTime.of(9, 15);
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
     private static final int MAX_CANDLES_PER_REQUEST = 1_000;
+    private static final Map<Integer, SpotTokenOverride> SPOT_TOKEN_OVERRIDES = Map.of(
+            3499, new SpotTokenOverride("BSE", 500470L),
+            10604, new SpotTokenOverride("BSE", 532454L),
+            1624, new SpotTokenOverride("BSE", 530965L),
+            3351, new SpotTokenOverride("BSE", 524715L),
+            3426, new SpotTokenOverride("BSE", 500400L)
+    );
 
     private final TokenStoreService tokenStoreService;
     private final CryptoService cryptoService;
@@ -65,6 +72,7 @@ public class MStockHistoricalService {
         String instrumentKey = instrumentResolver.resolveInstrumentKey(script)
                 .orElseThrow(() -> new IllegalArgumentException("Unable to resolve MStock instrument key for provided script."));
         MStockInstrumentEntity mStockInstrument = resolveInstrumentMasterRow(instrumentKey)
+                .or(() -> directSpotInstrument(script, instrumentKey))
                 .orElseThrow(() -> new IllegalArgumentException("MStock instrument master row not found for key " + instrumentKey));
         return getHistoricalCandles(mStockInstrument, interval, parseFrom(from), parseTo(to));
     }
@@ -114,6 +122,66 @@ public class MStockHistoricalService {
             }
         }
         return Optional.empty();
+    }
+
+    private Optional<MStockInstrumentEntity> directSpotInstrument(ScriptMasterEntity script, String instrumentKey) {
+        if (script == null || script.getScripCode() == null || script.getScripCode() <= 0) {
+            return Optional.empty();
+        }
+        if (StringUtils.hasText(script.getExpiry()) || script.getStrikePrice() != null && script.getStrikePrice() > 0d) {
+            return Optional.empty();
+        }
+
+        String exchange = normalizeSpotExchange(script.getExchange(), instrumentKey);
+        if (!StringUtils.hasText(exchange)) {
+            return Optional.empty();
+        }
+        String tradingSymbol = StringUtils.hasText(script.getTradingSymbol())
+                ? script.getTradingSymbol().trim().toUpperCase(Locale.ROOT)
+                : String.valueOf(script.getScripCode());
+        SpotTokenOverride override = SPOT_TOKEN_OVERRIDES.get(script.getScripCode());
+        if (override != null) {
+            log.info("Using configured MStock spot token override for scripCode {} symbol {} -> {}:{}",
+                    script.getScripCode(), tradingSymbol, override.exchange(), override.instrumentToken());
+            return Optional.of(MStockInstrumentEntity.builder()
+                    .exchange(override.exchange())
+                    .instrumentToken(override.instrumentToken())
+                    .instrumentKey(override.exchange() + ":" + tradingSymbol)
+                    .tradingSymbol(tradingSymbol)
+                    .build());
+        }
+
+        log.info("Using spot scripCode {} directly as MStock historical instrument token for {}:{}",
+                script.getScripCode(), exchange, tradingSymbol);
+        return Optional.of(MStockInstrumentEntity.builder()
+                .exchange(exchange)
+                .instrumentToken(script.getScripCode().longValue())
+                .instrumentKey(StringUtils.hasText(instrumentKey) ? instrumentKey : exchange + ":" + tradingSymbol)
+                .tradingSymbol(tradingSymbol)
+                .build());
+    }
+
+    private record SpotTokenOverride(String exchange, Long instrumentToken) {
+    }
+
+    private String normalizeSpotExchange(String scriptExchange, String instrumentKey) {
+        String value = StringUtils.hasText(scriptExchange) ? scriptExchange.trim().toUpperCase(Locale.ROOT) : null;
+        if ("NC".equals(value) || "NSE".equals(value)) {
+            return "NSE";
+        }
+        if ("BC".equals(value) || "BSE".equals(value)) {
+            return "BSE";
+        }
+        if (StringUtils.hasText(instrumentKey)) {
+            String upperKey = instrumentKey.trim().toUpperCase(Locale.ROOT);
+            if (upperKey.startsWith("NSE:")) {
+                return "NSE";
+            }
+            if (upperKey.startsWith("BSE:")) {
+                return "BSE";
+            }
+        }
+        return null;
     }
 
     private List<String> symbolCandidates(String symbol) {
