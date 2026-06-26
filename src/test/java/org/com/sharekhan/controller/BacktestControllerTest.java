@@ -24,6 +24,7 @@ import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -99,9 +100,9 @@ class BacktestControllerTest {
         BacktestController controller = controller(mock(BacktestReplayService.class), mock(BacktestDailyReplayService.class), reportService);
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
-        when(reportService.generateReport(org.mockito.ArgumentMatchers.any(BacktestReportRequest.class)))
+        when(reportService.startReport(org.mockito.ArgumentMatchers.any(BacktestReportRequest.class)))
                 .thenReturn(BacktestReportResponse.builder()
-                        .status("success")
+                        .status("RUNNING")
                         .reportId("report-1")
                         .downloadUrl("/api/backtests/reports/report-1/download")
                         .tradeCount(2)
@@ -113,9 +114,29 @@ class BacktestControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("success")))
+                .andExpect(jsonPath("$.status", is("RUNNING")))
                 .andExpect(jsonPath("$.reportId", is("report-1")))
                 .andExpect(jsonPath("$.downloadUrl", is("/api/backtests/reports/report-1/download")));
+    }
+
+    @Test
+    void returnsReportStatusWhenAdminTokenIsValid() throws Exception {
+        BacktestReportService reportService = mock(BacktestReportService.class);
+        BacktestController controller = controller(mock(BacktestReplayService.class), mock(BacktestDailyReplayService.class), reportService);
+        ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
+
+        when(reportService.reportStatus("report-1"))
+                .thenReturn(BacktestReportResponse.builder()
+                        .status("SUCCESS")
+                        .reportId("report-1")
+                        .downloadUrl("/api/backtests/reports/report-1/download")
+                        .build());
+
+        mockMvc(controller).perform(get("/api/backtests/reports/report-1")
+                        .header("X-Admin-Token", "secret-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")))
+                .andExpect(jsonPath("$.reportId", is("report-1")));
     }
 
     private BacktestController controller(BacktestReplayService replayService,

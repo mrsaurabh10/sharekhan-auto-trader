@@ -99,13 +99,27 @@ public class BacktestController {
             return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
         }
         try {
-            BacktestReportResponse response = backtestReportService.generateReport(request);
+            BacktestReportResponse response = backtestReportService.startReport(request);
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(error(ex.getMessage()));
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(error(ex.getMessage()));
         }
+    }
+
+    @GetMapping("/reports/{reportId}")
+    public ResponseEntity<?> reportStatus(
+            @RequestHeader(value = "X-Admin-Token", required = false) String headerToken,
+            @PathVariable String reportId) {
+        if (!authorized(headerToken)) {
+            return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
+        }
+        BacktestReportResponse response = backtestReportService.reportStatus(reportId);
+        if (response == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/reports/{reportId}/download")
