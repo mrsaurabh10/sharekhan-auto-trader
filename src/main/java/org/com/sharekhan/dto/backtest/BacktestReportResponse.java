@@ -5,6 +5,7 @@ import lombok.Data;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Data
 @Builder
@@ -20,6 +21,18 @@ public class BacktestReportResponse {
     private Integer errorCount;
     private Double actualPnl;
     private Double backtestPnl;
+    private List<IntervalSummary> intervals;
     private String downloadUrl;
     private LocalDateTime generatedAt;
+
+    @Data
+    @Builder
+    public static class IntervalSummary {
+        private String interval;
+        private Integer resultCount;
+        private Integer successCount;
+        private Integer errorCount;
+        private Double actualPnl;
+        private Double backtestPnl;
+    }
 }

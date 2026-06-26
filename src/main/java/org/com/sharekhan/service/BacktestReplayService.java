@@ -1077,7 +1077,7 @@ public class BacktestReplayService {
         Double entry = trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d
                 ? trade.getActualEntryPrice()
                 : trade.getEntryPrice();
-        long actualQuantity = trade.getQuantity() != null && trade.getQuantity() > 0L ? trade.getQuantity() : 0L;
+        long actualQuantity = resolveOriginalActualQuantity(trade);
         Long reportQuantity = resolveActualResultQuantity(trade, quantityOverride);
         Double pnl = scaledActualPnl(trade.getPnl(), actualQuantity, reportQuantity);
         return BacktestReplayResponse.Result.builder()
@@ -1101,6 +1101,18 @@ public class BacktestReplayService {
         ScriptMasterEntity script = trade.getScripCode() != null ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
         int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
         return resolveQuantity(trade, lotSize, quantityOverride);
+    }
+
+    private long resolveOriginalActualQuantity(TriggeredTradeSetupEntity trade) {
+        ScriptMasterEntity script = trade.getScripCode() != null ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
+        int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
+        if (trade.getOriginalLots() != null && trade.getOriginalLots() > 0) {
+            return (long) trade.getOriginalLots() * lotSize;
+        }
+        if (trade.getLots() != null && trade.getLots() > 0) {
+            return (long) trade.getLots() * lotSize;
+        }
+        return trade.getQuantity() != null && trade.getQuantity() > 0L ? trade.getQuantity() : 0L;
     }
 
     private Double scaledActualPnl(Double pnl, long actualQuantity, Long reportQuantity) {
