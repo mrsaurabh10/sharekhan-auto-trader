@@ -54,7 +54,7 @@ public class BacktestReplayService {
         int intervalMinutes = intervalMinutes(interval);
         LocalTime squareOffTime = parseTime(safeRequest.getSquareOffTime(), DEFAULT_SQUARE_OFF_TIME);
         String sameCandlePolicy = normalizeEnum(safeRequest.getSameCandlePolicy(), "PESSIMISTIC");
-        String triggerPricePolicy = normalizeTriggerPricePolicy(safeRequest.getTriggerPricePolicy());
+        String triggerPricePolicy = normalizeTriggerPricePolicy(firstText(safeRequest.getTriggerPricePolicy(), safeRequest.getTriggerPriceMode()));
         String executionPricePolicy = normalizeEnum(safeRequest.getExecutionPricePolicy(), "CANDLE_CLOSE");
         boolean reEntryOnStopLoss = Boolean.TRUE.equals(safeRequest.getReEntryOnStopLoss());
         int maxReEntries = reEntryOnStopLoss
@@ -91,7 +91,7 @@ public class BacktestReplayService {
                 new ArrayList<>()
         );
 
-        BacktestReplayRequest.Overrides overrides = safeRequest.getOverrides();
+        BacktestReplayRequest.Overrides overrides = resolveScenarioOverrides(safeRequest, trade, optionEntryPrice, spotEntryPrice);
         LevelState stopLoss = resolveLevel(
                 originalStopLossRule(overrides),
                 trade.getStopLoss(),
@@ -140,6 +140,7 @@ public class BacktestReplayService {
                 executionPricePolicy,
                 reEntryOnStopLoss,
                 maxReEntries,
+                safeRequest.getQuantity(),
                 intervalMinutes
         );
 
@@ -152,6 +153,10 @@ public class BacktestReplayService {
                 .executionPricePolicy(executionPricePolicy)
                 .reEntryOnStopLoss(reEntryOnStopLoss)
                 .maxReEntries(maxReEntries)
+                .quantityMode(resolveQuantityMode(safeRequest.getQuantity()))
+                .quantity(simulation.result() != null ? simulation.result().getQuantity() : null)
+                .lots(resolveLotsFromQuantity(simulation.result() != null ? simulation.result().getQuantity() : null, trade.getScripCode()))
+                .levelMode(resolveLevelMode(safeRequest.getLevels()))
                 .entryPriceForPnl(round(optionEntryPrice))
                 .stopLoss(levelValue(stopLoss))
                 .target1(levelValue(target1))
@@ -194,13 +199,14 @@ public class BacktestReplayService {
                                 String executionPricePolicy,
                                 boolean reEntryOnStopLoss,
                                 int maxReEntries,
+                                BacktestReplayRequest.QuantityOverride quantityOverride,
                                 int intervalMinutes) {
         List<BacktestReplayResponse.Event> events = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         LocalDate tradeDate = entryAt.toLocalDate();
         ScriptMasterEntity script = trade.getScripCode() != null ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
         int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
-        long totalQuantity = resolveQuantity(trade, lotSize);
+        long totalQuantity = resolveQuantity(trade, lotSize, quantityOverride);
         int currentLots = resolveLots(trade, totalQuantity, lotSize);
         int originalLots = trade.getOriginalLots() != null && trade.getOriginalLots() > 0
                 ? Math.max(trade.getOriginalLots(), currentLots)
@@ -667,6 +673,85 @@ public class BacktestReplayService {
         return resolved > 0d ? new LevelState(round(resolved), source) : null;
     }
 
+    private BacktestReplayRequest.Overrides resolveScenarioOverrides(BacktestReplayRequest request,
+                                                                     TriggeredTradeSetupEntity trade,
+                                                                     Double optionEntryPrice,
+                                                                     Double spotEntryPrice) {
+        BacktestReplayRequest.Overrides explicit = request != null ? request.getOverrides() : null;
+        BacktestReplayRequest.LevelScenario scenario = request != null ? request.getLevels() : null;
+        if (scenario == null || !"R_MULTIPLE".equals(normalizeEnum(scenario.getMode(), "ORIGINAL"))) {
+            return explicit;
+        }
+
+        BacktestReplayRequest.Overrides resolved = explicit != null ? explicit : new BacktestReplayRequest.Overrides();
+        PriceSource riskSource = originalStopSource(trade);
+        Double entry = riskSource == PriceSource.SPOT ? spotEntryPrice : optionEntryPrice;
+        Double originalStop = trade.getStopLoss();
+        if (entry == null || entry <= 0d || originalStop == null || originalStop <= 0d) {
+            throw new IllegalArgumentException("R_MULTIPLE levels require entry price and original stop loss.");
+        }
+        double risk = Math.abs(entry - originalStop);
+        if (risk <= 0d) {
+            throw new IllegalArgumentException("R_MULTIPLE levels require non-zero original risk.");
+        }
+
+        if (scenario.getSlR() != null && scenario.getSlR() > 0d) {
+            resolved.setStopLoss(rMultipleRule(LevelPurpose.STOP_LOSS, scenario.getSlR(), risk, riskSource));
+        }
+
+        boolean hasTargets = scenario.getTargets() != null && !scenario.getTargets().isEmpty();
+        if (hasTargets) {
+            resolved.setTarget1(noneRule());
+            resolved.setTarget2(noneRule());
+            resolved.setTarget3(noneRule());
+            for (BacktestReplayRequest.TargetRRule target : scenario.getTargets()) {
+                if (target == null || target.getR() == null || target.getR() <= 0d) {
+                    continue;
+                }
+                BacktestReplayRequest.LevelRule rule = rMultipleRule(LevelPurpose.TARGET, target.getR(), risk, originalTargetSource(trade));
+                int index = targetIndex(target.getTarget());
+                if (index == 1) {
+                    resolved.setTarget1(rule);
+                } else if (index == 2) {
+                    resolved.setTarget2(rule);
+                } else if (index == 3) {
+                    resolved.setTarget3(rule);
+                } else {
+                    throw new IllegalArgumentException("Unsupported target in R_MULTIPLE levels: " + target.getTarget());
+                }
+            }
+        }
+        return resolved;
+    }
+
+    private BacktestReplayRequest.LevelRule rMultipleRule(LevelPurpose purpose,
+                                                          double multiple,
+                                                          double risk,
+                                                          PriceSource source) {
+        BacktestReplayRequest.LevelRule rule = new BacktestReplayRequest.LevelRule();
+        rule.setType("POINTS_FROM_ENTRY");
+        rule.setPoints(round(risk * multiple));
+        rule.setPriceSource(source.name());
+        return rule;
+    }
+
+    private BacktestReplayRequest.LevelRule noneRule() {
+        BacktestReplayRequest.LevelRule rule = new BacktestReplayRequest.LevelRule();
+        rule.setType("NONE");
+        return rule;
+    }
+
+    private int targetIndex(String target) {
+        if (!StringUtils.hasText(target)) {
+            return 1;
+        }
+        String normalized = target.trim().toUpperCase(Locale.ROOT);
+        if (normalized.startsWith("T")) {
+            normalized = normalized.substring(1);
+        }
+        return Integer.parseInt(normalized);
+    }
+
     private double computeAtr(List<Candle> history, LocalDateTime entryAt, int period) {
         List<Candle> eligible = history.stream()
                 .filter(c -> c.dateTime().isBefore(entryAt))
@@ -847,7 +932,23 @@ public class BacktestReplayService {
                 : PriceSource.OPTION;
     }
 
-    private long resolveQuantity(TriggeredTradeSetupEntity trade, int lotSize) {
+    private long resolveQuantity(TriggeredTradeSetupEntity trade,
+                                 int lotSize,
+                                 BacktestReplayRequest.QuantityOverride override) {
+        String mode = resolveQuantityMode(override);
+        if ("FIXED_LOTS".equals(mode)) {
+            int lots = override != null && override.getLots() != null && override.getLots() > 0 ? override.getLots() : 1;
+            return (long) lots * Math.max(lotSize, 1);
+        }
+        if ("FIXED_QUANTITY".equals(mode)) {
+            long quantity = override != null && override.getQuantity() != null && override.getQuantity() > 0L
+                    ? override.getQuantity()
+                    : 0L;
+            if (quantity <= 0L) {
+                throw new IllegalArgumentException("FIXED_QUANTITY requires quantity.");
+            }
+            return quantity;
+        }
         if (trade.getQuantity() != null && trade.getQuantity() > 0L) {
             return trade.getQuantity();
         }
@@ -860,6 +961,37 @@ public class BacktestReplayService {
             return Math.max(1, (int) Math.ceil((double) quantity / lotSize));
         }
         return trade.getLots() != null && trade.getLots() > 0 ? trade.getLots() : 1;
+    }
+
+    private String resolveQuantityMode(BacktestReplayRequest.QuantityOverride override) {
+        String mode = override != null ? normalizeEnum(override.getMode(), "ACTUAL") : "ACTUAL";
+        if ("ACTUAL".equals(mode) || "ORIGINAL".equals(mode)) {
+            return "ACTUAL";
+        }
+        if ("FIXED_LOTS".equals(mode) || "FIXED_QUANTITY".equals(mode)) {
+            return mode;
+        }
+        throw new IllegalArgumentException("Unsupported quantity mode: " + override.getMode());
+    }
+
+    private Integer resolveLotsFromQuantity(Long quantity, Integer scripCode) {
+        if (quantity == null || quantity <= 0L) {
+            return null;
+        }
+        ScriptMasterEntity script = scripCode != null ? scriptMasterRepository.findByScripCode(scripCode) : null;
+        int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
+        return Math.max(1, (int) Math.ceil((double) quantity / lotSize));
+    }
+
+    private String resolveLevelMode(BacktestReplayRequest.LevelScenario levels) {
+        if (levels == null) {
+            return "ORIGINAL";
+        }
+        String mode = normalizeEnum(levels.getMode(), "ORIGINAL");
+        if ("ORIGINAL".equals(mode) || "R_MULTIPLE".equals(mode)) {
+            return mode;
+        }
+        throw new IllegalArgumentException("Unsupported level mode: " + levels.getMode());
     }
 
     private BookingStep resolveNextBookingStep(int totalLots, int currentLots) {
@@ -979,6 +1111,10 @@ public class BacktestReplayService {
 
     private Double firstNonNull(Double first, Double second) {
         return first != null ? first : second;
+    }
+
+    private String firstText(String first, String second) {
+        return StringUtils.hasText(first) ? first : second;
     }
 
     private String textOrDefault(String value, String fallback) {

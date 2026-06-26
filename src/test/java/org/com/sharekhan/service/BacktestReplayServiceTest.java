@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 
@@ -441,6 +442,65 @@ class BacktestReplayServiceTest {
         assertThat(response.getBacktest().getExitPrice()).isEqualTo(111.0);
         assertThat(response.getBacktest().getPnl()).isEqualTo(825.0);
         verifyNoInteractions(historicalService);
+    }
+
+    @Test
+    void appliesFixedLotsAndRMultipleLevelsForWhatIfReplay() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(150L);
+        trade.setLots(2);
+        trade.setStopLoss(90.0);
+        trade.setTarget1(115.0);
+        trade.setTarget2(125.0);
+        when(tradeRepository.findById(12L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 105, 99, 102),
+                        candle("2026-06-20", "09:21", 102, 131, 101, 130)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        request.setTriggerPriceMode("LTP");
+        BacktestReplayRequest.QuantityOverride quantity = new BacktestReplayRequest.QuantityOverride();
+        quantity.setMode("FIXED_LOTS");
+        quantity.setLots(1);
+        request.setQuantity(quantity);
+
+        BacktestReplayRequest.LevelScenario levels = new BacktestReplayRequest.LevelScenario();
+        levels.setMode("R_MULTIPLE");
+        levels.setSlR(1.75);
+        List<BacktestReplayRequest.TargetRRule> targets = new ArrayList<>();
+        BacktestReplayRequest.TargetRRule t1 = new BacktestReplayRequest.TargetRRule();
+        t1.setTarget("T1");
+        t1.setR(3.0);
+        targets.add(t1);
+        BacktestReplayRequest.TargetRRule t2 = new BacktestReplayRequest.TargetRRule();
+        t2.setTarget("T2");
+        t2.setR(4.0);
+        targets.add(t2);
+        levels.setTargets(targets);
+        request.setLevels(levels);
+
+        BacktestReplayResponse response = service.replayTrade(12L, request);
+
+        assertThat(response.getResolved().getQuantityMode()).isEqualTo("FIXED_LOTS");
+        assertThat(response.getResolved().getQuantity()).isEqualTo(75L);
+        assertThat(response.getResolved().getLots()).isEqualTo(1);
+        assertThat(response.getResolved().getLevelMode()).isEqualTo("R_MULTIPLE");
+        assertThat(response.getResolved().getStopLoss()).isEqualTo(82.5);
+        assertThat(response.getResolved().getTarget1()).isEqualTo(130.0);
+        assertThat(response.getResolved().getTarget2()).isEqualTo(140.0);
+        assertThat(response.getResolved().getTarget3()).isNull();
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(response.getBacktest().getQuantity()).isEqualTo(75L);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(2250.0);
     }
 
     private TriggeredTradeSetupEntity baseTrade() {
