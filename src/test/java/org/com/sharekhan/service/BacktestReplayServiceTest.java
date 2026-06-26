@@ -552,8 +552,9 @@ class BacktestReplayServiceTest {
         BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
 
         TriggeredTradeSetupEntity trade = baseTrade();
-        trade.setQuantity(150L);
-        trade.setLots(2);
+        trade.setQuantity(75L);
+        trade.setLots(1);
+        trade.setOriginalLots(3);
         trade.setStopLoss(90.0);
         trade.setTarget1(110.0);
         trade.setExitPrice(112.0);
@@ -577,7 +578,7 @@ class BacktestReplayServiceTest {
         BacktestReplayResponse response = service.replayTrade(14L, request);
 
         assertThat(response.getActual().getQuantity()).isEqualTo(75L);
-        assertThat(response.getActual().getPnl()).isEqualTo(900.0);
+        assertThat(response.getActual().getPnl()).isEqualTo(600.0);
     }
 
     private TriggeredTradeSetupEntity baseTrade() {

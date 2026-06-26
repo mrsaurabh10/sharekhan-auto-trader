@@ -19,6 +19,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
@@ -60,6 +62,10 @@ public class BacktestReportService {
         int errorCount = 0;
         double actualPnl = 0d;
         double backtestPnl = 0d;
+        Map<String, IntervalTotals> intervalTotals = new LinkedHashMap<>();
+        for (String interval : intervals) {
+            intervalTotals.put(interval, new IntervalTotals());
+        }
 
         try {
             Files.createDirectories(REPORT_DIR);
@@ -69,15 +75,23 @@ public class BacktestReportService {
                 for (TriggeredTradeSetupEntity trade : trades) {
                     for (String interval : intervals) {
                         resultCount++;
+                        IntervalTotals totals = intervalTotals.computeIfAbsent(interval, ignored -> new IntervalTotals());
+                        totals.resultCount++;
                         try {
                             BacktestReplayResponse response = backtestReplayService.replayTrade(trade.getId(), replayRequest(safeRequest, interval));
                             successCount++;
-                            actualPnl += value(response.getActual() != null ? response.getActual().getPnl() : null);
-                            backtestPnl += value(response.getBacktest() != null ? response.getBacktest().getPnl() : null);
+                            totals.successCount++;
+                            double rowActualPnl = value(response.getActual() != null ? response.getActual().getPnl() : null);
+                            double rowBacktestPnl = value(response.getBacktest() != null ? response.getBacktest().getPnl() : null);
+                            actualPnl += rowActualPnl;
+                            backtestPnl += rowBacktestPnl;
+                            totals.actualPnl += rowActualPnl;
+                            totals.backtestPnl += rowBacktestPnl;
                             writer.write(successRow(trade, interval, response));
                             writer.newLine();
                         } catch (Exception ex) {
                             errorCount++;
+                            totals.errorCount++;
                             writer.write(errorRow(trade, interval, ex.getMessage()));
                             writer.newLine();
                         }
@@ -100,6 +114,16 @@ public class BacktestReportService {
                 .errorCount(errorCount)
                 .actualPnl(round(actualPnl))
                 .backtestPnl(round(backtestPnl))
+                .intervals(intervalTotals.entrySet().stream()
+                        .map(entry -> BacktestReportResponse.IntervalSummary.builder()
+                                .interval(entry.getKey())
+                                .resultCount(entry.getValue().resultCount)
+                                .successCount(entry.getValue().successCount)
+                                .errorCount(entry.getValue().errorCount)
+                                .actualPnl(round(entry.getValue().actualPnl))
+                                .backtestPnl(round(entry.getValue().backtestPnl))
+                                .build())
+                        .toList())
                 .downloadUrl("/api/backtests/reports/" + reportId + "/download")
                 .generatedAt(generatedAt)
                 .build();
@@ -202,5 +226,13 @@ public class BacktestReportService {
 
     private double round(double value) {
         return Math.round(value * 100.0d) / 100.0d;
+    }
+
+    private static class IntervalTotals {
+        private int resultCount;
+        private int successCount;
+        private int errorCount;
+        private double actualPnl;
+        private double backtestPnl;
     }
 }
