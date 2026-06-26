@@ -177,7 +177,7 @@ public class BacktestReplayService {
                 .tradeSetupId(tradeSetupId)
                 .trade(snapshot(trade))
                 .resolved(resolved)
-                .actual(actualResult(trade))
+                .actual(actualResult(trade, safeRequest.getQuantity()))
                 .backtest(simulation.result())
                 .events(simulation.events())
                 .warnings(warnings)
@@ -208,7 +208,7 @@ public class BacktestReplayService {
         int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
         long totalQuantity = resolveQuantity(trade, lotSize, quantityOverride);
         int currentLots = resolveLots(trade, totalQuantity, lotSize);
-        int originalLots = trade.getOriginalLots() != null && trade.getOriginalLots() > 0
+        int originalLots = isActualQuantityMode(quantityOverride) && trade.getOriginalLots() != null && trade.getOriginalLots() > 0
                 ? Math.max(trade.getOriginalLots(), currentLots)
                 : Math.max(currentLots, 1);
 
@@ -974,6 +974,10 @@ public class BacktestReplayService {
         throw new IllegalArgumentException("Unsupported quantity mode: " + override.getMode());
     }
 
+    private boolean isActualQuantityMode(BacktestReplayRequest.QuantityOverride override) {
+        return "ACTUAL".equals(resolveQuantityMode(override));
+    }
+
     private Integer resolveLotsFromQuantity(Long quantity, Integer scripCode) {
         if (quantity == null || quantity <= 0L) {
             return null;
@@ -1068,21 +1072,43 @@ public class BacktestReplayService {
                 .build();
     }
 
-    private BacktestReplayResponse.Result actualResult(TriggeredTradeSetupEntity trade) {
+    private BacktestReplayResponse.Result actualResult(TriggeredTradeSetupEntity trade,
+                                                       BacktestReplayRequest.QuantityOverride quantityOverride) {
         Double entry = trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d
                 ? trade.getActualEntryPrice()
                 : trade.getEntryPrice();
+        long actualQuantity = trade.getQuantity() != null && trade.getQuantity() > 0L ? trade.getQuantity() : 0L;
+        Long reportQuantity = resolveActualResultQuantity(trade, quantityOverride);
+        Double pnl = scaledActualPnl(trade.getPnl(), actualQuantity, reportQuantity);
         return BacktestReplayResponse.Result.builder()
                 .entryAt(trade.getEntryAt())
                 .entryPrice(roundNullable(entry))
                 .exitAt(trade.getExitedAt())
                 .exitPrice(roundNullable(trade.getExitPrice()))
                 .exitReason(trade.getExitReason())
-                .quantity(trade.getQuantity())
+                .quantity(reportQuantity != null ? reportQuantity : trade.getQuantity())
                 .remainingQuantity(null)
-                .pnl(roundNullable(trade.getPnl()))
+                .pnl(roundNullable(pnl))
                 .exitCount(trade.getExitedAt() != null ? 1 : 0)
                 .build();
+    }
+
+    private Long resolveActualResultQuantity(TriggeredTradeSetupEntity trade,
+                                             BacktestReplayRequest.QuantityOverride quantityOverride) {
+        if (quantityOverride == null || isActualQuantityMode(quantityOverride)) {
+            return trade.getQuantity();
+        }
+        ScriptMasterEntity script = trade.getScripCode() != null ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
+        int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
+        return resolveQuantity(trade, lotSize, quantityOverride);
+    }
+
+    private Double scaledActualPnl(Double pnl, long actualQuantity, Long reportQuantity) {
+        if (pnl == null || !Double.isFinite(pnl) || reportQuantity == null || reportQuantity <= 0L
+                || actualQuantity <= 0L || actualQuantity == reportQuantity) {
+            return pnl;
+        }
+        return pnl * ((double) reportQuantity / actualQuantity);
     }
 
     private String firstSource(LevelState... levels) {

@@ -503,6 +503,83 @@ class BacktestReplayServiceTest {
         assertThat(response.getBacktest().getPnl()).isEqualTo(2250.0);
     }
 
+    @Test
+    void fixedOneLotUsesFirstTargetEvenWhenOriginalTradeHadMultipleLotsAndTsl() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(150L);
+        trade.setLots(2);
+        trade.setOriginalLots(2);
+        trade.setStopLoss(90.0);
+        trade.setTarget1(110.0);
+        trade.setTarget2(120.0);
+        trade.setTslEnabled(true);
+        when(tradeRepository.findById(13L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 105, 99, 102),
+                        candle("2026-06-20", "09:21", 102, 112, 101, 111),
+                        candle("2026-06-20", "09:22", 111, 112, 98, 99)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        BacktestReplayRequest.QuantityOverride quantity = new BacktestReplayRequest.QuantityOverride();
+        quantity.setMode("FIXED_LOTS");
+        quantity.setLots(1);
+        request.setQuantity(quantity);
+
+        BacktestReplayResponse response = service.replayTrade(13L, request);
+
+        assertThat(response.getResolved().getLots()).isEqualTo(1);
+        assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
+        assertThat(response.getBacktest().getExitPrice()).isEqualTo(111.0);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(825.0);
+        assertThat(response.getEvents()).extracting(BacktestReplayResponse.Event::getReason)
+                .doesNotContain("TARGET_HIT_PARTIAL", "LIVE_COMPAT_TSL", "TRAILING_SL_HIT");
+    }
+
+    @Test
+    void fixedLotsScalesActualPnlToScenarioQuantity() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setQuantity(150L);
+        trade.setLots(2);
+        trade.setStopLoss(90.0);
+        trade.setTarget1(110.0);
+        trade.setExitPrice(112.0);
+        trade.setExitedAt(LocalDateTime.of(2026, 6, 20, 9, 30));
+        trade.setPnl(1800.0);
+        when(tradeRepository.findById(14L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("1minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 105, 99, 102),
+                        candle("2026-06-20", "09:21", 102, 112, 101, 111)
+                ));
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        BacktestReplayRequest.QuantityOverride quantity = new BacktestReplayRequest.QuantityOverride();
+        quantity.setMode("FIXED_LOTS");
+        quantity.setLots(1);
+        request.setQuantity(quantity);
+
+        BacktestReplayResponse response = service.replayTrade(14L, request);
+
+        assertThat(response.getActual().getQuantity()).isEqualTo(75L);
+        assertThat(response.getActual().getPnl()).isEqualTo(900.0);
+    }
+
     private TriggeredTradeSetupEntity baseTrade() {
         return TriggeredTradeSetupEntity.builder()
                 .id(1L)
