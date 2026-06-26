@@ -22,6 +22,9 @@ import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Service
 @RequiredArgsConstructor
@@ -32,17 +35,77 @@ public class BacktestReportService {
 
     private final TriggeredTradeSetupRepository tradeRepository;
     private final BacktestReplayService backtestReplayService;
+    private final Map<String, BacktestReportResponse> reports = new ConcurrentHashMap<>();
+    private final ExecutorService reportExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "backtest-report-worker");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    public BacktestReportResponse startReport(BacktestReportRequest request) {
+        BacktestReportRequest safeRequest = request != null ? request : new BacktestReportRequest();
+        DateRange range = resolveDateRange(safeRequest);
+        String source = resolveSource(safeRequest);
+        String reportId = newReportId();
+        LocalDateTime startedAt = LocalDateTime.now(MARKET_ZONE);
+        BacktestReportResponse started = BacktestReportResponse.builder()
+                .status("RUNNING")
+                .reportId(reportId)
+                .from(range.from())
+                .to(range.to())
+                .source(source)
+                .downloadUrl("/api/backtests/reports/" + reportId + "/download")
+                .startedAt(startedAt)
+                .build();
+        reports.put(reportId, started);
+
+        reportExecutor.submit(() -> {
+            try {
+                BacktestReportResponse completed = generateReport(safeRequest, reportId, startedAt);
+                reports.put(reportId, completed);
+            } catch (Exception ex) {
+                reports.put(reportId, BacktestReportResponse.builder()
+                        .status("ERROR")
+                        .reportId(reportId)
+                        .from(range.from())
+                        .to(range.to())
+                        .source(source)
+                        .downloadUrl("/api/backtests/reports/" + reportId + "/download")
+                        .errorMessage(ex.getMessage())
+                        .startedAt(startedAt)
+                        .generatedAt(LocalDateTime.now(MARKET_ZONE))
+                        .build());
+            }
+        });
+        return started;
+    }
+
+    public BacktestReportResponse reportStatus(String reportId) {
+        BacktestReportResponse response = reports.get(reportId);
+        if (response != null) {
+            return response;
+        }
+        Path path = reportPath(reportId);
+        if (Files.exists(path)) {
+            return BacktestReportResponse.builder()
+                    .status("SUCCESS")
+                    .reportId(reportId)
+                    .downloadUrl("/api/backtests/reports/" + reportId + "/download")
+                    .build();
+        }
+        return null;
+    }
 
     public BacktestReportResponse generateReport(BacktestReportRequest request) {
+        return generateReport(request, newReportId(), LocalDateTime.now(MARKET_ZONE));
+    }
+
+    private BacktestReportResponse generateReport(BacktestReportRequest request, String reportId, LocalDateTime startedAt) {
         BacktestReportRequest safeRequest = request != null ? request : new BacktestReportRequest();
-        LocalDate to = safeRequest.getTo() != null ? safeRequest.getTo() : LocalDate.now(MARKET_ZONE).minusDays(1);
-        LocalDate from = safeRequest.getFrom() != null ? safeRequest.getFrom() : to;
-        if (from.isAfter(to)) {
-            LocalDate previousFrom = from;
-            from = to;
-            to = previousFrom;
-        }
-        String source = StringUtils.hasText(safeRequest.getSource()) ? safeRequest.getSource().trim() : "atr-signal";
+        DateRange range = resolveDateRange(safeRequest);
+        LocalDate from = range.from();
+        LocalDate to = range.to();
+        String source = resolveSource(safeRequest);
         List<String> intervals = safeRequest.getIntervals() != null && !safeRequest.getIntervals().isEmpty()
                 ? safeRequest.getIntervals()
                 : List.of("1minute", "5minute");
@@ -52,8 +115,6 @@ public class BacktestReportService {
                 from.atStartOfDay(),
                 to.atTime(23, 59, 59));
 
-        String reportId = LocalDateTime.now(MARKET_ZONE).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
-                + "-" + UUID.randomUUID().toString().substring(0, 8);
         Path reportPath = reportPath(reportId);
         LocalDateTime generatedAt = LocalDateTime.now(MARKET_ZONE);
 
@@ -125,8 +186,29 @@ public class BacktestReportService {
                                 .build())
                         .toList())
                 .downloadUrl("/api/backtests/reports/" + reportId + "/download")
+                .startedAt(startedAt)
                 .generatedAt(generatedAt)
                 .build();
+    }
+
+    private DateRange resolveDateRange(BacktestReportRequest request) {
+        LocalDate to = request.getTo() != null ? request.getTo() : LocalDate.now(MARKET_ZONE).minusDays(1);
+        LocalDate from = request.getFrom() != null ? request.getFrom() : to;
+        if (from.isAfter(to)) {
+            LocalDate previousFrom = from;
+            from = to;
+            to = previousFrom;
+        }
+        return new DateRange(from, to);
+    }
+
+    private String resolveSource(BacktestReportRequest request) {
+        return StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "atr-signal";
+    }
+
+    private String newReportId() {
+        return LocalDateTime.now(MARKET_ZONE).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
     public Path reportPath(String reportId) {
@@ -234,5 +316,8 @@ public class BacktestReportService {
         private int errorCount;
         private double actualPnl;
         private double backtestPnl;
+    }
+
+    private record DateRange(LocalDate from, LocalDate to) {
     }
 }

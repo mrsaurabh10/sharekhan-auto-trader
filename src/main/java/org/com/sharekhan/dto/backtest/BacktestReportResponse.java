@@ -23,6 +23,8 @@ public class BacktestReportResponse {
     private Double backtestPnl;
     private List<IntervalSummary> intervals;
     private String downloadUrl;
+    private String errorMessage;
+    private LocalDateTime startedAt;
     private LocalDateTime generatedAt;
 
     @Data
