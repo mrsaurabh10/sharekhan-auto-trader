@@ -63,6 +63,10 @@ public class BacktestReplayResponse {
         private String executionPricePolicy;
         private Boolean reEntryOnStopLoss;
         private Integer maxReEntries;
+        private String quantityMode;
+        private Long quantity;
+        private Integer lots;
+        private String levelMode;
         private Double entryPriceForPnl;
         private Double stopLoss;
         private Double target1;

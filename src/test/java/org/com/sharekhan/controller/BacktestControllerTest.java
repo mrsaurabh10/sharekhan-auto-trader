@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.com.sharekhan.dto.backtest.BacktestDailyReplayRangeRunResponse;
+import org.com.sharekhan.dto.backtest.BacktestReportRequest;
+import org.com.sharekhan.dto.backtest.BacktestReportResponse;
 import org.com.sharekhan.dto.backtest.BacktestReplayRequest;
 import org.com.sharekhan.dto.backtest.BacktestReplayResponse;
 import org.com.sharekhan.service.BacktestDailyReplayService;
+import org.com.sharekhan.service.BacktestReportService;
 import org.com.sharekhan.service.BacktestReplayService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -30,7 +33,7 @@ class BacktestControllerTest {
     @Test
     void rejectsMissingAdminTokenWhenConfigured() throws Exception {
         BacktestReplayService service = mock(BacktestReplayService.class);
-        BacktestController controller = new BacktestController(service, mock(BacktestDailyReplayService.class));
+        BacktestController controller = controller(service, mock(BacktestDailyReplayService.class), mock(BacktestReportService.class));
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
         mockMvc(controller).perform(post("/api/backtests/trade/1/replay")
@@ -43,7 +46,7 @@ class BacktestControllerTest {
     @Test
     void returnsReplayResponseWhenAdminTokenIsValid() throws Exception {
         BacktestReplayService service = mock(BacktestReplayService.class);
-        BacktestController controller = new BacktestController(service, mock(BacktestDailyReplayService.class));
+        BacktestController controller = controller(service, mock(BacktestDailyReplayService.class), mock(BacktestReportService.class));
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
         when(service.replayTrade(eq(1L), org.mockito.ArgumentMatchers.any(BacktestReplayRequest.class)))
@@ -65,7 +68,7 @@ class BacktestControllerTest {
     @Test
     void returnsRangeReplayResponseWhenAdminTokenIsValid() throws Exception {
         BacktestDailyReplayService dailyReplayService = mock(BacktestDailyReplayService.class);
-        BacktestController controller = new BacktestController(mock(BacktestReplayService.class), dailyReplayService);
+        BacktestController controller = controller(mock(BacktestReplayService.class), dailyReplayService, mock(BacktestReportService.class));
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
         when(dailyReplayService.runForDateRange(eq(LocalDate.of(2026, 6, 8)), eq(LocalDate.of(2026, 6, 17))))
@@ -88,6 +91,37 @@ class BacktestControllerTest {
                 .andExpect(jsonPath("$.status", is("success")))
                 .andExpect(jsonPath("$.dayCount", is(8)))
                 .andExpect(jsonPath("$.tradeCount", is(100)));
+    }
+
+    @Test
+    void returnsReportResponseWhenAdminTokenIsValid() throws Exception {
+        BacktestReportService reportService = mock(BacktestReportService.class);
+        BacktestController controller = controller(mock(BacktestReplayService.class), mock(BacktestDailyReplayService.class), reportService);
+        ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
+
+        when(reportService.generateReport(org.mockito.ArgumentMatchers.any(BacktestReportRequest.class)))
+                .thenReturn(BacktestReportResponse.builder()
+                        .status("success")
+                        .reportId("report-1")
+                        .downloadUrl("/api/backtests/reports/report-1/download")
+                        .tradeCount(2)
+                        .resultCount(4)
+                        .build());
+
+        mockMvc(controller).perform(post("/api/backtests/reports")
+                        .header("X-Admin-Token", "secret-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("success")))
+                .andExpect(jsonPath("$.reportId", is("report-1")))
+                .andExpect(jsonPath("$.downloadUrl", is("/api/backtests/reports/report-1/download")));
+    }
+
+    private BacktestController controller(BacktestReplayService replayService,
+                                          BacktestDailyReplayService dailyReplayService,
+                                          BacktestReportService reportService) {
+        return new BacktestController(replayService, dailyReplayService, reportService);
     }
 
     private MockMvc mockMvc(BacktestController controller) {

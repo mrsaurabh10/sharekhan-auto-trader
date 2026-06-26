@@ -7,12 +7,44 @@ public class BacktestReplayRequest {
     private Boolean intradayOnly;
     private String interval;
     private String squareOffTime;
+    private String triggerPriceMode;
     private String sameCandlePolicy;
     private String triggerPricePolicy;
     private String executionPricePolicy;
     private Boolean reEntryOnStopLoss;
     private Integer maxReEntries;
+    private QuantityOverride quantity;
+    private LevelScenario levels;
     private Overrides overrides;
+
+    @Data
+    public static class QuantityOverride {
+        /**
+         * ACTUAL, FIXED_LOTS, or FIXED_QUANTITY.
+         */
+        private String mode;
+        private Integer lots;
+        private Long quantity;
+    }
+
+    @Data
+    public static class LevelScenario {
+        /**
+         * ORIGINAL or R_MULTIPLE.
+         */
+        private String mode;
+        private Double slR;
+        private java.util.List<TargetRRule> targets;
+    }
+
+    @Data
+    public static class TargetRRule {
+        /**
+         * T1, T2, T3, 1, 2, or 3.
+         */
+        private String target;
+        private Double r;
+    }
 
     @Data
     public static class Overrides {
