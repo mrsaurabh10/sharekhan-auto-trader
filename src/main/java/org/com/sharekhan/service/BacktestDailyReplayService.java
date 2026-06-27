@@ -22,7 +22,10 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -144,12 +147,13 @@ public class BacktestDailyReplayService {
                 ATR_SIGNAL_SOURCE,
                 start,
                 end);
+        List<TriggeredTradeSetupEntity> rootTrades = rootTradesOnly(trades);
 
         int successCount = 0;
         int errorCount = 0;
         int skippedCount = 0;
         List<Long> failedTradeSetupIds = new ArrayList<>();
-        for (TriggeredTradeSetupEntity trade : trades) {
+        for (TriggeredTradeSetupEntity trade : rootTrades) {
             for (ReplayScenario scenario : SCENARIOS) {
                 Optional<BacktestReplayResultEntity> existing = existingResultOptional(trade.getId(), scenario);
                 if (existing.filter(this::isSuccessResult).isPresent()) {
@@ -179,7 +183,7 @@ public class BacktestDailyReplayService {
                 .status("success")
                 .tradeDate(resolvedDate)
                 .source(ATR_SIGNAL_SOURCE)
-                .tradeCount(trades.size())
+                .tradeCount(rootTrades.size())
                 .resultCount(successCount + errorCount + skippedCount)
                 .successCount(successCount)
                 .errorCount(errorCount)
@@ -187,6 +191,43 @@ public class BacktestDailyReplayService {
                 .failedTradeSetupIds(failedTradeSetupIds.stream().distinct().toList())
                 .runAt(runAt)
                 .build();
+    }
+
+    private List<TriggeredTradeSetupEntity> rootTradesOnly(List<TriggeredTradeSetupEntity> trades) {
+        if (trades == null || trades.isEmpty()) {
+            return List.of();
+        }
+        Map<String, TriggeredTradeSetupEntity> roots = new LinkedHashMap<>();
+        trades.stream()
+                .sorted(Comparator
+                        .comparing((TriggeredTradeSetupEntity trade) -> signalTime(trade), Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TriggeredTradeSetupEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .forEach(trade -> roots.putIfAbsent(signalKey(trade), trade));
+        return new ArrayList<>(roots.values());
+    }
+
+    private String signalKey(TriggeredTradeSetupEntity trade) {
+        return String.join("|",
+                textValue(tradeDate(trade)),
+                textValue(trade.getSymbol()),
+                textValue(trade.getScripCode()),
+                textValue(trade.getSpotScripCode()),
+                textValue(trade.getExchange()),
+                textValue(trade.getOptionType()),
+                textValue(trade.getStrikePrice()),
+                textValue(trade.getExpiry()),
+                textValue(signalTime(trade)));
+    }
+
+    private LocalDateTime signalTime(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
+        }
+        return trade.getEntryAt() != null ? trade.getEntryAt() : trade.getTriggeredAt();
+    }
+
+    private String textValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim().toUpperCase();
     }
 
     private BacktestReplayRequest request(ReplayScenario scenario) {

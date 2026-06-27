@@ -182,6 +182,70 @@ class BacktestDailyReplayServiceTest {
                 .containsExactly("5minute", "1minute");
     }
 
+    @Test
+    void skipsTslChildRowsAndReplaysOnlyRootTrade() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        BacktestReplayService replayService = mock(BacktestReplayService.class);
+        BacktestReplayResultRepository resultRepository = mock(BacktestReplayResultRepository.class);
+        BrokerCredentialsRepository brokerCredentialsRepository = mock(BrokerCredentialsRepository.class);
+        BacktestDailyReplayService service = new BacktestDailyReplayService(
+                tradeRepository,
+                replayService,
+                resultRepository,
+                brokerCredentialsRepository);
+        LocalDateTime entryAt = LocalDateTime.of(2026, 6, 19, 9, 20);
+        TriggeredTradeSetupEntity root = TriggeredTradeSetupEntity.builder()
+                .id(100L)
+                .source("atr-signal")
+                .symbol("ITC")
+                .scripCode(107866)
+                .spotScripCode(1660)
+                .exchange("NF")
+                .optionType("CE")
+                .strikePrice(420.0)
+                .expiry("30/06/2026")
+                .entryAt(entryAt)
+                .triggeredAt(entryAt)
+                .tslEnabled(true)
+                .quantity(2400L)
+                .lots(3)
+                .originalLots(3)
+                .build();
+        TriggeredTradeSetupEntity child = TriggeredTradeSetupEntity.builder()
+                .id(101L)
+                .source("atr-signal")
+                .symbol("ITC")
+                .scripCode(107866)
+                .spotScripCode(1660)
+                .exchange("NF")
+                .optionType("CE")
+                .strikePrice(420.0)
+                .expiry("30/06/2026")
+                .entryAt(entryAt)
+                .triggeredAt(entryAt)
+                .tslEnabled(true)
+                .quantity(1600L)
+                .lots(2)
+                .originalLots(3)
+                .build();
+        when(tradeRepository.findBySourceForBacktestDate(
+                eq("atr-signal"),
+                eq(LocalDateTime.of(2026, 6, 19, 0, 0)),
+                eq(LocalDate.of(2026, 6, 19).atTime(java.time.LocalTime.MAX))))
+                .thenReturn(List.of(child, root));
+        when(resultRepository.findByTradeSetupIdAndIntervalAndTriggerPricePolicyAndSquareOffTime(
+                eq(100L), any(), any(), eq("15:20")))
+                .thenReturn(Optional.empty());
+        when(replayService.replayTrade(eq(100L), any())).thenReturn(replayResponse());
+
+        BacktestDailyReplayRunResponse response = service.runForDate(LocalDate.of(2026, 6, 19));
+
+        assertThat(response.getTradeCount()).isEqualTo(1);
+        assertThat(response.getSuccessCount()).isEqualTo(3);
+        org.mockito.Mockito.verify(replayService, org.mockito.Mockito.times(3)).replayTrade(eq(100L), any());
+        org.mockito.Mockito.verify(replayService, org.mockito.Mockito.never()).replayTrade(eq(101L), any());
+    }
+
     private BacktestReplayResponse replayResponse() {
         return BacktestReplayResponse.builder()
                 .status("success")
