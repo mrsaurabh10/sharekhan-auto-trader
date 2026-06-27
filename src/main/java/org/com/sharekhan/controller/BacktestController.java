@@ -84,11 +84,25 @@ public class BacktestController {
             return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
         }
         try {
-            BacktestDailyReplayRangeRunResponse response = backtestDailyReplayService.runForDateRange(from, to);
+            BacktestDailyReplayRangeRunResponse response = backtestDailyReplayService.startDateRange(from, to);
             return ResponseEntity.ok(response);
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(error(ex.getMessage()));
         }
+    }
+
+    @GetMapping("/atr-signal/daily-replay/range/{runId}")
+    public ResponseEntity<?> replayAtrSignalRangeStatus(
+            @RequestHeader(value = "X-Admin-Token", required = false) String headerToken,
+            @PathVariable String runId) {
+        if (!authorized(headerToken)) {
+            return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
+        }
+        BacktestDailyReplayRangeRunResponse response = backtestDailyReplayService.rangeStatus(runId);
+        if (response == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/reports")

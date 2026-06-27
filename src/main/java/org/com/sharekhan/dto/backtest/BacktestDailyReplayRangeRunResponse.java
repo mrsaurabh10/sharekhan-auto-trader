@@ -11,6 +11,7 @@ import java.util.List;
 @Builder
 public class BacktestDailyReplayRangeRunResponse {
     private String status;
+    private String runId;
     private LocalDate from;
     private LocalDate to;
     private String source;
@@ -22,5 +23,8 @@ public class BacktestDailyReplayRangeRunResponse {
     private Integer skippedCount;
     private List<Long> failedTradeSetupIds;
     private List<BacktestDailyReplayRunResponse> days;
+    private String errorMessage;
+    private LocalDateTime startedAt;
+    private LocalDateTime completedAt;
     private LocalDateTime runAt;
 }

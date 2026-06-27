@@ -72,16 +72,12 @@ class BacktestControllerTest {
         BacktestController controller = controller(mock(BacktestReplayService.class), dailyReplayService, mock(BacktestReportService.class));
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
-        when(dailyReplayService.runForDateRange(eq(LocalDate.of(2026, 6, 8)), eq(LocalDate.of(2026, 6, 17))))
+        when(dailyReplayService.startDateRange(eq(LocalDate.of(2026, 6, 8)), eq(LocalDate.of(2026, 6, 17))))
                 .thenReturn(BacktestDailyReplayRangeRunResponse.builder()
-                        .status("success")
+                        .status("RUNNING")
+                        .runId("range-1")
                         .from(LocalDate.of(2026, 6, 8))
                         .to(LocalDate.of(2026, 6, 17))
-                        .dayCount(8)
-                        .tradeCount(100)
-                        .resultCount(200)
-                        .successCount(190)
-                        .errorCount(10)
                         .build());
 
         mockMvc(controller).perform(post("/api/backtests/atr-signal/daily-replay/range")
@@ -89,8 +85,28 @@ class BacktestControllerTest {
                         .param("from", "2026-06-08")
                         .param("to", "2026-06-17"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status", is("success")))
-                .andExpect(jsonPath("$.dayCount", is(8)))
+                .andExpect(jsonPath("$.status", is("RUNNING")))
+                .andExpect(jsonPath("$.runId", is("range-1")));
+    }
+
+    @Test
+    void returnsRangeReplayStatusWhenAdminTokenIsValid() throws Exception {
+        BacktestDailyReplayService dailyReplayService = mock(BacktestDailyReplayService.class);
+        BacktestController controller = controller(mock(BacktestReplayService.class), dailyReplayService, mock(BacktestReportService.class));
+        ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
+
+        when(dailyReplayService.rangeStatus("range-1"))
+                .thenReturn(BacktestDailyReplayRangeRunResponse.builder()
+                        .status("SUCCESS")
+                        .runId("range-1")
+                        .tradeCount(100)
+                        .build());
+
+        mockMvc(controller).perform(get("/api/backtests/atr-signal/daily-replay/range/range-1")
+                        .header("X-Admin-Token", "secret-token"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status", is("SUCCESS")))
+                .andExpect(jsonPath("$.runId", is("range-1")))
                 .andExpect(jsonPath("$.tradeCount", is(100)));
     }
 
