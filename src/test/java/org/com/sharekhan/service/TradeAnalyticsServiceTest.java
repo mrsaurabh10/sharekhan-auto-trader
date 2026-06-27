@@ -273,7 +273,7 @@ class TradeAnalyticsServiceTest {
     }
 
     @Test
-    void analyticsSkipsTslChildClosedTrades() {
+    void analyticsIncludesTslChildClosedTradesInActualPnl() {
         LocalDateTime entryAt = LocalDateTime.of(2026, 6, 19, 9, 20);
         TriggeredTradeSetupEntity root = closed(100L, "ITC", 500.0, LocalDateTime.of(2026, 6, 19, 10, 0));
         root.setSource("atr-signal");
@@ -308,10 +308,10 @@ class TradeAnalyticsServiceTest {
                 null
         );
 
-        assertThat(response.getSummary().getTotalClosedTrades()).isEqualTo(1);
-        assertThat(response.getSummary().getRealizedPnl()).isEqualTo(500.0);
+        assertThat(response.getSummary().getTotalClosedTrades()).isEqualTo(2);
+        assertThat(response.getSummary().getRealizedPnl()).isEqualTo(1500.0);
         assertThat(response.getRecentClosedTrades()).extracting(TradeAnalyticsResponse.RecentClosedTrade::getId)
-                .containsExactly(100L);
+                .containsExactly(101L, 100L);
     }
 
     @Test
