@@ -545,7 +545,7 @@ class BacktestReplayServiceTest {
     }
 
     @Test
-    void fixedLotsScalesActualPnlToScenarioQuantity() {
+    void fixedLotsKeepsActualPnlAsBooked() {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
@@ -578,7 +578,62 @@ class BacktestReplayServiceTest {
         BacktestReplayResponse response = service.replayTrade(14L, request);
 
         assertThat(response.getActual().getQuantity()).isEqualTo(75L);
-        assertThat(response.getActual().getPnl()).isEqualTo(600.0);
+        assertThat(response.getActual().getPnl()).isEqualTo(1800.0);
+    }
+
+    @Test
+    void actualPnlSumsAllRowsInTradeChainWhileReplayStartsFromRoot() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mock(MStockHistoricalService.class));
+
+        TriggeredTradeSetupEntity root = baseTrade();
+        root.setId(20L);
+        root.setQuantity(75L);
+        root.setLots(1);
+        root.setOriginalLots(3);
+        root.setStopLoss(90.0);
+        root.setTarget1(110.0);
+        root.setTarget2(120.0);
+        root.setTarget3(130.0);
+        root.setTslEnabled(true);
+        root.setExitReason("TARGET_HIT_PARTIAL");
+        root.setExitPrice(111.0);
+        root.setExitedAt(LocalDateTime.of(2026, 6, 20, 9, 25));
+        root.setPnl(825.0);
+
+        TriggeredTradeSetupEntity child = baseTrade();
+        child.setId(21L);
+        child.setQuantity(150L);
+        child.setLots(2);
+        child.setOriginalLots(3);
+        child.setStopLoss(100.0);
+        child.setTarget1(110.0);
+        child.setTarget2(120.0);
+        child.setTarget3(130.0);
+        child.setTslEnabled(true);
+        child.setExitReason("STOP_LOSS_HIT");
+        child.setExitPrice(99.0);
+        child.setExitedAt(LocalDateTime.of(2026, 6, 20, 9, 30));
+        child.setPnl(-150.0);
+
+        when(tradeRepository.findById(20L)).thenReturn(Optional.of(root));
+        when(tradeRepository.findForBacktestRange(any(), any())).thenReturn(List.of(root, child));
+        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
+        when(historicalService.getHistoricalCandles(eq(1001), eq("5minute"), any(), any()))
+                .thenReturn(List.of(
+                        candle("2026-06-20", "09:20", 100, 105, 99, 102),
+                        candle("2026-06-20", "09:25", 102, 111, 101, 111),
+                        candle("2026-06-20", "09:30", 111, 112, 99, 99)
+                ));
+
+        BacktestReplayResponse response = service.replayTrade(20L, new BacktestReplayRequest());
+
+        assertThat(response.getActual().getPnl()).isEqualTo(675.0);
+        assertThat(response.getActual().getExitCount()).isEqualTo(2);
+        assertThat(response.getActual().getExitReason()).isEqualTo("STOP_LOSS_HIT");
+        assertThat(response.getBacktest().getPnl()).isNotNull();
     }
 
     private TriggeredTradeSetupEntity baseTrade() {

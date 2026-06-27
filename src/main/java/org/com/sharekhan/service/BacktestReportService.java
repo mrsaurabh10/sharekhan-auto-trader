@@ -219,34 +219,13 @@ public class BacktestReportService {
         if (trades == null || trades.isEmpty()) {
             return List.of();
         }
-        boolean fixedOneLot = isFixedOneLot(request);
         Map<String, TriggeredTradeSetupEntity> roots = new LinkedHashMap<>();
         trades.stream()
                 .sorted(Comparator
                         .comparing((TriggeredTradeSetupEntity trade) -> signalTime(trade), Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparing(TriggeredTradeSetupEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
-                .forEach(trade -> roots.putIfAbsent(fixedOneLot ? fixedOneLotRootKey(trade) : signalKey(trade), trade));
+                .forEach(trade -> roots.putIfAbsent(signalKey(trade), trade));
         return new ArrayList<>(roots.values());
-    }
-
-    private boolean isFixedOneLot(BacktestReportRequest request) {
-        BacktestReplayRequest.QuantityOverride quantity = request != null ? request.getQuantity() : null;
-        return quantity != null
-                && StringUtils.hasText(quantity.getMode())
-                && "FIXED_LOTS".equalsIgnoreCase(quantity.getMode().trim())
-                && (quantity.getLots() == null || quantity.getLots() == 1);
-    }
-
-    private String fixedOneLotRootKey(TriggeredTradeSetupEntity trade) {
-        return String.join("|",
-                textValue(tradeDate(trade)),
-                textValue(trade.getSymbol()),
-                textValue(trade.getScripCode()),
-                textValue(trade.getSpotScripCode()),
-                textValue(trade.getExchange()),
-                textValue(trade.getOptionType()),
-                textValue(trade.getStrikePrice()),
-                textValue(trade.getExpiry()));
     }
 
     private String signalKey(TriggeredTradeSetupEntity trade) {
