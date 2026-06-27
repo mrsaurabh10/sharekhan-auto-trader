@@ -320,6 +320,18 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     @Query("""
             SELECT t
             FROM TriggeredTradeSetupEntity t
+            WHERE (
+                    (t.entryAt IS NOT NULL AND t.entryAt BETWEEN :start AND :end)
+                 OR (t.entryAt IS NULL AND t.triggeredAt BETWEEN :start AND :end)
+              )
+            ORDER BY COALESCE(t.entryAt, t.triggeredAt), t.id
+            """)
+    List<TriggeredTradeSetupEntity> findForBacktestRange(@Param("start") java.time.LocalDateTime start,
+                                                         @Param("end") java.time.LocalDateTime end);
+
+    @Query("""
+            SELECT t
+            FROM TriggeredTradeSetupEntity t
             WHERE (:userId IS NULL OR t.appUserId = :userId)
               AND (:symbol IS NULL OR LOWER(t.symbol) LIKE LOWER(CONCAT('%', :symbol, '%')))
               AND (:source IS NULL OR LOWER(t.source) LIKE LOWER(CONCAT('%', :source, '%')))

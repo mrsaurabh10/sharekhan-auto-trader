@@ -177,7 +177,7 @@ public class BacktestReplayService {
                 .tradeSetupId(tradeSetupId)
                 .trade(snapshot(trade))
                 .resolved(resolved)
-                .actual(actualResult(trade, safeRequest.getQuantity()))
+                .actual(actualResult(trade))
                 .backtest(simulation.result())
                 .events(simulation.events())
                 .warnings(warnings)
@@ -1072,55 +1072,88 @@ public class BacktestReplayService {
                 .build();
     }
 
-    private BacktestReplayResponse.Result actualResult(TriggeredTradeSetupEntity trade,
-                                                       BacktestReplayRequest.QuantityOverride quantityOverride) {
+    private BacktestReplayResponse.Result actualResult(TriggeredTradeSetupEntity trade) {
+        List<TriggeredTradeSetupEntity> chain = actualTradeChain(trade);
         Double entry = trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d
                 ? trade.getActualEntryPrice()
                 : trade.getEntryPrice();
-        long actualQuantity = resolveOriginalActualQuantity(trade);
-        Long reportQuantity = resolveActualResultQuantity(trade, quantityOverride);
-        Double pnl = scaledActualPnl(trade.getPnl(), actualQuantity, reportQuantity);
+        TriggeredTradeSetupEntity lastExited = chain.stream()
+                .filter(row -> row.getExitedAt() != null)
+                .max(Comparator.comparing(TriggeredTradeSetupEntity::getExitedAt)
+                        .thenComparing(TriggeredTradeSetupEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(trade);
+        Double pnl = chain.stream()
+                .map(TriggeredTradeSetupEntity::getPnl)
+                .filter(value -> value != null && Double.isFinite(value))
+                .reduce(0d, Double::sum);
+        long exitedQuantity = chain.stream()
+                .map(TriggeredTradeSetupEntity::getQuantity)
+                .filter(Objects::nonNull)
+                .mapToLong(Long::longValue)
+                .sum();
         return BacktestReplayResponse.Result.builder()
                 .entryAt(trade.getEntryAt())
                 .entryPrice(roundNullable(entry))
-                .exitAt(trade.getExitedAt())
-                .exitPrice(roundNullable(trade.getExitPrice()))
-                .exitReason(trade.getExitReason())
-                .quantity(reportQuantity != null ? reportQuantity : trade.getQuantity())
+                .exitAt(lastExited.getExitedAt())
+                .exitPrice(roundNullable(lastExited.getExitPrice()))
+                .exitReason(lastExited.getExitReason())
+                .quantity(exitedQuantity > 0L ? exitedQuantity : trade.getQuantity())
                 .remainingQuantity(null)
                 .pnl(roundNullable(pnl))
-                .exitCount(trade.getExitedAt() != null ? 1 : 0)
+                .exitCount((int) chain.stream().filter(row -> row.getExitedAt() != null).count())
                 .build();
     }
 
-    private Long resolveActualResultQuantity(TriggeredTradeSetupEntity trade,
-                                             BacktestReplayRequest.QuantityOverride quantityOverride) {
-        if (quantityOverride == null || isActualQuantityMode(quantityOverride)) {
-            return trade.getQuantity();
+    private List<TriggeredTradeSetupEntity> actualTradeChain(TriggeredTradeSetupEntity root) {
+        LocalDateTime at = signalTime(root);
+        if (at == null) {
+            return List.of(root);
         }
-        ScriptMasterEntity script = trade.getScripCode() != null ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
-        int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
-        return resolveQuantity(trade, lotSize, quantityOverride);
+        List<TriggeredTradeSetupEntity> dayTrades = tradeRepository.findForBacktestRange(
+                at.toLocalDate().atStartOfDay(),
+                at.toLocalDate().atTime(LocalTime.MAX));
+        if (dayTrades == null || dayTrades.isEmpty()) {
+            return List.of(root);
+        }
+        String key = signalKey(root);
+        List<TriggeredTradeSetupEntity> chain = dayTrades.stream()
+                .filter(trade -> Objects.equals(signalKey(trade), key))
+                .sorted(Comparator
+                        .comparing((TriggeredTradeSetupEntity trade) -> signalTime(trade), Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TriggeredTradeSetupEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .toList();
+        return chain.isEmpty() ? List.of(root) : chain;
     }
 
-    private long resolveOriginalActualQuantity(TriggeredTradeSetupEntity trade) {
-        ScriptMasterEntity script = trade.getScripCode() != null ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
-        int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
-        if (trade.getOriginalLots() != null && trade.getOriginalLots() > 0) {
-            return (long) trade.getOriginalLots() * lotSize;
-        }
-        if (trade.getLots() != null && trade.getLots() > 0) {
-            return (long) trade.getLots() * lotSize;
-        }
-        return trade.getQuantity() != null && trade.getQuantity() > 0L ? trade.getQuantity() : 0L;
+    private String signalKey(TriggeredTradeSetupEntity trade) {
+        return String.join("|",
+                textValue(tradeDate(trade)),
+                textValue(trade.getAppUserId()),
+                textValue(trade.getSource()),
+                textValue(trade.getSymbol()),
+                textValue(trade.getScripCode()),
+                textValue(trade.getSpotScripCode()),
+                textValue(trade.getExchange()),
+                textValue(trade.getOptionType()),
+                textValue(trade.getStrikePrice()),
+                textValue(trade.getExpiry()),
+                textValue(signalTime(trade)));
     }
 
-    private Double scaledActualPnl(Double pnl, long actualQuantity, Long reportQuantity) {
-        if (pnl == null || !Double.isFinite(pnl) || reportQuantity == null || reportQuantity <= 0L
-                || actualQuantity <= 0L || actualQuantity == reportQuantity) {
-            return pnl;
+    private LocalDate tradeDate(TriggeredTradeSetupEntity trade) {
+        LocalDateTime at = signalTime(trade);
+        return at != null ? at.toLocalDate() : null;
+    }
+
+    private LocalDateTime signalTime(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
         }
-        return pnl * ((double) reportQuantity / actualQuantity);
+        return trade.getEntryAt() != null ? trade.getEntryAt() : trade.getTriggeredAt();
+    }
+
+    private String textValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim().toUpperCase(Locale.ROOT);
     }
 
     private String firstSource(LevelState... levels) {
