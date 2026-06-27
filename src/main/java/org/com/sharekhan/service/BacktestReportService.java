@@ -19,6 +19,8 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
@@ -114,6 +116,7 @@ public class BacktestReportService {
                 source,
                 from.atStartOfDay(),
                 to.atTime(23, 59, 59));
+        List<TriggeredTradeSetupEntity> reportTrades = rootTradesOnly(trades, safeRequest);
 
         Path reportPath = reportPath(reportId);
         LocalDateTime generatedAt = LocalDateTime.now(MARKET_ZONE);
@@ -133,7 +136,7 @@ public class BacktestReportService {
             try (BufferedWriter writer = Files.newBufferedWriter(reportPath, StandardCharsets.UTF_8)) {
                 writer.write(header());
                 writer.newLine();
-                for (TriggeredTradeSetupEntity trade : trades) {
+                for (TriggeredTradeSetupEntity trade : reportTrades) {
                     for (String interval : intervals) {
                         resultCount++;
                         IntervalTotals totals = intervalTotals.computeIfAbsent(interval, ignored -> new IntervalTotals());
@@ -169,7 +172,7 @@ public class BacktestReportService {
                 .from(from)
                 .to(to)
                 .source(source)
-                .tradeCount(trades.size())
+                .tradeCount(reportTrades.size())
                 .resultCount(resultCount)
                 .successCount(successCount)
                 .errorCount(errorCount)
@@ -209,6 +212,65 @@ public class BacktestReportService {
     private String newReportId() {
         return LocalDateTime.now(MARKET_ZONE).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private List<TriggeredTradeSetupEntity> rootTradesOnly(List<TriggeredTradeSetupEntity> trades,
+                                                           BacktestReportRequest request) {
+        if (trades == null || trades.isEmpty()) {
+            return List.of();
+        }
+        boolean fixedOneLot = isFixedOneLot(request);
+        Map<String, TriggeredTradeSetupEntity> roots = new LinkedHashMap<>();
+        trades.stream()
+                .sorted(Comparator
+                        .comparing((TriggeredTradeSetupEntity trade) -> signalTime(trade), Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TriggeredTradeSetupEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .forEach(trade -> roots.putIfAbsent(fixedOneLot ? fixedOneLotRootKey(trade) : signalKey(trade), trade));
+        return new ArrayList<>(roots.values());
+    }
+
+    private boolean isFixedOneLot(BacktestReportRequest request) {
+        BacktestReplayRequest.QuantityOverride quantity = request != null ? request.getQuantity() : null;
+        return quantity != null
+                && StringUtils.hasText(quantity.getMode())
+                && "FIXED_LOTS".equalsIgnoreCase(quantity.getMode().trim())
+                && (quantity.getLots() == null || quantity.getLots() == 1);
+    }
+
+    private String fixedOneLotRootKey(TriggeredTradeSetupEntity trade) {
+        return String.join("|",
+                textValue(tradeDate(trade)),
+                textValue(trade.getSymbol()),
+                textValue(trade.getScripCode()),
+                textValue(trade.getSpotScripCode()),
+                textValue(trade.getExchange()),
+                textValue(trade.getOptionType()),
+                textValue(trade.getStrikePrice()),
+                textValue(trade.getExpiry()));
+    }
+
+    private String signalKey(TriggeredTradeSetupEntity trade) {
+        return String.join("|",
+                textValue(tradeDate(trade)),
+                textValue(trade.getSymbol()),
+                textValue(trade.getScripCode()),
+                textValue(trade.getSpotScripCode()),
+                textValue(trade.getExchange()),
+                textValue(trade.getOptionType()),
+                textValue(trade.getStrikePrice()),
+                textValue(trade.getExpiry()),
+                textValue(signalTime(trade)));
+    }
+
+    private LocalDateTime signalTime(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
+        }
+        return trade.getEntryAt() != null ? trade.getEntryAt() : trade.getTriggeredAt();
+    }
+
+    private String textValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim().toUpperCase();
     }
 
     public Path reportPath(String reportId) {
