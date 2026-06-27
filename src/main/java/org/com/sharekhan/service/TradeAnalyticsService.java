@@ -14,9 +14,11 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -114,11 +116,13 @@ public class TradeAnalyticsService {
                 .filter(this::isRealizedTrade)
                 .filter(trade -> isWithin(trade.getExitedAt(), start, end))
                 .toList();
+        realizedTrades = rootTradesOnly(realizedTrades);
 
         List<TriggeredTradeSetupEntity> openTrades = candidateTrades.stream()
                 .filter(trade -> trade.getStatus() != null && OPEN_STATUSES.contains(trade.getStatus()))
                 .filter(trade -> isWithin(trade.getTriggeredAt(), start, end))
                 .toList();
+        openTrades = rootTradesOnly(openTrades);
 
         int rejectedTrades = (int) candidateTrades.stream()
                 .filter(trade -> trade.getStatus() == TriggeredTradeStatus.REJECTED)
@@ -133,6 +137,7 @@ public class TradeAnalyticsService {
                 .filter(this::usesFunds)
                 .filter(trade -> overlapsFundUseWindow(trade, start, end))
                 .toList();
+        fundedTrades = rootTradesOnly(fundedTrades);
 
         return TradeAnalyticsResponse.builder()
                 .filters(TradeAnalyticsResponse.Filters.builder()
@@ -472,7 +477,7 @@ public class TradeAnalyticsService {
     }
 
     private TradeAnalyticsResponse.BacktestAnalytics buildBacktestAnalytics(List<BacktestReplayResultEntity> results) {
-        List<BacktestTradePair> pairs = backtestPairs(results);
+        List<BacktestTradePair> pairs = backtestPairs(rootBacktestResultsOnly(results));
         BacktestAggregate summary = aggregateBacktestPairs(pairs);
         return TradeAnalyticsResponse.BacktestAnalytics.builder()
                 .summary(backtestSummary(summary))
@@ -502,6 +507,71 @@ public class TradeAnalyticsService {
                         latestIntervalResult(entry.getValue(), "5minute", "CLOSE").orElse(null),
                         latestIntervalResult(entry.getValue(), "1minute", "CLOSE_REENTRY").orElse(null)))
                 .toList();
+    }
+
+    private List<TriggeredTradeSetupEntity> rootTradesOnly(List<TriggeredTradeSetupEntity> trades) {
+        if (trades == null || trades.isEmpty()) {
+            return List.of();
+        }
+        Map<String, TriggeredTradeSetupEntity> roots = new LinkedHashMap<>();
+        trades.stream()
+                .sorted(Comparator
+                        .comparing((TriggeredTradeSetupEntity trade) -> signalTime(trade), Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TriggeredTradeSetupEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .forEach(trade -> roots.putIfAbsent(signalKey(trade), trade));
+        return new ArrayList<>(roots.values());
+    }
+
+    private List<BacktestReplayResultEntity> rootBacktestResultsOnly(List<BacktestReplayResultEntity> results) {
+        if (results == null || results.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Long> rootTradeIds = new LinkedHashMap<>();
+        results.stream()
+                .sorted(Comparator.comparing(BacktestReplayResultEntity::getTradeSetupId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .forEach(result -> rootTradeIds.putIfAbsent(backtestSignalKey(result), result.getTradeSetupId()));
+        return results.stream()
+                .filter(result -> Objects.equals(result.getTradeSetupId(), rootTradeIds.get(backtestSignalKey(result))))
+                .toList();
+    }
+
+    private String signalKey(TriggeredTradeSetupEntity trade) {
+        return String.join("|",
+                textValue(tradeDate(trade)),
+                textValue(trade.getSymbol()),
+                textValue(trade.getScripCode()),
+                textValue(trade.getSpotScripCode()),
+                textValue(trade.getExchange()),
+                textValue(trade.getOptionType()),
+                textValue(trade.getStrikePrice()),
+                textValue(trade.getExpiry()),
+                textValue(signalTime(trade)));
+    }
+
+    private String backtestSignalKey(BacktestReplayResultEntity result) {
+        return String.join("|",
+                textValue(result.getTradeDate()),
+                textValue(result.getSymbol()),
+                textValue(result.getScripCode()),
+                textValue(result.getOptionType()),
+                textValue(result.getStrikePrice()),
+                textValue(result.getExpiry()));
+    }
+
+    private LocalDate tradeDate(TriggeredTradeSetupEntity trade) {
+        LocalDateTime at = signalTime(trade);
+        return at != null ? at.toLocalDate() : null;
+    }
+
+    private LocalDateTime signalTime(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return null;
+        }
+        return trade.getEntryAt() != null ? trade.getEntryAt() : trade.getTriggeredAt();
+    }
+
+    private String textValue(Object value) {
+        return value == null ? "" : String.valueOf(value).trim().toUpperCase();
     }
 
     private Optional<BacktestReplayResultEntity> latestIntervalResult(List<BacktestReplayResultEntity> results,

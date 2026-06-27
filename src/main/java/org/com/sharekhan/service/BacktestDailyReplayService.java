@@ -27,6 +27,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
@@ -50,6 +54,12 @@ public class BacktestDailyReplayService {
     private final BacktestReplayResultRepository resultRepository;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final Map<String, BacktestDailyReplayRangeRunResponse> rangeRuns = new ConcurrentHashMap<>();
+    private final ExecutorService rangeExecutor = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "backtest-daily-range-worker");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @Scheduled(cron = "0 0 16 * * MON-FRI", zone = "Asia/Kolkata")
     public void runPreviousAvailableDayAfterMarketClose() {
@@ -89,14 +99,59 @@ public class BacktestDailyReplayService {
         }
     }
 
-    private BacktestDailyReplayRangeRunResponse runForDateRangeInternal(LocalDate from, LocalDate to) {
-        LocalDate resolvedTo = to != null ? to : previousAvailableTradeDate(LocalDate.now(MARKET_ZONE));
-        LocalDate resolvedFrom = from != null ? from : resolvedTo;
-        if (resolvedFrom.isAfter(resolvedTo)) {
-            LocalDate previousFrom = resolvedFrom;
-            resolvedFrom = resolvedTo;
-            resolvedTo = previousFrom;
+    public BacktestDailyReplayRangeRunResponse startDateRange(LocalDate from, LocalDate to) {
+        if (!running.compareAndSet(false, true)) {
+            throw new IllegalStateException("ATR backtest daily replay is already running.");
         }
+        DateRange range = resolveDateRange(from, to);
+        String runId = newRunId();
+        LocalDateTime startedAt = LocalDateTime.now(MARKET_ZONE);
+        BacktestDailyReplayRangeRunResponse started = BacktestDailyReplayRangeRunResponse.builder()
+                .status("RUNNING")
+                .runId(runId)
+                .from(range.from())
+                .to(range.to())
+                .source(ATR_SIGNAL_SOURCE)
+                .startedAt(startedAt)
+                .runAt(startedAt)
+                .build();
+        rangeRuns.put(runId, started);
+
+        rangeExecutor.submit(() -> {
+            try {
+                BacktestDailyReplayRangeRunResponse completed = runForDateRangeInternal(range.from(), range.to());
+                completed.setRunId(runId);
+                completed.setStatus("SUCCESS");
+                completed.setStartedAt(startedAt);
+                completed.setCompletedAt(LocalDateTime.now(MARKET_ZONE));
+                rangeRuns.put(runId, completed);
+            } catch (Exception ex) {
+                rangeRuns.put(runId, BacktestDailyReplayRangeRunResponse.builder()
+                        .status("ERROR")
+                        .runId(runId)
+                        .from(range.from())
+                        .to(range.to())
+                        .source(ATR_SIGNAL_SOURCE)
+                        .errorMessage(ex.getMessage())
+                        .startedAt(startedAt)
+                        .completedAt(LocalDateTime.now(MARKET_ZONE))
+                        .runAt(startedAt)
+                        .build());
+            } finally {
+                running.set(false);
+            }
+        });
+        return started;
+    }
+
+    public BacktestDailyReplayRangeRunResponse rangeStatus(String runId) {
+        return rangeRuns.get(runId);
+    }
+
+    private BacktestDailyReplayRangeRunResponse runForDateRangeInternal(LocalDate from, LocalDate to) {
+        DateRange range = resolveDateRange(from, to);
+        LocalDate resolvedFrom = range.from();
+        LocalDate resolvedTo = range.to();
 
         List<BacktestDailyReplayRunResponse> days = new ArrayList<>();
         List<Long> failedTradeSetupIds = new ArrayList<>();
@@ -136,6 +191,22 @@ public class BacktestDailyReplayService {
                 .days(days)
                 .runAt(LocalDateTime.now(MARKET_ZONE))
                 .build();
+    }
+
+    private DateRange resolveDateRange(LocalDate from, LocalDate to) {
+        LocalDate resolvedTo = to != null ? to : previousAvailableTradeDate(LocalDate.now(MARKET_ZONE));
+        LocalDate resolvedFrom = from != null ? from : resolvedTo;
+        if (resolvedFrom.isAfter(resolvedTo)) {
+            LocalDate previousFrom = resolvedFrom;
+            resolvedFrom = resolvedTo;
+            resolvedTo = previousFrom;
+        }
+        return new DateRange(resolvedFrom, resolvedTo);
+    }
+
+    private String newRunId() {
+        return LocalDateTime.now(MARKET_ZONE).format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
     private BacktestDailyReplayRunResponse runForDateInternal(LocalDate tradeDate) {
@@ -380,5 +451,8 @@ public class BacktestDailyReplayService {
                                   String executionTriggerPricePolicy,
                                   String resultTriggerPricePolicy,
                                   boolean reEntryOnStopLoss) {
+    }
+
+    private record DateRange(LocalDate from, LocalDate to) {
     }
 }

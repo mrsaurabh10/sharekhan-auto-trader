@@ -242,10 +242,10 @@ class TradeAnalyticsServiceTest {
         when(backtestResultRepository.findByTradeDateBetween(eq(from), eq(to))).thenReturn(List.of(
                 replay(10L, "1minute", "SUCCESS", 100.0, 50.0),
                 replay(10L, "5minute", "SUCCESS", 130.0, 50.0),
-                replay(11L, "1minute", "SUCCESS", -40.0, -100.0),
-                replay(11L, "5minute", "SUCCESS", -80.0, -100.0),
-                replay(12L, "1minute", "ERROR", null, 0.0),
-                replay(12L, "5minute", "ERROR", null, 0.0)
+                replay(11L, "BANKNIFTY", 2002, "1minute", "SUCCESS", -40.0, -100.0),
+                replay(11L, "BANKNIFTY", 2002, "5minute", "SUCCESS", -80.0, -100.0),
+                replay(12L, "FINNIFTY", 3003, "1minute", "ERROR", null, 0.0),
+                replay(12L, "FINNIFTY", 3003, "5minute", "ERROR", null, 0.0)
         ));
 
         TradeAnalyticsResponse response = service.getTradeAnalytics(
@@ -270,6 +270,98 @@ class TradeAnalyticsServiceTest {
         assertThat(summary.getOneMinuteCloserToActual()).isEqualTo(1);
         assertThat(summary.getFiveMinuteCloserToActual()).isEqualTo(1);
         assertThat(response.getBacktest().getByDay()).hasSize(1);
+    }
+
+    @Test
+    void analyticsSkipsTslChildClosedTrades() {
+        LocalDateTime entryAt = LocalDateTime.of(2026, 6, 19, 9, 20);
+        TriggeredTradeSetupEntity root = closed(100L, "ITC", 500.0, LocalDateTime.of(2026, 6, 19, 10, 0));
+        root.setSource("atr-signal");
+        root.setScripCode(107866);
+        root.setSpotScripCode(1660);
+        root.setExchange("NF");
+        root.setOptionType("CE");
+        root.setStrikePrice(420.0);
+        root.setExpiry("30/06/2026");
+        root.setEntryAt(entryAt);
+        root.setTriggeredAt(entryAt);
+        TriggeredTradeSetupEntity child = closed(101L, "ITC", 1000.0, LocalDateTime.of(2026, 6, 19, 11, 0));
+        child.setSource("atr-signal");
+        child.setScripCode(107866);
+        child.setSpotScripCode(1660);
+        child.setExchange("NF");
+        child.setOptionType("CE");
+        child.setStrikePrice(420.0);
+        child.setExpiry("30/06/2026");
+        child.setEntryAt(entryAt);
+        child.setTriggeredAt(entryAt);
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq("atr-signal"), eq(null), eq(null)))
+                .thenReturn(List.of(child, root));
+
+        TradeAnalyticsResponse response = service.getTradeAnalytics(
+                1L,
+                LocalDate.of(2026, 6, 19),
+                LocalDate.of(2026, 6, 19),
+                null,
+                "atr-signal",
+                null,
+                null
+        );
+
+        assertThat(response.getSummary().getTotalClosedTrades()).isEqualTo(1);
+        assertThat(response.getSummary().getRealizedPnl()).isEqualTo(500.0);
+        assertThat(response.getRecentClosedTrades()).extracting(TradeAnalyticsResponse.RecentClosedTrade::getId)
+                .containsExactly(100L);
+    }
+
+    @Test
+    void backtestAnalyticsSkipsPersistedChildRowsForSameInstrument() {
+        LocalDate from = LocalDate.of(2026, 6, 19);
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(eq(1L), eq("Simulator"), eq(null), eq("atr-signal"), eq(null), eq(true)))
+                .thenReturn(List.of());
+        BacktestReplayResultEntity rootOneMinute = replay(100L, "1minute", "SUCCESS", 500.0, 100.0);
+        rootOneMinute.setSymbol("ITC");
+        rootOneMinute.setScripCode(107866);
+        rootOneMinute.setOptionType("CE");
+        rootOneMinute.setStrikePrice(420.0);
+        rootOneMinute.setExpiry("30/06/2026");
+        rootOneMinute.setTradeDate(from);
+        BacktestReplayResultEntity childOneMinute = replay(101L, "1minute", "SUCCESS", 1000.0, 200.0);
+        childOneMinute.setSymbol("ITC");
+        childOneMinute.setScripCode(107866);
+        childOneMinute.setOptionType("CE");
+        childOneMinute.setStrikePrice(420.0);
+        childOneMinute.setExpiry("30/06/2026");
+        childOneMinute.setTradeDate(from);
+        BacktestReplayResultEntity rootFiveMinute = replay(100L, "5minute", "SUCCESS", 600.0, 100.0);
+        rootFiveMinute.setSymbol("ITC");
+        rootFiveMinute.setScripCode(107866);
+        rootFiveMinute.setOptionType("CE");
+        rootFiveMinute.setStrikePrice(420.0);
+        rootFiveMinute.setExpiry("30/06/2026");
+        rootFiveMinute.setTradeDate(from);
+        when(backtestResultRepository.findByTradeDateBetween(eq(from), eq(from))).thenReturn(List.of(
+                childOneMinute,
+                rootOneMinute,
+                rootFiveMinute
+        ));
+
+        TradeAnalyticsResponse response = service.getTradeAnalytics(
+                1L,
+                from,
+                from,
+                null,
+                "atr-signal",
+                null,
+                true
+        );
+
+        TradeAnalyticsResponse.BacktestSummary summary = response.getBacktest().getSummary();
+        assertThat(summary.getTotalTrades()).isEqualTo(1);
+        assertThat(summary.getComparableTrades()).isEqualTo(1);
+        assertThat(summary.getActualPnl()).isEqualTo(100.0);
+        assertThat(summary.getOneMinutePnl()).isEqualTo(500.0);
+        assertThat(summary.getFiveMinutePnl()).isEqualTo(600.0);
     }
 
     private TriggeredTradeSetupEntity closed(Long id, String symbol, Double pnl, LocalDateTime exitedAt) {
@@ -310,11 +402,22 @@ class TradeAnalyticsServiceTest {
                                               String status,
                                               Double backtestPnl,
                                               Double actualPnl) {
+        return replay(tradeSetupId, "NIFTY", null, interval, status, backtestPnl, actualPnl);
+    }
+
+    private BacktestReplayResultEntity replay(Long tradeSetupId,
+                                              String symbol,
+                                              Integer scripCode,
+                                              String interval,
+                                              String status,
+                                              Double backtestPnl,
+                                              Double actualPnl) {
         return BacktestReplayResultEntity.builder()
                 .tradeSetupId(tradeSetupId)
                 .appUserId(1L)
                 .source("atr-signal")
-                .symbol("NIFTY")
+                .symbol(symbol)
+                .scripCode(scripCode)
                 .tradeDate(LocalDate.of(2026, 6, 8))
                 .interval(interval)
                 .triggerPricePolicy("CLOSE")
