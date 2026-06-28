@@ -6,10 +6,12 @@ import org.com.sharekhan.dto.backtest.BacktestDailyReplayRunResponse;
 import org.com.sharekhan.dto.backtest.BacktestDailyReplayRangeRunResponse;
 import org.com.sharekhan.dto.backtest.BacktestReplayRequest;
 import org.com.sharekhan.dto.backtest.BacktestReplayResponse;
+import org.com.sharekhan.entity.BacktestReplayEventEntity;
 import org.com.sharekhan.entity.BacktestReplayResultEntity;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
+import org.com.sharekhan.repository.BacktestReplayEventRepository;
 import org.com.sharekhan.repository.BacktestReplayResultRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
@@ -52,6 +54,7 @@ public class BacktestDailyReplayService {
     private final TriggeredTradeSetupRepository tradeRepository;
     private final BacktestReplayService backtestReplayService;
     private final BacktestReplayResultRepository resultRepository;
+    private final BacktestReplayEventRepository eventRepository;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final Map<String, BacktestDailyReplayRangeRunResponse> rangeRuns = new ConcurrentHashMap<>();
@@ -78,28 +81,40 @@ public class BacktestDailyReplayService {
     }
 
     public BacktestDailyReplayRunResponse runForDate(LocalDate tradeDate) {
+        return runForDate(tradeDate, false);
+    }
+
+    public BacktestDailyReplayRunResponse runForDate(LocalDate tradeDate, boolean force) {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("ATR backtest daily replay is already running.");
         }
         try {
-            return runForDateInternal(tradeDate);
+            return runForDateInternal(tradeDate, force);
         } finally {
             running.set(false);
         }
     }
 
     public BacktestDailyReplayRangeRunResponse runForDateRange(LocalDate from, LocalDate to) {
+        return runForDateRange(from, to, false);
+    }
+
+    public BacktestDailyReplayRangeRunResponse runForDateRange(LocalDate from, LocalDate to, boolean force) {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("ATR backtest daily replay is already running.");
         }
         try {
-            return runForDateRangeInternal(from, to);
+            return runForDateRangeInternal(from, to, force);
         } finally {
             running.set(false);
         }
     }
 
     public BacktestDailyReplayRangeRunResponse startDateRange(LocalDate from, LocalDate to) {
+        return startDateRange(from, to, false);
+    }
+
+    public BacktestDailyReplayRangeRunResponse startDateRange(LocalDate from, LocalDate to, boolean force) {
         if (!running.compareAndSet(false, true)) {
             throw new IllegalStateException("ATR backtest daily replay is already running.");
         }
@@ -119,7 +134,7 @@ public class BacktestDailyReplayService {
 
         rangeExecutor.submit(() -> {
             try {
-                BacktestDailyReplayRangeRunResponse completed = runForDateRangeInternal(range.from(), range.to());
+                BacktestDailyReplayRangeRunResponse completed = runForDateRangeInternal(range.from(), range.to(), force);
                 completed.setRunId(runId);
                 completed.setStatus("SUCCESS");
                 completed.setStartedAt(startedAt);
@@ -148,7 +163,7 @@ public class BacktestDailyReplayService {
         return rangeRuns.get(runId);
     }
 
-    private BacktestDailyReplayRangeRunResponse runForDateRangeInternal(LocalDate from, LocalDate to) {
+    private BacktestDailyReplayRangeRunResponse runForDateRangeInternal(LocalDate from, LocalDate to, boolean force) {
         DateRange range = resolveDateRange(from, to);
         LocalDate resolvedFrom = range.from();
         LocalDate resolvedTo = range.to();
@@ -164,7 +179,7 @@ public class BacktestDailyReplayService {
             if (isWeekend(date)) {
                 continue;
             }
-            BacktestDailyReplayRunResponse daily = runForDateInternal(date);
+            BacktestDailyReplayRunResponse daily = runForDateInternal(date, force);
             days.add(daily);
             tradeCount += valueOrZero(daily.getTradeCount());
             resultCount += valueOrZero(daily.getResultCount());
@@ -209,7 +224,7 @@ public class BacktestDailyReplayService {
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
-    private BacktestDailyReplayRunResponse runForDateInternal(LocalDate tradeDate) {
+    private BacktestDailyReplayRunResponse runForDateInternal(LocalDate tradeDate, boolean force) {
         LocalDate resolvedDate = tradeDate != null ? tradeDate : previousAvailableTradeDate(LocalDate.now(MARKET_ZONE));
         LocalDateTime start = resolvedDate.atStartOfDay();
         LocalDateTime end = resolvedDate.atTime(LocalTime.MAX);
@@ -227,7 +242,7 @@ public class BacktestDailyReplayService {
         for (TriggeredTradeSetupEntity trade : rootTrades) {
             for (ReplayScenario scenario : SCENARIOS) {
                 Optional<BacktestReplayResultEntity> existing = existingResultOptional(trade.getId(), scenario);
-                if (existing.filter(this::isSuccessResult).isPresent()) {
+                if (!force && existing.filter(this::isSuccessResult).isPresent()) {
                     skippedCount++;
                     continue;
                 }
@@ -343,7 +358,11 @@ public class BacktestDailyReplayService {
             result.setBacktestPnl(backtest.getPnl());
             result.setBacktestExitCount(backtest.getExitCount());
         }
-        resultRepository.save(result);
+        BacktestReplayResultEntity saved = resultRepository.save(result);
+        if (saved == null) {
+            saved = result;
+        }
+        saveEvents(saved, response, scenario, runAt);
     }
 
     private void saveError(TriggeredTradeSetupEntity trade, ReplayScenario scenario, String message, LocalDateTime runAt) {
@@ -358,6 +377,49 @@ public class BacktestDailyReplayService {
         result.setBacktestPnl(null);
         result.setBacktestExitCount(null);
         resultRepository.save(result);
+    }
+
+    private void saveEvents(BacktestReplayResultEntity result,
+                            BacktestReplayResponse response,
+                            ReplayScenario scenario,
+                            LocalDateTime runAt) {
+        if (result.getId() == null) {
+            return;
+        }
+        eventRepository.deleteByResultId(result.getId());
+        if (response.getEvents() == null || response.getEvents().isEmpty()) {
+            return;
+        }
+        List<BacktestReplayEventEntity> events = new ArrayList<>();
+        int index = 0;
+        for (BacktestReplayResponse.Event event : response.getEvents()) {
+            if (!"EXIT".equalsIgnoreCase(event.getType())) {
+                continue;
+            }
+            events.add(BacktestReplayEventEntity.builder()
+                    .resultId(result.getId())
+                    .tradeSetupId(result.getTradeSetupId())
+                    .eventIndex(++index)
+                    .eventAt(event.getAt())
+                    .eventType(event.getType())
+                    .reason(event.getReason())
+                    .interval(scenario.interval())
+                    .triggerPricePolicy(scenario.resultTriggerPricePolicy())
+                    .squareOffTime(SQUARE_OFF_TIME)
+                    .priceSource(event.getPriceSource())
+                    .referencePrice(event.getReferencePrice())
+                    .optionPrice(event.getOptionPrice())
+                    .stopLoss(event.getStopLoss())
+                    .target(event.getTarget())
+                    .quantity(event.getQuantity())
+                    .lots(event.getLots())
+                    .pnl(event.getPnl())
+                    .runAt(runAt)
+                    .build());
+        }
+        if (!events.isEmpty()) {
+            eventRepository.saveAll(events);
+        }
     }
 
     private BacktestReplayResultEntity existingResult(Long tradeSetupId, ReplayScenario scenario) {
