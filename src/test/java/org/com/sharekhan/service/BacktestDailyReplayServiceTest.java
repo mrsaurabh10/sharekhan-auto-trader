@@ -5,6 +5,7 @@ import org.com.sharekhan.dto.backtest.BacktestDailyReplayRangeRunResponse;
 import org.com.sharekhan.dto.backtest.BacktestReplayResponse;
 import org.com.sharekhan.entity.BacktestReplayResultEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.repository.BacktestReplayEventRepository;
 import org.com.sharekhan.repository.BacktestReplayResultRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
@@ -33,6 +34,7 @@ class BacktestDailyReplayServiceTest {
                 mock(TriggeredTradeSetupRepository.class),
                 mock(BacktestReplayService.class),
                 mock(BacktestReplayResultRepository.class),
+                mock(BacktestReplayEventRepository.class),
                 mock(BrokerCredentialsRepository.class));
 
         assertThat(service.previousAvailableTradeDate(LocalDate.of(2026, 6, 22)))
@@ -48,6 +50,7 @@ class BacktestDailyReplayServiceTest {
                 tradeRepository,
                 mock(BacktestReplayService.class),
                 mock(BacktestReplayResultRepository.class),
+                mock(BacktestReplayEventRepository.class),
                 mock(BrokerCredentialsRepository.class));
         when(tradeRepository.findBySourceForBacktestDate(eq("atr-signal"), any(), any()))
                 .thenReturn(List.of());
@@ -75,11 +78,13 @@ class BacktestDailyReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         BacktestReplayService replayService = mock(BacktestReplayService.class);
         BacktestReplayResultRepository resultRepository = mock(BacktestReplayResultRepository.class);
+        BacktestReplayEventRepository eventRepository = mock(BacktestReplayEventRepository.class);
         BrokerCredentialsRepository brokerCredentialsRepository = mock(BrokerCredentialsRepository.class);
         BacktestDailyReplayService service = new BacktestDailyReplayService(
                 tradeRepository,
                 replayService,
                 resultRepository,
+                eventRepository,
                 brokerCredentialsRepository);
         TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
                 .id(100L)
@@ -129,11 +134,13 @@ class BacktestDailyReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         BacktestReplayService replayService = mock(BacktestReplayService.class);
         BacktestReplayResultRepository resultRepository = mock(BacktestReplayResultRepository.class);
+        BacktestReplayEventRepository eventRepository = mock(BacktestReplayEventRepository.class);
         BrokerCredentialsRepository brokerCredentialsRepository = mock(BrokerCredentialsRepository.class);
         BacktestDailyReplayService service = new BacktestDailyReplayService(
                 tradeRepository,
                 replayService,
                 resultRepository,
+                eventRepository,
                 brokerCredentialsRepository);
         TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
                 .id(101L)
@@ -187,11 +194,13 @@ class BacktestDailyReplayServiceTest {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         BacktestReplayService replayService = mock(BacktestReplayService.class);
         BacktestReplayResultRepository resultRepository = mock(BacktestReplayResultRepository.class);
+        BacktestReplayEventRepository eventRepository = mock(BacktestReplayEventRepository.class);
         BrokerCredentialsRepository brokerCredentialsRepository = mock(BrokerCredentialsRepository.class);
         BacktestDailyReplayService service = new BacktestDailyReplayService(
                 tradeRepository,
                 replayService,
                 resultRepository,
+                eventRepository,
                 brokerCredentialsRepository);
         LocalDateTime entryAt = LocalDateTime.of(2026, 6, 19, 9, 20);
         TriggeredTradeSetupEntity root = TriggeredTradeSetupEntity.builder()

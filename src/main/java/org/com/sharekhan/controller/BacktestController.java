@@ -63,12 +63,13 @@ public class BacktestController {
     @PostMapping("/atr-signal/daily-replay")
     public ResponseEntity<?> replayAtrSignalTradesForDay(
             @RequestHeader(value = "X-Admin-Token", required = false) String headerToken,
-            @RequestParam(name = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+            @RequestParam(name = "date", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(name = "force", required = false, defaultValue = "false") boolean force) {
         if (!authorized(headerToken)) {
             return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
         }
         try {
-            BacktestDailyReplayRunResponse response = backtestDailyReplayService.runForDate(date);
+            BacktestDailyReplayRunResponse response = backtestDailyReplayService.runForDate(date, force);
             return ResponseEntity.ok(response);
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(error(ex.getMessage()));
@@ -79,12 +80,13 @@ public class BacktestController {
     public ResponseEntity<?> replayAtrSignalTradesForRange(
             @RequestHeader(value = "X-Admin-Token", required = false) String headerToken,
             @RequestParam(name = "from") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
-            @RequestParam(name = "to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+            @RequestParam(name = "to") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(name = "force", required = false, defaultValue = "false") boolean force) {
         if (!authorized(headerToken)) {
             return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
         }
         try {
-            BacktestDailyReplayRangeRunResponse response = backtestDailyReplayService.startDateRange(from, to);
+            BacktestDailyReplayRangeRunResponse response = backtestDailyReplayService.startDateRange(from, to, force);
             return ResponseEntity.ok(response);
         } catch (IllegalStateException ex) {
             return ResponseEntity.status(HttpStatus.CONFLICT).body(error(ex.getMessage()));

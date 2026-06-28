@@ -72,7 +72,7 @@ class BacktestControllerTest {
         BacktestController controller = controller(mock(BacktestReplayService.class), dailyReplayService, mock(BacktestReportService.class));
         ReflectionTestUtils.setField(controller, "adminToken", "secret-token");
 
-        when(dailyReplayService.startDateRange(eq(LocalDate.of(2026, 6, 8)), eq(LocalDate.of(2026, 6, 17))))
+        when(dailyReplayService.startDateRange(eq(LocalDate.of(2026, 6, 8)), eq(LocalDate.of(2026, 6, 17)), eq(false)))
                 .thenReturn(BacktestDailyReplayRangeRunResponse.builder()
                         .status("RUNNING")
                         .runId("range-1")
