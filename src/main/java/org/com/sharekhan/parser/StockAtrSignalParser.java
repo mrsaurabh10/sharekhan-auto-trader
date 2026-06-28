@@ -10,7 +10,7 @@ import java.util.regex.Pattern;
 public class StockAtrSignalParser implements TradingSignalParser {
 
     private static final Pattern ONE_LINE = Pattern.compile(
-            "^(?:STOCK\\s+)?ATR(?:\\s+TRADE)?\\s+([A-Z0-9_\\-]+)\\s+(LONG|SHORT|BUY|SELL|BULLISH|BEARISH)\\s+(?:ABOVE\\s+|BELOW\\s+|ENTRY\\s+)?([0-9]+(?:\\.[0-9]+)?)(?:\\s+.*)?$",
+            "^(?:STOCK\\s+)?ATR(?:\\s+TRADE)?\\s+([A-Z0-9_&\\-]+)\\s+(LONG|SHORT|BUY|SELL|BULLISH|BEARISH)\\s+(?:ABOVE\\s+|BELOW\\s+|ENTRY\\s+)?([0-9]+(?:\\.[0-9]+)?)(?:\\s+.*)?$",
             Pattern.CASE_INSENSITIVE
     );
 

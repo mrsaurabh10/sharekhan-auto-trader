@@ -25,6 +25,19 @@ class StockAtrSignalParserTest {
     }
 
     @Test
+    void parsesOneLineAtrSignalWithAmpersandInStockSymbol() {
+        Map<String, Object> result = parser.parse("ATR M&M LONG 3198.30 JULY EXPIRY");
+
+        assertNotNull(result);
+        assertEquals("atr-signal", result.get("source"));
+        assertEquals(true, result.get("stockAtrTrade"));
+        assertEquals("M&M", result.get("stock"));
+        assertEquals(3198.30, (Double) result.get("entry"), 0.01);
+        assertEquals("LONG", result.get("direction"));
+        assertEquals(7, result.get("expiryMonth"));
+    }
+
+    @Test
     void parsesKeyValueAtrSignal() {
         String text = """
                 ATR TRADE
