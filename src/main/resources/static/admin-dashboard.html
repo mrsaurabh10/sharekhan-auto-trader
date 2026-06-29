@@ -63,6 +63,16 @@
         .analytics-card .value { font-size: 1.05rem; font-weight: bold; }
         .analytics-card .value.positive { color: green; }
         .analytics-card .value.negative { color: red; }
+        .analytics-equity-panel { border: 1px solid #dfe4ef; border-radius: 6px; padding: 10px; background: #fff; margin-bottom: 10px; }
+        .analytics-equity-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+        .analytics-equity-header h4 { margin: 0; }
+        .analytics-equity-legend { color: #666; font-size: 0.78rem; }
+        .analytics-equity-legend span { white-space: nowrap; margin-left: 10px; }
+        .analytics-equity-legend i { display: inline-block; width: 12px; height: 3px; margin-right: 4px; vertical-align: middle; background: #2b7cff; }
+        .analytics-equity-legend i.daily { height: 8px; background: #91a4c6; opacity: 0.65; }
+        .analytics-equity-chart { min-height: 280px; overflow-x: auto; }
+        .analytics-equity-chart svg { display: block; width: 100%; min-width: 560px; height: auto; }
+        .analytics-equity-empty { min-height: 180px; display: flex; align-items: center; justify-content: center; color: #777; }
         .analytics-backtest-panel { border: 1px solid #dfe4ef; border-radius: 6px; padding: 10px; background: #fff; margin-bottom: 10px; }
         .analytics-backtest-panel h4 { margin: 0 0 8px 0; }
         .analytics-backtest-table-wrap { overflow-x: auto; }
@@ -246,6 +256,13 @@
                     <div id="analyticsTodayPnlSummaryNote" class="pnl-summary-note">Uses today's trades, independent of status filter.</div>
                 </div>
                 <div id="analyticsCards" class="analytics-cards"></div>
+                <div class="analytics-equity-panel">
+                    <div class="analytics-equity-header">
+                        <h4>Equity Curve</h4>
+                        <div class="analytics-equity-legend"><span><i></i>Cumulative PnL</span><span><i class="daily"></i>Daily PnL</span></div>
+                    </div>
+                    <div id="analyticsEquityChart" class="analytics-equity-chart" role="img" aria-label="Daily profit and cumulative equity curve"></div>
+                </div>
                 <div id="analyticsBacktestPanel" class="analytics-backtest-panel" style="display:none">
                     <h4>Backtest Replay: 1m Close vs 5m Close</h4>
                     <div id="analyticsBacktestCards" class="analytics-cards"></div>
@@ -387,6 +404,6 @@
     </div>
 </div>
 
-<script src="/admin-dashboard.js?v=20"></script>
+<script src="/admin-dashboard.js?v=21"></script>
 </body>
 </html>

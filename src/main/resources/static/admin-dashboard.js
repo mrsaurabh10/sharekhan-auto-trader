@@ -368,6 +368,114 @@
     return '<td style="color:' + color + ';font-weight:bold">' + escapeHtml(formatAnalyticsNumber(value)) + '</td>';
   }
 
+  function formatAnalyticsAxisValue(value) {
+    const num = Number(value);
+    if (!isFinite(num)) return '0';
+    const absolute = Math.abs(num);
+    if (absolute >= 10000000) return (num / 10000000).toFixed(1).replace(/\.0$/, '') + 'Cr';
+    if (absolute >= 100000) return (num / 100000).toFixed(1).replace(/\.0$/, '') + 'L';
+    if (absolute >= 1000) return (num / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return num.toFixed(0);
+  }
+
+  function renderEquityChart(byDay) {
+    const chart = document.getElementById('analyticsEquityChart');
+    if (!chart) return;
+    if (!Array.isArray(byDay) || !byDay.length) {
+      chart.innerHTML = '<div class="analytics-equity-empty">No daily profit data for this range.</div>';
+      return;
+    }
+
+    let runningPnl = 0;
+    const points = byDay.map(function(row) {
+      const dailyPnl = Number(row.realizedPnl);
+      runningPnl += isFinite(dailyPnl) ? dailyPnl : 0;
+      const suppliedCumulative = row.cumulativeRealizedPnl == null ? NaN : Number(row.cumulativeRealizedPnl);
+      return {
+        date: String(row.date || ''),
+        dailyPnl: isFinite(dailyPnl) ? dailyPnl : 0,
+        cumulativePnl: isFinite(suppliedCumulative) ? suppliedCumulative : runningPnl
+      };
+    });
+
+    const width = 900;
+    const height = 300;
+    const margin = { top: 18, right: 20, bottom: 46, left: 64 };
+    const plotWidth = width - margin.left - margin.right;
+    const plotHeight = height - margin.top - margin.bottom;
+    const allValues = [0];
+    points.forEach(function(point) {
+      allValues.push(point.dailyPnl, point.cumulativePnl);
+    });
+    let minValue = Math.min.apply(null, allValues);
+    let maxValue = Math.max.apply(null, allValues);
+    if (minValue === maxValue) {
+      const padding = Math.max(Math.abs(minValue) * 0.1, 1);
+      minValue -= padding;
+      maxValue += padding;
+    } else {
+      const padding = (maxValue - minValue) * 0.08;
+      minValue -= padding;
+      maxValue += padding;
+    }
+
+    const xAt = function(index) {
+      return points.length === 1 ? margin.left + plotWidth / 2 : margin.left + (index * plotWidth / (points.length - 1));
+    };
+    const yAt = function(value) {
+      return margin.top + ((maxValue - value) / (maxValue - minValue)) * plotHeight;
+    };
+    const zeroY = yAt(0);
+    const gridLines = [];
+    for (let i = 0; i <= 4; i += 1) {
+      const value = maxValue - ((maxValue - minValue) * i / 4);
+      const y = margin.top + (plotHeight * i / 4);
+      gridLines.push('<line x1="' + margin.left + '" y1="' + y.toFixed(2) + '" x2="' + (width - margin.right) + '" y2="' + y.toFixed(2) + '" stroke="#e7ebf2" stroke-width="1"/>');
+      gridLines.push('<text x="' + (margin.left - 9) + '" y="' + (y + 4).toFixed(2) + '" text-anchor="end" fill="#687386" font-size="11">' + escapeHtml(formatAnalyticsAxisValue(value)) + '</text>');
+    }
+
+    const slotWidth = plotWidth / Math.max(points.length, 1);
+    const barWidth = Math.max(3, Math.min(18, slotWidth * 0.52));
+    const bars = points.map(function(point, index) {
+      const x = xAt(index) - barWidth / 2;
+      const valueY = yAt(point.dailyPnl);
+      const y = Math.min(valueY, zeroY);
+      const barHeight = Math.max(1, Math.abs(zeroY - valueY));
+      const color = point.dailyPnl >= 0 ? '#58a67d' : '#dc6b6b';
+      return '<rect x="' + x.toFixed(2) + '" y="' + y.toFixed(2) + '" width="' + barWidth.toFixed(2) + '" height="' + barHeight.toFixed(2) + '" rx="2" fill="' + color + '" opacity="0.5"><title>' + escapeHtml(point.date + ' | Daily PnL: ' + formatAnalyticsNumber(point.dailyPnl) + ' | Equity: ' + formatAnalyticsNumber(point.cumulativePnl)) + '</title></rect>';
+    }).join('');
+
+    const linePoints = points.map(function(point, index) {
+      return xAt(index).toFixed(2) + ',' + yAt(point.cumulativePnl).toFixed(2);
+    }).join(' ');
+    const firstX = xAt(0).toFixed(2);
+    const lastX = xAt(points.length - 1).toFixed(2);
+    const areaPoints = firstX + ',' + zeroY.toFixed(2) + ' ' + linePoints + ' ' + lastX + ',' + zeroY.toFixed(2);
+    const dots = points.map(function(point, index) {
+      const color = point.dailyPnl >= 0 ? '#16804b' : '#c53939';
+      return '<circle cx="' + xAt(index).toFixed(2) + '" cy="' + yAt(point.cumulativePnl).toFixed(2) + '" r="3.5" fill="' + color + '" stroke="#fff" stroke-width="1.5"><title>' + escapeHtml(point.date + ' | Daily PnL: ' + formatAnalyticsNumber(point.dailyPnl) + ' | Equity: ' + formatAnalyticsNumber(point.cumulativePnl)) + '</title></circle>';
+    }).join('');
+
+    const maxLabels = 7;
+    const labelEvery = Math.max(1, Math.ceil(points.length / maxLabels));
+    const dateLabels = points.map(function(point, index) {
+      if (index % labelEvery !== 0 && index !== points.length - 1) return '';
+      const shortDate = point.date.length >= 10 ? point.date.slice(5) : point.date;
+      return '<text x="' + xAt(index).toFixed(2) + '" y="' + (height - 18) + '" text-anchor="middle" fill="#687386" font-size="11">' + escapeHtml(shortDate) + '</text>';
+    }).join('');
+
+    chart.innerHTML = '<svg viewBox="0 0 ' + width + ' ' + height + '" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">' +
+      '<defs><linearGradient id="analyticsEquityFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#2b7cff" stop-opacity="0.24"/><stop offset="100%" stop-color="#2b7cff" stop-opacity="0.02"/></linearGradient></defs>' +
+      gridLines.join('') +
+      '<line x1="' + margin.left + '" y1="' + zeroY.toFixed(2) + '" x2="' + (width - margin.right) + '" y2="' + zeroY.toFixed(2) + '" stroke="#9da7b5" stroke-width="1"/>' +
+      bars +
+      '<polygon points="' + areaPoints + '" fill="url(#analyticsEquityFill)"/>' +
+      '<polyline points="' + linePoints + '" fill="none" stroke="#2b7cff" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>' +
+      dots + dateLabels +
+      '<text x="15" y="' + (margin.top + plotHeight / 2) + '" transform="rotate(-90 15 ' + (margin.top + plotHeight / 2) + ')" text-anchor="middle" fill="#687386" font-size="11">Realized PnL</text>' +
+      '</svg>';
+  }
+
   function setDefaultAnalyticsDates() {
     const fromEl = document.getElementById('analyticsFrom');
     const toEl = document.getElementById('analyticsTo');
@@ -394,6 +502,7 @@
     const narrative = document.getElementById('analyticsAiNarrative');
     if (state) state.innerText = message || '';
     if (cards) cards.innerHTML = '';
+    renderEquityChart([]);
     renderBacktestAnalytics(null);
     if (symbolBody) symbolBody.innerHTML = '<tr><td colspan="5">No symbol data</td></tr>';
     if (dayBody) dayBody.innerHTML = '<tr><td colspan="4">No daily data</td></tr>';
@@ -442,6 +551,7 @@
     ).join('') : '<tr><td colspan="5">No symbol data</td></tr>';
 
     const byDay = Array.isArray(data && data.byDay) ? data.byDay : [];
+    renderEquityChart(byDay);
     dayBody.innerHTML = byDay.length ? byDay.map(row =>
       '<tr><td>' + escapeHtml(row.date || '-') + '</td>' +
       '<td>' + escapeHtml(String(row.closedCount || 0)) + '</td>' +
