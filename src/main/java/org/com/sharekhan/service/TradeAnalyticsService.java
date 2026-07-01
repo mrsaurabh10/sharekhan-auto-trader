@@ -337,10 +337,26 @@ public class TradeAnalyticsService {
                 .count();
         double grossProfit = wins.stream().mapToDouble(Double::doubleValue).sum();
         double grossLoss = losses.stream().mapToDouble(Double::doubleValue).sum();
+        double brokerage = 0.0d;
+        double totalTradeCost = 0.0d;
+        for (TriggeredTradeSetupEntity trade : realizedTrades) {
+            TradeCostCalculator.TradeCharges charges = TradeCostCalculator.calculateCharges(trade);
+            if (charges != null) {
+                brokerage += charges.brokerage();
+                totalTradeCost += charges.totalTradeCost();
+            } else if (trade.getTradeCost() != null) {
+                totalTradeCost += trade.getTradeCost();
+            }
+        }
+        double governmentTaxes = totalTradeCost - brokerage;
         PeakFundUse peakFundUse = peakFundUse(fundedTrades, start, end);
 
         return TradeAnalyticsResponse.Summary.builder()
                 .realizedPnl(round(realizedPnl))
+                .brokerage(round(brokerage))
+                .governmentTaxes(round(governmentTaxes))
+                .totalTradeCost(round(totalTradeCost))
+                .effectiveRealizedPnl(round(realizedPnl - totalTradeCost))
                 .totalClosedTrades(realizedTrades.size())
                 .winningTrades(wins.size())
                 .losingTrades(losses.size())
