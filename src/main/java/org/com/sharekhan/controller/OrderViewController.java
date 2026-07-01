@@ -10,6 +10,7 @@ import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.service.CurrentUserService;
 import org.com.sharekhan.service.TradeExecutionService;
+import org.com.sharekhan.service.TradeCostCalculator;
 import org.com.sharekhan.service.TradingRequestService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -39,6 +40,7 @@ public class OrderViewController {
     @Autowired private CurrentUserService currentUserService;
     @Autowired private BrokerCredentialsRepository brokerCredentialsRepository;
     @Autowired private ObjectMapper objectMapper;
+    @Autowired private TradeCostCalculator tradeCostCalculator;
 
     @GetMapping("/requests")
     public ResponseEntity<?> getRequestedOrders(@RequestParam(name = "userId", required = false) Long userId,
@@ -82,6 +84,18 @@ public class OrderViewController {
 
     private Map<String, Object> enrichExecution(TriggeredTradeSetupEntity trade, Long scopedUserId) {
         Map<String, Object> row = objectMapper.convertValue(trade, MAP_TYPE);
+        TradeCostCalculator.TradeCharges charges = tradeCostCalculator.calculate(trade);
+        if (charges != null) {
+            row.put("brokerage", charges.brokerage());
+            row.put("stt", charges.stt());
+            row.put("exchangeTransactionCharges", charges.exchangeTransactionCharges());
+            row.put("stampCharges", charges.stampCharges());
+            row.put("sebiTransactionFees", charges.sebiTransactionFees());
+            row.put("gst", charges.gst());
+            row.put("totalTradeCost", charges.totalTradeCost());
+            row.put("effectivePnl", charges.effectivePnl());
+            row.put("exercised", charges.exercised());
+        }
         addTradeScope(row, trade.getBrokerCredentialsId(), trade.getAppUserId(), scopedUserId);
         return row;
     }

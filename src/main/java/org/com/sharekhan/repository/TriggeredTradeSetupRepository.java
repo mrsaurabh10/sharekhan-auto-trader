@@ -271,12 +271,16 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     // Atomically mark trade as exited with exitPrice, exitedAt and pnl to avoid lost-update concurrency
     @Modifying
     @Transactional
-    @Query("UPDATE TriggeredTradeSetupEntity t SET t.status = :status, t.exitPrice = :exitPrice, t.exitedAt = :exitedAt , t.pnl = :pnl WHERE t.id = :id")
+    @Query("UPDATE TriggeredTradeSetupEntity t SET t.status = :status, t.exitPrice = :exitPrice, " +
+            "t.exitedAt = :exitedAt, t.pnl = :pnl, t.tradeCost = :tradeCost, " +
+            "t.effectivePnl = :effectivePnl WHERE t.id = :id")
     int markExitedWithPNL(@Param("id") Long id,
                           @Param("status") org.com.sharekhan.enums.TriggeredTradeStatus status,
                           @Param("exitPrice") Double exitPrice,
                           @Param("exitedAt") java.time.LocalDateTime exitedAt,
-                          @Param("pnl")  Double pnl    );
+                          @Param("pnl") Double pnl,
+                          @Param("tradeCost") Double tradeCost,
+                          @Param("effectivePnl") Double effectivePnl);
 
     List<TriggeredTradeSetupEntity> findBySymbolAndAppUserIdAndStatus(String symbol, Long appUserId, TriggeredTradeStatus status);
 

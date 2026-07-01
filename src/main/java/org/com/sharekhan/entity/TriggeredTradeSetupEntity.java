@@ -8,6 +8,7 @@ import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "triggered_trade_setups")
+@EntityListeners(TradeCostPersistenceListener.class)
 @Getter
 @Setter
 @Builder
@@ -94,6 +95,12 @@ public class TriggeredTradeSetupEntity {
 
     private Double exitPrice;
     private Double pnl;
+
+    @Column(name = "trade_cost")
+    private Double tradeCost;
+
+    @Column(name = "effective_pnl")
+    private Double effectivePnl;
 
     private LocalDateTime exitOrderPlacedAt;
 }
