@@ -525,7 +525,11 @@
     }
 
     const cardDefs = [
-      ['Realized PnL', formatAnalyticsNumber(summary.realizedPnl), summary.realizedPnl],
+      ['Gross Realized PnL', formatAnalyticsNumber(summary.realizedPnl), summary.realizedPnl],
+      ['Brokerage', formatAnalyticsNumber(summary.brokerage), null],
+      ['Government Taxes & Charges', formatAnalyticsNumber(summary.governmentTaxes), null],
+      ['Total Trade Cost', formatAnalyticsNumber(summary.totalTradeCost), null],
+      ['Effective Realized PnL', formatAnalyticsNumber(summary.effectiveRealizedPnl), summary.effectiveRealizedPnl],
       ['Win Rate', formatAnalyticsPercent(summary.winRate), null],
       ['Profit Factor', formatAnalyticsNumber(summary.profitFactor), null],
       ['Closed Trades', String(summary.totalClosedTrades != null ? summary.totalClosedTrades : 0), null],

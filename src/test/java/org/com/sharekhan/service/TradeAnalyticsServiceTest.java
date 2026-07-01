@@ -47,6 +47,10 @@ class TradeAnalyticsServiceTest {
         TradeAnalyticsResponse response = service.getTradeAnalytics(1L, from, to, null, null, null, null);
 
         assertThat(response.getSummary().getRealizedPnl()).isEqualTo(600.0);
+        assertThat(response.getSummary().getBrokerage()).isEqualTo(30.0);
+        assertThat(response.getSummary().getGovernmentTaxes()).isEqualTo(37.53);
+        assertThat(response.getSummary().getTotalTradeCost()).isEqualTo(67.53);
+        assertThat(response.getSummary().getEffectiveRealizedPnl()).isEqualTo(532.47);
         assertThat(response.getSummary().getTotalClosedTrades()).isEqualTo(3);
         assertThat(response.getSummary().getWinningTrades()).isEqualTo(1);
         assertThat(response.getSummary().getLosingTrades()).isEqualTo(1);
@@ -85,6 +89,10 @@ class TradeAnalyticsServiceTest {
         );
 
         assertThat(response.getSummary().getRealizedPnl()).isEqualTo(0.0);
+        assertThat(response.getSummary().getBrokerage()).isEqualTo(0.0);
+        assertThat(response.getSummary().getGovernmentTaxes()).isEqualTo(0.0);
+        assertThat(response.getSummary().getTotalTradeCost()).isEqualTo(0.0);
+        assertThat(response.getSummary().getEffectiveRealizedPnl()).isEqualTo(0.0);
         assertThat(response.getSummary().getTotalClosedTrades()).isZero();
         assertThat(response.getSummary().getWinRate()).isEqualTo(0.0);
         assertThat(response.getSummary().getLossRate()).isEqualTo(0.0);

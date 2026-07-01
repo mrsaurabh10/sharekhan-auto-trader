@@ -36,6 +36,10 @@ public class TradeAnalyticsResponse {
     @Builder
     public static class Summary {
         private Double realizedPnl;
+        private Double brokerage;
+        private Double governmentTaxes;
+        private Double totalTradeCost;
+        private Double effectiveRealizedPnl;
         private Integer totalClosedTrades;
         private Integer winningTrades;
         private Integer losingTrades;
