@@ -1066,7 +1066,7 @@
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="14">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="16">No user selected</td></tr>'; updatePaginationUI(null); return; }
 
     try {
       let url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(tradeScope) + '&page=' + currentExecPage + '&size=' + execPageSize;
@@ -1083,7 +1083,7 @@
       }
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="14">No executed trades</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="16">No executed trades</td></tr>';
         refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
         updatePaginationUI(pageInfo);
         return;
@@ -1180,6 +1180,8 @@
         const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
         const spotLtpTd = document.createElement('td'); spotLtpTd.innerText = '-'; tr.appendChild(spotLtpTd);
         const pnlTd = document.createElement('td'); pnlTd.innerText = '-'; tr.appendChild(pnlTd);
+        const tradeCostTd = document.createElement('td'); tradeCostTd.innerText = '-'; tr.appendChild(tradeCostTd);
+        const effectivePnlTd = document.createElement('td'); effectivePnlTd.innerText = '-'; tr.appendChild(effectivePnlTd);
 
         // Store data for PNL
         try { tr.setAttribute('data-entry', (pnlEntry != null && pnlEntry !== '-' ? String(pnlEntry) : '')); } catch (e) {}
@@ -1195,6 +1197,21 @@
              } else if (finalPnl != null) {
                  pnlTd.innerText = String(finalPnl);
              }
+        }
+
+        if (t.totalTradeCost != null && !isNaN(t.totalTradeCost)) {
+          tradeCostTd.innerText = Number(t.totalTradeCost).toFixed(2);
+          const sttLabel = t.exercised ? 'STT (exercised)' : 'STT (sell)';
+          tradeCostTd.title = 'Brokerage: ' + Number(t.brokerage || 0).toFixed(2) +
+            '\n' + sttLabel + ': ' + Number(t.stt || 0).toFixed(2) +
+            '\nExchange: ' + Number(t.exchangeTransactionCharges || 0).toFixed(2) +
+            '\nStamp: ' + Number(t.stampCharges || 0).toFixed(2) +
+            '\nSEBI: ' + Number(t.sebiTransactionFees || 0).toFixed(2) +
+            '\nGST: ' + Number(t.gst || 0).toFixed(2);
+        }
+        if (t.effectivePnl != null && !isNaN(t.effectivePnl)) {
+          effectivePnlTd.innerText = Number(t.effectivePnl).toFixed(2);
+          updatePnlStyle(effectivePnlTd, t.effectivePnl);
         }
 
         // Determine Keys
@@ -1240,7 +1257,7 @@
       }
       refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
       updatePaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="14">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="16">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {

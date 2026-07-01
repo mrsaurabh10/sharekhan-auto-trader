@@ -2777,11 +2777,16 @@ public class TradeExecutionService {
                             .doubleValue();
                 }
 
+                persisted.setExitPrice(exitPriceVal);
+                persisted.setPnl(pnlVal);
+                TradeCostCalculator.TradeCharges charges = TradeCostCalculator.calculateCharges(persisted);
                 int updated = triggeredTradeRepo.markExitedWithPNL(persisted.getId(),
                         TriggeredTradeStatus.EXITED_SUCCESS,
                         exitPriceVal,
                         java.time.LocalDateTime.now(),
-                        pnlVal);
+                        pnlVal,
+                        charges != null ? charges.totalTradeCost() : null,
+                        charges != null ? charges.effectivePnl() : null);
                 if (updated == 1) {
                     TradeEventLogger.logOrderExecuted("EXIT", persisted, exitPriceVal, result.getStatus());
                     try {

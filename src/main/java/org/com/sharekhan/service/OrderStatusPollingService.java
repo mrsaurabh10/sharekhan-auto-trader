@@ -289,7 +289,11 @@ public class OrderStatusPollingService {
                     try {
                         // If this was an exit order, prefer an atomic repository update to avoid lost-update concurrency
                         if (wasExitOrder && currentTrade.getExitPrice() != null) {
-                            int updated = tradeRepo.markExitedWithPNL(currentTrade.getId(), TriggeredTradeStatus.EXITED_SUCCESS, currentTrade.getExitPrice(), currentTrade.getExitedAt(), currentTrade.getPnl());
+                            TradeCostCalculator.TradeCharges charges = TradeCostCalculator.calculateCharges(currentTrade);
+                            int updated = tradeRepo.markExitedWithPNL(currentTrade.getId(), TriggeredTradeStatus.EXITED_SUCCESS,
+                                    currentTrade.getExitPrice(), currentTrade.getExitedAt(), currentTrade.getPnl(),
+                                    charges != null ? charges.totalTradeCost() : null,
+                                    charges != null ? charges.effectivePnl() : null);
                             if (updated == 1) {
                                 log.info("✅ markExited updated trade {} to EXITED_SUCCESS", currentTrade.getId());
                             } else {
