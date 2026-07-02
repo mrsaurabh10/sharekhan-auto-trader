@@ -43,6 +43,7 @@ public class BacktestReplayService {
         }
         TriggeredTradeSetupEntity trade = tradeRepository.findById(tradeSetupId)
                 .orElseThrow(() -> new IllegalArgumentException("Trade setup not found: " + tradeSetupId));
+        List<TriggeredTradeSetupEntity> actualTradeChain = actualTradeChain(trade);
 
         BacktestReplayRequest safeRequest = request != null ? request : new BacktestReplayRequest();
         boolean intradayOnly = safeRequest.getIntradayOnly() == null || Boolean.TRUE.equals(safeRequest.getIntradayOnly());
@@ -141,6 +142,7 @@ public class BacktestReplayService {
                 reEntryOnStopLoss,
                 maxReEntries,
                 safeRequest.getQuantity(),
+                actualTradeChainQuantity(actualTradeChain, trade),
                 intervalMinutes
         );
 
@@ -177,7 +179,7 @@ public class BacktestReplayService {
                 .tradeSetupId(tradeSetupId)
                 .trade(snapshot(trade))
                 .resolved(resolved)
-                .actual(actualResult(trade))
+                .actual(actualResult(trade, actualTradeChain))
                 .backtest(simulation.result())
                 .events(simulation.events())
                 .warnings(warnings)
@@ -200,13 +202,14 @@ public class BacktestReplayService {
                                 boolean reEntryOnStopLoss,
                                 int maxReEntries,
                                 BacktestReplayRequest.QuantityOverride quantityOverride,
+                                long actualTradeChainQuantity,
                                 int intervalMinutes) {
         List<BacktestReplayResponse.Event> events = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
         LocalDate tradeDate = entryAt.toLocalDate();
         ScriptMasterEntity script = trade.getScripCode() != null ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
         int lotSize = script != null && script.getLotSize() != null && script.getLotSize() > 0 ? script.getLotSize() : 1;
-        long totalQuantity = resolveQuantity(trade, lotSize, quantityOverride);
+        long totalQuantity = resolveQuantity(trade, lotSize, quantityOverride, actualTradeChainQuantity);
         int currentLots = resolveLots(trade, totalQuantity, lotSize);
         int originalLots = isActualQuantityMode(quantityOverride) && trade.getOriginalLots() != null && trade.getOriginalLots() > 0
                 ? Math.max(trade.getOriginalLots(), currentLots)
@@ -934,7 +937,8 @@ public class BacktestReplayService {
 
     private long resolveQuantity(TriggeredTradeSetupEntity trade,
                                  int lotSize,
-                                 BacktestReplayRequest.QuantityOverride override) {
+                                 BacktestReplayRequest.QuantityOverride override,
+                                 long actualTradeChainQuantity) {
         String mode = resolveQuantityMode(override);
         if ("FIXED_LOTS".equals(mode)) {
             int lots = override != null && override.getLots() != null && override.getLots() > 0 ? override.getLots() : 1;
@@ -948,6 +952,9 @@ public class BacktestReplayService {
                 throw new IllegalArgumentException("FIXED_QUANTITY requires quantity.");
             }
             return quantity;
+        }
+        if (actualTradeChainQuantity > 0L) {
+            return actualTradeChainQuantity;
         }
         if (trade.getQuantity() != null && trade.getQuantity() > 0L) {
             return trade.getQuantity();
@@ -1072,8 +1079,8 @@ public class BacktestReplayService {
                 .build();
     }
 
-    private BacktestReplayResponse.Result actualResult(TriggeredTradeSetupEntity trade) {
-        List<TriggeredTradeSetupEntity> chain = actualTradeChain(trade);
+    private BacktestReplayResponse.Result actualResult(TriggeredTradeSetupEntity trade,
+                                                       List<TriggeredTradeSetupEntity> chain) {
         Double entry = trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d
                 ? trade.getActualEntryPrice()
                 : trade.getEntryPrice();
@@ -1102,6 +1109,20 @@ public class BacktestReplayService {
                 .pnl(roundNullable(pnl))
                 .exitCount((int) chain.stream().filter(row -> row.getExitedAt() != null).count())
                 .build();
+    }
+
+    private long actualTradeChainQuantity(List<TriggeredTradeSetupEntity> chain,
+                                          TriggeredTradeSetupEntity root) {
+        long chainQuantity = chain == null ? 0L : chain.stream()
+                .map(TriggeredTradeSetupEntity::getQuantity)
+                .filter(Objects::nonNull)
+                .filter(quantity -> quantity > 0L)
+                .mapToLong(Long::longValue)
+                .sum();
+        if (chainQuantity > 0L) {
+            return chainQuantity;
+        }
+        return root.getQuantity() != null && root.getQuantity() > 0L ? root.getQuantity() : 0L;
     }
 
     private List<TriggeredTradeSetupEntity> actualTradeChain(TriggeredTradeSetupEntity root) {

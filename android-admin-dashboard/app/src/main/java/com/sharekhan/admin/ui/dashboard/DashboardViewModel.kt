@@ -9,6 +9,11 @@ import com.sharekhan.admin.data.model.PageResponse
 import com.sharekhan.admin.data.model.PlaceOrderPayload
 import com.sharekhan.admin.data.model.TradingRequest
 import com.sharekhan.admin.data.model.TriggeredTrade
+import com.sharekhan.admin.data.model.StrategyStartPayload
+import com.sharekhan.admin.data.model.StrategySubscription
+import com.sharekhan.admin.data.model.StrategyTemplate
+import com.sharekhan.admin.data.model.TradeAnalytics
+import com.sharekhan.admin.data.model.UpdateTargetsRequest
 import com.sharekhan.admin.data.repository.AdminRepository
 import com.sharekhan.admin.ui.state.UiState
 import com.sharekhan.admin.ui.state.getOrNull
@@ -26,8 +31,10 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 enum class DashboardTab {
-    ORDER, REQUESTS, EXECUTED, BROKERS
+    ORDER, REQUESTS, EXECUTED, ANALYTICS, STRATEGIES, BROKERS
 }
+
+enum class TradeScope(val apiValue: String) { OWN("own"), SIMULATOR("simulator") }
 
 data class PaginationState(
     val page: Int = 0,
@@ -78,10 +85,44 @@ data class BrokerDialogState(
     val totpSecret: String = "",
     val secretKey: String = "",
     val active: Boolean = true,
+    val tradingEnabled: Boolean = true,
+    val defaultForOrders: Boolean = false,
     val isSaving: Boolean = false
 ) {
     val isNew: Boolean get() = brokerId == null
 }
+
+data class AnalyticsFormState(
+    val from: String = "",
+    val to: String = "",
+    val symbol: String = "",
+    val sourceOptions: List<String> = emptyList(),
+    val selectedSources: Set<String> = emptySet(),
+    val intraday: Boolean = false
+)
+
+data class StrategyState(
+    val templates: List<StrategyTemplate> = emptyList(),
+    val subscriptions: List<StrategySubscription> = emptyList(),
+    val selectedTemplateId: String = "",
+    val symbol: String = "",
+    val lots: String = "1",
+    val intraday: Boolean = true,
+    val loading: Boolean = false
+)
+
+data class TradeEditDialogState(
+    val id: Long,
+    val execution: Boolean,
+    val entryPrice: String = "",
+    val stopLoss: String = "",
+    val target1: String = "",
+    val target2: String = "",
+    val target3: String = "",
+    val quantity: String = "",
+    val intraday: Boolean = false,
+    val saving: Boolean = false
+)
 
 class DashboardViewModel(
     private val repository: AdminRepository
@@ -95,6 +136,8 @@ class DashboardViewModel(
 
     private val _requestsState = MutableStateFlow<UiState<List<TradingRequest>>>(UiState.Idle)
     val requestsState: StateFlow<UiState<List<TradingRequest>>> = _requestsState.asStateFlow()
+    private val _requestPagination = MutableStateFlow(PaginationState())
+    val requestPagination: StateFlow<PaginationState> = _requestPagination.asStateFlow()
 
     private val _executedState =
         MutableStateFlow<UiState<PageResponse<TriggeredTrade>>>(UiState.Idle)
@@ -123,6 +166,19 @@ class DashboardViewModel(
 
     private val _ltpPrices = MutableStateFlow<Map<String, Double>>(emptyMap())
     val ltpPrices: StateFlow<Map<String, Double>> = _ltpPrices.asStateFlow()
+
+    private val _tradeScope = MutableStateFlow(TradeScope.OWN)
+    val tradeScope: StateFlow<TradeScope> = _tradeScope.asStateFlow()
+
+    private val _analyticsState = MutableStateFlow<UiState<TradeAnalytics>>(UiState.Idle)
+    val analyticsState: StateFlow<UiState<TradeAnalytics>> = _analyticsState.asStateFlow()
+    private val _analyticsForm = MutableStateFlow(AnalyticsFormState())
+    val analyticsForm: StateFlow<AnalyticsFormState> = _analyticsForm.asStateFlow()
+
+    private val _strategyState = MutableStateFlow(StrategyState())
+    val strategyState: StateFlow<StrategyState> = _strategyState.asStateFlow()
+    private val _tradeEditDialog = MutableStateFlow<TradeEditDialogState?>(null)
+    val tradeEditDialog: StateFlow<TradeEditDialogState?> = _tradeEditDialog.asStateFlow()
 
     private var instrumentJob: Job? = null
     private var strikeJob: Job? = null
@@ -157,14 +213,18 @@ class DashboardViewModel(
         }
     }
 
-    fun createUser(username: String, customerId: String) {
+    fun createUser(username: String, password: String, customerId: String) {
         if (username.isBlank()) {
             viewModelScope.launch { _messages.send("Username is required") }
             return
         }
+        if (password.isBlank()) {
+            viewModelScope.launch { _messages.send("Password is required") }
+            return
+        }
         val customerIdNumber = customerId.toLongOrNull()
         viewModelScope.launch {
-            runCatching { repository.createUser(username, customerIdNumber, null) }
+            runCatching { repository.createUser(username, password, customerIdNumber, null) }
                 .onSuccess {
                     _messages.send("User $username created")
                     refreshUsers()
@@ -190,19 +250,37 @@ class DashboardViewModel(
     }
 
     private fun refreshUserScopedData() {
-        refreshTradingRequests()
+        refreshTradingRequests(resetPage = true)
         refreshExecutedTrades(resetPage = true)
         refreshBrokers()
+        refreshAnalytics()
+        refreshStrategies()
     }
 
-    fun refreshTradingRequests() {
+    fun refreshTradingRequests(resetPage: Boolean = false) {
         val userId = _selectedUser.value?.id ?: return
+        val page = if (resetPage) 0 else _requestPagination.value.page
         _requestsState.value = UiState.Loading
         viewModelScope.launch {
-            runCatching { repository.fetchTradingRequests(userId) }
-                .onSuccess { requests -> _requestsState.value = UiState.Success(requests) }
+            runCatching { repository.fetchTradingRequests(userId, _tradeScope.value.apiValue, page, REQUEST_PAGE_SIZE) }
+                .onSuccess { requests ->
+                    _requestsState.value = UiState.Success(requests.content)
+                    _requestPagination.value = PaginationState(requests.number, requests.totalPages, requests.first, requests.last)
+                }
                 .onFailure { ex -> _requestsState.value = UiState.Error(ex.readableMessage()) }
         }
+    }
+
+    fun loadNextRequestPage() {
+        if (_requestPagination.value.isLast) return
+        _requestPagination.update { it.copy(page = it.page + 1) }
+        refreshTradingRequests()
+    }
+
+    fun loadPreviousRequestPage() {
+        if (_requestPagination.value.isFirst) return
+        _requestPagination.update { it.copy(page = maxOf(0, it.page - 1)) }
+        refreshTradingRequests()
     }
 
     fun refreshExecutedTrades(resetPage: Boolean = false) {
@@ -211,7 +289,7 @@ class DashboardViewModel(
         val statuses = _statusFilter.value.toList()
         _executedState.value = UiState.Loading
         viewModelScope.launch {
-            runCatching { repository.fetchExecutedTrades(userId, statuses, page, EXEC_PAGE_SIZE) }
+            runCatching { repository.fetchExecutedTrades(userId, statuses, page, EXEC_PAGE_SIZE, _tradeScope.value.apiValue) }
                 .onSuccess { response ->
                     _executedState.value = UiState.Success(response)
                     _executedPagination.value = PaginationState(
@@ -270,6 +348,102 @@ class DashboardViewModel(
         }
     }
 
+    fun updateTradeScope(scope: TradeScope) {
+        if (_tradeScope.value == scope) return
+        _tradeScope.value = scope
+        refreshTradingRequests(resetPage = true)
+        refreshExecutedTrades(resetPage = true)
+        refreshAnalytics()
+    }
+
+    fun refreshAnalytics(ai: Boolean = false) {
+        val userId = _selectedUser.value?.id ?: return
+        _analyticsState.value = UiState.Loading
+        viewModelScope.launch {
+            val form = _analyticsForm.value
+            runCatching {
+                val sources = repository.fetchAnalyticsSources(userId, _tradeScope.value.apiValue)
+                _analyticsForm.update { it.copy(sourceOptions = sources) }
+                repository.fetchAnalytics(
+                    userId, _tradeScope.value.apiValue, form.from.ifBlank { null }, form.to.ifBlank { null },
+                    form.symbol.ifBlank { null }, form.selectedSources.toList(), form.intraday, ai
+                )
+            }.onSuccess { _analyticsState.value = UiState.Success(it) }
+                .onFailure { _analyticsState.value = UiState.Error(it.readableMessage()) }
+        }
+    }
+
+    fun updateAnalyticsForm(transform: (AnalyticsFormState) -> AnalyticsFormState) {
+        _analyticsForm.update(transform)
+    }
+
+    fun toggleAnalyticsSource(source: String) {
+        _analyticsForm.update { form ->
+            val selected = form.selectedSources.toMutableSet()
+            if (!selected.add(source)) selected.remove(source)
+            form.copy(selectedSources = selected)
+        }
+    }
+
+    fun refreshStrategies() {
+        val userId = _selectedUser.value?.id ?: return
+        _strategyState.update { it.copy(loading = true) }
+        viewModelScope.launch {
+            runCatching { repository.fetchStrategyTemplates() to repository.fetchStrategySubscriptions(userId) }
+                .onSuccess { (templates, subscriptions) ->
+                    _strategyState.update {
+                        it.copy(templates = templates, subscriptions = subscriptions,
+                            selectedTemplateId = it.selectedTemplateId.ifBlank { templates.firstOrNull()?.id.orEmpty() }, loading = false)
+                    }
+                }.onFailure {
+                    _strategyState.update { state -> state.copy(loading = false) }
+                    _messages.send(it.readableMessage())
+                }
+        }
+    }
+
+    fun updateStrategyState(transform: (StrategyState) -> StrategyState) = _strategyState.update(transform)
+
+    fun startStrategy() {
+        val userId = _selectedUser.value?.id ?: return
+        val state = _strategyState.value
+        if (state.selectedTemplateId.isBlank() || state.symbol.isBlank()) {
+            viewModelScope.launch { _messages.send("Strategy and symbol are required") }
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                repository.startStrategy(StrategyStartPayload(state.selectedTemplateId, state.symbol.trim().uppercase(), state.lots.toIntOrNull()?.coerceAtLeast(1) ?: 1, state.intraday, userId, resolvePreferredBrokerId()))
+            }.onSuccess { _messages.send("Strategy #${it.id} started"); refreshStrategies() }
+                .onFailure { _messages.send(it.readableMessage()) }
+        }
+    }
+
+    fun cancelStrategy(id: Long) {
+        viewModelScope.launch {
+            runCatching { repository.cancelStrategy(id) }
+                .onSuccess { _messages.send("Strategy #$id cancelled"); refreshStrategies() }
+                .onFailure { _messages.send(it.readableMessage()) }
+        }
+    }
+
+    fun refreshScriptMaster(mStock: Boolean) {
+        viewModelScope.launch {
+            runCatching { repository.refreshScriptMaster(mStock) }
+                .onSuccess { _messages.send((it.message ?: "Refresh complete") + (it.rows?.let { rows -> " ($rows rows)" } ?: "")) }
+                .onFailure { _messages.send(it.readableMessage()) }
+        }
+    }
+
+    fun moveStopLossToCost(trade: TriggeredTrade) = tradeAction("SL moved to cost") { repository.moveStopLossToCost(trade.id) }
+    fun squareOff(trade: TriggeredTrade) = tradeAction("Square-off submitted") { repository.squareOff(trade.id) }
+    private fun tradeAction(message: String, action: suspend () -> Unit) {
+        viewModelScope.launch {
+            runCatching { action() }.onSuccess { _messages.send(message); refreshExecutedTrades() }
+                .onFailure { _messages.send(it.readableMessage()) }
+        }
+    }
+
     fun triggerRequest(request: TradingRequest, brokerId: Long?) {
         viewModelScope.launch {
             runCatching { repository.triggerRequest(request.id, brokerId) }
@@ -290,6 +464,40 @@ class DashboardViewModel(
                     refreshTradingRequests()
                 }
                 .onFailure { ex -> _messages.send(ex.readableMessage()) }
+        }
+    }
+
+    fun editRequest(request: TradingRequest) {
+        _tradeEditDialog.value = TradeEditDialogState(request.id, false, request.entryPrice.text(), request.stopLoss.text(), request.target1.text(), request.target2.text(), request.target3.text(), request.quantity?.toString().orEmpty(), request.intraday == true)
+    }
+
+    fun editExecution(trade: TriggeredTrade) {
+        _tradeEditDialog.value = TradeEditDialogState(trade.id, true, trade.entryPrice.text(), trade.stopLoss.text(), trade.target1.text(), trade.target2.text(), trade.target3.text(), trade.quantity?.toString().orEmpty(), trade.intraday == true)
+    }
+
+    fun updateTradeEditDialog(transform: (TradeEditDialogState) -> TradeEditDialogState) =
+        _tradeEditDialog.update { it?.let(transform) }
+
+    fun closeTradeEditDialog() { _tradeEditDialog.value = null }
+
+    fun saveTradeEditDialog() {
+        val state = _tradeEditDialog.value ?: return
+        val update = UpdateTargetsRequest(
+            entryPrice = state.entryPrice.toDoubleOrNull(), stopLoss = state.stopLoss.toDoubleOrNull(),
+            target1 = state.target1.toDoubleOrNull(), target2 = state.target2.toDoubleOrNull(), target3 = state.target3.toDoubleOrNull(),
+            quantity = state.quantity.toLongOrNull(), intraday = state.intraday, userId = _selectedUser.value?.id
+        )
+        _tradeEditDialog.update { it?.copy(saving = true) }
+        viewModelScope.launch {
+            runCatching { if (state.execution) repository.updateExecution(state.id, update) else repository.updateRequest(state.id, update) }
+                .onSuccess {
+                    _tradeEditDialog.value = null
+                    _messages.send(if (state.execution) "Trade updated" else "Request updated")
+                    if (state.execution) refreshExecutedTrades() else refreshTradingRequests()
+                }.onFailure { ex ->
+                    _tradeEditDialog.update { it?.copy(saving = false) }
+                    _messages.send(ex.readableMessage())
+                }
         }
     }
 
@@ -545,7 +753,9 @@ class DashboardViewModel(
             brokerId = summary.id,
             brokerName = summary.brokerName.orEmpty(),
             customerId = summary.customerId?.toString() ?: "",
-            active = summary.active
+            active = summary.active,
+            tradingEnabled = summary.tradingEnabled,
+            defaultForOrders = summary.defaultForOrders
         )
         viewModelScope.launch {
             runCatching { repository.fetchBrokerDetails(summary.id) }
@@ -560,7 +770,9 @@ class DashboardViewModel(
                         clientCode = details.clientCode.orEmpty(),
                         totpSecret = details.totpSecret.orEmpty(),
                         secretKey = details.secretKey.orEmpty(),
-                        active = details.active
+                        active = details.active,
+                        tradingEnabled = details.tradingEnabled,
+                        defaultForOrders = details.defaultForOrders
                     )
                 }
                 .onFailure { ex ->
@@ -595,6 +807,8 @@ class DashboardViewModel(
             if (dialog.totpSecret.isNotBlank()) put("totpSecret", dialog.totpSecret)
             if (dialog.secretKey.isNotBlank()) put("secretKey", dialog.secretKey)
             put("active", dialog.active)
+            put("tradingEnabled", dialog.tradingEnabled)
+            put("defaultForOrders", dialog.defaultForOrders)
         }
         _brokerDialog.update { it?.copy(isSaving = true) }
         viewModelScope.launch {
@@ -640,6 +854,7 @@ class DashboardViewModel(
             "EXITED_SUCCESS"
         )
         private const val EXEC_PAGE_SIZE = 10
+        private const val REQUEST_PAGE_SIZE = 10
         private val strikeFormatter = DecimalFormat("#.##")
         val SUPPORTED_EXCHANGES = listOf("NF", "BF", "MX", "NC", "BC")
 
@@ -695,6 +910,7 @@ private fun requiresOptionFlow(exchange: String): Boolean {
 }
 
 private fun String.normalizeKey(): String = trim().uppercase()
+private fun Double?.text(): String = this?.toString().orEmpty()
 
 private fun buildQualifiedKey(exchange: String?, symbol: String?): String? {
     if (exchange.isNullOrBlank() || symbol.isNullOrBlank()) return null

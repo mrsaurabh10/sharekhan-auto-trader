@@ -9,6 +9,11 @@ import com.sharekhan.admin.data.model.PlaceOrderPayload
 import com.sharekhan.admin.data.model.TradingRequest
 import com.sharekhan.admin.data.model.TriggeredTrade
 import com.sharekhan.admin.data.model.UpdateTargetsRequest
+import com.sharekhan.admin.data.model.RefreshResult
+import com.sharekhan.admin.data.model.StrategyStartPayload
+import com.sharekhan.admin.data.model.StrategySubscription
+import com.sharekhan.admin.data.model.StrategyTemplate
+import com.sharekhan.admin.data.model.TradeAnalytics
 import com.sharekhan.admin.data.preferences.AdminPreferences
 import com.sharekhan.admin.data.remote.AdminApiClient
 import com.sharekhan.admin.data.remote.AdminHttpException
@@ -70,11 +75,11 @@ class AdminRepository(
 
     suspend fun fetchUsers(): List<AppUser> = withClient { it.fetchUsers() }
 
-    suspend fun createUser(username: String, customerId: Long?, notes: String?): AppUser =
-        withClient { it.createUser(username, customerId, notes) }
+    suspend fun createUser(username: String, password: String, customerId: Long?, notes: String?): AppUser =
+        withClient { it.createUser(username, password, customerId, notes) }
 
-    suspend fun fetchTradingRequests(userId: Long?): List<TradingRequest> =
-        withClient { it.fetchTradingRequests(userId) }
+    suspend fun fetchTradingRequests(userId: Long?, scope: String, page: Int, size: Int): PageResponse<TradingRequest> =
+        withClient { it.fetchTradingRequests(userId, scope, page, size) }
 
     suspend fun triggerRequest(requestId: Long, brokerCredentialsId: Long?): String =
         withClient { it.triggerRequest(requestId, brokerCredentialsId) }
@@ -89,12 +94,28 @@ class AdminRepository(
         userId: Long?,
         statuses: List<String>,
         page: Int,
-        size: Int
+        size: Int,
+        scope: String
     ): PageResponse<TriggeredTrade> =
-        withClient { it.fetchExecutedTrades(userId, statuses, page, size) }
+        withClient { it.fetchExecutedTrades(userId, statuses, page, size, scope) }
 
     suspend fun updateExecution(executionId: Long, update: UpdateTargetsRequest): TriggeredTrade =
         withClient { it.updateExecution(executionId, update) }
+
+    suspend fun moveStopLossToCost(tradeId: Long) = withClient { it.moveStopLossToCost(tradeId) }
+    suspend fun squareOff(tradeId: Long) = withClient { it.squareOff(tradeId) }
+    suspend fun modifyExitOrder(tradeId: Long, price: Double?, orderStatus: String?) =
+        withClient { it.modifyExitOrder(tradeId, price, orderStatus) }
+
+    suspend fun fetchAnalyticsSources(userId: Long, scope: String): List<String> =
+        withClient { it.fetchAnalyticsSources(userId, scope) }
+    suspend fun fetchAnalytics(userId: Long, scope: String, from: String?, to: String?, symbol: String?, sources: List<String>, intraday: Boolean, ai: Boolean): TradeAnalytics =
+        withClient { it.fetchAnalytics(userId, scope, from, to, symbol, sources, intraday, ai) }
+    suspend fun fetchStrategyTemplates(): List<StrategyTemplate> = withClient { it.fetchStrategyTemplates() }
+    suspend fun fetchStrategySubscriptions(userId: Long): List<StrategySubscription> = withClient { it.fetchStrategySubscriptions(userId) }
+    suspend fun startStrategy(payload: StrategyStartPayload): StrategySubscription = withClient { it.startStrategy(payload) }
+    suspend fun cancelStrategy(id: Long) = withClient { it.cancelStrategy(id) }
+    suspend fun refreshScriptMaster(mStock: Boolean): RefreshResult = withClient { it.refreshScriptMaster(mStock) }
 
     suspend fun fetchBrokers(userId: Long): List<BrokerSummary> =
         withClient { it.fetchBrokers(userId) }
