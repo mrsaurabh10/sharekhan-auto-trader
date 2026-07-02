@@ -582,7 +582,7 @@ class BacktestReplayServiceTest {
     }
 
     @Test
-    void actualPnlSumsAllRowsInTradeChainWhileReplayStartsFromRoot() {
+    void actualReplayReconstructsOriginalQuantityFromAllRowsInTradeChain() {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
@@ -631,9 +631,16 @@ class BacktestReplayServiceTest {
         BacktestReplayResponse response = service.replayTrade(20L, new BacktestReplayRequest());
 
         assertThat(response.getActual().getPnl()).isEqualTo(675.0);
+        assertThat(response.getActual().getQuantity()).isEqualTo(225L);
         assertThat(response.getActual().getExitCount()).isEqualTo(2);
         assertThat(response.getActual().getExitReason()).isEqualTo("STOP_LOSS_HIT");
-        assertThat(response.getBacktest().getPnl()).isNotNull();
+        assertThat(response.getResolved().getQuantityMode()).isEqualTo("ACTUAL");
+        assertThat(response.getResolved().getQuantity()).isEqualTo(225L);
+        assertThat(response.getResolved().getLots()).isEqualTo(3);
+        assertThat(response.getBacktest().getQuantity()).isEqualTo(225L);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(675.0);
+        assertThat(response.getEvents()).extracting(BacktestReplayResponse.Event::getReason)
+                .containsExactly("ORIGINAL_ENTRY", "TARGET_HIT_PARTIAL", "LIVE_COMPAT_TSL", "TRAILING_SL_HIT");
     }
 
     private TriggeredTradeSetupEntity baseTrade() {

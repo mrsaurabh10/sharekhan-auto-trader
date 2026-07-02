@@ -3,10 +3,15 @@ package com.sharekhan.admin.data.remote
 import com.sharekhan.admin.data.model.AppUser
 import com.sharekhan.admin.data.model.BrokerDetails
 import com.sharekhan.admin.data.model.BrokerSummary
+import com.sharekhan.admin.data.model.RefreshResult
 import com.sharekhan.admin.data.model.PageResponse
 import com.sharekhan.admin.data.model.PlaceOrderPayload
 import com.sharekhan.admin.data.model.TradingRequest
 import com.sharekhan.admin.data.model.TriggeredTrade
+import com.sharekhan.admin.data.model.StrategyStartPayload
+import com.sharekhan.admin.data.model.StrategySubscription
+import com.sharekhan.admin.data.model.StrategyTemplate
+import com.sharekhan.admin.data.model.TradeAnalytics
 import com.sharekhan.admin.data.model.UpdateTargetsRequest
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -82,18 +87,24 @@ class AdminApiClient(
             }
 
             val request = Request.Builder()
-                .url(buildUrl("admin/login"))
+                .url(buildUrl("login"))
                 .post(formBuilder.build())
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Content-Type", "application/x-www-form-urlencoded")
-                .header("Referer", buildUrl("admin/login").toString())
+                .header("Referer", buildUrl("login").toString())
                 .build()
 
             client.newCall(request).execute().use { response ->
-                // Let Spring redirect; errors will fall through
-                if (response.code == 401 || response.code == 403) {
+                val finalUrl = response.request.url
+                val returnedToLogin = finalUrl.encodedPath == buildUrl("login").encodedPath
+                if (!response.isSuccessful || returnedToLogin) {
                     val body = response.body?.string().orEmpty()
-                    throw AdminHttpException(response.code, "Login failed", body)
+                    val message = if (finalUrl.queryParameter("error") != null) {
+                        "Invalid username or password"
+                    } else {
+                        "Login failed (HTTP ${response.code}, final URL $finalUrl)"
+                    }
+                    throw AdminHttpException(if (returnedToLogin) 401 else response.code, message, body)
                 }
             }
 
@@ -103,7 +114,7 @@ class AdminApiClient(
 
             val ok = dashboardPing()
             if (!ok) {
-                throw IOException("Login failed: dashboard ping unsuccessful")
+                throw IOException("Login succeeded but admin dashboard access could not be verified")
             }
 
             csrfToken = null // Force reload for authenticated calls
@@ -113,7 +124,7 @@ class AdminApiClient(
     suspend fun logout() {
         runCatching {
             request(
-                path = "admin/logout",
+                path = "logout",
                 method = HttpMethod.GET,
                 requireJson = false,
                 enforceSuccess = false
@@ -133,9 +144,10 @@ class AdminApiClient(
         return array?.toAppUsers() ?: emptyList()
     }
 
-    suspend fun createUser(username: String, customerId: Long?, notes: String?): AppUser {
+    suspend fun createUser(username: String, password: String, customerId: Long?, notes: String?): AppUser {
         val payload = buildJsonObject {
             put("username", username)
+            put("password", password)
             customerId?.let { put("customerId", it) }
             notes?.takeIf { it.isNotBlank() }?.let { put("notes", it) }
         }
@@ -147,14 +159,15 @@ class AdminApiClient(
         return json.decodeFromJsonElement(AppUser.serializer(), element)
     }
 
-    suspend fun fetchTradingRequests(userId: Long?): List<TradingRequest> {
+    suspend fun fetchTradingRequests(userId: Long?, scope: String, page: Int, size: Int): PageResponse<TradingRequest> {
         val element = requestJson(
             path = "api/orders/requests",
-            query = mapOf("userId" to userId?.toString())
+            query = mapOf(
+                "userId" to userId?.toString(), "scope" to scope,
+                "page" to page.toString(), "size" to size.toString()
+            )
         )
-        return element.jsonArrayOrEmpty().map {
-            json.decodeFromJsonElement(TradingRequest.serializer(), it)
-        }
+        return json.decodeFromJsonElement(PageResponse.serializer(TradingRequest.serializer()), element)
     }
 
     suspend fun triggerRequest(
@@ -202,7 +215,8 @@ class AdminApiClient(
         userId: Long?,
         statuses: List<String>,
         page: Int,
-        size: Int
+        size: Int,
+        scope: String
     ): PageResponse<TriggeredTrade> {
         val query = mutableMapOf<String, String>()
         userId?.let { query["userId"] = it.toString() }
@@ -215,6 +229,7 @@ class AdminApiClient(
         }
         query["page"] = page.toString()
         query["size"] = size.toString()
+        query["scope"] = scope
         val element = requestJson(
             path = "api/orders/executed",
             query = query
@@ -233,6 +248,63 @@ class AdminApiClient(
             body = json.encodeToJsonElement(UpdateTargetsRequest.serializer(), update)
         )
         return json.decodeFromJsonElement(TriggeredTrade.serializer(), element)
+    }
+
+    suspend fun moveStopLossToCost(tradeId: Long) = action("api/trades/move-sl-to-cost/$tradeId")
+
+    suspend fun squareOff(tradeId: Long) = action("api/trades/square-off/$tradeId")
+
+    suspend fun modifyExitOrder(tradeId: Long, price: Double?, orderStatus: String?) {
+        val payload = buildJsonObject {
+            price?.let { put("price", it) }
+            orderStatus?.let { put("orderStatus", it) }
+        }
+        requestJson("api/trades/exit-order/$tradeId/modify", HttpMethod.POST, body = payload, requireJson = false)
+    }
+
+    suspend fun fetchAnalyticsSources(userId: Long, scope: String): List<String> =
+        requestJson("api/analytics/sources", query = mapOf("userId" to userId.toString(), "scope" to scope))
+            .jsonArrayOrEmpty().mapNotNull { it.jsonPrimitiveOrNull()?.content }
+
+    suspend fun fetchAnalytics(
+        userId: Long, scope: String, from: String?, to: String?, symbol: String?,
+        sources: List<String>, intraday: Boolean, ai: Boolean
+    ): TradeAnalytics {
+        val element = requestJson(
+            "api/analytics/trades",
+            query = mapOf(
+                "userId" to userId.toString(), "scope" to scope, "from" to from,
+                "to" to to, "symbol" to symbol, "source" to sources.joinToString(",").ifBlank { null },
+                "intraday" to intraday.toString(), "ai" to ai.toString()
+            )
+        )
+        return json.decodeFromJsonElement(TradeAnalytics.serializer(), element)
+    }
+
+    suspend fun fetchStrategyTemplates(): List<StrategyTemplate> =
+        requestJson("api/strategies/templates").jsonArrayOrEmpty().map {
+            json.decodeFromJsonElement(StrategyTemplate.serializer(), it)
+        }
+
+    suspend fun fetchStrategySubscriptions(userId: Long): List<StrategySubscription> =
+        requestJson("api/strategies/subscriptions", query = mapOf("userId" to userId.toString()))
+            .jsonArrayOrEmpty().map { json.decodeFromJsonElement(StrategySubscription.serializer(), it) }
+
+    suspend fun startStrategy(payload: StrategyStartPayload): StrategySubscription =
+        json.decodeFromJsonElement(
+            StrategySubscription.serializer(),
+            requestJson("api/strategies/start", HttpMethod.POST, body = json.encodeToJsonElement(StrategyStartPayload.serializer(), payload))
+        )
+
+    suspend fun cancelStrategy(id: Long) = action("api/strategies/subscriptions/$id/cancel")
+
+    suspend fun refreshScriptMaster(mStock: Boolean): RefreshResult {
+        val path = if (mStock) "api/mstock/instruments/refresh" else "api/scripts/refresh"
+        return json.decodeFromJsonElement(RefreshResult.serializer(), requestJson(path, HttpMethod.POST))
+    }
+
+    private suspend fun action(path: String) {
+        requestJson(path, HttpMethod.POST, requireJson = false)
     }
 
     suspend fun fetchBrokers(userId: Long): List<BrokerSummary> {
@@ -402,7 +474,7 @@ class AdminApiClient(
 
     private suspend fun fetchLoginCsrf(): CsrfToken? {
         val request = Request.Builder()
-            .url(buildUrl("admin/login"))
+            .url(buildUrl("login"))
             .get()
             .header("Accept", "text/html")
             .build()

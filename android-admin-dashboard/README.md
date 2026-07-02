@@ -7,7 +7,7 @@ This module provides a native Android client for the existing ShareKhan admin da
 - Kotlin + Jetpack Compose UI with Material 3.
 - OkHttp networking client with full session + CSRF management (mirrors the browser flow).
 - Modular architecture (Repository + ViewModel + Compose UI).
-- Supports triggering requests, cancelling, prefilling new orders, recording manual executions, and managing brokers.
+- Supports scoped live/simulator trades, analytics and backtest comparisons, strategies, trade actions, manual executions, and broker management.
 - Base URL, username, and session information persist locally via Jetpack DataStore.
 
 ## Project layout
@@ -44,10 +44,12 @@ android-admin-dashboard/
 4. Launch the app on an emulator or device:
    - On first launch, the login screen pre-fills the last used base URL/username (defaults to `http://10.0.2.2:8080` and `admin`).
    - Enter credentials and tap **Sign In** to establish a session. The app verifies the login by calling `/admin/dashboard-ping`.
-5. After login you will land on the native dashboard with four tabs:
+5. After login you will land on the native dashboard with six tabs:
    - **Place Order** – Compose version of the order entry form with dynamic instrument/strike/expiry lookups.
    - **Requests** – Pending trading requests with actions to trigger, cancel, or prefill the order form.
-   - **Executed** – Paginated executed trades list with status filters.
+   - **Executed** – Paginated trades with status filters, costs/effective P&L, editing, SL-to-cost, and square-off actions.
+   - **Analytics** – Date/source/symbol filters, cost-aware P&L, daily equity data, backtest comparison, and Gemini analysis.
+   - **Strategies** – Start, monitor, refresh, and cancel strategy subscriptions.
    - **Brokers** – Broker credential management (add/edit/delete) per app user.
 
 ## Feature notes & parity with the web UI
@@ -58,16 +60,16 @@ android-admin-dashboard/
 | Load / create app users                          | ✓              | Add user card in the left panel. |
 | Trading request list + trigger/cancel/prefill    | ✓              | Prefill copies fields into the Place Order form. |
 | Executed trades list with filters + pagination   | ✓              | Uses the same `/api/orders/executed` endpoint. |
+| Own/simulator trade scope                        | ✓              | Scope is shared by requests, executed trades, and analytics. |
+| Analytics, costs, equity data, Gemini            | ✓              | Includes symbol/day breakdowns and effective realized P&L. |
+| 1m/5m/re-entry backtest comparison               | ✓              | Rendered from the analytics response. |
+| Strategy subscriptions                           | ✓              | Start, list, refresh, and cancel. |
+| Script-master refresh                            | ✓              | Supports both mStock and Sharekhan refresh actions. |
+| Trade edit, SL-to-cost, and square-off            | ✓              | Available directly from request/trade cards. |
 | Broker list / add / edit / delete                | ✓              | Full CRUD with encrypted fields handled server-side. |
 | Place order form (options + spot toggles)        | ✓              | Dynamic instrument/strike/expiry fetching; resolves active broker automatically. |
-| Real-time LTP WebSocket                          | ✗ (todo)       | The current release relies on periodic refresh; WebSocket streaming can be added later. |
-| Request/execution inline editing dialogs         | Partial        | Prefill + trigger supported; inline edit dialogs will be added in a follow-up. |
-
-### Known limitations / TODOs
-
-- WebSocket streaming for live LTP updates is not yet implemented (planned as a future enhancement).
-- Advanced editing dialogs for requests/executions are scoped for a subsequent iteration.
-- The project currently expects Android Studio to generate the Gradle Wrapper; if you need CLI-only support, run `gradle wrapper` yourself from within the module.
+| Real-time LTP WebSocket                          | ✓              | Session-aware WebSocket updates request and executed-trade cards. |
+| Request/execution editing dialogs                | ✓              | Updates entry, stop, targets, quantity, and intraday flag. |
 
 ## Useful configuration
 
@@ -83,4 +85,3 @@ android-admin-dashboard/
 ## License / attribution
 
 This module follows the same license as the parent repository. Review the repository’s primary LICENSE file for details.
-
