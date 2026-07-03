@@ -20,6 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -409,7 +410,7 @@ class BacktestReplayServiceTest {
     }
 
     @Test
-    void usesMStockHistoricalCandlesBeforeSharekhan() {
+    void resolvesMStockOptionCandlesByTradeIdentityInsteadOfReusableScripCode() {
         TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
         SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
@@ -417,13 +418,27 @@ class BacktestReplayServiceTest {
         BacktestReplayService service = new BacktestReplayService(tradeRepository, historicalService, scriptMasterRepository, mStockHistoricalService);
 
         TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setScripCode(75372);
+        trade.setSymbol("BANKBARODA");
+        trade.setStrikePrice(275.0);
+        trade.setOptionType("PE");
+        trade.setExpiry("28/07/2026");
         trade.setQuantity(75L);
         trade.setLots(1);
         trade.setStopLoss(95.0);
         trade.setTarget1(110.0);
         when(tradeRepository.findById(10L)).thenReturn(Optional.of(trade));
-        when(scriptMasterRepository.findByScripCode(1001)).thenReturn(script(75));
-        when(mStockHistoricalService.getHistoricalCandles(eq(1001), any(), any(), any(), any(), any(), eq("1minute"), any(), any()))
+        when(scriptMasterRepository.findByScripCode(75372)).thenReturn(script(75));
+        when(mStockHistoricalService.getHistoricalCandles(
+                eq((Integer) null),
+                eq("NF"),
+                eq("BANKBARODA"),
+                eq(275.0),
+                eq("PE"),
+                eq("28/07/2026"),
+                eq("1minute"),
+                any(),
+                any()))
                 .thenReturn(MStockHistoricalService.HistoricalResponse.builder()
                         .status("success")
                         .count(2)
@@ -441,6 +456,74 @@ class BacktestReplayServiceTest {
         assertThat(response.getBacktest().getExitReason()).isEqualTo("TARGET_HIT");
         assertThat(response.getBacktest().getExitPrice()).isEqualTo(111.0);
         assertThat(response.getBacktest().getPnl()).isEqualTo(825.0);
+        verify(mStockHistoricalService).getHistoricalCandles(
+                eq((Integer) null),
+                eq("NF"),
+                eq("BANKBARODA"),
+                eq(275.0),
+                eq("PE"),
+                eq("28/07/2026"),
+                eq("1minute"),
+                any(),
+                any());
+        verifyNoInteractions(historicalService);
+    }
+
+    @Test
+    void usesCorrectHistoricalEntryWhenStoredFillIsOutsideResolvedContractCandle() {
+        TriggeredTradeSetupRepository tradeRepository = mock(TriggeredTradeSetupRepository.class);
+        SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        MStockHistoricalService mStockHistoricalService = mock(MStockHistoricalService.class);
+        BacktestReplayService service = new BacktestReplayService(
+                tradeRepository, historicalService, scriptMasterRepository, mStockHistoricalService);
+
+        TriggeredTradeSetupEntity trade = baseTrade();
+        trade.setId(15L);
+        trade.setScripCode(81520);
+        trade.setSymbol("CANBK");
+        trade.setStrikePrice(130.0);
+        trade.setOptionType("PE");
+        trade.setExpiry("28/07/2026");
+        trade.setEntryAt(LocalDateTime.of(2026, 6, 24, 9, 39, 15));
+        trade.setTriggeredAt(trade.getEntryAt());
+        trade.setActualEntryPrice(2.60);
+        trade.setQuantity(6750L);
+        trade.setLots(1);
+        trade.setStopLoss(4.40);
+        trade.setTarget1(4.80);
+
+        when(tradeRepository.findById(15L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(81520)).thenReturn(script(6750));
+        when(mStockHistoricalService.getHistoricalCandles(
+                eq((Integer) null),
+                eq("NF"),
+                eq("CANBK"),
+                eq(130.0),
+                eq("PE"),
+                eq("28/07/2026"),
+                eq("1minute"),
+                any(),
+                any()))
+                .thenReturn(MStockHistoricalService.HistoricalResponse.builder()
+                        .status("success")
+                        .count(2)
+                        .candles(List.of(
+                                mstockCandle("2026-06-24", "09:39", 4.66, 4.66, 4.66, 4.66),
+                                mstockCandle("2026-06-24", "09:49", 4.85, 4.85, 4.85, 4.85)
+                        ))
+                        .build());
+
+        BacktestReplayRequest request = new BacktestReplayRequest();
+        request.setInterval("1minute");
+        request.setTriggerPricePolicy("CLOSE");
+
+        BacktestReplayResponse response = service.replayTrade(15L, request);
+
+        assertThat(response.getResolved().getEntryPriceForPnl()).isEqualTo(4.66);
+        assertThat(response.getBacktest().getEntryPrice()).isEqualTo(4.66);
+        assertThat(response.getBacktest().getExitPrice()).isEqualTo(4.85);
+        assertThat(response.getBacktest().getPnl()).isEqualTo(1282.5);
         verifyNoInteractions(historicalService);
     }
 

@@ -21,6 +21,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -67,7 +68,7 @@ public class BacktestReplayService {
         LocalDate historyFrom = tradeDate.minusDays(15);
         LocalDate historyTo = tradeDate;
 
-        List<Candle> optionHistory = loadCandles(trade.getScripCode(), interval, historyFrom, historyTo);
+        List<Candle> optionHistory = loadOptionCandles(trade, interval, historyFrom, historyTo);
         if (optionHistory.isEmpty()) {
             throw new IllegalArgumentException("No historical option candles found for scripCode " + trade.getScripCode());
         }
@@ -76,7 +77,7 @@ public class BacktestReplayService {
                 ? loadCandles(trade.getSpotScripCode(), interval, historyFrom, historyTo)
                 : List.of();
 
-        Double optionEntryPrice = resolveOptionEntryPrice(trade, optionHistory, entryAt);
+        Double optionEntryPrice = resolveOptionEntryPrice(trade, optionHistory, entryAt, intervalMinutes);
         if (optionEntryPrice == null || optionEntryPrice <= 0d) {
             throw new IllegalArgumentException("Unable to resolve option entry price for PnL. Trade actualEntryPrice is missing and no entry candle was found.");
         }
@@ -816,11 +817,44 @@ public class BacktestReplayService {
         if (scripCode == null) {
             return List.of();
         }
-        List<Candle> mStockCandles = loadMStockCandles(scripCode, interval, from, to);
+        List<Candle> mStockCandles = loadMStockCandles(
+                scripCode, null, null, null, null, null, interval, from, to);
         if (!mStockCandles.isEmpty()) {
             return mStockCandles;
         }
         return loadSharekhanCandles(scripCode, interval, from, to);
+    }
+
+    private List<Candle> loadOptionCandles(TriggeredTradeSetupEntity trade,
+                                           String interval,
+                                           LocalDate from,
+                                           LocalDate to) {
+        if (trade == null || trade.getScripCode() == null) {
+            return List.of();
+        }
+
+        boolean hasInstrumentIdentity = StringUtils.hasText(trade.getExchange())
+                && StringUtils.hasText(trade.getSymbol())
+                && trade.getStrikePrice() != null
+                && StringUtils.hasText(trade.getOptionType())
+                && StringUtils.hasText(trade.getExpiry());
+        List<Candle> mStockCandles = hasInstrumentIdentity
+                ? loadMStockCandles(
+                        null,
+                        trade.getExchange(),
+                        trade.getSymbol(),
+                        trade.getStrikePrice(),
+                        trade.getOptionType(),
+                        trade.getExpiry(),
+                        interval,
+                        from,
+                        to)
+                : loadMStockCandles(
+                        trade.getScripCode(), null, null, null, null, null, interval, from, to);
+        if (!mStockCandles.isEmpty()) {
+            return mStockCandles;
+        }
+        return loadSharekhanCandles(trade.getScripCode(), interval, from, to);
     }
 
     private List<Candle> loadSharekhanCandles(Integer scripCode, String interval, LocalDate from, LocalDate to) {
@@ -833,15 +867,23 @@ public class BacktestReplayService {
                 .toList();
     }
 
-    private List<Candle> loadMStockCandles(Integer scripCode, String interval, LocalDate from, LocalDate to) {
+    private List<Candle> loadMStockCandles(Integer scripCode,
+                                           String exchange,
+                                           String instrument,
+                                           Double strikePrice,
+                                           String optionType,
+                                           String expiry,
+                                           String interval,
+                                           LocalDate from,
+                                           LocalDate to) {
         try {
             MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandles(
                     scripCode,
-                    null,
-                    null,
-                    null,
-                    null,
-                    null,
+                    exchange,
+                    instrument,
+                    strikePrice,
+                    optionType,
+                    expiry,
                     interval,
                     from.toString(),
                     to.toString());
@@ -862,8 +904,8 @@ public class BacktestReplayService {
                         scripCode, interval, from, to, ex.getMessage());
                 return List.of();
             }
-            log.warn("MStock historical primary load failed for scripCode={} interval={} from={} to={}: {}",
-                    scripCode, interval, from, to, ex.getMessage());
+            log.warn("MStock historical primary load failed for scripCode={} instrument={} strike={} optionType={} expiry={} interval={} from={} to={}: {}",
+                    scripCode, instrument, strikePrice, optionType, expiry, interval, from, to, ex.getMessage());
             log.debug("MStock historical primary load error", ex);
             return List.of();
         }
@@ -879,14 +921,64 @@ public class BacktestReplayService {
         throw new IllegalArgumentException("Trade setup has neither entryAt nor triggeredAt.");
     }
 
-    private Double resolveOptionEntryPrice(TriggeredTradeSetupEntity trade, List<Candle> optionHistory, LocalDateTime entryAt) {
-        if (trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d) {
-            return trade.getActualEntryPrice();
+    private Double resolveOptionEntryPrice(TriggeredTradeSetupEntity trade,
+                                           List<Candle> optionHistory,
+                                           LocalDateTime entryAt,
+                                           int intervalMinutes) {
+        Optional<Candle> entryCandle = candleContaining(optionHistory, entryAt, intervalMinutes);
+        if (entryCandle.isEmpty()) {
+            log.warn("No historical option candle covers entry time {} for trade {} scripCode={} symbol={} strike={} optionType={} expiry={}",
+                    entryAt, trade.getId(), trade.getScripCode(), trade.getSymbol(), trade.getStrikePrice(),
+                    trade.getOptionType(), trade.getExpiry());
+            return null;
         }
-        if (!usesSpotForEntry(trade) && trade.getEntryPrice() != null && trade.getEntryPrice() > 0d) {
-            return trade.getEntryPrice();
+
+        Candle candle = entryCandle.get();
+        Double recordedEntry = trade.getActualEntryPrice() != null && trade.getActualEntryPrice() > 0d
+                ? trade.getActualEntryPrice()
+                : (!usesSpotForEntry(trade) && trade.getEntryPrice() != null && trade.getEntryPrice() > 0d
+                        ? trade.getEntryPrice()
+                        : null);
+        if (recordedEntry != null && priceWithinCandle(recordedEntry, candle)) {
+            return recordedEntry;
         }
-        return firstCandleAtOrAfter(optionHistory, entryAt).map(Candle::open).orElse(null);
+
+        double historicalEntry = candle.close();
+        if (!Double.isFinite(historicalEntry) || historicalEntry <= 0d) {
+            historicalEntry = candle.open();
+        }
+        if (!Double.isFinite(historicalEntry) || historicalEntry <= 0d) {
+            return null;
+        }
+        if (recordedEntry != null) {
+            log.warn("Recorded option entry {} is outside historical entry candle [{}, {}] for trade {}; using candle close {}.",
+                    recordedEntry, candle.low(), candle.high(), trade.getId(), historicalEntry);
+        }
+        return round(historicalEntry);
+    }
+
+    private Optional<Candle> candleContaining(List<Candle> candles,
+                                              LocalDateTime at,
+                                              int intervalMinutes) {
+        if (candles == null || candles.isEmpty() || at == null) {
+            return Optional.empty();
+        }
+        int minutes = Math.max(1, intervalMinutes);
+        LocalDateTime minute = at.withSecond(0).withNano(0);
+        LocalDateTime bucketStart = minute.minusMinutes(minute.getMinute() % minutes);
+        LocalDateTime bucketEnd = bucketStart.plusMinutes(minutes);
+        return candles.stream()
+                .filter(Objects::nonNull)
+                .filter(candle -> !candle.dateTime().isBefore(bucketStart) && candle.dateTime().isBefore(bucketEnd))
+                .min(Comparator.comparingLong(candle -> Math.abs(Duration.between(at, candle.dateTime()).getSeconds())));
+    }
+
+    private boolean priceWithinCandle(double price, Candle candle) {
+        double epsilon = 0.01d;
+        return Double.isFinite(price)
+                && price > 0d
+                && price + epsilon >= candle.low()
+                && price - epsilon <= candle.high();
     }
 
     private Double resolveSpotEntryPrice(TriggeredTradeSetupEntity trade, List<Candle> spotHistory, LocalDateTime entryAt) {
@@ -896,7 +988,7 @@ public class BacktestReplayService {
         return firstCandleAtOrAfter(spotHistory, entryAt).map(Candle::open).orElse(null);
     }
 
-    private java.util.Optional<Candle> firstCandleAtOrAfter(List<Candle> candles, LocalDateTime at) {
+    private Optional<Candle> firstCandleAtOrAfter(List<Candle> candles, LocalDateTime at) {
         return candles.stream()
                 .filter(c -> !c.dateTime().isBefore(at))
                 .findFirst();
