@@ -505,14 +505,15 @@ public class BacktestReplayService {
         if (reference == null) {
             return false;
         }
-        boolean peSpot = stopLoss.source() == PriceSource.SPOT && "PE".equalsIgnoreCase(trade.getOptionType());
+        boolean closeOnly = "CLOSE".equals(triggerPricePolicy);
         if (stopLoss.source() == PriceSource.SPOT) {
-            return peSpot ? reference.close() >= stopLoss.price() : reference.close() <= stopLoss.price();
+            boolean putOption = "PE".equalsIgnoreCase(trade.getOptionType());
+            if (closeOnly) {
+                return putOption ? reference.close() >= stopLoss.price() : reference.close() <= stopLoss.price();
+            }
+            return putOption ? reference.high() >= stopLoss.price() : reference.low() <= stopLoss.price();
         }
-        if ("CLOSE".equals(triggerPricePolicy)) {
-            return peSpot ? reference.close() >= stopLoss.price() : reference.close() <= stopLoss.price();
-        }
-        return peSpot ? reference.high() >= stopLoss.price() : reference.low() <= stopLoss.price();
+        return closeOnly ? reference.close() <= stopLoss.price() : reference.low() <= stopLoss.price();
     }
 
     private boolean isTargetHit(TriggeredTradeSetupEntity trade,
@@ -527,14 +528,15 @@ public class BacktestReplayService {
         if (reference == null) {
             return false;
         }
-        boolean peSpot = target.source() == PriceSource.SPOT && "PE".equalsIgnoreCase(trade.getOptionType());
+        boolean closeOnly = "CLOSE".equals(triggerPricePolicy);
         if (target.source() == PriceSource.SPOT) {
-            return peSpot ? reference.low() <= target.price() : reference.high() >= target.price();
+            boolean putOption = "PE".equalsIgnoreCase(trade.getOptionType());
+            if (closeOnly) {
+                return putOption ? reference.close() <= target.price() : reference.close() >= target.price();
+            }
+            return putOption ? reference.low() <= target.price() : reference.high() >= target.price();
         }
-        if ("CLOSE".equals(triggerPricePolicy)) {
-            return peSpot ? reference.close() <= target.price() : reference.close() >= target.price();
-        }
-        return peSpot ? reference.low() <= target.price() : reference.high() >= target.price();
+        return closeOnly ? reference.close() >= target.price() : reference.high() >= target.price();
     }
 
     private boolean isReEntryTriggered(Candle optionCandle, double originalEntryPrice, String triggerPricePolicy) {
