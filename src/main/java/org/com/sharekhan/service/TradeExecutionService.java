@@ -503,6 +503,8 @@ public class TradeExecutionService {
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
                 .source(request.getSource()) // store source
+                .openingRuleReset(Boolean.FALSE)
+                .gapReentryCount(0)
                 .build();
 
         // Persist request entity (no more storing legacy customerId on the request)
@@ -715,6 +717,11 @@ public class TradeExecutionService {
         trade.setUseSpotPrice(requestEntity.getUseSpotPrice());
         trade.setSpotScripCode(requestEntity.getSpotScripCode());
         trade.setSource(requestEntity.getSource());
+        trade.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
+        trade.setGapDayOpen(requestEntity.getGapDayOpen());
+        trade.setGapPreviousClose(requestEntity.getGapPreviousClose());
+        trade.setGapStopLoss(requestEntity.getGapStopLoss());
+        trade.setGapReentryCount(requestEntity.getGapReentryCount());
         return trade;
     }
 
@@ -993,6 +1000,8 @@ public class TradeExecutionService {
                 .useSpotPrice(request.getUseSpotPrice())
                 .spotScripCode(spotScripCode)
                 .source(request.getSource())
+                .openingRuleReset(Boolean.FALSE)
+                .gapReentryCount(0)
                 .build();
 
         TriggerTradeRequestEntity saved = triggerTradeRequestRepository.save(entity);
@@ -1581,6 +1590,11 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             triggeredTradeSetupEntity.setSource(trigger.getSource());
+            triggeredTradeSetupEntity.setGapProtectionEnabled(trigger.getGapProtectionEnabled());
+            triggeredTradeSetupEntity.setGapDayOpen(trigger.getGapDayOpen());
+            triggeredTradeSetupEntity.setGapPreviousClose(trigger.getGapPreviousClose());
+            triggeredTradeSetupEntity.setGapStopLoss(trigger.getGapStopLoss());
+            triggeredTradeSetupEntity.setGapReentryCount(trigger.getGapReentryCount());
             
             triggeredTradeSetupEntity = triggeredTradeRepo.save(triggeredTradeSetupEntity);
 
@@ -2789,6 +2803,7 @@ public class TradeExecutionService {
                         charges != null ? charges.effectivePnl() : null);
                 if (updated == 1) {
                     TradeEventLogger.logOrderExecuted("EXIT", persisted, exitPriceVal, result.getStatus());
+                    rearmGapFillRequestAfterImmediateExit(persisted);
                     try {
                         if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
                             entityManager.getEntityManagerFactory().getCache().evict(TriggeredTradeSetupEntity.class, persisted.getId());
@@ -2836,6 +2851,24 @@ public class TradeExecutionService {
         }
 
         return result;
+    }
+
+    private void rearmGapFillRequestAfterImmediateExit(TriggeredTradeSetupEntity exitedTrade) {
+        if (exitedTrade == null || !"GAP_FILL_STOP".equals(exitedTrade.getExitReason())
+                || exitedTrade.getTriggerRequestId() == null) {
+            return;
+        }
+        int completedReentries = exitedTrade.getGapReentryCount() != null
+                ? exitedTrade.getGapReentryCount()
+                : 0;
+        if (completedReentries >= 1) {
+            return;
+        }
+        int rearmed = triggerTradeRequestRepository.rearmGapFillOnce(exitedTrade.getTriggerRequestId());
+        if (rearmed == 1) {
+            log.info("Rearmed immediately-exited gap-fill request {} for one retrigger",
+                    exitedTrade.getTriggerRequestId());
+        }
     }
 
     public boolean hasUsableTradedEntryPrice(TriggerTradeRequestEntity request, double tradedLtp) {
@@ -3886,6 +3919,11 @@ public class TradeExecutionService {
         temp.setUseSpotPrice(requestEntity.getUseSpotPrice()); // Copy legacy flag
 
         temp.setSpotScripCode(requestEntity.getSpotScripCode());
+        temp.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
+        temp.setGapDayOpen(requestEntity.getGapDayOpen());
+        temp.setGapPreviousClose(requestEntity.getGapPreviousClose());
+        temp.setGapStopLoss(requestEntity.getGapStopLoss());
+        temp.setGapReentryCount(requestEntity.getGapReentryCount());
 
         // run execution using the converted entity
         final double executionLtp = ltp;

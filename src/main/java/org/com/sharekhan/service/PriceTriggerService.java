@@ -19,15 +19,25 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class PriceTriggerService {
+
+    private static final ZoneId IST_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
+    private static final String ATR_SIGNAL_SOURCE = "atr-signal";
+    private static final String GAP_FILL_EXIT_REASON = "GAP_FILL_STOP";
+    private final ConcurrentMap<Long, LocalDateTime> gapPolicyAttemptedAt = new ConcurrentHashMap<>();
 
     private final TriggerTradeRequestRepository triggerRepo;
     private final TriggeredTradeSetupRepository triggeredRepo;
@@ -43,7 +53,8 @@ public class PriceTriggerService {
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         // Check if current time is after 9:20 AM IST
-         LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
+         LocalDateTime nowIst = nowIst();
+         LocalTime now = nowIst.toLocalTime();
          if (now.isBefore(LocalTime.of(9, 20))) {
              log.debug("Skipping price trigger evaluation before 9:20 AM. Current time: {}", now);
              return;
@@ -112,6 +123,13 @@ public class PriceTriggerService {
                 
                 if (trigger.getEntryPrice() == null) continue;
 
+                initializeGapPolicy(trigger);
+
+                OpeningDecision openingDecision = evaluateOpeningRule(trigger, nowIst, ltp);
+                if (openingDecision == OpeningDecision.WAIT || openingDecision == OpeningDecision.REJECTED) {
+                    continue;
+                }
+
                 double entryPrice = trigger.getEntryPrice();
                 double tolerance = 1.006;
                 boolean isPE = "PE".equalsIgnoreCase(trigger.getOptionType());
@@ -130,12 +148,14 @@ public class PriceTriggerService {
                     conditionMet = ltp >= entryPrice;
                 }
 
-                if (conditionMet) {
+                if (conditionMet || openingDecision == OpeningDecision.READY) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
                     if (claimed == 1) {
-                        String conditionSummary = isPE
-                                ? String.format("spot LTP %.2f <= entry %.2f", ltp, entryPrice)
-                                : String.format("spot LTP %.2f >= entry %.2f", ltp, entryPrice);
+                        String conditionSummary = openingDecision == OpeningDecision.READY
+                                ? "Rule B directional one-minute close confirmed"
+                                : isPE
+                                    ? String.format("spot LTP %.2f <= entry %.2f", ltp, entryPrice)
+                                    : String.format("spot LTP %.2f >= entry %.2f", ltp, entryPrice);
                         TradeEventLogger.logEntryTriggered(trigger, ltp, "SPOT_LTP", conditionSummary);
                         log.info("🚀 Spot Entry condition met for {} ({}) at SpotLTP: {}", trigger.getSymbol(), trigger.getOptionType(), ltp);
 
@@ -168,11 +188,17 @@ public class PriceTriggerService {
             return false;
         }
 
+        boolean atrSpotEntry = ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
+                && (Boolean.TRUE.equals(trigger.getUseSpotForEntry())
+                    || (trigger.getUseSpotForEntry() == null && Boolean.TRUE.equals(trigger.getUseSpotPrice())));
+
         Optional<ReferencePrice> openPrice = getTodayOpenReferencePrice(referenceScrip);
         if (openPrice.isPresent()) {
             ReferencePrice open = openPrice.get();
             if (isComparableToEntryPrice(open.price(), entryPrice)) {
-                if (rejectIfReferencePriceInvalid(
+                if (atrSpotEntry
+                        ? rejectIfTargetAlreadyReached(trigger, open.label(), open.price(), downsideEntry)
+                        : rejectIfReferencePriceInvalid(
                         trigger,
                         open.label(),
                         open.price(),
@@ -187,6 +213,10 @@ public class PriceTriggerService {
             }
         }
 
+        if (atrSpotEntry) {
+            return rejectIfTargetAlreadyReached(trigger, currentPriceLabel, currentPrice, downsideEntry);
+        }
+
         return rejectIfReferencePriceInvalid(
                 trigger,
                 currentPriceLabel,
@@ -194,6 +224,163 @@ public class PriceTriggerService {
                 entryPrice,
                 toleranceMultiplier,
                 downsideEntry);
+    }
+
+    private boolean rejectIfTargetAlreadyReached(TriggerTradeRequestEntity trigger,
+                                                  String priceLabel,
+                                                  double referencePrice,
+                                                  boolean downsideEntry) {
+        Double target1 = trigger.getTarget1();
+        if (target1 == null || target1 <= 0d || !Double.isFinite(referencePrice)) {
+            return false;
+        }
+        boolean reached = downsideEntry ? referencePrice <= target1 : referencePrice >= target1;
+        if (!reached) {
+            return false;
+        }
+        int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(),
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                TriggeredTradeStatus.REJECTED.name());
+        if (claimed == 1) {
+            log.warn("{} {} has already reached/breached ATR target1 {} for trigger {}. Marking as REJECTED.",
+                    priceLabel, referencePrice, target1, trigger.getId());
+        }
+        return true;
+    }
+
+    private OpeningDecision evaluateOpeningRule(TriggerTradeRequestEntity trigger,
+                                                LocalDateTime nowIst,
+                                                double currentSpotPrice) {
+        if (!isAtrOpeningRequest(trigger, nowIst) || !nowIst.toLocalTime().isBefore(OPENING_RULE_CUTOFF)) {
+            return OpeningDecision.NORMAL;
+        }
+        if (Boolean.TRUE.equals(trigger.getOpeningRuleReset())) {
+            return OpeningDecision.NORMAL;
+        }
+
+        Integer spotScripCode = trigger.getSpotScripCode();
+        if (spotScripCode == null) {
+            return OpeningDecision.NORMAL;
+        }
+        LtpCacheService.MinuteCandle candle = ltpCacheService.getLastCompletedMinuteCandle(spotScripCode);
+        if (candle == null || candle.minute() == null || trigger.getCreatedAt() == null) {
+            return OpeningDecision.WAIT;
+        }
+        LocalDateTime requestMinute = trigger.getCreatedAt().truncatedTo(ChronoUnit.MINUTES);
+        if (candle.minute().isBefore(requestMinute)) {
+            return OpeningDecision.WAIT;
+        }
+
+        boolean isPe = "PE".equalsIgnoreCase(trigger.getOptionType());
+        Double target1 = trigger.getTarget1();
+        if (target1 != null && target1 > 0d) {
+            boolean targetTouchedNow = isPe ? currentSpotPrice <= target1 : currentSpotPrice >= target1;
+            boolean targetTouchedSinceRequest = ltpCacheService.hasPriceTouchedSince(
+                    spotScripCode, trigger.getCreatedAt(), target1, isPe);
+            boolean fullCandleAfterRequest = candle.minute().isAfter(requestMinute);
+            boolean targetTouchedInCompletedCandle = fullCandleAfterRequest
+                    && (isPe ? candle.low() <= target1 : candle.high() >= target1);
+            boolean targetTouched = targetTouchedNow || targetTouchedSinceRequest || targetTouchedInCompletedCandle;
+            if (targetTouched) {
+                int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(),
+                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                        TriggeredTradeStatus.REJECTED.name());
+                if (claimed == 1) {
+                    log.info("Opening Rule B rejected request {} because T1 {} was touched before entry in candle {}",
+                            trigger.getId(), target1, candle.minute());
+                }
+                return OpeningDecision.REJECTED;
+            }
+        }
+
+        Double stopLoss = trigger.getStopLoss();
+        if (stopLoss != null && stopLoss > 0d) {
+            boolean stopClosed = isPe ? candle.close() >= stopLoss : candle.close() <= stopLoss;
+            if (stopClosed) {
+                trigger.setOpeningRuleReset(Boolean.TRUE);
+                triggerRepo.save(trigger);
+                log.info("Opening Rule B reset request {} after candle {} closed beyond SL {}. Request remains pending for retrigger.",
+                        trigger.getId(), candle.minute(), stopLoss);
+                return OpeningDecision.WAIT;
+            }
+        }
+
+        double entryPrice = trigger.getEntryPrice();
+        boolean confirmed = isPe ? candle.close() <= entryPrice : candle.close() >= entryPrice;
+        return confirmed ? OpeningDecision.READY : OpeningDecision.WAIT;
+    }
+
+    private boolean isAtrOpeningRequest(TriggerTradeRequestEntity trigger, LocalDateTime nowIst) {
+        return trigger != null
+                && ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
+                && trigger.getCreatedAt() != null
+                && trigger.getCreatedAt().toLocalDate().equals(nowIst.toLocalDate())
+                && trigger.getCreatedAt().toLocalTime().isBefore(OPENING_RULE_CUTOFF);
+    }
+
+    private void initializeGapPolicy(TriggerTradeRequestEntity trigger) {
+        if (trigger == null || !ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
+                || Boolean.TRUE.equals(trigger.getGapPolicyInitialized())
+                || trigger.getCreatedAt() == null
+                || !trigger.getCreatedAt().toLocalTime().isBefore(OPENING_RULE_CUTOFF)
+                || trigger.getSpotScripCode() == null || trigger.getEntryPrice() == null
+                || trigger.getTarget1() == null || trigger.getStopLoss() == null) {
+            return;
+        }
+
+        LocalDateTime attemptTime = nowIst();
+        if (trigger.getId() != null) {
+            LocalDateTime previousAttempt = gapPolicyAttemptedAt.get(trigger.getId());
+            if (previousAttempt != null && Duration.between(previousAttempt, attemptTime).toSeconds() < 60) {
+                return;
+            }
+            gapPolicyAttemptedAt.put(trigger.getId(), attemptTime);
+        }
+
+        OptionalDouble marketOpenOpt = sharekhanHistoricalService.getTodayMarketOpenPrice(trigger.getSpotScripCode());
+        OptionalDouble previousCloseOpt = sharekhanHistoricalService.getPreviousTradingClose(trigger.getSpotScripCode());
+        if (marketOpenOpt.isEmpty() || previousCloseOpt.isEmpty()) {
+            return;
+        }
+
+        double dayOpen = marketOpenOpt.getAsDouble();
+        double previousClose = previousCloseOpt.getAsDouble();
+        double entry = trigger.getEntryPrice();
+        double target1 = trigger.getTarget1();
+        double originalStop = trigger.getStopLoss();
+        boolean isPe = "PE".equalsIgnoreCase(trigger.getOptionType());
+        boolean qualifyingGap = isPe
+                ? dayOpen < previousClose && target1 < dayOpen && dayOpen < entry
+                : dayOpen > previousClose && entry < dayOpen && dayOpen < target1;
+
+        trigger.setGapPolicyInitialized(Boolean.TRUE);
+        trigger.setGapDayOpen(dayOpen);
+        trigger.setGapPreviousClose(previousClose);
+        trigger.setGapReentryCount(trigger.getGapReentryCount() != null ? trigger.getGapReentryCount() : 0);
+        trigger.setGapProtectionEnabled(qualifyingGap);
+        if (qualifyingGap) {
+            trigger.setGapStopLoss(isPe
+                    ? Math.min(originalStop, previousClose)
+                    : Math.max(originalStop, previousClose));
+            log.info("Gap protection enabled for request {} symbol={} direction={} previousClose={} dayOpen={} entry={} T1={} gapStop={}",
+                    trigger.getId(), trigger.getSymbol(), isPe ? "PE" : "CE", previousClose, dayOpen,
+                    entry, target1, trigger.getGapStopLoss());
+        }
+        triggerRepo.save(trigger);
+        if (trigger.getId() != null) {
+            gapPolicyAttemptedAt.remove(trigger.getId());
+        }
+    }
+
+    private enum OpeningDecision {
+        NORMAL,
+        WAIT,
+        READY,
+        REJECTED
+    }
+
+    LocalDateTime nowIst() {
+        return LocalDateTime.now(IST_ZONE);
     }
 
     private Optional<ReferencePrice> getTodayOpenReferencePrice(Integer referenceScrip) {
@@ -395,7 +582,7 @@ public class PriceTriggerService {
                 boolean usesSpotSl = usesSpotForSl(persisted);
                 boolean usesSpotTarget = usesSpotForTarget(persisted);
 
-                Double slRefPrice = usesSpotSl ? spotLtp : tradedLtp;
+                Double slRefPrice = usesSpotSl ? resolveSpotStopClose(persisted) : tradedLtp;
                 Double targetRefPrice = usesSpotTarget ? spotLtp : tradedLtp;
 
                 if (usesSpotSl && slRefPrice == null) {
@@ -407,6 +594,17 @@ public class PriceTriggerService {
 
                 Double slVal = persisted.getStopLoss();
                 boolean hasValidSl = (slVal != null && slVal > 0d);
+
+                if (isGapFillStopHit(persisted)) {
+                    if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp,
+                            persisted.getGapStopLoss(), "Gap fill stop")) {
+                        return 0;
+                    }
+                    return triggeredRepo.claimIfStatusEquals(tradeId,
+                            TriggeredTradeStatus.EXECUTED.name(),
+                            TriggeredTradeStatus.EXIT_TRIGGERED.name(),
+                            GAP_FILL_EXIT_REASON);
+                }
 
                 // Check SL against effective reference price
                 boolean slHit = false;
@@ -488,13 +686,15 @@ public class PriceTriggerService {
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
                 
                 // Re-determine effective prices for logging/logic
-                Double slRefPrice = usesSpotForSl(reloaded) ? spotLtp : tradedLtp;
+                Double slRefPrice = usesSpotForSl(reloaded) ? resolveSpotStopClose(reloaded) : tradedLtp;
                 Double targetRefPrice = usesSpotForTarget(reloaded) ? spotLtp : tradedLtp;
 
                 String exitReason = reloaded.getExitReason();
                 boolean exitOrderAlreadyPresent = reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank();
-                if ("STOP_LOSS_HIT".equals(exitReason)) {
-                    Double stopPriceOption = reloaded.getStopLoss();
+                if ("STOP_LOSS_HIT".equals(exitReason) || GAP_FILL_EXIT_REASON.equals(exitReason)) {
+                    Double stopPriceOption = GAP_FILL_EXIT_REASON.equals(exitReason)
+                            ? reloaded.getGapStopLoss()
+                            : reloaded.getStopLoss();
                     boolean usesSpotSl = usesSpotForSl(reloaded);
 
                     boolean modified = false;
@@ -518,7 +718,7 @@ public class PriceTriggerService {
                         log.warn("📉 SL hit for trade {} - modified existing exit order {} to price {}", tradeId, reloaded.getExitOrderId(), stopPriceOption);
                     } else {
                         log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, tradedLtp);
-                        tradeExecutionService.squareOff(reloaded, tradedLtp, "STOP_LOSS_HIT");
+                        tradeExecutionService.squareOff(reloaded, tradedLtp, exitReason);
                     }
                 } else {
                     // TARGET_HIT
@@ -557,6 +757,40 @@ public class PriceTriggerService {
         } catch (Exception e) {
             log.error("❌ Error in handleTradeWithLock for trade {}: {}", tradeId, e.getMessage(), e);
         }
+    }
+
+    private boolean isGapFillStopHit(TriggeredTradeSetupEntity trade) {
+        if (trade == null || !Boolean.TRUE.equals(trade.getGapProtectionEnabled())
+                || trade.getGapStopLoss() == null || trade.getGapStopLoss() <= 0d
+                || trade.getSpotScripCode() == null || !usesSpotForSl(trade)) {
+            return false;
+        }
+        LtpCacheService.MinuteCandle candle = ltpCacheService.getLastCompletedMinuteCandle(trade.getSpotScripCode());
+        if (candle == null || candle.minute() == null) {
+            return false;
+        }
+        if (trade.getEntryAt() != null
+                && candle.minute().isBefore(trade.getEntryAt().truncatedTo(ChronoUnit.MINUTES))) {
+            return false;
+        }
+        return "PE".equalsIgnoreCase(trade.getOptionType())
+                ? candle.close() >= trade.getGapStopLoss()
+                : candle.close() <= trade.getGapStopLoss();
+    }
+
+    private Double resolveSpotStopClose(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getSpotScripCode() == null) {
+            return null;
+        }
+        LtpCacheService.MinuteCandle candle = ltpCacheService.getLastCompletedMinuteCandle(trade.getSpotScripCode());
+        if (candle == null || candle.minute() == null) {
+            return null;
+        }
+        if (trade.getEntryAt() != null
+                && candle.minute().isBefore(trade.getEntryAt().truncatedTo(ChronoUnit.MINUTES))) {
+            return null;
+        }
+        return candle.close();
     }
 
     private int calculateLotsToBook(TriggeredTradeSetupEntity trade, double ltp) {

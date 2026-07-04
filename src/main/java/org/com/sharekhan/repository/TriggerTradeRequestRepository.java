@@ -213,4 +213,19 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     int claimIfStatusEquals(@Param("id") Long id,
                             @Param("expectedStatus") String expectedStatus,
                             @Param("newStatus") String newStatus);
+
+    /** Atomically permits exactly one gap-fill re-entry for the original trigger request. */
+    @Modifying
+    @Transactional
+    @Query(value = """
+            UPDATE trigger_trade_requests
+            SET gap_reentry_count = 1,
+                opening_rule_reset = true,
+                status = 'PLACED_PENDING_CONFIRMATION'
+            WHERE id = :id
+              AND status = 'TRIGGERED'
+              AND gap_protection_enabled = true
+              AND (gap_reentry_count IS NULL OR gap_reentry_count = 0)
+            """, nativeQuery = true)
+    int rearmGapFillOnce(@Param("id") Long id);
 }
