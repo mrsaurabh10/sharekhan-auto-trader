@@ -20,7 +20,7 @@ public class TriggeredTradeSetupEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Transient
+    @Column(name = "trigger_request_id")
     private Long triggerRequestId;
 
     private String symbol;
@@ -82,6 +82,12 @@ public class TriggeredTradeSetupEntity {
 
     @Column(name = "source")
     private String source;
+
+    private Boolean gapProtectionEnabled;
+    private Double gapDayOpen;
+    private Double gapPreviousClose;
+    private Double gapStopLoss;
+    private Integer gapReentryCount;
 
     @Enumerated(EnumType.STRING)
     private TriggeredTradeStatus status;

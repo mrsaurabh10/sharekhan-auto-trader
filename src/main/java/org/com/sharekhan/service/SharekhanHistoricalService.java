@@ -57,6 +57,8 @@ public class SharekhanHistoricalService {
 
     // Cache opening price per trading day (IST) and scrip code
     private final Map<LocalDate, Map<Integer, Double>> openPriceCache = new ConcurrentHashMap<>();
+    private final Map<LocalDate, Map<Integer, Double>> marketOpenPriceCache = new ConcurrentHashMap<>();
+    private final Map<LocalDate, Map<Integer, Double>> previousCloseCache = new ConcurrentHashMap<>();
 
     /**
      * Fetch the opening price for the provided scrip code for the current trading day (IST).
@@ -80,6 +82,54 @@ public class SharekhanHistoricalService {
         OptionalDouble fetched = fetchOpenPrice(scripCode, today);
         fetched.ifPresent(value -> dayCache.put(scripCode, value));
         return fetched;
+    }
+
+    /** Returns the latest completed trading-session close before today. */
+    public OptionalDouble getPreviousTradingClose(Integer scripCode) {
+        if (scripCode == null) {
+            return OptionalDouble.empty();
+        }
+        LocalDate today = LocalDate.now(IST_ZONE);
+        purgeOlderThan(today);
+        Map<Integer, Double> dayCache = previousCloseCache.computeIfAbsent(today, ignored -> new ConcurrentHashMap<>());
+        Double cached = dayCache.get(scripCode);
+        if (cached != null) {
+            return OptionalDouble.of(cached);
+        }
+
+        List<HistoricalCandle> candles = getHistoricalCandles(
+                scripCode, "5minute", today.minusDays(7), today.minusDays(1));
+        OptionalDouble resolved = candles.stream()
+                .filter(HistoricalCandle::hasOhlc)
+                .filter(candle -> candle.date() != null && candle.date().isBefore(today))
+                .sorted(java.util.Comparator.comparing(HistoricalCandle::date)
+                        .thenComparing(candle -> candle.time() != null ? candle.time() : LocalTime.MIN))
+                .mapToDouble(HistoricalCandle::close)
+                .reduce((first, second) -> second);
+        resolved.ifPresent(value -> dayCache.put(scripCode, value));
+        return resolved;
+    }
+
+    /** Returns the first intraday candle open for today (normally the 09:15 market open). */
+    public OptionalDouble getTodayMarketOpenPrice(Integer scripCode) {
+        if (scripCode == null) {
+            return OptionalDouble.empty();
+        }
+        LocalDate today = LocalDate.now(IST_ZONE);
+        purgeOlderThan(today);
+        Map<Integer, Double> dayCache = marketOpenPriceCache.computeIfAbsent(today, ignored -> new ConcurrentHashMap<>());
+        Double cached = dayCache.get(scripCode);
+        if (cached != null) {
+            return OptionalDouble.of(cached);
+        }
+        OptionalDouble resolved = getHistoricalCandles(scripCode, "5minute", today, today).stream()
+                .filter(HistoricalCandle::hasOhlc)
+                .filter(candle -> today.equals(candle.date()))
+                .sorted(java.util.Comparator.comparing(candle -> candle.time() != null ? candle.time() : LocalTime.MAX))
+                .mapToDouble(HistoricalCandle::open)
+                .findFirst();
+        resolved.ifPresent(value -> dayCache.put(scripCode, value));
+        return resolved;
     }
 
     public List<HistoricalCandle> getHistoricalCandles(Integer scripCode,
@@ -490,6 +540,8 @@ public class SharekhanHistoricalService {
 
     private void purgeOlderThan(LocalDate reference) {
         openPriceCache.keySet().removeIf(date -> date.isBefore(reference));
+        marketOpenPriceCache.keySet().removeIf(date -> date.isBefore(reference));
+        previousCloseCache.keySet().removeIf(date -> date.isBefore(reference));
     }
 
     private String buildIntervalPath(LocalDate targetDate) {

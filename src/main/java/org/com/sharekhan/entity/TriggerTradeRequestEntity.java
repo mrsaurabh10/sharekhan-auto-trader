@@ -64,6 +64,15 @@ public class TriggerTradeRequestEntity {
     @Column(name = "source")
     private String source;
 
+    // Opening-entry and gap-protection state for ATR signals.
+    private Boolean openingRuleReset;
+    private Boolean gapPolicyInitialized;
+    private Boolean gapProtectionEnabled;
+    private Double gapDayOpen;
+    private Double gapPreviousClose;
+    private Double gapStopLoss;
+    private Integer gapReentryCount;
+
     @Enumerated(EnumType.STRING)
     private TriggeredTradeStatus status;
 

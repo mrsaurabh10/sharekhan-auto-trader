@@ -10,6 +10,7 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.service.broker.BrokerService;
@@ -40,6 +41,7 @@ public class OrderStatusPollingService {
 
     private final ScheduledExecutorService executor = Executors.newScheduledThreadPool(2);
     private final TriggeredTradeSetupRepository tradeRepo;
+    private final TriggerTradeRequestRepository triggerRequestRepo;
     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
      // Track last modify price attempted per orderId to avoid spamming identical modify requests
      private final Map<String, Double> lastModifyPrice = new ConcurrentHashMap<>();
@@ -321,6 +323,8 @@ public class OrderStatusPollingService {
                     if (!wasExitOrder) {
                         TriggeredTradeSetupEntity executedTrade = reloaded != null ? reloaded : currentTrade;
                         tradeExecutionService.handleEntryOrderExecution(executedTrade);
+                    } else {
+                        rearmGapFillRequest(reloaded != null ? reloaded : currentTrade);
                     }
 
                     // Send telegram notification for executed/exit
@@ -422,6 +426,29 @@ public class OrderStatusPollingService {
 //        executor.schedule(() -> {
 //            log.warn("⚠️ Stopping polling after timeout for order {}", orderIdToMonitor);
 //        }, 2, TimeUnit.MINUTES);
+    }
+
+    void rearmGapFillRequest(TriggeredTradeSetupEntity exitedTrade) {
+        if (exitedTrade == null || !"GAP_FILL_STOP".equals(exitedTrade.getExitReason())
+                || exitedTrade.getTriggerRequestId() == null) {
+            return;
+        }
+        int completedReentries = exitedTrade.getGapReentryCount() != null
+                ? exitedTrade.getGapReentryCount()
+                : 0;
+        if (completedReentries >= 1) {
+            log.info("Gap-fill request {} will not be rearmed because the one-retrigger limit is exhausted",
+                    exitedTrade.getTriggerRequestId());
+            return;
+        }
+
+        int rearmed = triggerRequestRepo.rearmGapFillOnce(exitedTrade.getTriggerRequestId());
+        if (rearmed == 1) {
+            log.info("Rearmed gap-fill request {} for one retrigger", exitedTrade.getTriggerRequestId());
+        } else {
+            log.info("Gap-fill request {} was already rearmed or is no longer eligible",
+                    exitedTrade.getTriggerRequestId());
+        }
     }
 
     private JSONObject fetchBrokerOrderStatus(TriggeredTradeSetupEntity trade,
