@@ -41,4 +41,20 @@ class LtpCacheServiceTest {
 
         assertThat(cache.hasPriceTouchedSince(123, requestCreatedAt, 110.0, false)).isTrue();
     }
+
+    @Test
+    void retainsCompletedMinuteCandlesForConsecutiveCloseRules() {
+        LtpCacheService cache = new LtpCacheService();
+
+        cache.updateLtpAt(123, 100.0, LocalDateTime.of(2026, 7, 3, 9, 20, 1));
+        cache.updateLtpAt(123, 101.0, LocalDateTime.of(2026, 7, 3, 9, 21, 1));
+        cache.updateLtpAt(123, 102.0, LocalDateTime.of(2026, 7, 3, 9, 22, 1));
+        cache.updateLtpAt(123, 103.0, LocalDateTime.of(2026, 7, 3, 9, 23, 1));
+
+        assertThat(cache.getCompletedMinuteCandlesSince(123, LocalDateTime.of(2026, 7, 3, 9, 21)))
+                .extracting(LtpCacheService.MinuteCandle::minute)
+                .containsExactly(
+                        LocalDateTime.of(2026, 7, 3, 9, 21),
+                        LocalDateTime.of(2026, 7, 3, 9, 22));
+    }
 }
