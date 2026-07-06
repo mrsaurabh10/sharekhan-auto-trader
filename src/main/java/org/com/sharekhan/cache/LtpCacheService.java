@@ -10,6 +10,7 @@ import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -26,7 +27,9 @@ public class LtpCacheService {
     private final Map<LocalDate, Map<Integer, Double>> openingPriceCache = new ConcurrentHashMap<>();
     private final Map<Integer, MinuteBucket> activeMinuteCandles = new ConcurrentHashMap<>();
     private final Map<Integer, MinuteCandle> completedMinuteCandles = new ConcurrentHashMap<>();
+    private final Map<Integer, Deque<MinuteCandle>> completedMinuteCandleHistory = new ConcurrentHashMap<>();
     private final Map<Integer, RecentPriceWindow> recentPriceWindows = new ConcurrentHashMap<>();
+    private static final int MAX_COMPLETED_CANDLES_PER_SCRIP = 120;
 
     /**
      * Update the LTP for a scripCode (called from WebSocket listener)
@@ -45,6 +48,18 @@ public class LtpCacheService {
 
     public MinuteCandle getLastCompletedMinuteCandle(int scripCode) {
         return completedMinuteCandles.get(scripCode);
+    }
+
+    public List<MinuteCandle> getCompletedMinuteCandlesSince(int scripCode, LocalDateTime sinceMinute) {
+        Deque<MinuteCandle> history = completedMinuteCandleHistory.get(scripCode);
+        if (history == null) {
+            return List.of();
+        }
+        synchronized (history) {
+            return history.stream()
+                    .filter(candle -> sinceMinute == null || !candle.minute().isBefore(sinceMinute))
+                    .toList();
+        }
     }
 
     /**
@@ -95,6 +110,7 @@ public class LtpCacheService {
         openingPriceCache.clear();
         activeMinuteCandles.clear();
         completedMinuteCandles.clear();
+        completedMinuteCandleHistory.clear();
         recentPriceWindows.clear();
     }
 
@@ -113,6 +129,7 @@ public class LtpCacheService {
         openingPriceCache.clear();
         activeMinuteCandles.clear();
         completedMinuteCandles.clear();
+        completedMinuteCandleHistory.clear();
         recentPriceWindows.clear();
     }
 
@@ -144,13 +161,28 @@ public class LtpCacheService {
         activeMinuteCandles.compute(scripCode, (key, current) -> {
             if (current == null || !current.minute.equals(minute)) {
                 if (current != null && current.minute.isBefore(minute)) {
-                    completedMinuteCandles.put(scripCode, current.snapshot());
+                    recordCompletedMinuteCandle(scripCode, current.snapshot());
                 }
                 return new MinuteBucket(minute, ltp);
             }
             current.update(ltp);
             return current;
         });
+    }
+
+    private void recordCompletedMinuteCandle(int scripCode, MinuteCandle candle) {
+        completedMinuteCandles.put(scripCode, candle);
+        Deque<MinuteCandle> history = completedMinuteCandleHistory.computeIfAbsent(
+                scripCode, ignored -> new ArrayDeque<>());
+        synchronized (history) {
+            if (!history.isEmpty() && history.peekLast().minute().equals(candle.minute())) {
+                history.removeLast();
+            }
+            history.addLast(candle);
+            while (history.size() > MAX_COMPLETED_CANDLES_PER_SCRIP) {
+                history.removeFirst();
+            }
+        }
     }
 
     private void recordRecentPrice(int scripCode, double ltp, LocalDateTime observedAt) {
