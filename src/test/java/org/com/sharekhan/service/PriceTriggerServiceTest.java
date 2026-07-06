@@ -53,7 +53,7 @@ class PriceTriggerServiceTest {
     );
 
     @Test
-    void ruleBTriggersAfterDirectionalMinuteCloseEvenIfNextTickFallsBackBelowEntry() {
+    void atrSpotEntryWaitsWhenCurrentTickFallsBackAfterDirectionalClose() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 21, 1)).when(timedService).nowIst();
         var trigger = atrTrigger(7001L, 100.0, 90.0, 110.0);
@@ -64,12 +64,31 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of(trigger));
         when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
                 new LtpCacheService.MinuteCandle(LocalDateTime.of(2026, 7, 3, 9, 20), 99.0, 105.0, 98.0, 101.0));
-        when(triggerRepo.claimIfStatusEquals(7001L,
+        timedService.evaluatePriceTrigger(20000, 99.0);
+
+        verify(triggerRepo, never()).claimIfStatusEquals(7001L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+    }
+
+    @Test
+    void atrSpotEntryTriggersWhenDirectionalCloseAndCurrentTickRemainValid() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 21, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7016L, 100.0, 90.0, 110.0);
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                new LtpCacheService.MinuteCandle(LocalDateTime.of(2026, 7, 3, 9, 20), 99.0, 105.0, 98.0, 101.0));
+        when(triggerRepo.claimIfStatusEquals(7016L,
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
-        timedService.evaluatePriceTrigger(20000, 99.0);
+        timedService.evaluatePriceTrigger(20000, 100.2);
 
         verify(tradeExecutionService).executeTradeFromEntity(trigger);
     }
@@ -91,6 +110,27 @@ class PriceTriggerServiceTest {
 
         verify(triggerRepo).save(trigger);
         org.assertj.core.api.Assertions.assertThat(trigger.getOpeningRuleReset()).isTrue();
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+    }
+
+    @Test
+    void ruleBResetStillRequiresDirectionalMinuteCloseBefore0930() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 22, 12)).when(timedService).nowIst();
+        var trigger = atrTrigger(7011L, 100.0, 90.0, 110.0);
+        trigger.setOpeningRuleReset(Boolean.TRUE);
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                new LtpCacheService.MinuteCandle(LocalDateTime.of(2026, 7, 3, 9, 21), 99.0, 100.5, 98.0, 99.5));
+
+        timedService.evaluatePriceTrigger(20000, 100.1);
+
+        verify(triggerRepo, never()).claimIfStatusEquals(7011L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
         verify(tradeExecutionService, never()).executeTradeFromEntity(any());
     }
 
@@ -119,7 +159,7 @@ class PriceTriggerServiceTest {
     }
 
     @Test
-    void ruleBReturnsToNormalEntryMonitoringAt0930WithoutACompletedConfirmation() {
+    void atrSpotEntryStillRequiresCompletedConfirmationAt0930() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 30)).when(timedService).nowIst();
         var trigger = atrTrigger(7005L, 100.0, 90.0, 110.0);
@@ -128,14 +168,80 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of());
         when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
                 .thenReturn(List.of(trigger));
-        when(triggerRepo.claimIfStatusEquals(7005L,
+        timedService.evaluatePriceTrigger(20000, 100.0);
+
+        verify(triggerRepo, never()).claimIfStatusEquals(7005L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+    }
+
+    @Test
+    void atrSpotEntryAfter0930RejectsRawTickWhenCompletedCeCandleClosedBelowEntry() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 33, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7017L, 490.80, 487.76, 493.84);
+        trigger.setCreatedAt(LocalDateTime.of(2026, 7, 3, 9, 32, 10));
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                new LtpCacheService.MinuteCandle(LocalDateTime.of(2026, 7, 3, 9, 32),
+                        489.70, 490.95, 489.50, 490.25));
+
+        timedService.evaluatePriceTrigger(20000, 490.90);
+
+        verify(triggerRepo, never()).claimIfStatusEquals(7017L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+    }
+
+    @Test
+    void atrSpotPeEntryAfter0930RequiresDirectionalCloseAndValidCurrentTick() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 33, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7018L, 100.0, 105.0, 95.0);
+        trigger.setOptionType("PE");
+        trigger.setCreatedAt(LocalDateTime.of(2026, 7, 3, 9, 32, 10));
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                new LtpCacheService.MinuteCandle(LocalDateTime.of(2026, 7, 3, 9, 32),
+                        100.20, 100.30, 99.20, 99.50));
+        when(triggerRepo.claimIfStatusEquals(7018L,
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
-        timedService.evaluatePriceTrigger(20000, 100.0);
+        timedService.evaluatePriceTrigger(20000, 99.70);
 
         verify(tradeExecutionService).executeTradeFromEntity(trigger);
+    }
+
+    @Test
+    void nonAtrSpotEntryRetainsTickBasedTriggering() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
+        var trigger = atrTrigger(7019L, 100.0, 90.0, 110.0);
+        trigger.setSource("manual");
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(triggerRepo.claimIfStatusEquals(7019L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                .thenReturn(1);
+        when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
+
+        timedService.evaluatePriceTrigger(20000, 100.10);
+
+        verify(tradeExecutionService).executeTradeFromEntity(trigger);
+        verify(ltpCacheService, never()).getLastCompletedMinuteCandle(20000);
     }
 
     @Test
@@ -260,6 +366,32 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void spotTargetIsEvaluatedBeforeFirstCompletedSpotCandleExists() {
+        TriggeredTradeSetupEntity trade = optionTrade(7010L, 999999, 20000);
+        trade.setOptionType("PE");
+        trade.setUseSpotForSl(true);
+        trade.setUseSpotForTarget(true);
+        trade.setStopLoss(105.0);
+        trade.setTarget1(100.0);
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of(trade));
+        when(ltpCacheService.getLtp(999999)).thenReturn(120.0);
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(null);
+        when(triggeredRepo.findById(7010L)).thenReturn(Optional.of(trade));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade, 120.0)).thenReturn(true);
+        when(triggeredRepo.claimIfStatusEquals(7010L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT")).thenReturn(0);
+
+        service.monitorOpenTrades(20000, 99.0);
+
+        verify(triggeredRepo).claimIfStatusEquals(7010L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+        verify(triggeredRepo, never()).claimIfStatusEquals(7010L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
+    }
+
+    @Test
     void monitorOpenTradesDoesNotUseSpotTickAsTradedPriceWhenOptionScripMatchesSpot() {
         TriggeredTradeSetupEntity trade = optionTrade(5209L, 20000, 20000);
         trade.setTarget1(131.2);
@@ -295,6 +427,123 @@ class PriceTriggerServiceTest {
         verify(tradeExecutionService, never()).hasUsableTradedExitPrice(trade, 23357.0);
         verify(tradeExecutionService, never()).modifyExitOrderForTarget(any(), eq(23357.0));
         verify(tradeExecutionService, never()).squareOff(any(), eq(23357.0), anyString());
+    }
+
+    @Test
+    void exitsAtrTradeAfterGraceAndThreeConsecutiveAdverseSpotCloses() {
+        TriggeredTradeSetupEntity trade = mfslPeTrade(7012L);
+        when(triggeredRepo.findById(7012L)).thenReturn(Optional.of(trade));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                minuteCandle(9, 28, 1593.0));
+        when(ltpCacheService.getCompletedMinuteCandlesSince(eq(20000), any(LocalDateTime.class)))
+                .thenReturn(List.of(
+                        minuteCandle(9, 26, 1591.0),
+                        minuteCandle(9, 27, 1592.0),
+                        minuteCandle(9, 28, 1593.0)));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade, 41.65)).thenReturn(true);
+        when(triggeredRepo.claimIfStatusEquals(7012L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "ENTRY_RECROSS_EXIT")).thenAnswer(invocation -> {
+                    trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+                    trade.setExitReason("ENTRY_RECROSS_EXIT");
+                    return 1;
+                });
+
+        service.handleTradeWithLock(7012L, 41.65, 1593.0);
+
+        verify(tradeExecutionService).squareOff(trade, 41.65, "ENTRY_RECROSS_EXIT");
+    }
+
+    @Test
+    void doesNotExitWhenAdverseSpotClosesAreNotConsecutive() {
+        TriggeredTradeSetupEntity trade = mfslPeTrade(7013L);
+        when(triggeredRepo.findById(7013L)).thenReturn(Optional.of(trade));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                minuteCandle(9, 29, 1593.0));
+        when(ltpCacheService.getCompletedMinuteCandlesSince(eq(20000), any(LocalDateTime.class)))
+                .thenReturn(List.of(
+                        minuteCandle(9, 26, 1591.0),
+                        minuteCandle(9, 27, 1589.0),
+                        minuteCandle(9, 28, 1592.0),
+                        minuteCandle(9, 29, 1593.0)));
+
+        service.handleTradeWithLock(7013L, 41.65, 1593.0);
+
+        verify(triggeredRepo, never()).claimIfStatusEquals(7013L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "ENTRY_RECROSS_EXIT");
+        verify(tradeExecutionService, never()).squareOff(any(), anyDouble(), eq("ENTRY_RECROSS_EXIT"));
+    }
+
+    @Test
+    void exitsCeTradeAfterThreeConsecutiveSpotClosesBelowEntry() {
+        TriggeredTradeSetupEntity trade = mfslPeTrade(7014L);
+        trade.setOptionType("CE");
+        trade.setEntryPrice(100.0);
+        trade.setStopLoss(90.0);
+        trade.setTarget1(110.0);
+        when(triggeredRepo.findById(7014L)).thenReturn(Optional.of(trade));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(minuteCandle(9, 28, 97.0));
+        when(ltpCacheService.getCompletedMinuteCandlesSince(eq(20000), any(LocalDateTime.class)))
+                .thenReturn(List.of(
+                        minuteCandle(9, 26, 99.0),
+                        minuteCandle(9, 27, 98.0),
+                        minuteCandle(9, 28, 97.0)));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade, 41.65)).thenReturn(true);
+        when(triggeredRepo.claimIfStatusEquals(7014L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "ENTRY_RECROSS_EXIT")).thenAnswer(invocation -> {
+                    trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+                    trade.setExitReason("ENTRY_RECROSS_EXIT");
+                    return 1;
+                });
+
+        service.handleTradeWithLock(7014L, 41.65, 97.0);
+
+        verify(tradeExecutionService).squareOff(trade, 41.65, "ENTRY_RECROSS_EXIT");
+    }
+
+    @Test
+    void ignoresAdverseClosesDuringFirstThreeFullCandlesAfterEntry() {
+        TriggeredTradeSetupEntity trade = mfslPeTrade(7015L);
+        when(triggeredRepo.findById(7015L)).thenReturn(Optional.of(trade));
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(minuteCandle(9, 25, 1593.0));
+        when(ltpCacheService.getCompletedMinuteCandlesSince(eq(20000), any(LocalDateTime.class)))
+                .thenReturn(List.of(
+                        minuteCandle(9, 23, 1591.0),
+                        minuteCandle(9, 24, 1592.0),
+                        minuteCandle(9, 25, 1593.0)));
+
+        service.handleTradeWithLock(7015L, 41.65, 1593.0);
+
+        verify(triggeredRepo, never()).claimIfStatusEquals(7015L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "ENTRY_RECROSS_EXIT");
+        verify(tradeExecutionService, never()).squareOff(any(), anyDouble(), eq("ENTRY_RECROSS_EXIT"));
+    }
+
+    private TriggeredTradeSetupEntity mfslPeTrade(Long id) {
+        return TriggeredTradeSetupEntity.builder()
+                .id(id)
+                .symbol("MFSL")
+                .scripCode(999999)
+                .spotScripCode(20000)
+                .optionType("PE")
+                .entryPrice(1590.60)
+                .actualEntryPrice(43.90)
+                .stopLoss(1598.72)
+                .target1(1582.48)
+                .lots(3)
+                .originalLots(3)
+                .quantity(1200L)
+                .source("atr-signal")
+                .status(TriggeredTradeStatus.EXECUTED)
+                .useSpotForEntry(true)
+                .useSpotForSl(true)
+                .useSpotForTarget(true)
+                .entryAt(LocalDateTime.of(2026, 7, 3, 9, 22, 39))
+                .build();
+    }
+
+    private LtpCacheService.MinuteCandle minuteCandle(int hour, int minute, double close) {
+        return new LtpCacheService.MinuteCandle(
+                LocalDateTime.of(2026, 7, 3, hour, minute), close, close, close, close);
     }
 
     private TriggeredTradeSetupEntity optionTrade(Long id, Integer scripCode, Integer spotScripCode) {

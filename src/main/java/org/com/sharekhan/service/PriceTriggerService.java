@@ -37,6 +37,9 @@ public class PriceTriggerService {
     private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
     private static final String GAP_FILL_EXIT_REASON = "GAP_FILL_STOP";
+    private static final String ENTRY_RECROSS_EXIT_REASON = "ENTRY_RECROSS_EXIT";
+    private static final int ENTRY_RECROSS_GRACE_CANDLES = 3;
+    private static final int ENTRY_RECROSS_REQUIRED_CLOSES = 3;
     private final ConcurrentMap<Long, LocalDateTime> gapPolicyAttemptedAt = new ConcurrentHashMap<>();
 
     private final TriggerTradeRequestRepository triggerRepo;
@@ -125,7 +128,7 @@ public class PriceTriggerService {
 
                 initializeGapPolicy(trigger);
 
-                OpeningDecision openingDecision = evaluateOpeningRule(trigger, nowIst, ltp);
+                OpeningDecision openingDecision = evaluateAtrSpotEntryRule(trigger, nowIst, ltp);
                 if (openingDecision == OpeningDecision.WAIT || openingDecision == OpeningDecision.REJECTED) {
                     continue;
                 }
@@ -152,7 +155,7 @@ public class PriceTriggerService {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
                     if (claimed == 1) {
                         String conditionSummary = openingDecision == OpeningDecision.READY
-                                ? "Rule B directional one-minute close confirmed"
+                                ? "directional one-minute close confirmed and current spot remains beyond entry"
                                 : isPE
                                     ? String.format("spot LTP %.2f <= entry %.2f", ltp, entryPrice)
                                     : String.format("spot LTP %.2f >= entry %.2f", ltp, entryPrice);
@@ -248,22 +251,22 @@ public class PriceTriggerService {
         return true;
     }
 
-    private OpeningDecision evaluateOpeningRule(TriggerTradeRequestEntity trigger,
-                                                LocalDateTime nowIst,
-                                                double currentSpotPrice) {
-        if (!isAtrOpeningRequest(trigger, nowIst) || !nowIst.toLocalTime().isBefore(OPENING_RULE_CUTOFF)) {
+    private OpeningDecision evaluateAtrSpotEntryRule(TriggerTradeRequestEntity trigger,
+                                                     LocalDateTime nowIst,
+                                                     double currentSpotPrice) {
+        if (trigger == null || !ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())) {
             return OpeningDecision.NORMAL;
         }
-        if (Boolean.TRUE.equals(trigger.getOpeningRuleReset())) {
-            return OpeningDecision.NORMAL;
+        if (trigger.getCreatedAt() == null
+                || !trigger.getCreatedAt().toLocalDate().equals(nowIst.toLocalDate())) {
+            return OpeningDecision.WAIT;
         }
-
         Integer spotScripCode = trigger.getSpotScripCode();
         if (spotScripCode == null) {
-            return OpeningDecision.NORMAL;
+            return OpeningDecision.WAIT;
         }
         LtpCacheService.MinuteCandle candle = ltpCacheService.getLastCompletedMinuteCandle(spotScripCode);
-        if (candle == null || candle.minute() == null || trigger.getCreatedAt() == null) {
+        if (candle == null || candle.minute() == null) {
             return OpeningDecision.WAIT;
         }
         LocalDateTime requestMinute = trigger.getCreatedAt().truncatedTo(ChronoUnit.MINUTES);
@@ -272,42 +275,49 @@ public class PriceTriggerService {
         }
 
         boolean isPe = "PE".equalsIgnoreCase(trigger.getOptionType());
-        Double target1 = trigger.getTarget1();
-        if (target1 != null && target1 > 0d) {
-            boolean targetTouchedNow = isPe ? currentSpotPrice <= target1 : currentSpotPrice >= target1;
-            boolean targetTouchedSinceRequest = ltpCacheService.hasPriceTouchedSince(
-                    spotScripCode, trigger.getCreatedAt(), target1, isPe);
-            boolean fullCandleAfterRequest = candle.minute().isAfter(requestMinute);
-            boolean targetTouchedInCompletedCandle = fullCandleAfterRequest
-                    && (isPe ? candle.low() <= target1 : candle.high() >= target1);
-            boolean targetTouched = targetTouchedNow || targetTouchedSinceRequest || targetTouchedInCompletedCandle;
-            if (targetTouched) {
-                int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(),
-                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                        TriggeredTradeStatus.REJECTED.name());
-                if (claimed == 1) {
-                    log.info("Opening Rule B rejected request {} because T1 {} was touched before entry in candle {}",
-                            trigger.getId(), target1, candle.minute());
+        boolean openingRuleActive = isAtrOpeningRequest(trigger, nowIst)
+                && nowIst.toLocalTime().isBefore(OPENING_RULE_CUTOFF);
+        if (openingRuleActive) {
+            Double target1 = trigger.getTarget1();
+            if (target1 != null && target1 > 0d) {
+                boolean targetTouchedNow = isPe ? currentSpotPrice <= target1 : currentSpotPrice >= target1;
+                boolean targetTouchedSinceRequest = ltpCacheService.hasPriceTouchedSince(
+                        spotScripCode, trigger.getCreatedAt(), target1, isPe);
+                boolean fullCandleAfterRequest = candle.minute().isAfter(requestMinute);
+                boolean targetTouchedInCompletedCandle = fullCandleAfterRequest
+                        && (isPe ? candle.low() <= target1 : candle.high() >= target1);
+                boolean targetTouched = targetTouchedNow || targetTouchedSinceRequest || targetTouchedInCompletedCandle;
+                if (targetTouched) {
+                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(),
+                            TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                            TriggeredTradeStatus.REJECTED.name());
+                    if (claimed == 1) {
+                        log.info("Opening Rule B rejected request {} because T1 {} was touched before entry in candle {}",
+                                trigger.getId(), target1, candle.minute());
+                    }
+                    return OpeningDecision.REJECTED;
                 }
-                return OpeningDecision.REJECTED;
             }
-        }
 
-        Double stopLoss = trigger.getStopLoss();
-        if (stopLoss != null && stopLoss > 0d) {
-            boolean stopClosed = isPe ? candle.close() >= stopLoss : candle.close() <= stopLoss;
-            if (stopClosed) {
-                trigger.setOpeningRuleReset(Boolean.TRUE);
-                triggerRepo.save(trigger);
-                log.info("Opening Rule B reset request {} after candle {} closed beyond SL {}. Request remains pending for retrigger.",
-                        trigger.getId(), candle.minute(), stopLoss);
-                return OpeningDecision.WAIT;
+            Double stopLoss = trigger.getStopLoss();
+            if (stopLoss != null && stopLoss > 0d) {
+                boolean stopClosed = isPe ? candle.close() >= stopLoss : candle.close() <= stopLoss;
+                if (stopClosed) {
+                    if (!Boolean.TRUE.equals(trigger.getOpeningRuleReset())) {
+                        trigger.setOpeningRuleReset(Boolean.TRUE);
+                        triggerRepo.save(trigger);
+                        log.info("Opening Rule B reset request {} after candle {} closed beyond SL {}. Request remains pending for candle-confirmed retrigger.",
+                                trigger.getId(), candle.minute(), stopLoss);
+                    }
+                    return OpeningDecision.WAIT;
+                }
             }
         }
 
         double entryPrice = trigger.getEntryPrice();
-        boolean confirmed = isPe ? candle.close() <= entryPrice : candle.close() >= entryPrice;
-        return confirmed ? OpeningDecision.READY : OpeningDecision.WAIT;
+        boolean candleConfirmed = isPe ? candle.close() <= entryPrice : candle.close() >= entryPrice;
+        boolean currentSpotStillValid = isPe ? currentSpotPrice <= entryPrice : currentSpotPrice >= entryPrice;
+        return candleConfirmed && currentSpotStillValid ? OpeningDecision.READY : OpeningDecision.WAIT;
     }
 
     private boolean isAtrOpeningRequest(TriggerTradeRequestEntity trigger, LocalDateTime nowIst) {
@@ -582,7 +592,13 @@ public class PriceTriggerService {
                 boolean usesSpotSl = usesSpotForSl(persisted);
                 boolean usesSpotTarget = usesSpotForTarget(persisted);
 
-                Double slRefPrice = usesSpotSl ? resolveSpotStopClose(persisted) : tradedLtp;
+                // Keep both ternary branches boxed. If the first completed spot candle does not
+                // exist yet, resolveSpotStopClose returns null; mixing that Double with the
+                // primitive tradedLtp would otherwise force null unboxing and abort all target
+                // evaluation during the trade's first partial minute.
+                Double slRefPrice = usesSpotSl
+                        ? resolveSpotStopClose(persisted)
+                        : Double.valueOf(tradedLtp);
                 Double targetRefPrice = usesSpotTarget ? spotLtp : tradedLtp;
 
                 if (usesSpotSl && slRefPrice == null) {
@@ -629,6 +645,21 @@ public class PriceTriggerService {
                     if (updated == 0) {
                         updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
                     }
+                    return updated;
+                }
+
+                if (isFailedEntryRecross(persisted)) {
+                    LtpCacheService.MinuteCandle completedSpotCandle =
+                            ltpCacheService.getLastCompletedMinuteCandle(persisted.getSpotScripCode());
+                    Double completedSpotClose = completedSpotCandle != null ? completedSpotCandle.close() : spotLtp;
+                    if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp,
+                            completedSpotClose, "Entry recross")) {
+                        return 0;
+                    }
+                    int updated = triggeredRepo.claimIfStatusEquals(tradeId,
+                            TriggeredTradeStatus.EXECUTED.name(),
+                            TriggeredTradeStatus.EXIT_TRIGGERED.name(),
+                            ENTRY_RECROSS_EXIT_REASON);
                     return updated;
                 }
 
@@ -686,7 +717,9 @@ public class PriceTriggerService {
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
                 
                 // Re-determine effective prices for logging/logic
-                Double slRefPrice = usesSpotForSl(reloaded) ? resolveSpotStopClose(reloaded) : tradedLtp;
+                Double slRefPrice = usesSpotForSl(reloaded)
+                        ? resolveSpotStopClose(reloaded)
+                        : Double.valueOf(tradedLtp);
                 Double targetRefPrice = usesSpotForTarget(reloaded) ? spotLtp : tradedLtp;
 
                 String exitReason = reloaded.getExitReason();
@@ -720,6 +753,15 @@ public class PriceTriggerService {
                         log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, tradedLtp);
                         tradeExecutionService.squareOff(reloaded, tradedLtp, exitReason);
                     }
+                } else if (ENTRY_RECROSS_EXIT_REASON.equals(exitReason)) {
+                    LtpCacheService.MinuteCandle completedSpotCandle = reloaded.getSpotScripCode() == null
+                            ? null
+                            : ltpCacheService.getLastCompletedMinuteCandle(reloaded.getSpotScripCode());
+                    Double completedSpotClose = completedSpotCandle != null ? completedSpotCandle.close() : spotLtp;
+                    log.warn("Failed-entry recross confirmed for trade {} after {} grace candles and {} consecutive adverse spot closes. spotClose={} entry={}; exiting full position.",
+                            tradeId, ENTRY_RECROSS_GRACE_CANDLES, ENTRY_RECROSS_REQUIRED_CLOSES,
+                            completedSpotClose, reloaded.getEntryPrice());
+                    tradeExecutionService.squareOff(reloaded, tradedLtp, ENTRY_RECROSS_EXIT_REASON);
                 } else {
                     // TARGET_HIT
                     if (exitOrderAlreadyPresent) {
@@ -791,6 +833,55 @@ public class PriceTriggerService {
             return null;
         }
         return candle.close();
+    }
+
+    private boolean isFailedEntryRecross(TriggeredTradeSetupEntity trade) {
+        if (trade == null
+                || !ATR_SIGNAL_SOURCE.equalsIgnoreCase(trade.getSource())
+                || !usesSpotForEntry(trade)
+                || trade.getSpotScripCode() == null
+                || trade.getEntryAt() == null
+                || trade.getEntryPrice() == null
+                || trade.getEntryPrice() <= 0d) {
+            return false;
+        }
+
+        // Remaining entities created after T1 represent an already-managed winner; recross
+        // protection is only for the original position before its first target is booked.
+        if (trade.getOriginalLots() != null && trade.getLots() != null
+                && trade.getLots() < trade.getOriginalLots()) {
+            return false;
+        }
+
+        LocalDateTime entryMinute = trade.getEntryAt().truncatedTo(ChronoUnit.MINUTES);
+        LocalDateTime firstEvaluatedMinute = entryMinute.plusMinutes(ENTRY_RECROSS_GRACE_CANDLES + 1L);
+        List<LtpCacheService.MinuteCandle> candles = ltpCacheService.getCompletedMinuteCandlesSince(
+                trade.getSpotScripCode(), firstEvaluatedMinute);
+        if (candles == null || candles.isEmpty()) {
+            return false;
+        }
+
+        boolean isPe = "PE".equalsIgnoreCase(trade.getOptionType());
+        int consecutiveAdverseCloses = 0;
+        LocalDateTime previousMinute = null;
+        for (LtpCacheService.MinuteCandle candle : candles) {
+            if (candle == null || candle.minute() == null || candle.minute().isBefore(firstEvaluatedMinute)) {
+                continue;
+            }
+            if (previousMinute != null
+                    && ChronoUnit.MINUTES.between(previousMinute, candle.minute()) != 1L) {
+                consecutiveAdverseCloses = 0;
+            }
+            boolean adverseClose = isPe
+                    ? candle.close() > trade.getEntryPrice()
+                    : candle.close() < trade.getEntryPrice();
+            consecutiveAdverseCloses = adverseClose ? consecutiveAdverseCloses + 1 : 0;
+            previousMinute = candle.minute();
+            if (consecutiveAdverseCloses >= ENTRY_RECROSS_REQUIRED_CLOSES) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private int calculateLotsToBook(TriggeredTradeSetupEntity trade, double ltp) {
