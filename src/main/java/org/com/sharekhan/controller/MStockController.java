@@ -11,6 +11,7 @@ import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.service.MStockInstrumentCacheService;
 import org.com.sharekhan.service.MStockInstrumentResolver;
 import org.com.sharekhan.service.MStockHistoricalService;
+import org.com.sharekhan.service.MStockIntradayCandleService;
 import org.com.sharekhan.service.MStockLtpService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -31,6 +32,7 @@ public class MStockController {
     private final MStockInstrumentResolver instrumentResolver;
     private final MStockInstrumentCacheService instrumentCacheService;
     private final MStockHistoricalService mStockHistoricalService;
+    private final MStockIntradayCandleService mStockIntradayCandleService;
 
     @GetMapping("/ltp")
     public ResponseEntity<Map<String, Object>> getLtp(@RequestParam(name = "i") List<String> instruments) {
@@ -169,6 +171,43 @@ public class MStockController {
             return ResponseEntity.badRequest().body(err);
         } catch (Exception ex) {
             log.error("Failed to fetch MStock historical candles", ex);
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status", "error");
+            err.put("message", ex.getMessage());
+            return ResponseEntity.status(500).body(err);
+        }
+    }
+
+    @GetMapping("/intraday/candles")
+    public ResponseEntity<Map<String, Object>> getIntradayCandles(
+            @RequestParam(name = "exchange") String exchange,
+            @RequestParam(name = "symbolToken") String symbolToken,
+            @RequestParam(name = "interval", defaultValue = "minute") String interval) {
+        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(symbolToken) || !StringUtils.hasText(interval)) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status", "error");
+            err.put("message", "exchange, symbolToken and interval are required.");
+            return ResponseEntity.badRequest().body(err);
+        }
+
+        try {
+            List<MStockIntradayCandleService.IntradayCandle> candles =
+                    mStockIntradayCandleService.getIntradayCandles(exchange, symbolToken, interval);
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("status", "success");
+            body.put("exchange", exchange.trim());
+            body.put("symbolToken", symbolToken.trim());
+            body.put("interval", interval.trim());
+            body.put("count", candles.size());
+            body.put("candles", candles);
+            return ResponseEntity.ok(body);
+        } catch (IllegalArgumentException ex) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("status", "error");
+            err.put("message", ex.getMessage());
+            return ResponseEntity.badRequest().body(err);
+        } catch (Exception ex) {
+            log.error("Failed to fetch MStock intraday candles", ex);
             Map<String, Object> err = new LinkedHashMap<>();
             err.put("status", "error");
             err.put("message", ex.getMessage());
