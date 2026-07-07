@@ -28,4 +28,6 @@ public interface MStockInstrumentRepository extends JpaRepository<MStockInstrume
     List<MStockInstrumentEntity> findByExchangeIgnoreCaseAndNameIgnoreCase(String exchange, String name);
 
     boolean existsByInstrumentKey(String instrumentKey);
+
+    boolean existsByExchangeTokenIsNotNull();
 }

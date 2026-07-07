@@ -43,9 +43,13 @@ public class MStockInstrumentCacheService {
     private final MStockProperties mStockProperties;
 
     public boolean refreshInstrumentMasterIfEmpty() {
-        if (repository.count() > 0) {
+        long rows = repository.count();
+        if (rows > 0 && repository.existsByExchangeTokenIsNotNull()) {
             log.info("✅ MStock instrument master already populated. Skipping refresh.");
             return false;
+        }
+        if (rows > 0) {
+            log.warn("MStock instrument master has {} legacy rows without exchange tokens; refreshing it.", rows);
         }
         return refreshInstrumentMaster();
     }
