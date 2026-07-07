@@ -172,17 +172,28 @@ public class MStockIntradayCandleService {
             return null;
         }
         MStockInstrumentEntity instrument = instrumentRepository.findByInstrumentKey(instrumentKey).orElse(null);
-        if (instrument == null || !StringUtils.hasText(instrument.getExchangeToken())) {
-            log.warn("MStock exchange token missing for spot scripCode={}, instrumentKey={}",
+        String keyExchange = instrumentKey.contains(":")
+                ? instrumentKey.substring(0, instrumentKey.indexOf(':'))
+                : null;
+        String exchange = instrument != null && StringUtils.hasText(instrument.getExchange())
+                ? instrument.getExchange()
+                : keyExchange;
+        String exchangeToken = instrument != null ? instrument.getExchangeToken() : null;
+        if (!StringUtils.hasText(exchangeToken) && isCashExchange(exchange) && spotScripCode > 0) {
+            // Sharekhan cash scrip codes are the native NSE/BSE exchange tokens. This also keeps
+            // live confirmation working while a legacy MStock master is being refreshed.
+            exchangeToken = spotScripCode.toString();
+            log.info("Using native cash exchange token fallback for spot scripCode={}, instrumentKey={}",
                     spotScripCode, instrumentKey);
+        }
+        if (!StringUtils.hasText(exchangeToken)) {
+            log.warn("MStock exchange token unavailable for spot scripCode={}, instrumentKey={}, masterRowPresent={}",
+                    spotScripCode, instrumentKey, instrument != null);
             return null;
         }
-        String exchange = StringUtils.hasText(instrument.getExchange())
-                ? instrument.getExchange()
-                : instrumentKey.substring(0, instrumentKey.indexOf(':'));
         LocalDate expectedDate = normalizedMinute.toLocalDate();
         LocalTime expectedTime = normalizedMinute.toLocalTime();
-        IntradayCandle resolved = getIntradayCandles(exchange, instrument.getExchangeToken(), "minute").stream()
+        IntradayCandle resolved = getIntradayCandles(exchange, exchangeToken, "minute").stream()
                 .filter(candle -> candle.date().equals(expectedDate) && candle.time().equals(expectedTime))
                 .findFirst()
                 .orElse(null);
@@ -193,6 +204,13 @@ public class MStockIntradayCandleService {
             completedMinuteAttempts.keySet().removeIf(key -> key.minute().toLocalDate().isBefore(expectedDate));
         }
         return resolved;
+    }
+
+    private boolean isCashExchange(String exchange) {
+        return "NSE".equalsIgnoreCase(exchange)
+                || "NC".equalsIgnoreCase(exchange)
+                || "BSE".equalsIgnoreCase(exchange)
+                || "BC".equalsIgnoreCase(exchange);
     }
 
     private IntradayCandle parseCandle(JSONArray row) {

@@ -79,4 +79,23 @@ class MStockIntradayCandleServiceTest {
         assertSame(expected, service.getCompletedMinuteCandle(1922, requestedMinute));
         verify(service, times(1)).getIntradayCandles("NSE", "1922", "minute");
     }
+
+    @Test
+    void completedMinuteCandleFallsBackToNativeNseScripCodeForLegacyMaster() {
+        MStockInstrumentResolver resolver = mock(MStockInstrumentResolver.class);
+        MStockInstrumentRepository repository = mock(MStockInstrumentRepository.class);
+        MStockIntradayCandleService service = spy(new MStockIntradayCandleService(
+                mock(TokenStoreService.class), mock(CryptoService.class), resolver, repository));
+        LocalDateTime requestedMinute = LocalDateTime.of(2026, 7, 7, 11, 54);
+        var expected = new MStockIntradayCandleService.IntradayCandle(
+                LocalDate.of(2026, 7, 7), LocalTime.of(11, 54),
+                3120.0, 3122.0, 3118.0, 3121.0, 1_000L);
+
+        when(resolver.resolveInstrumentKey(1901)).thenReturn(Optional.of("NSE:CUMMINSIND-EQ"));
+        when(repository.findByInstrumentKey("NSE:CUMMINSIND-EQ")).thenReturn(Optional.empty());
+        doReturn(List.of(expected)).when(service).getIntradayCandles("NSE", "1901", "minute");
+
+        assertSame(expected, service.getCompletedMinuteCandle(1901, requestedMinute));
+        verify(service).getIntradayCandles("NSE", "1901", "minute");
+    }
 }
