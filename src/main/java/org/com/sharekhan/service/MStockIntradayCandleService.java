@@ -78,10 +78,6 @@ public class MStockIntradayCandleService {
         String normalizedSymbolToken = symbolToken.trim();
         String normalizedInterval = interval.trim();
         String url = String.format(INTRADAY_URL_TEMPLATE, normalizedExchange, normalizedSymbolToken, normalizedInterval);
-        log.info("Requesting MStock intraday candles exchange={}, segment={}, symbolToken={}, interval={}",
-                exchange.trim(), normalizedExchange, normalizedSymbolToken, normalizedInterval);
-        printDiagnostic("MStock intraday request url=" + url);
-
         TokenStoreService.TokenInfo tokenInfo = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK);
         String accessToken = null;
         String effectiveApiKey = this.apiKey;
@@ -111,12 +107,8 @@ public class MStockIntradayCandleService {
         }
 
         if (result.code != 200) {
-            printDiagnostic("MStock intraday response http=" + result.code + " body=" + result.body);
             throw new RuntimeException("MStock intraday request failed (http:" + result.code + "): " + result.body);
         }
-        log.debug("MStock intraday response http=200 exchange={}, symbolToken={}, interval={}, body={}",
-                normalizedExchange, normalizedSymbolToken, normalizedInterval, preview(result.body));
-        printDiagnostic("MStock intraday response http=200 body=" + result.body);
 
         JSONObject root = new JSONObject(result.body);
         if (!"success".equalsIgnoreCase(root.optString("status", ""))) {
@@ -125,8 +117,8 @@ public class MStockIntradayCandleService {
         JSONObject data = root.optJSONObject("data");
         JSONArray candles = data != null ? data.optJSONArray("candles") : null;
         if (candles == null || candles.isEmpty()) {
-            log.warn("MStock intraday response contained no candles exchange={}, symbolToken={}, interval={}, body={}",
-                    normalizedExchange, normalizedSymbolToken, normalizedInterval, preview(result.body));
+            log.warn("MStock intraday response contained no candles exchange={}, symbolToken={}, interval={}",
+                    normalizedExchange, normalizedSymbolToken, normalizedInterval);
             return List.of();
         }
 
@@ -142,7 +134,32 @@ public class MStockIntradayCandleService {
                     candles.length(), normalizedExchange, normalizedSymbolToken, normalizedInterval);
         }
         parsed.sort(Comparator.comparing(IntradayCandle::date).thenComparing(IntradayCandle::time));
+        logLatestCandles(normalizedExchange, normalizedSymbolToken, normalizedInterval, parsed);
         return parsed;
+    }
+
+    private void logLatestCandles(String exchange,
+                                  String symbolToken,
+                                  String interval,
+                                  List<IntradayCandle> candles) {
+        if (candles == null || candles.isEmpty()) {
+            return;
+        }
+        IntradayCandle latest = candles.get(candles.size() - 1);
+        IntradayCandle previous = candles.size() > 1 ? candles.get(candles.size() - 2) : null;
+        log.info("MStock intraday candles exchange={} symbolToken={} interval={} latest={} previous={}",
+                exchange, symbolToken, interval, candleSummary(latest), candleSummary(previous));
+    }
+
+    static String candleSummary(IntradayCandle candle) {
+        if (candle == null) {
+            return "unavailable";
+        }
+        String volume = candle.volume() != null ? candle.volume().toString() : "unavailable";
+        return String.format(Locale.ROOT,
+                "[%sT%s O=%s H=%s L=%s C=%s V=%s]",
+                candle.date(), candle.time(),
+                candle.open(), candle.high(), candle.low(), candle.close(), volume);
     }
 
     /**
@@ -326,18 +343,6 @@ public class MStockIntradayCandleService {
         } catch (Exception ignored) {
             return false;
         }
-    }
-
-    private String preview(String body) {
-        if (!StringUtils.hasText(body)) {
-            return "";
-        }
-        String compact = body.replaceAll("\\s+", " ").trim();
-        return compact.length() <= 500 ? compact : compact.substring(0, 500) + "...";
-    }
-
-    private void printDiagnostic(String message) {
-        System.out.println("[MSTOCK-INTRADAY] " + message);
     }
 
     private record HttpResult(int code, String body) {
