@@ -3,7 +3,9 @@ package org.com.sharekhan.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
+import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.enums.Broker;
+import org.com.sharekhan.repository.MStockInstrumentRepository;
 import org.com.sharekhan.util.CryptoService;
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -28,6 +30,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Slf4j
 @Service
@@ -36,6 +40,7 @@ public class MStockIntradayCandleService {
 
     private static final String INTRADAY_URL_TEMPLATE =
             "https://api.mstock.trade/openapi/typea/instruments/intraday/%s/%s/%s";
+    private static final long MISSING_CANDLE_RETRY_NANOS = 2_000_000_000L;
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final Map<String, String> EXCHANGE_SEGMENTS = Map.ofEntries(
             Map.entry("1", "1"),
@@ -56,6 +61,10 @@ public class MStockIntradayCandleService {
 
     private final TokenStoreService tokenStoreService;
     private final CryptoService cryptoService;
+    private final MStockInstrumentResolver instrumentResolver;
+    private final MStockInstrumentRepository instrumentRepository;
+    private final ConcurrentMap<CompletedMinuteKey, IntradayCandle> completedMinuteCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<CompletedMinuteKey, Long> completedMinuteAttempts = new ConcurrentHashMap<>();
 
     @Value("${app.mstock.api-key:}")
     private String apiKey;
@@ -134,6 +143,56 @@ public class MStockIntradayCandleService {
         }
         parsed.sort(Comparator.comparing(IntradayCandle::date).thenComparing(IntradayCandle::time));
         return parsed;
+    }
+
+    /**
+     * Resolve a Sharekhan spot scrip to its MStock exchange token and return the exact completed
+     * one-minute candle requested. The intraday API uses the exchange token, not the Sharekhan
+     * scrip code or MStock instrument token.
+     */
+    public IntradayCandle getCompletedMinuteCandle(Integer spotScripCode, LocalDateTime minute) {
+        if (spotScripCode == null || minute == null) {
+            return null;
+        }
+        LocalDateTime normalizedMinute = minute.withSecond(0).withNano(0);
+        CompletedMinuteKey cacheKey = new CompletedMinuteKey(spotScripCode, normalizedMinute);
+        IntradayCandle cached = completedMinuteCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        long nowNanos = System.nanoTime();
+        Long previousAttempt = completedMinuteAttempts.get(cacheKey);
+        if (previousAttempt != null && nowNanos - previousAttempt < MISSING_CANDLE_RETRY_NANOS) {
+            return null;
+        }
+        completedMinuteAttempts.put(cacheKey, nowNanos);
+        String instrumentKey = instrumentResolver.resolveInstrumentKey(spotScripCode).orElse(null);
+        if (!StringUtils.hasText(instrumentKey)) {
+            log.warn("Unable to resolve MStock instrument key for spot scripCode={}", spotScripCode);
+            return null;
+        }
+        MStockInstrumentEntity instrument = instrumentRepository.findByInstrumentKey(instrumentKey).orElse(null);
+        if (instrument == null || !StringUtils.hasText(instrument.getExchangeToken())) {
+            log.warn("MStock exchange token missing for spot scripCode={}, instrumentKey={}",
+                    spotScripCode, instrumentKey);
+            return null;
+        }
+        String exchange = StringUtils.hasText(instrument.getExchange())
+                ? instrument.getExchange()
+                : instrumentKey.substring(0, instrumentKey.indexOf(':'));
+        LocalDate expectedDate = normalizedMinute.toLocalDate();
+        LocalTime expectedTime = normalizedMinute.toLocalTime();
+        IntradayCandle resolved = getIntradayCandles(exchange, instrument.getExchangeToken(), "minute").stream()
+                .filter(candle -> candle.date().equals(expectedDate) && candle.time().equals(expectedTime))
+                .findFirst()
+                .orElse(null);
+        if (resolved != null) {
+            completedMinuteCache.put(cacheKey, resolved);
+            completedMinuteAttempts.remove(cacheKey);
+            completedMinuteCache.keySet().removeIf(key -> key.minute().toLocalDate().isBefore(expectedDate));
+            completedMinuteAttempts.keySet().removeIf(key -> key.minute().toLocalDate().isBefore(expectedDate));
+        }
+        return resolved;
     }
 
     private IntradayCandle parseCandle(JSONArray row) {
@@ -264,6 +323,9 @@ public class MStockIntradayCandleService {
     }
 
     private record HttpResult(int code, String body) {
+    }
+
+    private record CompletedMinuteKey(Integer spotScripCode, LocalDateTime minute) {
     }
 
     public record IntradayCandle(LocalDate date,
