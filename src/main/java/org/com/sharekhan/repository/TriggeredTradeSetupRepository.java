@@ -13,11 +13,17 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
+import java.time.LocalDateTime;
 
 @Repository
 public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTradeSetupEntity, Long> {
 
     List<TriggeredTradeSetupEntity> findByStatus(TriggeredTradeStatus status);
+
+    List<TriggeredTradeSetupEntity> findByStatusIn(List<TriggeredTradeStatus> statuses);
+
+    List<TriggeredTradeSetupEntity> findByStatusAndExitedAtBetweenOrderByExitedAtAsc(
+            TriggeredTradeStatus status, LocalDateTime from, LocalDateTime to);
 
     List<TriggeredTradeSetupEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
 

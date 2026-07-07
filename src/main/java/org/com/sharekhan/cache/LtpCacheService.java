@@ -23,6 +23,8 @@ public class LtpCacheService {
 
     // Stores latest LTP per scripCode
     private final Map<Integer, Double> ltpCache = new ConcurrentHashMap<>();
+    // Timestamp of the latest tick, used by read-only monitoring consumers to reject stale prices.
+    private final Map<Integer, LocalDateTime> ltpObservedAtCache = new ConcurrentHashMap<>();
     // Stores the first LTP observed after market open for each trading day (IST)
     private final Map<LocalDate, Map<Integer, Double>> openingPriceCache = new ConcurrentHashMap<>();
     private final Map<Integer, MinuteBucket> activeMinuteCandles = new ConcurrentHashMap<>();
@@ -38,6 +40,9 @@ public class LtpCacheService {
 
     void updateLtpAt(int scripCode, double ltp, LocalDateTime observedAt) {
         ltpCache.put(scripCode, ltp);
+        if (observedAt != null) {
+            ltpObservedAtCache.put(scripCode, observedAt);
+        }
         captureOpeningPriceIfEligible(scripCode, ltp, observedAt);
         updateMinuteCandle(scripCode, ltp, observedAt);
         recordRecentPrice(scripCode, ltp, observedAt);
@@ -68,6 +73,10 @@ public class LtpCacheService {
      */
     public Double getLtp(int scripCode) {
         return ltpCache.get(scripCode);
+    }
+
+    public LocalDateTime getObservedAt(int scripCode) {
+        return ltpObservedAtCache.get(scripCode);
     }
 
     /**
@@ -104,6 +113,7 @@ public class LtpCacheService {
      */
     public void removeLtp(int scripCode) {
         ltpCache.remove(scripCode);
+        ltpObservedAtCache.remove(scripCode);
     }
 
     /**
@@ -111,6 +121,7 @@ public class LtpCacheService {
      */
     public void clearAll() {
         ltpCache.clear();
+        ltpObservedAtCache.clear();
         openingPriceCache.clear();
         activeMinuteCandles.clear();
         completedMinuteCandles.clear();

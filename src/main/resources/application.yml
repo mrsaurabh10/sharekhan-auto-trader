@@ -51,6 +51,8 @@ logging:
 
 # Application specific
 app:
+  monitoring:
+    api-token: ${MONITORING_API_TOKEN:}
   scheduler:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
   strategy:
