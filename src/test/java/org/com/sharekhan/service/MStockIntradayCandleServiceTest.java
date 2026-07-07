@@ -98,4 +98,24 @@ class MStockIntradayCandleServiceTest {
         assertSame(expected, service.getCompletedMinuteCandle(1901, requestedMinute));
         verify(service).getIntradayCandles("NSE", "1901", "minute");
     }
+
+    @Test
+    void candleSummaryIncludesOhlcAndVolume() {
+        var candle = new MStockIntradayCandleService.IntradayCandle(
+                LocalDate.of(2026, 7, 7), LocalTime.of(14, 12),
+                2078.0, 2078.1, 2077.3, 2077.3, 102L);
+
+        assertEquals("[2026-07-07T14:12 O=2078.0 H=2078.1 L=2077.3 C=2077.3 V=102]",
+                MStockIntradayCandleService.candleSummary(candle));
+    }
+
+    @Test
+    void candleSummaryShowsUnavailableVolumeWhenMissing() {
+        var candle = new MStockIntradayCandleService.IntradayCandle(
+                LocalDate.of(2026, 7, 7), LocalTime.of(14, 11),
+                2078.2, 2078.2, 2078.0, 2078.0, null);
+
+        assertEquals("[2026-07-07T14:11 O=2078.2 H=2078.2 L=2078.0 C=2078.0 V=unavailable]",
+                MStockIntradayCandleService.candleSummary(candle));
+    }
 }
