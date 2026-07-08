@@ -255,10 +255,6 @@ public class PriceTriggerService {
         if (trigger == null || !ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())) {
             return OpeningDecision.NORMAL;
         }
-        if (trigger.getCreatedAt() == null
-                || !trigger.getCreatedAt().toLocalDate().equals(nowIst.toLocalDate())) {
-            return OpeningDecision.WAIT;
-        }
         Integer spotScripCode = trigger.getSpotScripCode();
         if (spotScripCode == null) {
             return OpeningDecision.WAIT;
@@ -278,27 +274,25 @@ public class PriceTriggerService {
                     trigger.getId(), expectedCompletedMinute);
             return OpeningDecision.WAIT;
         }
-        LtpCacheService.MinuteCandle candle = new LtpCacheService.MinuteCandle(
-                LocalDateTime.of(apiCandle.date(), apiCandle.time()),
-                apiCandle.open(), apiCandle.high(), apiCandle.low(), apiCandle.close());
-        LocalDateTime requestMinute = trigger.getCreatedAt().truncatedTo(ChronoUnit.MINUTES);
-        if (candle.minute().isBefore(requestMinute)) {
+        LocalDateTime candleMinute = LocalDateTime.of(apiCandle.date(), apiCandle.time());
+        if (!expectedCompletedMinute.equals(candleMinute)) {
+            log.debug("Ignoring stale MStock ATR entry candle for request {}. expectedMinute={} actualMinute={}",
+                    trigger.getId(), expectedCompletedMinute, candleMinute);
             return OpeningDecision.WAIT;
         }
-
+        LtpCacheService.MinuteCandle candle = new LtpCacheService.MinuteCandle(
+                candleMinute,
+                apiCandle.open(), apiCandle.high(), apiCandle.low(), apiCandle.close());
         boolean isPe = "PE".equalsIgnoreCase(trigger.getOptionType());
-        boolean openingRuleActive = isAtrOpeningRequest(trigger, nowIst)
-                && nowIst.toLocalTime().isBefore(OPENING_RULE_CUTOFF);
+        boolean openingRuleActive = nowIst.toLocalTime().isBefore(OPENING_RULE_CUTOFF);
         if (openingRuleActive) {
             Double target1 = trigger.getTarget1();
             if (target1 != null && target1 > 0d) {
                 boolean targetTouchedNow = isPe ? currentSpotPrice <= target1 : currentSpotPrice >= target1;
-                boolean targetTouchedSinceRequest = ltpCacheService.hasPriceTouchedSince(
-                        spotScripCode, trigger.getCreatedAt(), target1, isPe);
-                boolean fullCandleAfterRequest = candle.minute().isAfter(requestMinute);
-                boolean targetTouchedInCompletedCandle = fullCandleAfterRequest
-                        && (isPe ? candle.low() <= target1 : candle.high() >= target1);
-                boolean targetTouched = targetTouchedNow || targetTouchedSinceRequest || targetTouchedInCompletedCandle;
+                boolean targetTouchedSinceMarketOpen = ltpCacheService.hasPriceTouchedSince(
+                        spotScripCode, nowIst.toLocalDate().atTime(9, 15), target1, isPe);
+                boolean targetTouchedInCompletedCandle = isPe ? candle.low() <= target1 : candle.high() >= target1;
+                boolean targetTouched = targetTouchedNow || targetTouchedSinceMarketOpen || targetTouchedInCompletedCandle;
                 if (targetTouched) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(),
                             TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
@@ -327,8 +321,8 @@ public class PriceTriggerService {
         }
 
         double entryPrice = trigger.getEntryPrice();
-        boolean candleConfirmed = isPe ? candle.close() < entryPrice : candle.close() > entryPrice;
-        boolean currentSpotStillValid = isPe ? currentSpotPrice < entryPrice : currentSpotPrice > entryPrice;
+        boolean candleConfirmed = isPe ? candle.close() <= entryPrice : candle.close() >= entryPrice;
+        boolean currentSpotStillValid = isPe ? currentSpotPrice <= entryPrice : currentSpotPrice >= entryPrice;
         if (!candleConfirmed || !currentSpotStillValid) {
             return OpeningDecision.WAIT;
         }
@@ -337,19 +331,9 @@ public class PriceTriggerService {
         return OpeningDecision.READY;
     }
 
-    private boolean isAtrOpeningRequest(TriggerTradeRequestEntity trigger, LocalDateTime nowIst) {
-        return trigger != null
-                && ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
-                && trigger.getCreatedAt() != null
-                && trigger.getCreatedAt().toLocalDate().equals(nowIst.toLocalDate())
-                && trigger.getCreatedAt().toLocalTime().isBefore(OPENING_RULE_CUTOFF);
-    }
-
     private void initializeGapPolicy(TriggerTradeRequestEntity trigger) {
         if (trigger == null || !ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
                 || Boolean.TRUE.equals(trigger.getGapPolicyInitialized())
-                || trigger.getCreatedAt() == null
-                || !trigger.getCreatedAt().toLocalTime().isBefore(OPENING_RULE_CUTOFF)
                 || trigger.getSpotScripCode() == null || trigger.getEntryPrice() == null
                 || trigger.getTarget1() == null || trigger.getStopLoss() == null) {
             return;

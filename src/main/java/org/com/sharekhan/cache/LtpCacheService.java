@@ -19,6 +19,7 @@ public class LtpCacheService {
 
     private static final ZoneId IST_ZONE = ZoneId.of("Asia/Kolkata");
     private static final LocalTime MARKET_OPEN_TIME = LocalTime.of(9, 15);
+    private static final LocalTime MARKET_OPEN_CAPTURE_END = MARKET_OPEN_TIME.plusMinutes(1);
 
     // Stores latest LTP per scripCode
     private final Map<Integer, Double> ltpCache = new ConcurrentHashMap<>();
@@ -37,7 +38,7 @@ public class LtpCacheService {
 
     void updateLtpAt(int scripCode, double ltp, LocalDateTime observedAt) {
         ltpCache.put(scripCode, ltp);
-        captureOpeningPriceIfEligible(scripCode, ltp);
+        captureOpeningPriceIfEligible(scripCode, ltp, observedAt);
         updateMinuteCandle(scripCode, ltp, observedAt);
         recordRecentPrice(scripCode, ltp, observedAt);
         log.debug("📈 Updated LTP cache: scripCode={} ltp={}", scripCode, ltp);
@@ -116,18 +117,22 @@ public class LtpCacheService {
         recentPriceWindows.clear();
     }
 
-    private void captureOpeningPriceIfEligible(int scripCode, double ltp) {
-        LocalTime nowIst = LocalTime.now(IST_ZONE);
-        if (nowIst.isBefore(MARKET_OPEN_TIME)) {
-            return; // ignore pre-open ticks
+    private void captureOpeningPriceIfEligible(int scripCode, double ltp, LocalDateTime observedAt) {
+        if (observedAt == null || !Double.isFinite(ltp) || ltp <= 0d) {
+            return;
+        }
+        LocalTime observedTime = observedAt.toLocalTime();
+        if (observedTime.isBefore(MARKET_OPEN_TIME)
+                || !observedTime.isBefore(MARKET_OPEN_CAPTURE_END)) {
+            return; // only a tick from the actual 09:15 opening minute can represent the open
         }
 
-        LocalDate today = LocalDate.now(IST_ZONE);
-        purgeStaleOpeningPrices(today);
-        Map<Integer, Double> dailyMap = openingPriceCache.computeIfAbsent(today, d -> new ConcurrentHashMap<>());
+        LocalDate observedDate = observedAt.toLocalDate();
+        purgeStaleOpeningPrices(observedDate);
+        Map<Integer, Double> dailyMap = openingPriceCache.computeIfAbsent(observedDate, d -> new ConcurrentHashMap<>());
 
         dailyMap.computeIfAbsent(scripCode, key -> {
-            log.debug("📌 Captured opening price for scripCode={} on {}: {}", scripCode, today, ltp);
+            log.debug("📌 Captured opening price for scripCode={} on {}: {}", scripCode, observedDate, ltp);
             return ltp;
         });
     }

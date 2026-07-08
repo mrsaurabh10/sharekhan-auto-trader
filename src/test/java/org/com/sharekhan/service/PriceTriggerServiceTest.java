@@ -96,7 +96,7 @@ class PriceTriggerServiceTest {
     }
 
     @Test
-    void atrSpotPeEntryWaitsWhenCompletedCandleClosesExactlyAtEntry() {
+    void atrSpotPeEntryTriggersWhenCompletedCandleClosesExactlyAtEntry() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 21, 1)).when(timedService).nowIst();
         var trigger = atrTrigger(7020L, 380.30, 382.32, 378.28);
@@ -107,16 +107,18 @@ class PriceTriggerServiceTest {
         when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
                 .thenReturn(List.of(trigger));
         stubIntradayCandle(9, 20, 380.50, 380.60, 380.20, 380.30);
+        when(triggerRepo.claimIfStatusEquals(7020L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                .thenReturn(1);
+        when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
-        timedService.evaluatePriceTrigger(20000, 380.20);
+        timedService.evaluatePriceTrigger(20000, 380.30);
 
-        verify(triggerRepo, never()).claimIfStatusEquals(7020L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
-        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+        verify(tradeExecutionService).executeTradeFromEntity(trigger);
     }
 
     @Test
-    void atrSpotCeEntryWaitsWhenCompletedCandleClosesExactlyAtEntry() {
+    void atrSpotCeEntryTriggersWhenCompletedCandleClosesExactlyAtEntry() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 21, 1)).when(timedService).nowIst();
         var trigger = atrTrigger(7021L, 380.30, 378.28, 382.32);
@@ -126,12 +128,36 @@ class PriceTriggerServiceTest {
         when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
                 .thenReturn(List.of(trigger));
         stubIntradayCandle(9, 20, 380.10, 380.50, 380.00, 380.30);
+        when(triggerRepo.claimIfStatusEquals(7021L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                .thenReturn(1);
+        when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
-        timedService.evaluatePriceTrigger(20000, 380.40);
+        timedService.evaluatePriceTrigger(20000, 380.30);
 
-        verify(triggerRepo, never()).claimIfStatusEquals(7021L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
-        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+        verify(tradeExecutionService).executeTradeFromEntity(trigger);
+    }
+
+    @Test
+    void atrSpotEntryDoesNotDependOnCreatedAt() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 33, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7023L, 100.0, 90.0, 110.0);
+        trigger.setCreatedAt(null);
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        stubIntradayCandle(9, 32, 99.0, 101.0, 98.5, 100.0);
+        when(triggerRepo.claimIfStatusEquals(7023L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                .thenReturn(1);
+        when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
+
+        timedService.evaluatePriceTrigger(20000, 100.0);
+
+        verify(tradeExecutionService).executeTradeFromEntity(trigger);
     }
 
     @Test
