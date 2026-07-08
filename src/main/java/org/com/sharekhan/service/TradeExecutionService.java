@@ -630,6 +630,7 @@ public class TradeExecutionService {
             if (TriggeredTradeStatus.EXECUTED.equals(savedTrade.getStatus())) {
                 TradeEventLogger.logOrderExecuted("ENTRY", savedTrade, result.getExecutedPrice(), result.getStatus());
                 handleEntryOrderExecution(savedTrade);
+                sendEntryExecutedNotification(savedTrade);
             } else {
                 publishOrderPlaced(savedTrade);
             }
@@ -1644,6 +1645,7 @@ public class TradeExecutionService {
                 TradeEventLogger.logOrderExecuted("ENTRY", triggeredTradeSetupEntity, result.getExecutedPrice(), result.getStatus());
                 log.info("✅ Trade executed immediately. Skipping order status polling.");
                 handleEntryOrderExecution(triggeredTradeSetupEntity);
+                sendEntryExecutedNotification(triggeredTradeSetupEntity);
                 return triggeredTradeSetupEntity;
             }
 
@@ -2011,6 +2013,10 @@ public class TradeExecutionService {
                     log.info("📊 Entry status snapshot after attempt {} for trade {}: {}", attempt + 1, triggerLogId(trigger), latestStatus);
 
                     if (isOrderFilled(latestStatus)) {
+                        result.setStatus("Fully Executed");
+                        if (result.getExecutedPrice() == null) {
+                            result.setExecutedPrice(trigger.getActualEntryPrice());
+                        }
                         return result;
                     }
 
@@ -2983,6 +2989,27 @@ public class TradeExecutionService {
             maybePlaceTargetOrder(trade);
         } catch (Exception e) {
             log.warn("Failed to place target order for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
+        }
+    }
+
+    private void sendEntryExecutedNotification(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return;
+        }
+        try {
+            StringBuilder body = new StringBuilder();
+            body.append("Instrument: ").append(trade.getSymbol());
+            if (trade.getStrikePrice() != null) body.append(" ").append(trade.getStrikePrice());
+            if (trade.getOptionType() != null) body.append(" ").append(trade.getOptionType());
+            body.append("\nOrderId: ").append(trade.getOrderId());
+            body.append("\nStatus: ").append(TriggeredTradeStatus.EXECUTED);
+            if (trade.getEntryPrice() != null) body.append("\nEntry: ").append(trade.getEntryPrice());
+            if (trade.getActualEntryPrice() != null) body.append("\nExecuted Price: ").append(trade.getActualEntryPrice());
+            telegramNotificationService.sendTradeMessageForUser(
+                    trade.getAppUserId(), "Order Executed ✅", body.toString());
+        } catch (Exception e) {
+            log.warn("Failed sending Telegram notification for immediate entry execution on trade {}: {}",
+                    trade.getId(), e.getMessage());
         }
     }
 

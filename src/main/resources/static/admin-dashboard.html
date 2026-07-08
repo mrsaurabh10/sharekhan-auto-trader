@@ -394,16 +394,48 @@
         <section id="accountSection" style="display:none">
             <h4>Account for <span id="accountUserName"></span></h4>
             <div style="border:1px solid #eee; padding:0.6rem; margin-bottom:0.6rem; background:#fafafa;">
+                <h4 style="margin-top:0;">Password</h4>
                 <div class="form-row"><label class="inline small" for="accountNewPassword">New Password</label><input id="accountNewPassword" type="password" autocomplete="new-password" /></div>
                 <div class="form-row"><label class="inline small" for="accountConfirmPassword">Confirm Password</label><input id="accountConfirmPassword" type="password" autocomplete="new-password" /></div>
                 <button class="btn primary" id="changeAccountPasswordBtn" type="button">Update Password</button>
                 <div id="accountPasswordState" class="hint" style="margin-top:0.5rem;"></div>
+            </div>
+            <div style="border:1px solid #eee; padding:0.6rem; margin-bottom:0.6rem; background:#fafafa;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <h4 style="margin:0;">Configurations</h4>
+                    <button class="btn primary" id="addAccountConfigBtn" type="button">Add Configuration</button>
+                </div>
+                <div class="hint" style="margin:0.4rem 0;">Disabled configurations remain saved but are not used by trading logic.</div>
+                <table id="accountConfigsTable">
+                    <thead><tr><th>Key</th><th>Value</th><th>Enabled</th><th>Actions</th></tr></thead>
+                    <tbody><tr><td colspan="4">Loading configurations...</td></tr></tbody>
+                </table>
+                <div id="accountConfigEditor" style="display:none; margin-top:0.8rem; border:1px solid #dfe4ef; padding:0.6rem; background:#fff;">
+                    <h4 id="accountConfigEditorTitle" style="margin-top:0;">Add Configuration</h4>
+                    <div class="form-row"><label class="inline small" for="accountConfigKey">Key</label><input id="accountConfigKey" list="knownConfigKeys" maxlength="255" autocomplete="off" /></div>
+                    <datalist id="knownConfigKeys">
+                        <option value="allow_sharekhan_research"></option>
+                        <option value="telegram_trade_enabled"></option>
+                        <option value="max_amount_per_trade"></option>
+                        <option value="max_loss_per_trade"></option>
+                        <option value="option_stock_lot_size"></option>
+                        <option value="quick_trade_default_lots"></option>
+                        <option value="quick_trade_sl_percent"></option>
+                        <option value="quick_trade_target_percent"></option>
+                        <option value="quick_trade_target2_percent"></option>
+                    </datalist>
+                    <div class="form-row"><label class="inline small" for="accountConfigValue">Value</label><input id="accountConfigValue" maxlength="255" /></div>
+                    <div class="form-row"><label class="inline small" for="accountConfigEnabled">Enabled</label><input id="accountConfigEnabled" type="checkbox" checked /></div>
+                    <button class="btn primary" id="saveAccountConfigBtn" type="button">Save Configuration</button>
+                    <button class="btn" id="cancelAccountConfigBtn" type="button">Cancel</button>
+                    <div id="accountConfigState" class="hint" style="margin-top:0.5rem;"></div>
+                </div>
             </div>
         </section>
 
     </div>
 </div>
 
-<script src="/admin-dashboard.js?v=21"></script>
+<script src="/admin-dashboard.js?v=22"></script>
 </body>
 </html>

@@ -18,11 +18,15 @@ import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.broker.BrokerServiceFactory;
 import org.com.sharekhan.service.broker.ModifiableEntryBrokerService;
+import org.com.sharekhan.service.broker.OrderStatusBrokerService;
 import org.com.sharekhan.service.broker.TriggerPriceEntryBrokerService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.junit.jupiter.api.Test;
+import org.json.JSONArray;
+import org.json.JSONObject;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -183,6 +187,37 @@ class TradeExecutionServiceBrokerSideEntryTest {
         ctx.service.stopEntryOrderChase(created.getId());
     }
 
+    @Test
+    void brokerFillDetectedByFinalStatusCheckSendsExecutedTelegramAlert() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder()
+                .success(true)
+                .orderId("TRIGGER-ORDER")
+                .status("Pending")
+                .build());
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(124.0);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
+                .thenReturn(OrderPlacementResult.builder()
+                        .success(true)
+                        .orderId("ENTRY-ORDER-1")
+                        .status("Pending")
+                        .attemptedPrice(124.0)
+                        .build());
+        JSONObject filledResponse = new JSONObject().put("data", new JSONArray().put(
+                new JSONObject()
+                        .put("orderStatus", "Fully Executed")
+                        .put("avgPrice", 124.5)));
+        when(ctx.broker.fetchOrderStatus(any(), any(BrokerContext.class), eq("ENTRY-ORDER-1")))
+                .thenReturn(filledResponse);
+
+        TriggeredTradeSetupEntity executed = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(executed).isNotNull();
+        assertThat(executed.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        verify(ctx.telegramNotificationService).sendTradeMessageForUser(
+                eq(9L), eq("Order Executed ✅"), anyString());
+        verify(ctx.eventPublisher, never()).publishEvent(any(OrderPlacedEvent.class));
+    }
+
     private TriggerRequest optionRequest() {
         TriggerRequest request = new TriggerRequest();
         request.setInstrument("NIFTY");
@@ -239,6 +274,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
         private final ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         private final WebSocketSubscriptionService subscriptionService = mock(WebSocketSubscriptionService.class);
         private final WebSocketSubscriptionHelper subscriptionHelper = mock(WebSocketSubscriptionHelper.class);
+        private final TelegramNotificationService telegramNotificationService = mock(TelegramNotificationService.class);
         private final AtomicReference<TriggerTradeRequestEntity> savedRequest = new AtomicReference<>();
         private final AtomicReference<TriggeredTradeSetupEntity> savedTrade = new AtomicReference<>();
         private final TradeExecutionService service;
@@ -320,9 +356,11 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     new OrderPlacementGuard(),
                     null
             );
+            ReflectionTestUtils.setField(service, "telegramNotificationService", telegramNotificationService);
         }
     }
 
-    private interface TestBrokerService extends TriggerPriceEntryBrokerService, ModifiableEntryBrokerService {
+    private interface TestBrokerService extends TriggerPriceEntryBrokerService,
+            ModifiableEntryBrokerService, OrderStatusBrokerService {
     }
 }
