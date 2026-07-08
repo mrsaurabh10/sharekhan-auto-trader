@@ -15,4 +15,5 @@ public interface UserConfigRepository extends JpaRepository<UserConfig, Long> {
     // New: appUserId-based lookups (preferred)
     Optional<UserConfig> findByAppUserIdAndKeyName(Long appUserId, String keyName);
     List<UserConfig> findAllByAppUserIdAndEnabledTrue(Long appUserId);
+    List<UserConfig> findAllByAppUserIdOrderByKeyNameAsc(Long appUserId);
 }

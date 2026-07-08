@@ -8,6 +8,7 @@ import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.com.sharekhan.service.TradingMessageService;
+import org.com.sharekhan.service.UserConfigService;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.springframework.http.ResponseEntity;
@@ -57,6 +58,7 @@ public class AdminController {
     private final AppUserRepository appUserRepository;
     private final PlatformTransactionManager transactionManager;
     private final TradingMessageService tradingMessageService;
+    private final UserConfigService userConfigService;
 
     @PersistenceContext
     private EntityManager entityManager;
@@ -371,6 +373,48 @@ public class AdminController {
         u.setPassword(passwordEncoder.encode(newPw));
         appUserRepository.save(u);
         return ResponseEntity.ok("updated");
+    }
+
+    @GetMapping("/app-users/{id}/configs")
+    @ResponseBody
+    public ResponseEntity<?> listAppUserConfigs(@PathVariable Long id) {
+        if (!appUserRepository.existsById(id)) return ResponseEntity.notFound().build();
+        return ResponseEntity.ok(userConfigService.getConfigs(id));
+    }
+
+    @PostMapping("/app-users/{id}/configs")
+    @ResponseBody
+    public ResponseEntity<?> createAppUserConfig(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        if (!appUserRepository.existsById(id)) return ResponseEntity.notFound().build();
+        try {
+            return ResponseEntity.ok(userConfigService.createConfig(
+                    id,
+                    body.get("keyName") == null ? null : String.valueOf(body.get("keyName")),
+                    body.get("value") == null ? null : String.valueOf(body.get("value")),
+                    !body.containsKey("enabled") || Boolean.parseBoolean(String.valueOf(body.get("enabled")))
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PutMapping("/app-users/{userId}/configs/{configId}")
+    @ResponseBody
+    public ResponseEntity<?> updateAppUserConfig(@PathVariable Long userId,
+                                                  @PathVariable Long configId,
+                                                  @RequestBody Map<String, Object> body) {
+        if (!appUserRepository.existsById(userId)) return ResponseEntity.notFound().build();
+        try {
+            return ResponseEntity.ok(userConfigService.updateConfig(
+                    userId,
+                    configId,
+                    body.get("keyName") == null ? null : String.valueOf(body.get("keyName")),
+                    body.get("value") == null ? null : String.valueOf(body.get("value")),
+                    !body.containsKey("enabled") || Boolean.parseBoolean(String.valueOf(body.get("enabled")))
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     @DeleteMapping("/app-users/{id}")

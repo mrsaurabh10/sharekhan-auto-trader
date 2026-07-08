@@ -6,6 +6,7 @@ import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.service.CurrentUserService;
+import org.com.sharekhan.service.UserConfigService;
 import org.com.sharekhan.util.CryptoService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -27,6 +28,7 @@ public class UserController {
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final CryptoService cryptoService;
     private final PasswordEncoder passwordEncoder;
+    private final UserConfigService userConfigService;
 
     @GetMapping("/me")
     public ResponseEntity<?> me() {
@@ -179,6 +181,40 @@ public class UserController {
                 .orElseThrow(() -> new org.springframework.security.access.AccessDeniedException("App user login required"));
         user.setPassword(passwordEncoder.encode(newPassword));
         return ResponseEntity.ok("updated");
+    }
+
+    @GetMapping("/configs")
+    public ResponseEntity<?> listMyConfigs() {
+        return ResponseEntity.ok(userConfigService.getConfigs(requireUserId()));
+    }
+
+    @PostMapping("/configs")
+    public ResponseEntity<?> createMyConfig(@RequestBody Map<String, Object> body) {
+        try {
+            return ResponseEntity.ok(userConfigService.createConfig(
+                    requireUserId(),
+                    text(body.get("keyName")),
+                    text(body.get("value")),
+                    !body.containsKey("enabled") || Boolean.parseBoolean(String.valueOf(body.get("enabled")))
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PutMapping("/configs/{configId}")
+    public ResponseEntity<?> updateMyConfig(@PathVariable Long configId, @RequestBody Map<String, Object> body) {
+        try {
+            return ResponseEntity.ok(userConfigService.updateConfig(
+                    requireUserId(),
+                    configId,
+                    text(body.get("keyName")),
+                    text(body.get("value")),
+                    !body.containsKey("enabled") || Boolean.parseBoolean(String.valueOf(body.get("enabled")))
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
 
     private Long requireUserId() {

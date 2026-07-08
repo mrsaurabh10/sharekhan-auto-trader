@@ -58,6 +58,18 @@
       : '/api/user/brokers/' + encodeURIComponent(id);
   }
 
+  function configListUrl(userId) {
+    return window.isAdminSession
+      ? '/admin/app-users/' + encodeURIComponent(userId) + '/configs'
+      : '/api/user/configs';
+  }
+
+  function configDetailUrl(userId, configId) {
+    return window.isAdminSession
+      ? '/admin/app-users/' + encodeURIComponent(userId) + '/configs/' + encodeURIComponent(configId)
+      : '/api/user/configs/' + encodeURIComponent(configId);
+  }
+
   async function ensureCsrf() {
     const meta = document.querySelector('meta[name="_csrf"]');
     if (meta && meta.getAttribute('content')) return;
@@ -1552,6 +1564,7 @@
     const confirm = document.getElementById('accountConfirmPassword');
     if (pw) pw.value = '';
     if (confirm) confirm.value = '';
+    closeAccountConfigEditor();
   }
 
   function renderUserTabs() {
@@ -1606,6 +1619,7 @@
     }
     if (window.currentUserTab === 'account' && window.selectedUserId) {
       updateAccountSectionFor(window.selectedUserName);
+      loadAccountConfigs(window.selectedUserId).catch(function(){});
     }
   }
 
@@ -1681,9 +1695,96 @@
     }
   }
 
+  async function loadAccountConfigs(userId) {
+    const tbody = document.querySelector('#accountConfigsTable tbody');
+    if (!tbody || !userId) return;
+    tbody.innerHTML = '<tr><td colspan="4">Loading configurations...</td></tr>';
+    try {
+      const configs = await fetchJson(configListUrl(userId));
+      if (!Array.isArray(configs) || configs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4">No configurations created</td></tr>';
+        return;
+      }
+      tbody.innerHTML = '';
+      configs.forEach(function(config) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + escapeHtml(config.keyName) + '</td>' +
+          '<td style="word-break:break-word">' + escapeHtml(config.value) + '</td>' +
+          '<td>' + booleanLabel(config.enabled) + '</td>' +
+          '<td><button class="btn" type="button">Edit</button></td>';
+        tr.querySelector('button').addEventListener('click', function() { openAccountConfigEditor(config); });
+        tbody.appendChild(tr);
+      });
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="4">Failed to load configurations</td></tr>';
+    }
+  }
+
+  function openAccountConfigEditor(config) {
+    const editor = document.getElementById('accountConfigEditor');
+    if (!editor) return;
+    const editing = !!(config && config.id != null);
+    editor.style.display = 'block';
+    if (editing) editor.setAttribute('data-config-id', config.id);
+    else editor.removeAttribute('data-config-id');
+    const title = document.getElementById('accountConfigEditorTitle');
+    const key = document.getElementById('accountConfigKey');
+    const value = document.getElementById('accountConfigValue');
+    const enabled = document.getElementById('accountConfigEnabled');
+    const state = document.getElementById('accountConfigState');
+    if (title) title.innerText = editing ? 'Edit Configuration' : 'Add Configuration';
+    if (key) key.value = editing ? (config.keyName || '') : '';
+    if (value) value.value = editing && config.value != null ? String(config.value) : '';
+    if (enabled) enabled.checked = editing ? !!config.enabled : true;
+    if (state) state.innerText = '';
+    if (key) key.focus();
+  }
+
+  function closeAccountConfigEditor() {
+    const editor = document.getElementById('accountConfigEditor');
+    if (!editor) return;
+    editor.style.display = 'none';
+    editor.removeAttribute('data-config-id');
+    const state = document.getElementById('accountConfigState');
+    if (state) state.innerText = '';
+  }
+
+  async function saveAccountConfig() {
+    const editor = document.getElementById('accountConfigEditor');
+    const state = document.getElementById('accountConfigState');
+    const userId = window.selectedUserId;
+    if (!editor || !userId) return;
+    const configId = editor.getAttribute('data-config-id');
+    const keyEl = document.getElementById('accountConfigKey');
+    const valueEl = document.getElementById('accountConfigValue');
+    const enabledEl = document.getElementById('accountConfigEnabled');
+    const keyName = keyEl ? keyEl.value.trim() : '';
+    if (!keyName) { if (state) state.innerText = 'Configuration key is required.'; return; }
+    const body = {
+      keyName: keyName,
+      value: valueEl ? valueEl.value : '',
+      enabled: !!(enabledEl && enabledEl.checked)
+    };
+    const url = configId ? configDetailUrl(userId, configId) : configListUrl(userId);
+    try {
+      await ensureCsrf();
+      await fetchJson(url, { method: configId ? 'PUT' : 'POST', body: JSON.stringify(body) });
+      closeAccountConfigEditor();
+      await loadAccountConfigs(userId);
+    } catch (e) {
+      if (state) state.innerText = 'Failed to save configuration: ' + (e && e.message ? e.message : e);
+    }
+  }
+
   function wireAccountUI() {
     const btn = document.getElementById('changeAccountPasswordBtn');
     if (btn) btn.addEventListener('click', changeAccountPassword);
+    const addConfig = document.getElementById('addAccountConfigBtn');
+    if (addConfig) addConfig.addEventListener('click', function() { openAccountConfigEditor(null); });
+    const saveConfig = document.getElementById('saveAccountConfigBtn');
+    if (saveConfig) saveConfig.addEventListener('click', saveAccountConfig);
+    const cancelConfig = document.getElementById('cancelAccountConfigBtn');
+    if (cancelConfig) cancelConfig.addEventListener('click', closeAccountConfigEditor);
   }
 
   function selectUser(appUserId, liElem, customerId, username) {
