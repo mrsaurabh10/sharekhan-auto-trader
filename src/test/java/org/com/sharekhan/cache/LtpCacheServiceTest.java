@@ -2,7 +2,9 @@ package org.com.sharekhan.cache;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -40,6 +42,27 @@ class LtpCacheServiceTest {
         cache.updateLtpAt(123, 110.0, LocalDateTime.of(2026, 7, 3, 9, 20, 30));
 
         assertThat(cache.hasPriceTouchedSince(123, requestCreatedAt, 110.0, false)).isTrue();
+    }
+
+    @Test
+    void doesNotTreatFirstLateSubscriptionTickAsMarketOpen() {
+        LtpCacheService cache = new LtpCacheService();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+
+        cache.updateLtpAt(123, 152.7, today.atTime(10, 19, 8));
+
+        assertThat(cache.getTodayOpeningPrice(123)).isNull();
+    }
+
+    @Test
+    void capturesFirstTickFromActualOpeningMinute() {
+        LtpCacheService cache = new LtpCacheService();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+
+        cache.updateLtpAt(123, 140.0, today.atTime(9, 15, 2));
+        cache.updateLtpAt(123, 141.0, today.atTime(9, 15, 5));
+
+        assertThat(cache.getTodayOpeningPrice(123)).isEqualTo(140.0);
     }
 
 }
