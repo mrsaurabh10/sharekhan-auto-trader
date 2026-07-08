@@ -25,6 +25,7 @@ import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.junit.jupiter.api.Test;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.mockito.ArgumentCaptor;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -33,7 +34,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,6 +46,8 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -184,6 +189,14 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(ctx.service.isEntryOrderChaseActive(created.getId())).isTrue();
         verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(125.0));
 
+        @SuppressWarnings("unchecked")
+        Map<Long, Object> chaseStates = (Map<Long, Object>) ReflectionTestUtils.getField(ctx.service, "entryChaseStates");
+        Object chaseState = chaseStates.get(created.getId());
+        ReflectionTestUtils.setField(chaseState, "modifyAttempts", 10);
+        Double cappedChasePrice = ReflectionTestUtils.invokeMethod(
+                ctx.service, "determineEntryChasePrice", created, chaseState);
+        assertThat(cappedChasePrice).isEqualTo(130.0);
+
         ctx.service.stopEntryOrderChase(created.getId());
     }
 
@@ -216,6 +229,204 @@ class TradeExecutionServiceBrokerSideEntryTest {
         verify(ctx.telegramNotificationService).sendTradeMessageForUser(
                 eq(9L), eq("Order Executed ✅"), anyString());
         verify(ctx.eventPublisher, never()).publishEvent(any(OrderPlacedEvent.class));
+    }
+
+    @Test
+    void automaticEntryUsesFiveBoundedPriceLevelsThenCancels() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
+                .thenReturn(pending("ENTRY-5"));
+        when(ctx.broker.modifyEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-5"), anyDouble()))
+                .thenReturn(pending("ENTRY-5"));
+        configurePendingUntilCancelled(ctx, "ENTRY-5");
+
+        TriggeredTradeSetupEntity result = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        assertThat(result.getExitReason()).isEqualTo("ENTRY_NOT_FILLED_AFTER_5_ATTEMPTS");
+        verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(10.55));
+        ArgumentCaptor<Double> prices = ArgumentCaptor.forClass(Double.class);
+        verify(ctx.broker, times(4)).modifyEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-5"), prices.capture());
+        assertThat(prices.getAllValues()).containsExactly(10.60, 10.60, 10.60, 10.65);
+        verify(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-5"));
+    }
+
+    @Test
+    void automaticEntryCancelsWhenSpotSignalIsNoLongerValid() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);
+        TriggerTradeRequestEntity request = triggerRequestEntity();
+        request.setUseSpotForEntry(true);
+        request.setOptionType("PE");
+        request.setEntryPrice(434.15);
+        request.setSpotScripCode(20000);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.ltpCache.getLtp(20000)).thenReturn(434.30);
+
+        TriggeredTradeSetupEntity result = ctx.service.executeTradeFromEntity(request);
+
+        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        assertThat(result.getExitReason()).isEqualTo("ENTRY_SIGNAL_INVALIDATED");
+        verify(ctx.broker, never()).placeOrder(any(), any(BrokerContext.class), anyDouble());
+    }
+
+    @Test
+    void automaticEntryCancelsWhenAskExceedsTwoPercentCeiling() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);
+        QuoteCacheService.QuoteSnapshot initial = quote(10.50, 10.60, 10.55);
+        QuoteCacheService.QuoteSnapshot moved = quote(10.70, 10.80, 10.75);
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(initial), Optional.of(moved));
+        when(ctx.quoteCache.isStale(any(), any(Duration.class))).thenReturn(false);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
+                .thenReturn(pending("ENTRY-SLIPPAGE"));
+        configurePendingUntilCancelled(ctx, "ENTRY-SLIPPAGE");
+
+        TriggeredTradeSetupEntity result = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        assertThat(result.getExitReason()).isEqualTo("ENTRY_MAX_SLIPPAGE_EXCEEDED");
+        verify(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-SLIPPAGE"));
+        verify(ctx.broker, never()).modifyEntryOrder(any(), any(BrokerContext.class), anyString(), anyDouble());
+    }
+
+    @Test
+    void partialEntryFillIsTrackedAndOnlyRemainderIsCancelled() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
+                .thenReturn(pending("ENTRY-PARTIAL"));
+        when(ctx.broker.modifyEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL"), anyDouble()))
+                .thenReturn(pending("ENTRY-PARTIAL"));
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        doAnswer(invocation -> {
+            cancelled.set(true);
+            return null;
+        }).when(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL"));
+        when(ctx.broker.fetchOrderStatus(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL")))
+                .thenAnswer(invocation -> partialOrderHistory(cancelled.get() ? "Cancelled" : "Partially Executed"));
+
+        TriggeredTradeSetupEntity result = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        assertThat(result.getQuantity()).isEqualTo(20L);
+        assertThat(result.getActualEntryPrice()).isEqualTo(10.60);
+        verify(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL"));
+        verify(ctx.telegramNotificationService).sendTradeMessageForUser(
+                eq(9L), eq("Order Executed ✅"), anyString());
+    }
+
+    @Test
+    void partialEntryFillRemainsPendingWhileCancellationIsUnconfirmed() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
+                .thenReturn(pending("ENTRY-PARTIAL-PENDING"));
+        when(ctx.broker.modifyEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL-PENDING"), anyDouble()))
+                .thenReturn(pending("ENTRY-PARTIAL-PENDING"));
+        when(ctx.broker.fetchOrderStatus(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL-PENDING")))
+                .thenReturn(partialOrderHistory("Partially Executed"));
+
+        TriggeredTradeSetupEntity result = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(result.getQuantity()).isEqualTo(50L);
+        verify(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL-PENDING"));
+        verify(ctx.eventPublisher).publishEvent(any(OrderPlacedEvent.class));
+        verify(ctx.telegramNotificationService, never()).sendTradeMessageForUser(
+                eq(9L), eq("Order Executed ✅"), anyString());
+    }
+
+    @Test
+    void pollingTreatsTerminalCancellationWithFillAsPartialExecution() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(88L)
+                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                .quantity(50L)
+                .lots(1)
+                .entryPrice(10.55)
+                .stopLoss(9.50)
+                .target1(12.00)
+                .useSpotForEntry(false)
+                .build();
+
+        TradeExecutionService.TradeStatus status = ctx.service.evaluateOrderFinalStatus(
+                trade, partialOrderHistory("Cancelled"));
+
+        assertThat(status).isEqualTo(TradeExecutionService.TradeStatus.FULLY_EXECUTED);
+        assertThat(trade.getQuantity()).isEqualTo(20L);
+        assertThat(trade.getLots()).isNull();
+        assertThat(trade.getActualEntryPrice()).isEqualTo(10.60);
+    }
+
+    private static OrderPlacementResult pending(String orderId) {
+        return OrderPlacementResult.builder()
+                .success(true)
+                .orderId(orderId)
+                .status("Pending")
+                .build();
+    }
+
+    private static JSONObject orderHistory(String status) {
+        return new JSONObject().put("data", new JSONArray().put(
+                new JSONObject().put("orderStatus", status)));
+    }
+
+    private static JSONObject partialOrderHistory(String status) {
+        return new JSONObject().put("data", new JSONArray().put(
+                new JSONObject()
+                        .put("orderStatus", status)
+                        .put("filledQty", 20)
+                        .put("pendingQty", 30)
+                        .put("avgPrice", 10.60)));
+    }
+
+    private static void configurePendingUntilCancelled(TestContext ctx, String orderId) {
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        doAnswer(invocation -> {
+            cancelled.set(true);
+            return null;
+        }).when(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq(orderId));
+        when(ctx.broker.fetchOrderStatus(any(), any(BrokerContext.class), eq(orderId)))
+                .thenAnswer(invocation -> orderHistory(cancelled.get() ? "Cancelled" : "Pending"));
+    }
+
+    private static void configureFiveAttemptPolicy(TestContext ctx) {
+        ReflectionTestUtils.setField(ctx.service, "entryMaxSpreadPercent", 1.5d);
+        ReflectionTestUtils.setField(ctx.service, "entryQuoteStaleMillis", 2000L);
+        ReflectionTestUtils.setField(ctx.service, "entryMaxAttempts", 5);
+        ReflectionTestUtils.setField(ctx.service, "entryRetryDelayMillis", 1L);
+        ReflectionTestUtils.setField(ctx.service, "entryMaxSlippagePercent", 2.0d);
+        ReflectionTestUtils.setField(ctx.service, "entryHardSpreadPercent", 2.5d);
+        ReflectionTestUtils.setField(ctx.service, "entryWideSpreadConfirmations", 2);
+    }
+
+    private static void configureTightFreshQuote(TestContext ctx, double bid, double ask, double mid) {
+        QuoteCacheService.QuoteSnapshot quote = quote(bid, ask, mid);
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(quote));
+        when(ctx.quoteCache.isStale(any(), any(Duration.class))).thenReturn(false);
+    }
+
+    private static QuoteCacheService.QuoteSnapshot quote(double bid, double ask, double mid) {
+        return QuoteCacheService.QuoteSnapshot.builder()
+                .scripCode(123456)
+                .bestBid(bid)
+                .bestAsk(ask)
+                .lastTradedPrice(mid)
+                .midPrice(mid)
+                .spreadAbsolute(ask - bid)
+                .spreadPercent((ask - bid) * 100d / mid)
+                .updatedAt(Instant.now())
+                .build();
     }
 
     private TriggerRequest optionRequest() {

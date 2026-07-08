@@ -51,6 +51,15 @@ logging:
 
 # Application specific
 app:
+  trading:
+    entry:
+      max-attempts: ${ENTRY_MAX_ATTEMPTS:5}
+      retry-delay-ms: ${ENTRY_RETRY_DELAY_MS:2000}
+      max-spread-percent: ${ENTRY_MAX_SPREAD_PERCENT:1.5}
+      hard-spread-percent: ${ENTRY_HARD_SPREAD_PERCENT:2.5}
+      wide-spread-confirmations: ${ENTRY_WIDE_SPREAD_CONFIRMATIONS:2}
+      max-slippage-percent: ${ENTRY_MAX_SLIPPAGE_PERCENT:2.0}
+      quote-stale-ms: ${ENTRY_QUOTE_STALE_MS:2000}
   admin:
     token: "u7Hk9jN2vP4xM8yC5wQ1aR3fT6sZ0dE9bL4gJ2hK5mN8vX1zC4qW7eR9tY3a" # REPLACE THIS WITH A STRONG SECRET IN PRODUCTION
   default-broker: SHAREKHAN
