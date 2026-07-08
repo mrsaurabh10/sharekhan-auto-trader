@@ -12,5 +12,6 @@ public class OrderPlacementResult {
     private String rejectionReason;
     private Double attemptedPrice;
     private Double executedPrice;
+    private Long executedQuantity;
     private Double pnl; // for exit orders if available
 }
