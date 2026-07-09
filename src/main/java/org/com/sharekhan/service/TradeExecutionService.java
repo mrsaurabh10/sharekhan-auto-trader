@@ -247,8 +247,7 @@ public class TradeExecutionService {
         }
 
         QuoteCacheService.QuoteSnapshot snapshot = snapshotOpt.get();
-        long staleMs = entryQuoteStaleMillis > 0 ? entryQuoteStaleMillis : DEFAULT_QUOTE_STALENESS.toMillis();
-        boolean stale = quoteCacheService.isStale(snapshot, Duration.ofMillis(staleMs));
+        boolean stale = quoteCacheService.isStale(snapshot, entryQuoteMaxAge());
         if (stale) {
             return new EntryDiagnostics(true, "STALE_QUOTE", snapshot.getSpreadPercent(),
                     snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getUpdatedAt());
@@ -259,6 +258,101 @@ public class TradeExecutionService {
         String reason = shouldPlace ? "SPREAD_OK" : "SPREAD_THRESHOLD_EXCEEDED";
         return new EntryDiagnostics(shouldPlace, reason, spreadPercent,
                 snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getUpdatedAt());
+    }
+
+    private Duration entryQuoteMaxAge() {
+        long staleMs = entryQuoteStaleMillis > 0 ? entryQuoteStaleMillis : DEFAULT_QUOTE_STALENESS.toMillis();
+        return Duration.ofMillis(staleMs);
+    }
+
+    private Double resolveEntryReferencePrice(Integer scripCode, String context) {
+        Double sharekhanQuotePrice = resolveFreshSharekhanReferencePrice(scripCode, context);
+        if (isUsableMarketPrice(sharekhanQuotePrice)) {
+            return sharekhanQuotePrice;
+        }
+
+        Double cachedLtp = null;
+        if (ltpCacheService != null && scripCode != null) {
+            try {
+                cachedLtp = ltpCacheService.getLtp(scripCode);
+            } catch (Exception e) {
+                log.debug("[{}] Unable to read cached LTP for scrip {}: {}", context, scripCode, e.getMessage());
+            }
+        }
+        if (isUsableMarketPrice(cachedLtp)) {
+            log.debug("[{}] Using cached LTP {} for scrip {} after Sharekhan quote was unavailable/stale.",
+                    context, cachedLtp, scripCode);
+            return cachedLtp;
+        }
+
+        log.debug("[{}] No fresh Sharekhan quote/cache LTP for scrip {}. Trying MStock fallback.", context, scripCode);
+        return fetchLtpViaMStockFallback(scripCode, context);
+    }
+
+    private Double resolveFreshSharekhanReferencePrice(Integer scripCode, String context) {
+        Optional<QuoteCacheService.QuoteSnapshot> snapshotOpt = freshSharekhanQuoteSnapshot(scripCode, context);
+        if (snapshotOpt.isEmpty()) {
+            return null;
+        }
+
+        QuoteCacheService.QuoteSnapshot snapshot = snapshotOpt.get();
+        Double price = quoteReferencePrice(snapshot);
+        if (!isUsableMarketPrice(price)) {
+            log.debug("[{}] Fresh Sharekhan quote for scrip {} had no usable price. bid={} ask={} ltp={} mid={}",
+                    context, scripCode, snapshot.getBestBid(), snapshot.getBestAsk(),
+                    snapshot.getLastTradedPrice(), snapshot.getMidPrice());
+            return null;
+        }
+
+        log.debug("[{}] Using Sharekhan quote price {} for scrip {} (bid={} ask={} ltp={} updatedAt={}).",
+                context, price, scripCode, snapshot.getBestBid(), snapshot.getBestAsk(),
+                snapshot.getLastTradedPrice(), snapshot.getUpdatedAt());
+        return price;
+    }
+
+    private Optional<QuoteCacheService.QuoteSnapshot> freshSharekhanQuoteSnapshot(Integer scripCode, String context) {
+        if (quoteCacheService == null || scripCode == null) {
+            return Optional.empty();
+        }
+        try {
+            Optional<QuoteCacheService.QuoteSnapshot> snapshotOpt = quoteCacheService.getSnapshot(scripCode);
+            if (snapshotOpt == null || snapshotOpt.isEmpty()) {
+                return Optional.empty();
+            }
+            QuoteCacheService.QuoteSnapshot snapshot = snapshotOpt.get();
+            if (quoteCacheService.isStale(snapshot, entryQuoteMaxAge())) {
+                log.debug("[{}] Sharekhan quote for scrip {} is stale (updatedAt={}).",
+                        context, scripCode, snapshot.getUpdatedAt());
+                return Optional.empty();
+            }
+            return snapshotOpt;
+        } catch (Exception e) {
+            log.debug("[{}] Unable to read Sharekhan quote for scrip {}: {}", context, scripCode, e.getMessage());
+            return Optional.empty();
+        }
+    }
+
+    private Double quoteReferencePrice(QuoteCacheService.QuoteSnapshot snapshot) {
+        if (snapshot == null) {
+            return null;
+        }
+        if (isUsableMarketPrice(snapshot.getLastTradedPrice())) {
+            return snapshot.getLastTradedPrice();
+        }
+        if (isUsableMarketPrice(snapshot.getMidPrice())) {
+            return snapshot.getMidPrice();
+        }
+        if (isUsableMarketPrice(snapshot.getBestAsk())) {
+            return snapshot.getBestAsk();
+        }
+        if (isUsableMarketPrice(snapshot.getBestBid())) {
+            return snapshot.getBestBid();
+        }
+        return null;
+    }
+
+    private boolean isUsableMarketPrice(Double price) {
+        return price != null && Double.isFinite(price) && price > 0d;
     }
 
     private void logEntryDiagnostics(TriggeredTradeSetupEntity trigger,
@@ -949,11 +1043,7 @@ public class TradeExecutionService {
         Double ltp = null;
         boolean isMxExchange = "MX".equalsIgnoreCase(script.getExchange());
         if (!isMxExchange) {
-            ltp = ltpCacheService.getLtp(optionScripCode);
-            if (ltp == null) {
-                log.debug("Quick trade LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.", optionScripCode, request.getInstrument());
-                ltp = fetchLtpViaMStockFallback(optionScripCode, "executeQuickTrade");
-            }
+            ltp = resolveEntryReferencePrice(optionScripCode, "executeQuickTrade");
             if (ltp == null) {
                 log.warn("Quick trade LTP still unavailable for scrip {} after MStock fallback.", optionScripCode);
                 throw new InvalidTradeRequestException("Live price unavailable for quick trade; please retry shortly");
@@ -1078,12 +1168,7 @@ public class TradeExecutionService {
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
         if (!isNoStrikeExchange) {
-            Double optionLtp = ltpCacheService.getLtp(script.getScripCode());
-            if (optionLtp == null) {
-                log.debug("Immediate trigger LTP cache miss for scrip {} (instrument {}). Trying MStock fallback.",
-                        script.getScripCode(), request.getInstrument());
-                optionLtp = fetchLtpViaMStockFallback(script.getScripCode(), "executeTriggeredTrade");
-            }
+            Double optionLtp = resolveEntryReferencePrice(script.getScripCode(), "executeTriggeredTrade");
             if (optionLtp == null) {
                 throw new InvalidTradeRequestException("Option LTP unavailable for immediate strategy execution; will retry on next evaluation");
             }
@@ -1160,9 +1245,7 @@ public class TradeExecutionService {
                 log.debug("Option LTP subscription already active for {} reason={}", feedKey, reason);
             }
 
-            if (ltpCacheService.getLtp(script.getScripCode()) == null) {
-                fetchLtpViaMStockFallback(script.getScripCode(), "strategyOptionWarmup");
-            }
+            resolveEntryReferencePrice(script.getScripCode(), "strategyOptionWarmup");
             return Optional.of(script.getScripCode());
         } catch (Exception e) {
             log.warn("Unable to warm option LTP subscription for {} {} {} {}: {}",
@@ -2504,8 +2587,8 @@ public class TradeExecutionService {
             return null;
         }
 
-        Double fallbackLtp = null;
-        if (ltpCacheService != null && trade.getScripCode() != null) {
+        Double fallbackLtp = resolveFreshSharekhanReferencePrice(trade.getScripCode(), "determineEntryChasePrice");
+        if (fallbackLtp == null && ltpCacheService != null && trade.getScripCode() != null) {
             fallbackLtp = ltpCacheService.getLtp(trade.getScripCode());
         }
         if (fallbackLtp == null || fallbackLtp <= 0) {
@@ -3994,9 +4077,10 @@ public class TradeExecutionService {
             }
         }
 
-        // 2. Subscribe to ACK for all executed trades
+        // 2. Subscribe to ACK/LTP for all active trades and interrupted exit placements
         List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXECUTED);
         List<TriggeredTradeSetupEntity> targetOrders = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        List<TriggeredTradeSetupEntity> exitTriggeredTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
         java.util.Set<Long> seenTradeIds = new java.util.HashSet<>();
         List<TriggeredTradeSetupEntity> activeTrades = new java.util.ArrayList<>();
 
@@ -4010,9 +4094,14 @@ public class TradeExecutionService {
                 activeTrades.add(trade);
             }
         }
+        for (TriggeredTradeSetupEntity trade : exitTriggeredTrades) {
+            if (trade != null && trade.getId() != null && trade.getExitOrderId() == null && seenTradeIds.add(trade.getId())) {
+                activeTrades.add(trade);
+            }
+        }
 
         if (!activeTrades.isEmpty()) {
-            log.info("📄 Found {} active trades (EXECUTED/TARGET_ORDER_PLACED) for ACK monitoring", activeTrades.size());
+            log.info("📄 Found {} active trades (EXECUTED/TARGET_ORDER_PLACED/EXIT_TRIGGERED) for ACK monitoring", activeTrades.size());
             for (TriggeredTradeSetupEntity tradeSetupEntity : activeTrades) {
                 try {
                     Integer scripCode = tradeSetupEntity.getScripCode(); // Assuming you store this or convert symbol to code
@@ -4131,11 +4220,7 @@ public class TradeExecutionService {
         boolean isMxExchange = exchange != null && exchange.equalsIgnoreCase("MX");
 
         if (!isMxExchange) {
-            ltp = ltpCacheService.getLtp(optionScripCode);
-
-            if (ltp == null) {
-                ltp = fetchLtpViaMStockFallback(optionScripCode, "executeTradeFromEntity");
-            }
+            ltp = resolveEntryReferencePrice(optionScripCode, "executeTradeFromEntity");
 
             if (ltp == null) {
                 log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());

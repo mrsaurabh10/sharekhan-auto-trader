@@ -203,6 +203,10 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     List<TriggerTradeRequestEntity> findBySymbolIgnoreCaseAndStatusIn(@Param("symbol") String symbol,
                                                                       @Param("statuses") List<TriggeredTradeStatus> statuses);
 
+    @Query("select r from TriggerTradeRequestEntity r where lower(r.source) = lower(:source) and r.status in :statuses")
+    List<TriggerTradeRequestEntity> findBySourceIgnoreCaseAndStatusIn(@Param("source") String source,
+                                                                      @Param("statuses") List<TriggeredTradeStatus> statuses);
+
     // Added for duplicate check
     List<TriggerTradeRequestEntity> findBySymbolAndStrikePriceAndOptionTypeAndAppUserIdAndStatus(String symbol, Double strikePrice, String optionType, Long appUserId, TriggeredTradeStatus status);
 

@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -506,6 +507,29 @@ class PriceTriggerServiceTest {
         verify(tradeExecutionService, never()).hasUsableTradedExitPrice(trade, 23357.0);
         verify(tradeExecutionService, never()).modifyExitOrderForTarget(any(), eq(23357.0));
         verify(tradeExecutionService, never()).squareOff(any(), eq(23357.0), anyString());
+    }
+
+    @Test
+    void monitorOpenTradesRecoversExitTriggeredPartialWithoutExitOrder() {
+        TriggeredTradeSetupEntity trade = optionTrade(6353L, 999999, 20000);
+        trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+        trade.setExitReason("TARGET_HIT_PARTIAL");
+        trade.setExitOrderId(null);
+        trade.setQuantity(1275L);
+        trade.setLots(1);
+        trade.setOriginalLots(2);
+        trade.setTslEnabled(true);
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(999999), anyList())).thenReturn(List.of(trade));
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(999999), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findById(6353L)).thenReturn(Optional.of(trade));
+
+        service.monitorOpenTrades(999999, 15.95);
+
+        verify(triggeredRepo).findByScripCodeAndStatusIn(eq(999999), argThat(statuses ->
+                statuses != null && statuses.contains(TriggeredTradeStatus.EXIT_TRIGGERED)));
+        verify(tradeExecutionService).squareOff(trade, 15.95, "TARGET_HIT_PARTIAL");
+        verify(triggeredRepo, never()).claimIfStatusEquals(eq(6353L), anyString(), anyString(), anyString());
     }
 
     private void stubIntradayCandle(int hour,

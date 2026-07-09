@@ -232,6 +232,30 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void entryExecutionPrefersFreshSharekhanQuoteOverCachedLtp() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(9.90);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
+                .thenReturn(OrderPlacementResult.builder()
+                        .success(true)
+                        .orderId("ENTRY-SHAREKHAN-QUOTE")
+                        .status("Fully Executed")
+                        .attemptedPrice(10.55)
+                        .executedPrice(10.55)
+                        .executedQuantity(50L)
+                        .build());
+
+        TriggeredTradeSetupEntity executed = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(executed).isNotNull();
+        assertThat(executed.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(10.55));
+        verify(ctx.ltpCache, never()).getLtp(123456);
+    }
+
+    @Test
     void automaticEntryUsesFiveBoundedPriceLevelsThenCancels() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         configureFiveAttemptPolicy(ctx);
@@ -279,7 +303,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
         configureFiveAttemptPolicy(ctx);
         QuoteCacheService.QuoteSnapshot initial = quote(10.50, 10.60, 10.55);
         QuoteCacheService.QuoteSnapshot moved = quote(10.70, 10.80, 10.75);
-        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(initial), Optional.of(moved));
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(initial), Optional.of(initial), Optional.of(moved));
         when(ctx.quoteCache.isStale(any(), any(Duration.class))).thenReturn(false);
         when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
         when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))

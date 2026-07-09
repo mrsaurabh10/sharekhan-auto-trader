@@ -204,13 +204,14 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                     : triggerPrice != null ? "ENTRY_TRIGGER" : "ENTRY";
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                long attemptStartedAt = System.nanoTime();
                 try {
                     log.info("{}_BROKER_ATTEMPT | tradeId={} | symbol={} | attempt={} | requestType={} | transactionType={} | attemptedPrice={} | triggerPrice={}",
                             stage, trade.getId(), trade.getSymbol(), attempt, requestType, transactionType, price, order.triggerPrice);
                     response = SharekhanConsoleSilencer.call(() -> sharekhanConnect.placeOrder(order));
                 } catch (Exception e) {
-                    log.warn("{}_BROKER_ATTEMPT_FAILED | tradeId={} | attempt={} | attemptedPrice={} | triggerPrice={} | reason={}",
-                            stage, trade.getId(), attempt, price, order.triggerPrice, e.getMessage());
+                    log.warn("{}_BROKER_ATTEMPT_FAILED | tradeId={} | attempt={} | attemptedPrice={} | triggerPrice={} | elapsedMs={} | reason={}",
+                            stage, trade.getId(), attempt, price, order.triggerPrice, elapsedMillis(attemptStartedAt), e.getMessage());
                 }
 
                 if (response != null && response.has("data")) {
@@ -218,14 +219,14 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                     String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
                     if (isUsableOrderId(respOrderId)) {
                         orderId = respOrderId;
-                        log.info("{}_BROKER_ATTEMPT_ACCEPTED | tradeId={} | attempt={} | attemptedPrice={} | orderId={}",
-                                stage, trade.getId(), attempt, price, orderId);
+                        log.info("{}_BROKER_ATTEMPT_ACCEPTED | tradeId={} | attempt={} | attemptedPrice={} | orderId={} | elapsedMs={}",
+                                stage, trade.getId(), attempt, price, orderId, elapsedMillis(attemptStartedAt));
                         break;
                     }
                 }
 
-                log.warn("{}_BROKER_ATTEMPT_NO_ORDER_ID | tradeId={} | attempt={} | attemptedPrice={}",
-                        stage, trade.getId(), attempt, price);
+                log.warn("{}_BROKER_ATTEMPT_NO_ORDER_ID | tradeId={} | attempt={} | attemptedPrice={} | elapsedMs={}",
+                        stage, trade.getId(), attempt, price, elapsedMillis(attemptStartedAt));
 
                 if (attempt < maxAttempts) {
                     try { Thread.sleep(backoffMs[Math.min(attempt-1, backoffMs.length-1)]); } catch (InterruptedException ignored) {}
@@ -289,6 +290,10 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                     .status("Rejected")
                     .build();
         }
+    }
+
+    private long elapsedMillis(long startedAtNanos) {
+        return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos);
     }
 
     private boolean isUsableOrderId(String orderId) {
