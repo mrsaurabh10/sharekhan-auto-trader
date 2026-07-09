@@ -51,6 +51,10 @@ logging:
 
 # Application specific
 app:
+  scheduler:
+    pool-size: ${SCHEDULER_POOL_SIZE:8}
+  market-data:
+    sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
   trading:
     entry:
       max-attempts: ${ENTRY_MAX_ATTEMPTS:5}

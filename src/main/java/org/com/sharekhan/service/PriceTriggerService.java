@@ -37,6 +37,14 @@ public class PriceTriggerService {
     private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
     private static final String GAP_FILL_EXIT_REASON = "GAP_FILL_STOP";
+    private static final int CLAIM_NONE = 0;
+    private static final int CLAIM_EXIT_TRIGGERED = 1;
+    private static final int CLAIM_RECOVER_UNPLACED_EXIT = 2;
+    private static final List<TriggeredTradeStatus> MONITORABLE_TRADE_STATUSES = List.of(
+            TriggeredTradeStatus.EXECUTED,
+            TriggeredTradeStatus.TARGET_ORDER_PLACED,
+            TriggeredTradeStatus.EXIT_TRIGGERED
+    );
     private final ConcurrentMap<Long, LocalDateTime> gapPolicyAttemptedAt = new ConcurrentHashMap<>();
 
     private final TriggerTradeRequestRepository triggerRepo;
@@ -482,7 +490,7 @@ public class PriceTriggerService {
             // 1. Find trades where this scripCode is the TRADED instrument
             List<TriggeredTradeSetupEntity> trades = triggeredRepo.findByScripCodeAndStatusIn(
                     scripCode,
-                    java.util.List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED)
+                    MONITORABLE_TRADE_STATUSES
             );
 
             for (TriggeredTradeSetupEntity trade : trades) {
@@ -521,7 +529,7 @@ public class PriceTriggerService {
             // 2. Find trades where this scripCode is the SPOT instrument (if any)
             List<TriggeredTradeSetupEntity> spotTrades = triggeredRepo.findBySpotScripCodeAndStatusIn(
                     scripCode,
-                    java.util.List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED)
+                    MONITORABLE_TRADE_STATUSES
             );
              for (TriggeredTradeSetupEntity trade : spotTrades) {
                 try {
@@ -585,8 +593,11 @@ public class PriceTriggerService {
 
                 // Only act if still in EXECUTED or TARGET_ORDER_PLACED
                 TriggeredTradeStatus currentStatus = persisted.getStatus();
+                if (currentStatus == TriggeredTradeStatus.EXIT_TRIGGERED) {
+                    return hasNoExitOrderId(persisted) ? CLAIM_RECOVER_UNPLACED_EXIT : CLAIM_NONE;
+                }
                 if (currentStatus != TriggeredTradeStatus.EXECUTED && currentStatus != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
-                    return 0;
+                    return CLAIM_NONE;
                 }
 
                 // Determine effective prices for SL and Target
@@ -615,7 +626,7 @@ public class PriceTriggerService {
                 if (isGapFillStopHit(persisted)) {
                     if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp,
                             persisted.getGapStopLoss(), "Gap fill stop")) {
-                        return 0;
+                        return CLAIM_NONE;
                     }
                     return triggeredRepo.claimIfStatusEquals(tradeId,
                             TriggeredTradeStatus.EXECUTED.name(),
@@ -640,7 +651,7 @@ public class PriceTriggerService {
 
                 if (slHit) {
                     if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, slRefPrice, "SL")) {
-                        return 0;
+                        return CLAIM_NONE;
                     }
                     int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
                     if (updated == 0) {
@@ -656,7 +667,7 @@ public class PriceTriggerService {
                         int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
                         if (lotsToBook > 0) {
                             if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
-                                return 0;
+                                return CLAIM_NONE;
                             }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
                             if (updated == 0) {
@@ -684,7 +695,7 @@ public class PriceTriggerService {
                         
                         if (targetHit) {
                             if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
-                                return 0;
+                                return CLAIM_NONE;
                             }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
                             if (updated == 0) {
@@ -695,10 +706,15 @@ public class PriceTriggerService {
                     }
                 }
 
-                return 0;
+                return CLAIM_NONE;
             });
 
-            if (claimed != null && claimed == 1) {
+            if (claimed != null && claimed == CLAIM_RECOVER_UNPLACED_EXIT) {
+                TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId)
+                        .orElseThrow(() -> new RuntimeException("Trade not found during exit recovery: " + tradeId));
+                recoverUnplacedExitOrder(reloaded, tradedLtp, spotLtp);
+                persistPnlIfMissing(reloaded, tradedLtp);
+            } else if (claimed != null && claimed == CLAIM_EXIT_TRIGGERED) {
                 // Claim succeeded — now re-load the entity (outside the short transaction) and proceed to squareOff
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
                 
@@ -776,6 +792,43 @@ public class PriceTriggerService {
         } catch (Exception e) {
             log.error("❌ Error in handleTradeWithLock for trade {}: {}", tradeId, e.getMessage(), e);
         }
+    }
+
+    private boolean hasNoExitOrderId(TriggeredTradeSetupEntity trade) {
+        return trade == null || trade.getExitOrderId() == null || trade.getExitOrderId().isBlank();
+    }
+
+    private void recoverUnplacedExitOrder(TriggeredTradeSetupEntity trade, double tradedLtp, Double spotLtp) {
+        if (trade == null || trade.getStatus() != TriggeredTradeStatus.EXIT_TRIGGERED || !hasNoExitOrderId(trade)) {
+            return;
+        }
+
+        String exitReason = trade.getExitReason();
+        if (exitReason == null || exitReason.isBlank()) {
+            exitReason = "TARGET_HIT";
+        }
+
+        log.warn("Recovering trade {} stuck in EXIT_TRIGGERED without exitOrderId. reason={} tradedLtp={} spotLtp={}",
+                trade.getId(), exitReason, tradedLtp, spotLtp);
+
+        if ("STOP_LOSS_HIT".equals(exitReason)
+                || GAP_FILL_EXIT_REASON.equals(exitReason)
+                || "TARGET_HIT_PARTIAL".equals(exitReason)
+                || "TARGET_HIT_FULL".equals(exitReason)) {
+            tradeExecutionService.squareOff(trade, tradedLtp, exitReason);
+            return;
+        }
+
+        if (Boolean.TRUE.equals(trade.getTslEnabled())) {
+            int lots = resolveCurrentLots(trade);
+            Double targetRefPrice = usesSpotForTarget(trade) ? spotLtp : tradedLtp;
+            if (lots > 1 && targetRefPrice != null) {
+                handlePartialBooking(trade, targetRefPrice, tradedLtp, lots);
+                return;
+            }
+        }
+
+        tradeExecutionService.squareOff(trade, tradedLtp, exitReason);
     }
 
     private boolean isGapFillStopHit(TriggeredTradeSetupEntity trade) {

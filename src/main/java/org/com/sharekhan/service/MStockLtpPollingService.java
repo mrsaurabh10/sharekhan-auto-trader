@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.springframework.beans.factory.annotation.Value;
@@ -11,6 +12,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.time.ZoneId;
@@ -31,6 +33,7 @@ public class MStockLtpPollingService {
     private final WebSocketSubscriptionService webSocketSubscriptionService;
     private final MStockLtpService mStockLtpService;
     private final LtpCacheService ltpCacheService;
+    private final QuoteCacheService quoteCacheService;
     private final PriceTriggerService priceTriggerService;
     private final MStockInstrumentResolver instrumentResolver;
     private final TokenStoreService tokenStoreService;
@@ -48,6 +51,9 @@ public class MStockLtpPollingService {
 
     @Value("${app.mstock.poll-delay-ms:1500}")
     private long mstockPollDelayMs;
+
+    @Value("${app.market-data.sharekhan-quote-stale-ms:2000}")
+    private long sharekhanQuoteStaleMs;
 
     @Scheduled(fixedDelayString = "${app.mstock.poll-delay-ms:1500}")
     public void pollMStockLtp() {
@@ -84,6 +90,11 @@ public class MStockLtpPollingService {
             for (String scripKey : activeScripKeys) {
                 Integer scripCode = extractScripCode(scripKey);
                 if (scripCode == null) continue;
+
+                if (hasFreshSharekhanQuote(scripCode)) {
+                    log.debug("Skipping MStock LTP fallback for scrip {} because Sharekhan quote is fresh.", scripCode);
+                    continue;
+                }
 
                 String mstockKey = getMStockKey(scripCode);
                 if (StringUtils.hasText(mstockKey)) {
@@ -154,6 +165,37 @@ public class MStockLtpPollingService {
         return tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK) != null
                 || StringUtils.hasText(tokenStoreService.getFirstNonExpiredTokenForBroker(Broker.MSTOCK))
                 || StringUtils.hasText(tokenStoreService.getAccessToken(Broker.MSTOCK));
+    }
+
+    private boolean hasFreshSharekhanQuote(Integer scripCode) {
+        if (quoteCacheService == null || scripCode == null) {
+            return false;
+        }
+        try {
+            Optional<QuoteCacheService.QuoteSnapshot> snapshotOpt = quoteCacheService.getSnapshot(scripCode);
+            if (snapshotOpt == null || snapshotOpt.isEmpty()) {
+                return false;
+            }
+            QuoteCacheService.QuoteSnapshot snapshot = snapshotOpt.get();
+            if (quoteCacheService.isStale(snapshot, Duration.ofMillis(configuredSharekhanQuoteStaleMs()))) {
+                return false;
+            }
+            return isUsablePrice(snapshot.getLastTradedPrice())
+                    || isUsablePrice(snapshot.getMidPrice())
+                    || isUsablePrice(snapshot.getBestBid())
+                    || isUsablePrice(snapshot.getBestAsk());
+        } catch (Exception e) {
+            log.debug("Unable to inspect Sharekhan quote freshness for scrip {}: {}", scripCode, e.getMessage());
+            return false;
+        }
+    }
+
+    private long configuredSharekhanQuoteStaleMs() {
+        return sharekhanQuoteStaleMs > 0 ? sharekhanQuoteStaleMs : 2000L;
+    }
+
+    private boolean isUsablePrice(Double price) {
+        return price != null && Double.isFinite(price) && price > 0d;
     }
 
     private boolean isInTransientBackoff(Instant now) {
