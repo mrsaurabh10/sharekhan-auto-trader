@@ -28,6 +28,11 @@ public class H2SchemaCompatibilityInitializer {
             return;
         }
 
+        widenStrategySubscriptionLastMessage();
+        synchronizeUserConfigIdentity();
+    }
+
+    private void widenStrategySubscriptionLastMessage() {
         List<Integer> lengths = jdbcTemplate.queryForList("""
                 SELECT CHARACTER_MAXIMUM_LENGTH
                 FROM INFORMATION_SCHEMA.COLUMNS
@@ -42,6 +47,27 @@ public class H2SchemaCompatibilityInitializer {
 
         jdbcTemplate.execute("ALTER TABLE STRATEGY_SUBSCRIPTIONS ALTER COLUMN LAST_MESSAGE VARCHAR(" + LAST_MESSAGE_LENGTH + ")");
         log.info("Widened STRATEGY_SUBSCRIPTIONS.LAST_MESSAGE to VARCHAR({})", LAST_MESSAGE_LENGTH);
+    }
+
+    /**
+     * H2 databases restored from an older file can retain rows while their
+     * identity counter is reset. Ensure a newly created user configuration
+     * receives an ID after the current maximum rather than reusing one.
+     */
+    private void synchronizeUserConfigIdentity() {
+        try {
+            Long nextId = jdbcTemplate.queryForObject(
+                    "SELECT COALESCE(MAX(ID), 0) + 1 FROM USER_CONFIG", Long.class);
+            if (nextId == null) {
+                return;
+            }
+            jdbcTemplate.execute("ALTER TABLE USER_CONFIG ALTER COLUMN ID RESTART WITH " + nextId);
+            log.info("Synchronized USER_CONFIG identity counter to {}", nextId);
+        } catch (Exception e) {
+            // Do not prevent application startup if a legacy database has not
+            // created USER_CONFIG yet; Hibernate will create it during schema setup.
+            log.warn("Unable to synchronize USER_CONFIG identity counter: {}", e.getMessage());
+        }
     }
 
     private boolean isH2Database() {
