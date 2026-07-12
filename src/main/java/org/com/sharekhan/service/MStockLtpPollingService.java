@@ -35,6 +35,7 @@ public class MStockLtpPollingService {
     private final LtpCacheService ltpCacheService;
     private final QuoteCacheService quoteCacheService;
     private final PriceTriggerService priceTriggerService;
+    private final ScripExecutorManager scripExecutorManager;
     private final MStockInstrumentResolver instrumentResolver;
     private final TokenStoreService tokenStoreService;
 
@@ -135,8 +136,12 @@ public class MStockLtpPollingService {
                 }
 
                 ltpCacheService.updateLtp(scripCode, newLtp);
-                priceTriggerService.evaluatePriceTrigger(scripCode, newLtp);
-                priceTriggerService.monitorOpenTrades(scripCode, newLtp);
+                // Never run trigger/exit logic on the scheduler thread. A slow broker
+                // request must not stall polling for every subscribed instrument.
+                scripExecutorManager.submitTriggerTask(scripCode,
+                        () -> priceTriggerService.evaluatePriceTrigger(scripCode, newLtp));
+                scripExecutorManager.submitMonitorTask(scripCode,
+                        () -> priceTriggerService.monitorOpenTrades(scripCode, newLtp));
             }
             resetTransientBackoffIfNeeded();
         } catch (MStockLtpException e) {
