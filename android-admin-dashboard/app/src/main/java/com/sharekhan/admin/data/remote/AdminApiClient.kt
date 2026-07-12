@@ -4,6 +4,7 @@ import com.sharekhan.admin.data.model.AppUser
 import com.sharekhan.admin.data.model.BrokerDetails
 import com.sharekhan.admin.data.model.BrokerSummary
 import com.sharekhan.admin.data.model.RefreshResult
+import com.sharekhan.admin.data.model.LtpQuote
 import com.sharekhan.admin.data.model.PageResponse
 import com.sharekhan.admin.data.model.PlaceOrderPayload
 import com.sharekhan.admin.data.model.TradingRequest
@@ -30,6 +31,7 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.FormBody
 import okhttp3.HttpUrl
@@ -416,6 +418,20 @@ class AdminApiClient(
         return entry.jsonObject["last_price"]?.jsonPrimitive?.doubleOrNull
     }
 
+    suspend fun fetchLtpByScripCode(scripCode: Int): LtpQuote? {
+        val element = requestJson(
+            path = "api/mstock/ltp/by-script",
+            query = mapOf("scripCode" to scripCode.toString())
+        )
+        val response = element.jsonObject
+        val lastPrice = response["last_price"]?.jsonPrimitive?.doubleOrNull ?: return null
+        return LtpQuote(
+            scripCode = response["scripCode"]?.jsonPrimitive?.intOrNull(),
+            qualifiedKey = response["instrument"]?.jsonPrimitive?.contentOrNull(),
+            lastPrice = lastPrice
+        )
+    }
+
     suspend fun placeOrder(
         payload: PlaceOrderPayload,
         alreadyExecuted: Boolean
@@ -619,6 +635,11 @@ class AdminApiClient(
             Regex("""name="_csrf"\s+value="([^"]+)"""", RegexOption.IGNORE_CASE)
     }
 }
+
+private fun JsonPrimitive.intOrNull(): Int? = longOrNull?.let {
+    if (it in Int.MIN_VALUE..Int.MAX_VALUE) it.toInt() else null
+}
+private fun JsonPrimitive.contentOrNull(): String? = runCatching { content }.getOrNull()
 
 private enum class HttpMethod {
     GET, POST, PUT, DELETE

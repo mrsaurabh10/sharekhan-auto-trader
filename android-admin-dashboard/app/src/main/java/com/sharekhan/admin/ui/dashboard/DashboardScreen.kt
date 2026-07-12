@@ -18,6 +18,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -85,7 +86,8 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DashboardScreen(
-    viewModel: DashboardViewModel
+    viewModel: DashboardViewModel,
+    onSignOut: () -> Unit
 ) {
     val usersState by viewModel.usersState.collectAsState()
     val selectedUser by viewModel.selectedUser.collectAsState()
@@ -151,6 +153,9 @@ fun DashboardScreen(
                         }
                     },
                     actions = {
+                        IconButton(onClick = onSignOut) {
+                            Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = "Sign out")
+                        }
                         IconButton(onClick = { viewModel.refreshUsers() }) {
                             Icon(Icons.Default.Refresh, contentDescription = "Refresh users")
                         }

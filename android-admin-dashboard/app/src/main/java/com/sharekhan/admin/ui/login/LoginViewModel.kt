@@ -35,6 +35,7 @@ class LoginViewModel(
     val events = _events
 
     init {
+        attemptAutoLogin()
         viewModelScope.launch {
             repository.baseUrl.collectLatest { url ->
                 _uiState.update { current ->
@@ -49,6 +50,17 @@ class LoginViewModel(
                         if (state.username.isNotBlank()) state else state.copy(username = username)
                     }
                 }
+            }
+        }
+    }
+
+    private fun attemptAutoLogin() {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            if (repository.autoLogin()) {
+                _events.send(LoginEvent.Success)
+            } else {
+                _uiState.update { it.copy(isLoading = false) }
             }
         }
     }
@@ -99,4 +111,3 @@ class LoginViewModel(
             }
     }
 }
-

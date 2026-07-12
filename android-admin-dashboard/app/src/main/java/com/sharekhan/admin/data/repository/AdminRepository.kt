@@ -4,6 +4,7 @@ import com.sharekhan.admin.data.model.AppUser
 import com.sharekhan.admin.data.model.BrokerDetails
 import com.sharekhan.admin.data.model.BrokerSummary
 import com.sharekhan.admin.data.model.LtpSnapshot
+import com.sharekhan.admin.data.model.LtpQuote
 import com.sharekhan.admin.data.model.PageResponse
 import com.sharekhan.admin.data.model.PlaceOrderPayload
 import com.sharekhan.admin.data.model.TradingRequest
@@ -58,9 +59,22 @@ class AdminRepository(
         withContext(dispatcher) {
             val client = AdminApiClient(baseUrl, json, dispatcher)
             client.login(username, password)
-            preferences.saveBaseUrl(baseUrl)
-            preferences.saveLastUsername(username)
+            preferences.saveRememberedLogin(baseUrl, username, password)
             _session.value = Session(baseUrl, username, client)
+        }
+    }
+
+    suspend fun autoLogin(): Boolean {
+        val savedLogin = preferences.rememberedLogin() ?: return false
+        return try {
+            withContext(dispatcher) {
+            val client = AdminApiClient(savedLogin.baseUrl, json, dispatcher)
+            client.login(savedLogin.username, savedLogin.password)
+            _session.value = Session(savedLogin.baseUrl, savedLogin.username, client)
+            true
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -68,6 +82,7 @@ class AdminRepository(
         withContext(dispatcher) {
             _session.value?.client?.logout()
             _session.value = null
+            preferences.clearRememberedLogin()
         }
     }
 
@@ -143,6 +158,9 @@ class AdminRepository(
 
     suspend fun fetchOptionLtp(key: String): Double? =
         withClient { it.fetchOptionLtp(key) }
+
+    suspend fun fetchLtpByScripCode(scripCode: Int): LtpQuote? =
+        withClient { it.fetchLtpByScripCode(scripCode) }
 
     suspend fun placeOrder(payload: PlaceOrderPayload, alreadyExecuted: Boolean): JsonElement =
         withClient { it.placeOrder(payload, alreadyExecuted) }

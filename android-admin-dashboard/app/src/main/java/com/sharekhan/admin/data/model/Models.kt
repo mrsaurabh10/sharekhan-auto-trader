@@ -261,3 +261,9 @@ data class LtpSnapshot(
     val scripCode: Int? = null,
     val qualifiedKey: String? = null
 )
+
+data class LtpQuote(
+    val scripCode: Int? = null,
+    val qualifiedKey: String? = null,
+    val lastPrice: Double
+)

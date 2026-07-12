@@ -7,6 +7,7 @@ import com.sharekhan.admin.data.model.AppUser
 import com.sharekhan.admin.data.model.BrokerSummary
 import com.sharekhan.admin.data.model.PageResponse
 import com.sharekhan.admin.data.model.PlaceOrderPayload
+import com.sharekhan.admin.data.model.LtpQuote
 import com.sharekhan.admin.data.model.TradingRequest
 import com.sharekhan.admin.data.model.TriggeredTrade
 import com.sharekhan.admin.data.model.StrategyStartPayload
@@ -19,6 +20,8 @@ import com.sharekhan.admin.ui.state.UiState
 import com.sharekhan.admin.ui.state.getOrNull
 import java.text.DecimalFormat
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -183,6 +186,7 @@ class DashboardViewModel(
     private var instrumentJob: Job? = null
     private var strikeJob: Job? = null
     private var expiryJob: Job? = null
+    private var ltpStreamJob: Job? = null
 
     fun loadInitial() {
         if (_usersState.value is UiState.Loading || _usersState.value is UiState.Success) return
@@ -191,7 +195,6 @@ class DashboardViewModel(
 
     init {
         observeSessionChanges()
-        startLtpStream()
     }
 
     fun refreshUsers() {
@@ -266,6 +269,7 @@ class DashboardViewModel(
                 .onSuccess { requests ->
                     _requestsState.value = UiState.Success(requests.content)
                     _requestPagination.value = PaginationState(requests.number, requests.totalPages, requests.first, requests.last)
+                    refreshCurrentLtps(requests.content.mapNotNull { it.scripCode })
                 }
                 .onFailure { ex -> _requestsState.value = UiState.Error(ex.readableMessage()) }
         }
@@ -298,6 +302,7 @@ class DashboardViewModel(
                         isFirst = response.first,
                         isLast = response.last
                     )
+                    refreshCurrentLtps(response.content.mapNotNull { it.scripCode })
                 }
                 .onFailure { ex ->
                     _executedState.value = UiState.Error(ex.readableMessage())
@@ -872,13 +877,18 @@ class DashboardViewModel(
             repository.session.collect { session ->
                 if (session == null) {
                     _ltpPrices.value = emptyMap()
+                    ltpStreamJob?.cancel()
+                    ltpStreamJob = null
+                } else {
+                    startLtpStream()
                 }
             }
         }
     }
 
     private fun startLtpStream() {
-        viewModelScope.launch {
+        if (ltpStreamJob?.isActive == true) return
+        ltpStreamJob = viewModelScope.launch {
             repository.observeLtp()
                 .retryWhen { _, attempt ->
                     val delayMillis = (attempt + 1) * 2_000L
@@ -897,6 +907,25 @@ class DashboardViewModel(
                         }
                     }
                 }
+        }
+    }
+
+    private fun refreshCurrentLtps(scripCodes: List<Int>) {
+        val missingCodes = scripCodes.distinct().filter { it.toString() !in _ltpPrices.value }
+        if (missingCodes.isEmpty()) return
+        viewModelScope.launch {
+            missingCodes.map { scripCode ->
+                async { runCatching { repository.fetchLtpByScripCode(scripCode) }.getOrNull() }
+            }.awaitAll().filterNotNull().forEach(::applyLtpQuote)
+        }
+    }
+
+    private fun applyLtpQuote(quote: LtpQuote) {
+        _ltpPrices.update { current ->
+            current.toMutableMap().apply {
+                quote.scripCode?.let { put(it.toString(), quote.lastPrice) }
+                quote.qualifiedKey?.normalizeKey()?.let { put(it, quote.lastPrice) }
+            }
         }
     }
 }
