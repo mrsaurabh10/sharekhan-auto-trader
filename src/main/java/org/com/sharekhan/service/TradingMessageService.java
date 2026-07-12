@@ -563,17 +563,6 @@ public class TradingMessageService {
         String source = request.getSource() == null ? "(missing)" : request.getSource().trim();
         String skipReason = "source configuration '" + source + "' is not enabled";
         System.out.println("⏭️ Skipping trade for user #" + appUserId + " because " + skipReason);
-        try {
-            if (telegramNotificationService != null) {
-                String body = skipReason + "; trade ignored for incoming signal.\n"
-                        + "Instrument: " + request.getInstrument()
-                        + (request.getStrikePrice() != null ? " " + request.getStrikePrice() : "")
-                        + (request.getOptionType() != null ? " " + request.getOptionType() : "");
-                telegramNotificationService.sendTradeMessageForUser(appUserId, "Trade Skipped", body);
-            }
-        } catch (Exception ignored) {
-            // Notification delivery must not prevent routing subsequent signals.
-        }
     }
 
     // Gracefully shutdown executor
