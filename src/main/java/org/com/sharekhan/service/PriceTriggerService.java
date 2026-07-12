@@ -9,10 +9,12 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.logging.TradeEventLogger;
 import org.com.sharekhan.repository.ScriptMasterRepository;
+import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.springframework.stereotype.Service;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -59,6 +61,8 @@ public class PriceTriggerService {
     private final MStockInstrumentResolver instrumentResolver;
     private final SharekhanHistoricalService sharekhanHistoricalService;
     private final ScripExecutorManager scripExecutorManager;
+    private final OrderExecutionDispatcher orderExecutionDispatcher;
+    private final BrokerCredentialsRepository brokerCredentialsRepository;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         // Check if current time is after 9:20 AM IST
@@ -102,15 +106,7 @@ public class PriceTriggerService {
 
                         // convert request -> executed entity and run execution flow
                         trigger.setStatus(TriggeredTradeStatus.TRIGGERED); // Update entity status reference
-                        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
-                        
-                        if (executed != null) {
-                            log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
-                        } else {
-                            // rollback claim
-                            triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
-                            log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
-                        }
+                        dispatchEntryExecution(trigger);
                     }
                 }
             }
@@ -170,19 +166,92 @@ public class PriceTriggerService {
 
                         // convert request -> executed entity and run execution flow
                         trigger.setStatus(TriggeredTradeStatus.TRIGGERED); // Update entity status reference
-                        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(trigger);
-                        
-                        if (executed != null) {
-                            log.info("✅ Trigger {} converted to live trade and marked as TRIGGERED", trigger.getId());
-                        } else {
-                            triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
-                            log.warn("⚠️ Trigger {} execution skipped (likely due to missing LTP). Keeping request for retry.", trigger.getId());
-                        }
+                        dispatchEntryExecution(trigger);
                     }
                 }
             }
         } catch (Exception e) {
             log.error("❌ Error evaluating price trigger for scripCode {}: {}", scripCode, e.getMessage(), e);
+        }
+    }
+
+    private void dispatchEntryExecution(TriggerTradeRequestEntity request) {
+        if (request == null || request.getId() == null) {
+            return;
+        }
+        Long requestId = request.getId();
+        String key = orderExecutionKey("ENTRY:" + requestId, request.getBrokerCredentialsId());
+        if (!orderExecutionDispatcher.submit(key, () -> executeTriggeredRequest(request))) {
+            log.debug("Entry execution already queued/running for request {}", requestId);
+        }
+    }
+
+    private void executeTriggeredRequest(TriggerTradeRequestEntity request) {
+        if (request == null || request.getId() == null || request.getStatus() != TriggeredTradeStatus.TRIGGERED) {
+            return;
+        }
+        Long requestId = request.getId();
+
+        // A previous attempt may have reached the broker and persisted a trade before
+        // the request status update. Never submit another entry in that case.
+        List<TriggeredTradeSetupEntity> existing = triggeredRepo.findByTriggerRequestId(requestId);
+        if (existing != null && !existing.isEmpty()) {
+            TriggeredTradeSetupEntity latest = existing.get(existing.size() - 1);
+            TriggeredTradeStatus status = latest.getStatus() == TriggeredTradeStatus.EXECUTED
+                    ? TriggeredTradeStatus.EXECUTED
+                    : latest.getStatus() == TriggeredTradeStatus.REJECTED
+                    ? TriggeredTradeStatus.REJECTED
+                    : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
+            triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.TRIGGERED.name(), status.name());
+            log.info("Entry request {} already has persisted trade {}; not placing a duplicate order.", requestId, latest.getId());
+            return;
+        }
+
+        TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(request);
+        if (executed == null) {
+            triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
+            log.warn("Trigger {} did not produce an order; reset to pending for a fresh LTP evaluation.", requestId);
+            return;
+        }
+
+        TriggeredTradeStatus status = executed.getStatus() == TriggeredTradeStatus.EXECUTED
+                ? TriggeredTradeStatus.EXECUTED
+                : executed.getStatus() == TriggeredTradeStatus.REJECTED
+                ? TriggeredTradeStatus.REJECTED
+                : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
+        triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.TRIGGERED.name(), status.name());
+        log.info("Trigger {} execution completed with trade {} status={}", requestId, executed.getId(), status);
+    }
+
+    /**
+     * Recover requests left in TRIGGERED by an interrupted execution. Recovery only
+     * re-arms a request when no linked trade was persisted, so it cannot duplicate
+     * a broker order after a restart.
+     */
+    @Scheduled(fixedDelayString = "${app.trading.trigger-recovery-delay-ms:15000}")
+    public void recoverStaleTriggeredRequests() {
+        for (TriggerTradeRequestEntity request : triggerRepo.findByStatus(TriggeredTradeStatus.TRIGGERED)) {
+            if (request.getId() == null || orderExecutionDispatcher.isInFlight(
+                    orderExecutionKey("ENTRY:" + request.getId(), request.getBrokerCredentialsId()))) {
+                continue;
+            }
+            List<TriggeredTradeSetupEntity> existing = triggeredRepo.findByTriggerRequestId(request.getId());
+            if (existing != null && !existing.isEmpty()) {
+                TriggeredTradeSetupEntity latest = existing.get(existing.size() - 1);
+                TriggeredTradeStatus status = latest.getStatus() == TriggeredTradeStatus.EXECUTED
+                        ? TriggeredTradeStatus.EXECUTED
+                        : latest.getStatus() == TriggeredTradeStatus.REJECTED
+                        ? TriggeredTradeStatus.REJECTED
+                        : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
+                triggerRepo.claimIfStatusEquals(request.getId(), TriggeredTradeStatus.TRIGGERED.name(), status.name());
+                continue;
+            }
+            int reset = triggerRepo.claimIfStatusEquals(request.getId(), TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
+            if (reset == 1) {
+                log.warn("Recovered stale triggered request {} by resetting it to pending; no broker order was persisted.", request.getId());
+            }
         }
     }
 
@@ -753,7 +822,7 @@ public class PriceTriggerService {
                         log.warn("📉 SL hit for trade {} - modified existing exit order {} to price {}", tradeId, reloaded.getExitOrderId(), stopPriceOption);
                     } else {
                         log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, tradedLtp);
-                        tradeExecutionService.squareOff(reloaded, tradedLtp, exitReason);
+                        dispatchSquareOff(reloaded, tradedLtp, exitReason);
                     }
                 } else {
                     // TARGET_HIT
@@ -774,13 +843,13 @@ public class PriceTriggerService {
                         // If lot count cannot be derived, fall back to single-lot target exit behavior.
                         if (lots <= 1) {
                             log.info("🎯 Target hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff (Single/Unknown Lot)", tradeId, targetRefPrice, tradedLtp);
-                            tradeExecutionService.squareOff(reloaded, tradedLtp, "TARGET_HIT");
+                            dispatchSquareOff(reloaded, tradedLtp, "TARGET_HIT");
                         } else {
                             handlePartialBooking(reloaded, targetRefPrice, tradedLtp, lots);
                         }
                     } else {
                         log.info("🎯 Target hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff (TSL Disabled)", tradeId, targetRefPrice, tradedLtp);
-                        tradeExecutionService.squareOff(reloaded, tradedLtp, "TARGET_HIT");
+                        dispatchSquareOff(reloaded, tradedLtp, "TARGET_HIT");
                     }
                 }
 
@@ -796,6 +865,34 @@ public class PriceTriggerService {
 
     private boolean hasNoExitOrderId(TriggeredTradeSetupEntity trade) {
         return trade == null || trade.getExitOrderId() == null || trade.getExitOrderId().isBlank();
+    }
+
+    private void dispatchSquareOff(TriggeredTradeSetupEntity trade, double tradedLtp, String exitReason) {
+        if (trade == null || trade.getId() == null) {
+            return;
+        }
+        String key = orderExecutionKey("EXIT:" + trade.getId(), trade.getBrokerCredentialsId());
+        if (!orderExecutionDispatcher.submit(key,
+                () -> tradeExecutionService.squareOff(trade, tradedLtp, exitReason))) {
+            log.debug("Exit execution already queued/running for trade {}", trade.getId());
+        }
+    }
+
+    private String orderExecutionKey(String liveKey, Long brokerCredentialsId) {
+        if (brokerCredentialsId == null) {
+            return liveKey;
+        }
+        try {
+            return brokerCredentialsRepository.findById(brokerCredentialsId)
+                    .filter(credentials -> credentials.getBrokerName() != null
+                            && "Simulator".equalsIgnoreCase(credentials.getBrokerName()))
+                    .map(credentials -> "SIM:" + liveKey)
+                    .orElse(liveKey);
+        } catch (Exception e) {
+            // Do not risk routing a live order to the low-priority simulator queue.
+            log.debug("Unable to resolve broker priority for {}: {}", liveKey, e.getMessage());
+            return liveKey;
+        }
     }
 
     private void recoverUnplacedExitOrder(TriggeredTradeSetupEntity trade, double tradedLtp, Double spotLtp) {
@@ -815,7 +912,7 @@ public class PriceTriggerService {
                 || GAP_FILL_EXIT_REASON.equals(exitReason)
                 || "TARGET_HIT_PARTIAL".equals(exitReason)
                 || "TARGET_HIT_FULL".equals(exitReason)) {
-            tradeExecutionService.squareOff(trade, tradedLtp, exitReason);
+            dispatchSquareOff(trade, tradedLtp, exitReason);
             return;
         }
 
@@ -828,7 +925,7 @@ public class PriceTriggerService {
             }
         }
 
-        tradeExecutionService.squareOff(trade, tradedLtp, exitReason);
+        dispatchSquareOff(trade, tradedLtp, exitReason);
     }
 
     private boolean isGapFillStopHit(TriggeredTradeSetupEntity trade) {
@@ -922,7 +1019,7 @@ public class PriceTriggerService {
 
         if (lotsToBook >= currentLots) {
             // Full exit
-            tradeExecutionService.squareOff(trade, tradedLtp, "TARGET_HIT_FULL");
+            dispatchSquareOff(trade, tradedLtp, "TARGET_HIT_FULL");
         } else {
             // Partial exit
             long originalQty = trade.getQuantity();
@@ -999,7 +1096,7 @@ public class PriceTriggerService {
             }
 
             // Proceed to square off this portion
-            tradeExecutionService.squareOff(trade, tradedLtp, "TARGET_HIT_PARTIAL");
+            dispatchSquareOff(trade, tradedLtp, "TARGET_HIT_PARTIAL");
         }
     }
 

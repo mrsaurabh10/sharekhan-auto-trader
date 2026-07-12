@@ -56,6 +56,15 @@ app:
   market-data:
     sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
   trading:
+    order-execution:
+      # Exit capacity is intentionally reserved: a target/SL cannot queue behind entries.
+      entry-pool-size: ${ENTRY_ORDER_EXECUTION_POOL_SIZE:4}
+      exit-pool-size: ${EXIT_ORDER_EXECUTION_POOL_SIZE:4}
+      entry-queue-capacity: ${ENTRY_ORDER_EXECUTION_QUEUE_CAPACITY:200}
+      exit-queue-capacity: ${EXIT_ORDER_EXECUTION_QUEUE_CAPACITY:100}
+      # Simulator traffic is deliberately isolated and deprioritized.
+      simulator-pool-size: ${SIMULATOR_ORDER_EXECUTION_POOL_SIZE:1}
+      simulator-queue-capacity: ${SIMULATOR_ORDER_EXECUTION_QUEUE_CAPACITY:50}
     entry:
       max-attempts: ${ENTRY_MAX_ATTEMPTS:5}
       retry-delay-ms: ${ENTRY_RETRY_DELAY_MS:2000}

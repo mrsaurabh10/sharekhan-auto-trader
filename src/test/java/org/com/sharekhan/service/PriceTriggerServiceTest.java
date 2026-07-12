@@ -6,6 +6,7 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.ScriptMasterRepository;
+import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -41,6 +42,7 @@ class PriceTriggerServiceTest {
     private final LtpCacheService ltpCacheService = mock(LtpCacheService.class);
     private final SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
     private final MStockIntradayCandleService intradayCandleService = mock(MStockIntradayCandleService.class);
+    private final OrderExecutionDispatcher orderExecutionDispatcher = mock(OrderExecutionDispatcher.class);
 
     private final PriceTriggerService service = new PriceTriggerService(
             triggerRepo,
@@ -54,8 +56,17 @@ class PriceTriggerServiceTest {
             intradayCandleService,
             mock(MStockInstrumentResolver.class),
             historicalService,
-            mock(ScripExecutorManager.class)
+            mock(ScripExecutorManager.class),
+            orderExecutionDispatcher,
+            mock(BrokerCredentialsRepository.class)
     );
+
+    {
+        when(orderExecutionDispatcher.submit(anyString(), any(Runnable.class))).thenAnswer(invocation -> {
+            ((Runnable) invocation.getArgument(1)).run();
+            return true;
+        });
+    }
 
     @Test
     void atrSpotEntryWaitsWhenCurrentTickFallsBackAfterDirectionalClose() {

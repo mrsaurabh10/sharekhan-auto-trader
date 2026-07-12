@@ -35,6 +35,7 @@ class MStockLtpPollingServiceTest {
                 ltpCacheService,
                 quoteCacheService,
                 priceTriggerService,
+                mock(ScripExecutorManager.class),
                 instrumentResolver,
                 tokenStoreService);
         ReflectionTestUtils.setField(service, "sharekhanQuoteStaleMs", 2000L);

@@ -437,40 +437,8 @@ public class TradingMessageService {
                 req.setBrokerCredentialsId(c.getId());
                 req.setUserId(c.getAppUserId());
 
-                // Per-user configuration: telegram_trade_enabled (default true)
-                boolean enabled = true;
-                if ("Sharekhan".equalsIgnoreCase(req.getSource())) {
-                    try {
-                        String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "true");
-                        if (v != null) {
-                            String s = v.trim().toLowerCase();
-                            enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
-                        }
-                    } catch (Exception ignore) { enabled = true; }
-                } else if (!"admin-ui".equalsIgnoreCase(req.getSource())) {
-                    try {
-                        String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "true");
-                        if (v != null) {
-                            String s = v.trim().toLowerCase();
-                            enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
-                        }
-                    } catch (Exception ignore) { enabled = true; }
-                }
-
-                if (!enabled) {
-                    // Skip placing for this user; optionally notify/log
-                    String skipReason = "Sharekhan".equalsIgnoreCase(req.getSource()) ? "allow_sharekhan_research=false" : "telegram_trade_enabled=false";
-                    System.out.println("⏭️ Skipping trade for user #" + c.getAppUserId() + " due to " + skipReason);
-                    try {
-                        if (telegramNotificationService != null) {
-                            String title = "Trade Skipped";
-                            String body = skipReason + "; Trade ignored for incoming signal.\n" +
-                                    "Instrument: " + (req.getInstrument()) +
-                                    (req.getStrikePrice()!=null?(" "+req.getStrikePrice()):"") +
-                                    (req.getOptionType()!=null?(" "+req.getOptionType()):"");
-                            telegramNotificationService.sendTradeMessageForUser(c.getAppUserId(), title, body);
-                        }
-                    } catch (Exception ignored) {}
+                if (!isSourceEnabledForUser(c.getAppUserId(), req.getSource())) {
+                    notifySourceDisabled(c.getAppUserId(), req);
                     continue;
                 }
 
@@ -524,37 +492,8 @@ public class TradingMessageService {
                     TriggerRequest req = cloneRequest(base);
                     req.setBrokerCredentialsId(c.getId());
                     req.setUserId(c.getAppUserId());
-                    boolean enabled = true;
-                    if ("Sharekhan".equalsIgnoreCase(req.getSource())) {
-                        try {
-                            String v = userConfigService.getConfig(c.getAppUserId(), "allow_sharekhan_research", "false");
-                            if (v != null) {
-                                String s = v.trim().toLowerCase();
-                                enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
-                            }
-                        } catch (Exception ignore) { enabled = false; }
-                    } else if (!"admin-ui".equalsIgnoreCase(req.getSource())) {
-                        try {
-                            String v = userConfigService.getConfig(c.getAppUserId(), "telegram_trade_enabled", "false");
-                            if (v != null) {
-                                String s = v.trim().toLowerCase();
-                                enabled = s.equals("true") || s.equals("1") || s.equals("yes") || s.equals("on");
-                            }
-                        } catch (Exception ignore) { enabled = false; }
-                    }
-                    if (!enabled) {
-                        String skipReason = "Sharekhan".equalsIgnoreCase(req.getSource()) ? "allow_sharekhan_research=false" : "telegram_trade_enabled=false";
-                        System.out.println("⏭️ Skipping trade for user #" + c.getAppUserId() + " due to " + skipReason);
-                        try {
-                            if (telegramNotificationService != null) {
-                                String title = "Trade Skipped";
-                                String body = skipReason + "; Trade ignored for incoming signal.\n" +
-                                        "Instrument: " + (req.getInstrument()) +
-                                        (req.getStrikePrice()!=null?(" "+req.getStrikePrice()):"") +
-                                        (req.getOptionType()!=null?(" "+req.getOptionType()):"");
-                                telegramNotificationService.sendTradeMessageForUser(c.getAppUserId(), title, body);
-                            }
-                        } catch (Exception ignored) {}
+                    if (!isSourceEnabledForUser(c.getAppUserId(), req.getSource())) {
+                        notifySourceDisabled(c.getAppUserId(), req);
                         continue;
                     }
 
@@ -588,6 +527,52 @@ public class TradingMessageService {
             if (executor != null) {
                 shutdownExecutor(executor);
             }
+        }
+    }
+
+    /**
+     * A signal source is opt-in for every user.  The configuration key is the
+     * source value carried by the request (for example {@code atr-signal}) and
+     * its value must be a truthy boolean.  Disabled configurations are ignored
+     * by UserConfigService, so they also reject the source.
+     */
+    private boolean isSourceEnabledForUser(Long appUserId, String source) {
+        if (appUserId == null || source == null || source.isBlank()) {
+            return false;
+        }
+        try {
+            return isTruthy(userConfigService.getConfig(appUserId, source.trim(), "false"));
+        } catch (Exception e) {
+            System.err.println("Unable to read source configuration for user #" + appUserId
+                    + ", source=" + source + ": " + e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean isTruthy(String value) {
+        if (value == null) {
+            return false;
+        }
+        return switch (value.trim().toLowerCase(Locale.ROOT)) {
+            case "true", "1", "yes", "on" -> true;
+            default -> false;
+        };
+    }
+
+    private void notifySourceDisabled(Long appUserId, TriggerRequest request) {
+        String source = request.getSource() == null ? "(missing)" : request.getSource().trim();
+        String skipReason = "source configuration '" + source + "' is not enabled";
+        System.out.println("⏭️ Skipping trade for user #" + appUserId + " because " + skipReason);
+        try {
+            if (telegramNotificationService != null) {
+                String body = skipReason + "; trade ignored for incoming signal.\n"
+                        + "Instrument: " + request.getInstrument()
+                        + (request.getStrikePrice() != null ? " " + request.getStrikePrice() : "")
+                        + (request.getOptionType() != null ? " " + request.getOptionType() : "");
+                telegramNotificationService.sendTradeMessageForUser(appUserId, "Trade Skipped", body);
+            }
+        } catch (Exception ignored) {
+            // Notification delivery must not prevent routing subsequent signals.
         }
     }
 
