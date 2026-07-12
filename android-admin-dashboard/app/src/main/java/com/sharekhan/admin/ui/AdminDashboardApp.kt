@@ -1,6 +1,7 @@
 package com.sharekhan.admin.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -10,11 +11,13 @@ import com.sharekhan.admin.ui.dashboard.DashboardScreen
 import com.sharekhan.admin.ui.dashboard.DashboardViewModel
 import com.sharekhan.admin.ui.login.LoginScreen
 import com.sharekhan.admin.ui.login.LoginViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun AdminDashboardApp() {
     val navController = rememberNavController()
     val repository = LocalAppContainer.current.repository
+    val scope = rememberCoroutineScope()
 
     NavHost(
         navController = navController,
@@ -36,7 +39,17 @@ fun AdminDashboardApp() {
         composable(AppDestinations.Dashboard.route) {
             val dashboardViewModel: DashboardViewModel =
                 viewModel(factory = DashboardViewModel.factory(repository))
-            DashboardScreen(viewModel = dashboardViewModel)
+            DashboardScreen(
+                viewModel = dashboardViewModel,
+                onSignOut = {
+                    scope.launch {
+                        repository.logout()
+                        navController.navigate(AppDestinations.Login.route) {
+                            popUpTo(AppDestinations.Dashboard.route) { inclusive = true }
+                        }
+                    }
+                }
+            )
         }
     }
 }
