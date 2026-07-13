@@ -6,7 +6,9 @@ services:
       dockerfile: Dockerfile
     image: sharekhan-auto-trader
     restart: unless-stopped
-    mem_limit: 640m
+    # Reserve enough capacity for the 2-vCPU / 2-GiB VM host and Docker itself.
+    cpus: "2.0"
+    mem_limit: 1536m
     environment:
       SPRING_PROFILES_ACTIVE: "${SPRING_PROFILES_ACTIVE:-user-test}"
       SERVER_PORT: "${SERVER_PORT:-8080}"
@@ -19,7 +21,7 @@ services:
       GEMINI_MAX_OUTPUT_TOKENS: "${GEMINI_MAX_OUTPUT_TOKENS:-2048}"
       GEMINI_THINKING_BUDGET: "${GEMINI_THINKING_BUDGET:-0}"
       TZ: Asia/Kolkata
-      JAVA_OPTS: "${JAVA_OPTS:--Xms128m -Xmx384m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/dumps -Xlog:gc*:file=/app/logs/gc.log:utctime}"
+      JAVA_OPTS: "${JAVA_OPTS:--Xms256m -Xmx1024m -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/dumps -Xlog:gc*:file=/app/logs/gc.log:utctime}"
       ENABLE_DEBUG: "${ENABLE_DEBUG:-false}"
       ENABLE_JMX: "${ENABLE_JMX:-false}"
       JMX_PORT: "${JMX_PORT:-9010}"
