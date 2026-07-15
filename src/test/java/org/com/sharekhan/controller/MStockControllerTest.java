@@ -3,6 +3,7 @@ package org.com.sharekhan.controller;
 import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.service.MStockHistoricalService;
+import org.com.sharekhan.service.MStockGainerLoserService;
 import org.com.sharekhan.service.MStockInstrumentCacheService;
 import org.com.sharekhan.service.MStockInstrumentResolver;
 import org.com.sharekhan.service.MStockIntradayCandleService;
@@ -24,6 +25,7 @@ class MStockControllerTest {
     private final MStockIntradayCandleService intradayCandleService = mock(MStockIntradayCandleService.class);
     private final MStockController controller = new MStockController(
             mock(MStockLtpService.class),
+            mock(MStockGainerLoserService.class),
             mock(TokenStoreService.class),
             mock(BrokerAuthProviderRegistry.class),
             mock(MStockInstrumentResolver.class),
