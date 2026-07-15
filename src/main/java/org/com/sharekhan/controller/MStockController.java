@@ -13,6 +13,7 @@ import org.com.sharekhan.service.MStockInstrumentResolver;
 import org.com.sharekhan.service.MStockHistoricalService;
 import org.com.sharekhan.service.MStockIntradayCandleService;
 import org.com.sharekhan.service.MStockLtpService;
+import org.com.sharekhan.service.MStockGainerLoserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.util.StringUtils;
@@ -27,6 +28,7 @@ import java.util.*;
 public class MStockController {
 
     private final MStockLtpService mStockLtpService;
+    private final MStockGainerLoserService mStockGainerLoserService;
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
     private final MStockInstrumentResolver instrumentResolver;
@@ -55,6 +57,36 @@ public class MStockController {
             err.put("status", "error");
             err.put("message", e.getMessage());
             return ResponseEntity.status(500).body(err);
+        }
+    }
+
+    /**
+     * Read-only proxy for MStock's Top Gainers/Losers API.  MStock access credentials remain
+     * server-side; this endpoint exposes only the returned market data.
+     *
+     * @param type GAINERS, LOSERS, or BOTH (default)
+     */
+    @GetMapping("/gainers-losers")
+    public ResponseEntity<Map<String, Object>> gainersLosers(
+            @RequestParam(name = "type", defaultValue = "BOTH") String type) {
+        try {
+            String normalized = type == null ? "BOTH" : type.trim().toUpperCase(Locale.ROOT);
+            if (!Set.of("GAINERS", "LOSERS", "BOTH").contains(normalized)) {
+                return ResponseEntity.badRequest().body(Map.of("status", "error",
+                        "message", "type must be GAINERS, LOSERS, or BOTH"));
+            }
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("status", "success");
+            if ("GAINERS".equals(normalized) || "BOTH".equals(normalized)) {
+                response.put("gainers", mStockGainerLoserService.topGainers());
+            }
+            if ("LOSERS".equals(normalized) || "BOTH".equals(normalized)) {
+                response.put("losers", mStockGainerLoserService.topLosers());
+            }
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            log.error("Failed to fetch MStock gainers/losers", e);
+            return ResponseEntity.internalServerError().body(Map.of("status", "error", "message", e.getMessage()));
         }
     }
 

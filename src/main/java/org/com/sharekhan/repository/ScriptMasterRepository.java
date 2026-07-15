@@ -45,6 +45,12 @@ public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity
             @Param("expiry") String expiry
     );
 
+    /** Symbols with a listed NSE F&O option contract.  The strategy resolves the matching NC/BC spot row separately. */
+    @Query("SELECT DISTINCT UPPER(s.tradingSymbol) FROM ScriptMasterEntity s "
+            + "WHERE s.strikePrice IS NOT NULL AND s.expiry IS NOT NULL "
+            + "AND UPPER(s.optionType) IN ('CE', 'PE')")
+    List<String> findDistinctOptionUnderlyingSymbols();
+
     List<ScriptMasterEntity> findByExchange(String exchange);
 
     @Query("SELECT DISTINCT s.strikePrice FROM ScriptMasterEntity s WHERE s.exchange = :exchange AND s.tradingSymbol = :instrument AND s.strikePrice IS NOT NULL")

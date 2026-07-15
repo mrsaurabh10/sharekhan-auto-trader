@@ -53,6 +53,10 @@ logging:
 app:
   scheduler:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
+  strategy:
+    fno-0925-mover:
+      # Set FNO_0925_MOVER_BREAKOUT_ATR_MULTIPLIER=1.0 to use a full ATR breakout.
+      breakout-atr-multiplier: ${FNO_0925_MOVER_BREAKOUT_ATR_MULTIPLIER:0.5}
   market-data:
     sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
   trading:
