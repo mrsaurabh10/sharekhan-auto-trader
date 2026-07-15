@@ -33,7 +33,9 @@ public class StrategySubscriptionService {
     public StrategySubscriptionEntity start(StrategyApplyRequest request) {
         validate(request);
         String templateId = request.getTemplateId().trim().toUpperCase(Locale.ROOT);
-        String symbol = request.getSymbol().trim().toUpperCase(Locale.ROOT);
+        String symbol = isFnoMoverTemplate(templateId)
+                ? "FNO_UNIVERSE"
+                : request.getSymbol().trim().toUpperCase(Locale.ROOT);
 
         if (request.getUserId() != null) {
             List<StrategySubscriptionEntity> existing = repository
@@ -172,11 +174,15 @@ public class StrategySubscriptionService {
         if (!StringUtils.hasText(request.getTemplateId())) {
             throw new IllegalArgumentException("templateId is required");
         }
-        if (!StringUtils.hasText(request.getSymbol())) {
+        if (!isFnoMoverTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
         }
         if (request.getUserId() == null) {
             throw new IllegalArgumentException("userId is required to start a background strategy");
         }
+    }
+
+    private boolean isFnoMoverTemplate(String templateId) {
+        return Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 }
