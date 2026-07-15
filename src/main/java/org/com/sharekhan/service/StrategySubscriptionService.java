@@ -6,6 +6,7 @@ import org.com.sharekhan.dto.StrategyApplyRequest;
 import org.com.sharekhan.dto.StrategyApplyResponse;
 import org.com.sharekhan.entity.StrategySubscriptionEntity;
 import org.com.sharekhan.repository.StrategySubscriptionRepository;
+import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -93,13 +94,22 @@ public class StrategySubscriptionService {
     @Scheduled(fixedDelayString = "${app.strategy.scheduler-delay-ms:60000}")
     public void evaluateActiveStrategies() {
         LocalTime now = LocalTime.now(MARKET_ZONE);
-        if (now.isBefore(LocalTime.of(9, 30)) || now.isAfter(LocalTime.of(15, 25))) {
+        if (now.isBefore(LocalTime.of(9, 25)) || now.isAfter(LocalTime.of(15, 25))) {
             return;
         }
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
         for (StrategySubscriptionEntity subscription : active) {
             evaluate(subscription);
         }
+    }
+
+    /** The mover universe must be frozen at the stated market time, not at the next polling tick. */
+    @Scheduled(cron = "0 25 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void snapshotFno0925MoverStrategies() {
+        repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
+                .filter(subscription -> Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID
+                        .equalsIgnoreCase(subscription.getTemplateId()))
+                .forEach(this::evaluate);
     }
 
     private void evaluate(StrategySubscriptionEntity subscription) {
