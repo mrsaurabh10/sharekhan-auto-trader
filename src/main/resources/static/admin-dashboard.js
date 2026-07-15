@@ -1994,16 +1994,17 @@
       if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
       const templateId = (document.getElementById('strategyTemplate') || {}).value || '';
       const symbol = ((document.getElementById('strategySymbol') || {}).value || '').trim().toUpperCase();
+      const fnoMover = templateId.trim().toUpperCase() === 'FNO_0925_MOVER_ATR_BREAKOUT';
       const lotsValue = Number((document.getElementById('strategyLots') || {}).value || '1');
       const intraday = !!(document.getElementById('strategyIntraday') && document.getElementById('strategyIntraday').checked);
       if (!templateId) { if (result) result.innerText = 'Select a strategy template.'; return; }
-      if (!symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
+      if (!fnoMover && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
       try {
         btn.disabled = true;
         await ensureCsrf();
         const body = {
           templateId,
-          symbol,
+          symbol: fnoMover ? 'FNO_UNIVERSE' : symbol,
           lots: Number.isFinite(lotsValue) && lotsValue > 0 ? lotsValue : 1,
           intraday,
           userId: window.selectedUserId || null,
