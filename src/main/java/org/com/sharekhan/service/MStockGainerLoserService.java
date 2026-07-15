@@ -28,21 +28,34 @@ import java.util.Locale;
 public class MStockGainerLoserService {
 
     private static final String URL = "https://api.mstock.trade/openapi/typea/losergainer";
-    private static final String NSE_EQUITY_FORM = "Exchange=1&SecurityIdCode=13&segment=1&TypeFlag=";
+    public static final int NSE_EQUITY_EXCHANGE = 1;
+    public static final int NSE_EQUITY_SECURITY_ID_CODE = 13;
+    public static final int NSE_EQUITY_SEGMENT = 1;
 
     private final TokenStoreService tokenStoreService;
     private final CryptoService cryptoService;
     private final MStockProperties properties;
 
     public List<Mover> topGainers() {
-        return fetch("G");
+        return topGainers(NSE_EQUITY_EXCHANGE, NSE_EQUITY_SECURITY_ID_CODE, NSE_EQUITY_SEGMENT);
     }
 
     public List<Mover> topLosers() {
-        return fetch("L");
+        return topLosers(NSE_EQUITY_EXCHANGE, NSE_EQUITY_SECURITY_ID_CODE, NSE_EQUITY_SEGMENT);
     }
 
-    private List<Mover> fetch(String typeFlag) {
+    public List<Mover> topGainers(int exchange, int securityIdCode, int segment) {
+        return fetch("G", exchange, securityIdCode, segment);
+    }
+
+    public List<Mover> topLosers(int exchange, int securityIdCode, int segment) {
+        return fetch("L", exchange, securityIdCode, segment);
+    }
+
+    private List<Mover> fetch(String typeFlag, int exchange, int securityIdCode, int segment) {
+        if (exchange <= 0 || securityIdCode <= 0 || segment <= 0) {
+            throw new IllegalArgumentException("exchange, securityIdCode, and segment must be positive integers");
+        }
         TokenStoreService.TokenInfo token = tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK);
         if (token == null || !StringUtils.hasText(token.getToken())) {
             throw new IllegalStateException("No MStock access token available for top gainers/losers API.");
@@ -62,7 +75,9 @@ public class MStockGainerLoserService {
             connection.setRequestProperty("Authorization", "token " + apiKey + ":" + token.getToken());
             connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
             try (OutputStream output = connection.getOutputStream()) {
-                output.write((NSE_EQUITY_FORM + typeFlag).getBytes(StandardCharsets.UTF_8));
+                String form = "Exchange=" + exchange + "&SecurityIdCode=" + securityIdCode
+                        + "&segment=" + segment + "&TypeFlag=" + typeFlag;
+                output.write(form.getBytes(StandardCharsets.UTF_8));
             }
             int status = connection.getResponseCode();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(
