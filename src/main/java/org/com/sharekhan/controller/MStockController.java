@@ -68,7 +68,10 @@ public class MStockController {
      */
     @GetMapping("/gainers-losers")
     public ResponseEntity<Map<String, Object>> gainersLosers(
-            @RequestParam(name = "type", defaultValue = "BOTH") String type) {
+            @RequestParam(name = "type", defaultValue = "BOTH") String type,
+            @RequestParam(name = "exchange", defaultValue = "1") int exchange,
+            @RequestParam(name = "securityIdCode", defaultValue = "13") int securityIdCode,
+            @RequestParam(name = "segment", defaultValue = "1") int segment) {
         try {
             String normalized = type == null ? "BOTH" : type.trim().toUpperCase(Locale.ROOT);
             if (!Set.of("GAINERS", "LOSERS", "BOTH").contains(normalized)) {
@@ -77,11 +80,14 @@ public class MStockController {
             }
             Map<String, Object> response = new LinkedHashMap<>();
             response.put("status", "success");
+            response.put("exchange", exchange);
+            response.put("securityIdCode", securityIdCode);
+            response.put("segment", segment);
             if ("GAINERS".equals(normalized) || "BOTH".equals(normalized)) {
-                response.put("gainers", mStockGainerLoserService.topGainers());
+                response.put("gainers", mStockGainerLoserService.topGainers(exchange, securityIdCode, segment));
             }
             if ("LOSERS".equals(normalized) || "BOTH".equals(normalized)) {
-                response.put("losers", mStockGainerLoserService.topLosers());
+                response.put("losers", mStockGainerLoserService.topLosers(exchange, securityIdCode, segment));
             }
             return ResponseEntity.ok(response);
         } catch (Exception e) {
