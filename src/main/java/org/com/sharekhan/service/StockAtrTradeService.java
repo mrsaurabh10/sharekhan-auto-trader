@@ -6,7 +6,9 @@ import org.com.sharekhan.dto.StockAtrTradeRequest;
 import org.com.sharekhan.dto.StockAtrTradeResponse;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -41,6 +43,95 @@ public class StockAtrTradeService {
 
     private final ScriptMasterRepository scriptMasterRepository;
     private final SharekhanHistoricalService historicalService;
+
+    @Autowired(required = false)
+    private MStockHistoricalService mStockHistoricalService;
+
+    /**
+     * Refreshes the spot SL/target levels for an ATR signal after its option entry is filled.
+     * MStock is intentionally the only source here: on an unavailable/invalid response the
+     * caller keeps the originally persisted levels rather than mixing data sources.
+     */
+    public boolean refreshLevelsAtEntry(TriggeredTradeSetupEntity trade, Double spotEntryPrice) {
+        if (!isAtrSignalSpotTrade(trade) || spotEntryPrice == null || !Double.isFinite(spotEntryPrice)
+                || spotEntryPrice <= 0d || mStockHistoricalService == null) {
+            return false;
+        }
+
+        try {
+            LocalDate today = LocalDate.now(MARKET_ZONE);
+            LocalDateTime now = LocalDateTime.now(MARKET_ZONE);
+            LocalDateTime currentFiveMinuteBoundary = now.withSecond(0)
+                    .withNano(0)
+                    .withMinute((now.getMinute() / 5) * 5);
+            MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandles(
+                    trade.getSpotScripCode(), null, null, null, null, null,
+                    FIVE_MINUTE_INTERVAL, today.minusDays(10).toString(), today.toString());
+            List<MStockHistoricalService.HistoricalCandle> candles = response != null && response.candles() != null
+                    ? response.candles().stream()
+                    .filter(Objects::nonNull)
+                    .filter(candle -> candle.date() != null && candle.time() != null)
+                    .filter(candle -> LocalDateTime.of(candle.date(), candle.time()).isBefore(currentFiveMinuteBoundary))
+                    .filter(candle -> candle.high() > 0d && candle.low() > 0d && candle.close() > 0d)
+                    .sorted(Comparator.comparing(MStockHistoricalService.HistoricalCandle::date)
+                            .thenComparing(MStockHistoricalService.HistoricalCandle::time))
+                    .toList()
+                    : List.of();
+
+            int requiredCandles = ATR_PERIOD + 1;
+            if (candles.size() < requiredCandles) {
+                throw new IllegalStateException("MStock returned " + candles.size() + " valid 5-minute candles; required "
+                        + requiredCandles + " for ATR(" + ATR_PERIOD + ")");
+            }
+
+            List<MStockHistoricalService.HistoricalCandle> tail = candles.subList(candles.size() - requiredCandles, candles.size());
+            double trueRangeSum = 0d;
+            for (int i = 1; i < tail.size(); i++) {
+                MStockHistoricalService.HistoricalCandle current = tail.get(i);
+                MStockHistoricalService.HistoricalCandle previous = tail.get(i - 1);
+                double trueRange = Math.max(current.high() - current.low(),
+                        Math.max(Math.abs(current.high() - previous.close()), Math.abs(current.low() - previous.close())));
+                trueRangeSum += trueRange;
+            }
+            double atr = roundPrice(trueRangeSum / ATR_PERIOD);
+            if (!Double.isFinite(atr) || atr <= 0d) {
+                throw new IllegalStateException("MStock returned an invalid ATR(" + ATR_PERIOD + ")");
+            }
+
+            boolean ce = "CE".equalsIgnoreCase(trade.getOptionType());
+            Double originalStopLoss = trade.getStopLoss();
+            Double originalTarget1 = trade.getTarget1();
+            trade.setStopLoss(roundPrice(ce
+                    ? spotEntryPrice - (STOP_LOSS_ATR_MULTIPLIER * atr)
+                    : spotEntryPrice + (STOP_LOSS_ATR_MULTIPLIER * atr)));
+            trade.setTarget1(roundPrice(ce
+                    ? spotEntryPrice + (TARGET1_ATR_MULTIPLIER * atr)
+                    : spotEntryPrice - (TARGET1_ATR_MULTIPLIER * atr)));
+            trade.setTarget2(roundPrice(ce
+                    ? spotEntryPrice + (TARGET2_ATR_MULTIPLIER * atr)
+                    : spotEntryPrice - (TARGET2_ATR_MULTIPLIER * atr)));
+            trade.setTarget3(roundPrice(ce
+                    ? spotEntryPrice + (TARGET3_ATR_MULTIPLIER * atr)
+                    : spotEntryPrice - (TARGET3_ATR_MULTIPLIER * atr)));
+            log.info("📐 ATR levels refreshed at option entry | trade={} source=mstock spotEntry={} atrPeriod={} atr5m={} stopLoss={} target1={} target2={} target3={} originalStopLoss={} originalTarget1={}",
+                    trade.getId(), roundPrice(spotEntryPrice), ATR_PERIOD, atr, trade.getStopLoss(), trade.getTarget1(),
+                    trade.getTarget2(), trade.getTarget3(), originalStopLoss, originalTarget1);
+            return true;
+        } catch (Exception e) {
+            log.warn("Keeping original ATR levels for trade {} because MStock refresh failed: {}",
+                    trade.getId(), e.getMessage());
+            return false;
+        }
+    }
+
+    private boolean isAtrSignalSpotTrade(TriggeredTradeSetupEntity trade) {
+        return trade != null
+                && "atr-signal".equalsIgnoreCase(trade.getSource())
+                && trade.getSpotScripCode() != null
+                && ("CE".equalsIgnoreCase(trade.getOptionType()) || "PE".equalsIgnoreCase(trade.getOptionType()))
+                && Boolean.TRUE.equals(trade.getUseSpotForSl())
+                && Boolean.TRUE.equals(trade.getUseSpotForTarget());
+    }
 
     public StockAtrTradeResponse triggerForAllUsers(StockAtrTradeRequest request) {
         TriggerRequest triggerRequest = buildTriggerRequest(request);

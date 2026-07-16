@@ -1,0 +1,43 @@
+services:
+  trade-monitor:
+    container_name: sharekhan-trade-monitor
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: sharekhan-trade-monitor:latest
+    restart: unless-stopped
+    environment:
+      TRADER_API_URL: "${TRADER_API_URL}"
+      TRADER_API_TOKEN: "${TRADER_API_TOKEN}"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID:-}"
+      SHADOW_MODE: "${SHADOW_MODE:-true}"
+      POLL_INTERVAL: "${POLL_INTERVAL:-10s}"
+      HTTP_TIMEOUT: "${HTTP_TIMEOUT:-5s}"
+      STALE_PRICE_AFTER: "${STALE_PRICE_AFTER:-30s}"
+      EXIT_STUCK_AFTER: "${EXIT_STUCK_AFTER:-60s}"
+      PROXIMITY_FRACTION: "${PROXIMITY_FRACTION:-0.10}"
+      MOVE_TO_COST_FRACTION: "${MOVE_TO_COST_FRACTION:-0.60}"
+      SUMMARY_HOUR: "${SUMMARY_HOUR:-15}"
+      SUMMARY_MINUTE: "${SUMMARY_MINUTE:-40}"
+      STATE_FILE: /app/data/advisory-state.json
+    volumes:
+      - monitor-data:/app/data
+    ports:
+      - "127.0.0.1:${HEALTH_PORT:-8090}:8090"
+    cpus: "0.25"
+    mem_limit: 128m
+    pids_limit: 64
+    read_only: true
+    tmpfs:
+      - /tmp:size=8m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+volumes:
+  monitor-data:

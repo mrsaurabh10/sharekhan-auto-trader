@@ -735,6 +735,9 @@ public class PriceTriggerService {
                     if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
                         int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
                         if (lotsToBook > 0) {
+                            if (!canExitSpotTargetAtCurrentOptionPrice(persisted, tradedLtp)) {
+                                return CLAIM_NONE;
+                            }
                             if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
                                 return CLAIM_NONE;
                             }
@@ -763,6 +766,9 @@ public class PriceTriggerService {
                         }
                         
                         if (targetHit) {
+                            if (!canExitSpotTargetAtCurrentOptionPrice(persisted, tradedLtp)) {
+                                return CLAIM_NONE;
+                            }
                             if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
                                 return CLAIM_NONE;
                             }
@@ -1202,6 +1208,22 @@ public class PriceTriggerService {
         }
 
         return true;
+    }
+
+    private boolean canExitSpotTargetAtCurrentOptionPrice(TriggeredTradeSetupEntity trade, double tradedLtp) {
+        if (!usesSpotForTarget(trade)) {
+            return true;
+        }
+        Double actualEntryPrice = trade != null ? trade.getActualEntryPrice() : null;
+        if (actualEntryPrice == null || actualEntryPrice <= 0d || !Double.isFinite(actualEntryPrice)) {
+            return true;
+        }
+        if (Double.isFinite(tradedLtp) && tradedLtp + 0.000001d >= actualEntryPrice) {
+            return true;
+        }
+        log.info("🎯 Spot target reached for trade {}, but option LTP {} is below actual entry {}. Keeping the position open.",
+                trade.getId(), tradedLtp, actualEntryPrice);
+        return false;
     }
 
     private boolean looksLikeSpotLtpForOptionTrade(TriggeredTradeSetupEntity trade, double tradedLtp, Double spotLtp) {

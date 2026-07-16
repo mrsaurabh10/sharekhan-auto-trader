@@ -50,8 +50,44 @@ class TelegramSignalParserTest {
         assertEquals("95", result.get("target1"));
         assertEquals("100", result.get("target2"));
         assertEquals("105", result.get("target3"));
-        assertEquals(75.0, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(79.2, (Double) result.get("stopLoss"), 0.01);
         assertNotEquals(true, result.get("quickTrade"));
+    }
+
+    @Test
+    void replacesCeStopLossAboveTargetWithTenPercentOptionStop() {
+        Map<String, Object> result = parser.parse("""
+                BUY EICHERMOT 7400 CE ABOVE 175
+                TARGET :- 190 / 205
+                SL :- 1440
+                """);
+
+        assertNotNull(result);
+        assertEquals(157.5, (Double) result.get("stopLoss"), 0.01);
+    }
+
+    @Test
+    void replacesPeStopLossBelowTargetWithTenPercentOptionStop() {
+        Map<String, Object> result = parser.parse("""
+                BUY EICHERMOT 7400 PE ABOVE 175
+                TARGET :- 160 / 145
+                SL :- 144
+                """);
+
+        assertNotNull(result);
+        assertEquals(157.5, (Double) result.get("stopLoss"), 0.01);
+    }
+
+    @Test
+    void retainsValidDirectionalStopLoss() {
+        Map<String, Object> result = parser.parse("""
+                BUY EICHERMOT 7400 CE ABOVE 175
+                TARGET :- 190 / 205
+                SL :- 160
+                """);
+
+        assertNotNull(result);
+        assertEquals(160.0, (Double) result.get("stopLoss"), 0.01);
     }
 
     @Test

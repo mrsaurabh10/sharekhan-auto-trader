@@ -26,9 +26,9 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * At 09:25 IST this template snapshots the F&O universe.  It chooses the five largest gainers
  * when advancing names outnumber declining names; otherwise it chooses the five largest losers.
- * A selected stock is traded only after a completed five-minute candle extends a configurable
- * distance from its 09:25 reference price.  The option contract is always ATM CE for gainers and
- * ATM PE for losers.
+ * The selected stocks are inserted into trading requests immediately. Their spot entry is the
+ * 09:25 snapshot price plus/minus the configured ATR distance, and the option contract is always
+ * ATM CE for gainers and ATM PE for losers.
  */
 @Slf4j
 @Component
@@ -37,13 +37,17 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     public static final String TEMPLATE_ID = "FNO_0925_MOVER_ATR_BREAKOUT";
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID,
-            "F&O 9:25 Mover ATR Breakout",
-            "At 9:25 chooses top 5 gainers when gainers outnumber losers, otherwise top 5 losers; enters ATM CE/PE after the selected underlying moves by the configured ATR(75) breakout distance.",
+            "F&O 9:25 Mover ATR Entry",
+            "At 9:25 chooses top 5 gainers when gainers outnumber losers, otherwise top 5 losers, and immediately submits ATM CE/PE requests with a configurable ATR(75) spot entry.",
             "AUTO");
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
     private static final int ATR_PERIOD = 75;
     private static final int TOP_COUNT = 5;
     private static final int DEFAULT_LOTS = 3;
+    private static final double STOP_LOSS_ATR_MULTIPLIER = 2d;
+    private static final double TARGET1_ATR_MULTIPLIER = 2d;
+    private static final double TARGET2_ATR_MULTIPLIER = 3d;
+    private static final double TARGET3_ATR_MULTIPLIER = 4d;
 
     private final StrategySupport support;
     private final ScriptMasterRepository scriptMasterRepository;
@@ -77,7 +81,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             return support.waiting(METADATA, symbol, "Waiting for the 09:25 F&O mover snapshot.");
         }
 
-        List<Selection> selections = selectionsByDay.computeIfAbsent(now.toLocalDate(), ignored -> snapshotUniverse(now));
+        List<Selection> selections = selectionsByDay.computeIfAbsent(now.toLocalDate(), ignored -> snapshotUniverse());
         selectionsByDay.keySet().removeIf(day -> day.isBefore(now.toLocalDate()));
         if (selections.isEmpty()) {
             return support.waiting(METADATA, symbol, "No eligible F&O movers were available at 09:25; no trade will be created today.");
@@ -85,10 +89,6 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
 
         List<Triggered> triggered = new ArrayList<>();
         for (Selection selection : selections) {
-            StrategyCandle breakout = latestCompletedCandle(selection.spot(), now);
-            if (breakout == null || !hasBrokenOut(selection, breakout.close())) {
-                continue;
-            }
             TriggerRequest trigger = buildTrigger(request, selection);
             TriggerTradeRequestEntity existing = support.findExisting(trigger);
             if (existing != null) {
@@ -97,17 +97,11 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             }
             triggered.add(new Triggered(selection, trigger, support.executeTriggeredTrade(trigger), false));
         }
-        if (triggered.isEmpty()) {
-            String side = selections.get(0).optionType().equals("CE") ? "gainers/CE" : "losers/PE";
-            return support.waiting(METADATA, symbol, "Selected " + side + " list is waiting for a "
-                    + breakoutAtrMultiplier + " x ATR(" + ATR_PERIOD + ") breakout.");
-        }
-
         Triggered first = triggered.get(0);
         long newRequests = triggered.stream().filter(item -> !item.duplicate()).count();
         return StrategyApplyResponse.builder()
                 .status(newRequests > 0 ? "triggered" : "duplicate")
-                .message("F&O 09:25 mover breakout created " + newRequests + " request(s) for "
+                .message("F&O 09:25 mover snapshot created " + newRequests + " immediate request(s) for "
                         + triggered.stream().map(item -> item.selection().symbol()).sorted().toList() + ".")
                 .templateId(TEMPLATE_ID)
                 .symbol(first.selection().symbol())
@@ -118,7 +112,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                 .build();
     }
 
-    private List<Selection> snapshotUniverse(LocalDateTime now) {
+    private List<Selection> snapshotUniverse() {
         Set<String> fnoUniverse = new HashSet<>(scriptMasterRepository.findDistinctOptionUnderlyingSymbols());
         List<MStockGainerLoserService.Mover> gainers = gainerLoserService.topGainers().stream()
                 .filter(mover -> fnoUniverse.contains(mover.symbol()))
@@ -153,18 +147,6 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         return selections;
     }
 
-    private StrategyCandle latestCompletedCandle(ScriptMasterEntity spot, LocalDateTime now) {
-        return latestCompletedCandle(support.loadCandles(spot).candles(), now);
-    }
-
-    private StrategyCandle latestCompletedCandle(List<StrategyCandle> candles, LocalDateTime now) {
-        return candles.stream()
-                .filter(candle -> candle.date().equals(now.toLocalDate()))
-                .filter(candle -> !candle.time().plusMinutes(StrategySupport.CANDLE_MINUTES).isAfter(now.toLocalTime()))
-                .max(Comparator.comparing(StrategyCandle::time))
-                .orElse(null);
-    }
-
     private double atr(List<StrategyCandle> candles) {
         if (candles.size() < ATR_PERIOD + 1) return 0d;
         List<StrategyCandle> tail = candles.subList(candles.size() - (ATR_PERIOD + 1), candles.size());
@@ -177,26 +159,27 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         return total / ATR_PERIOD;
     }
 
-    private boolean hasBrokenOut(Selection selection, double close) {
-        double distance = selection.atr() * breakoutAtrMultiplier;
-        return "CE".equals(selection.optionType())
-                ? close >= selection.referencePrice() + distance
-                : close <= selection.referencePrice() - distance;
-    }
-
     private TriggerRequest buildTrigger(StrategyApplyRequest request, Selection selection) {
         boolean ce = "CE".equals(selection.optionType());
         double distance = selection.atr() * breakoutAtrMultiplier;
         double entry = support.roundPrice(ce ? selection.referencePrice() + distance : selection.referencePrice() - distance);
-        double stop = support.roundPrice(selection.referencePrice());
+        double stop = support.roundPrice(ce
+                ? entry - (STOP_LOSS_ATR_MULTIPLIER * selection.atr())
+                : entry + (STOP_LOSS_ATR_MULTIPLIER * selection.atr()));
         String expiry = support.nearestExpiry(selection.symbol(), selection.optionType());
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(selection.symbol());
         trigger.setEntryPrice(entry);
         trigger.setStopLoss(stop);
-        trigger.setTarget1(support.roundPrice(ce ? entry + selection.atr() : entry - selection.atr()));
-        trigger.setTarget2(support.roundPrice(ce ? entry + (2d * selection.atr()) : entry - (2d * selection.atr())));
-        trigger.setTarget3(support.roundPrice(ce ? entry + (3d * selection.atr()) : entry - (3d * selection.atr())));
+        trigger.setTarget1(support.roundPrice(ce
+                ? entry + (TARGET1_ATR_MULTIPLIER * selection.atr())
+                : entry - (TARGET1_ATR_MULTIPLIER * selection.atr())));
+        trigger.setTarget2(support.roundPrice(ce
+                ? entry + (TARGET2_ATR_MULTIPLIER * selection.atr())
+                : entry - (TARGET2_ATR_MULTIPLIER * selection.atr())));
+        trigger.setTarget3(support.roundPrice(ce
+                ? entry + (TARGET3_ATR_MULTIPLIER * selection.atr())
+                : entry - (TARGET3_ATR_MULTIPLIER * selection.atr())));
         trigger.setOptionType(selection.optionType());
         trigger.setExpiry(expiry);
         trigger.setStrikePrice(support.nearestStrike(selection.symbol(), selection.optionType(), expiry, entry));

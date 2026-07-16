@@ -177,6 +177,9 @@ public class TradeExecutionService {
     @Autowired
     private UserConfigService userConfigService;
 
+    @Autowired(required = false)
+    private StockAtrTradeService stockAtrTradeService;
+
     private final CryptoService cryptoService;
 
     @Autowired
@@ -3296,10 +3299,25 @@ public class TradeExecutionService {
     }
 
     public void handleEntryOrderExecution(TriggeredTradeSetupEntity trade) {
+        refreshAtrLevelsAtConfirmedEntry(trade);
         try {
             maybePlaceTargetOrder(trade);
         } catch (Exception e) {
             log.warn("Failed to place target order for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
+        }
+    }
+
+    private void refreshAtrLevelsAtConfirmedEntry(TriggeredTradeSetupEntity trade) {
+        if (stockAtrTradeService == null || trade == null || trade.getSpotScripCode() == null) {
+            return;
+        }
+        Double spotLtp = fetchLtpViaMStockFallback(trade.getSpotScripCode(), "ATR_ENTRY_LEVEL_REFRESH");
+        if (spotLtp == null || !Double.isFinite(spotLtp) || spotLtp <= 0d) {
+            log.warn("Keeping original ATR levels for trade {} because MStock spot LTP was unavailable at entry.", trade.getId());
+            return;
+        }
+        if (stockAtrTradeService.refreshLevelsAtEntry(trade, spotLtp)) {
+            triggeredTradeRepo.save(trade);
         }
     }
 

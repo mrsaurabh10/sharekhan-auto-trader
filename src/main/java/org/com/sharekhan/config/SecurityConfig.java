@@ -54,6 +54,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/sharekhan/historical/**").permitAll() // Secure via X-Admin-Token inside the controller
                         .requestMatchers("/api/sharekhan/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/backtests/**").permitAll() // Secure via X-Admin-Token inside the controller
+                        .requestMatchers("/internal/monitoring/**").permitAll() // Secured by X-Monitoring-Token in the controller
                         .requestMatchers("/ws/**").hasAnyRole("ADMIN", "USER")
                         .anyRequest().permitAll()
                 )
