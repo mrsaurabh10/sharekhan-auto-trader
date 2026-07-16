@@ -521,6 +521,24 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void spotTargetKeepsLongOptionOpenWhenPremiumIsBelowActualEntry() {
+        TriggeredTradeSetupEntity trade = optionTrade(5211L, 999999, 20000);
+        trade.setUseSpotForTarget(true);
+        trade.setTarget1(23400.0);
+        trade.setActualEntryPrice(111.2);
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of(trade));
+        when(ltpCacheService.getLtp(999999)).thenReturn(100.0);
+        when(triggeredRepo.findById(5211L)).thenReturn(Optional.of(trade));
+
+        service.monitorOpenTrades(20000, 23357.0);
+
+        verify(triggeredRepo, never()).claimIfStatusEquals(eq(5211L), anyString(), anyString(), anyString());
+        verify(tradeExecutionService, never()).squareOff(any(), anyDouble(), anyString());
+    }
+
+    @Test
     void monitorOpenTradesRecoversExitTriggeredPartialWithoutExitOrder() {
         TriggeredTradeSetupEntity trade = optionTrade(6353L, 999999, 20000);
         trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);

@@ -6,14 +6,16 @@ Small, read-only Go service that polls the trader's authenticated snapshot endpo
 
 - Missing stop-loss protection
 - Missing or stale market data
-- Stop-loss proximity
+- Stop-loss proximity with remaining distance
 - Stop-loss breached while the trade remains active
-- Target proximity
+- Explicit T1, T2, and T3 proximity advisories with remaining distance
 - Move-stop-loss-to-cost suggestion
 - Stuck exit order
 - Daily closed-trade summary at 15:40 IST
 
 Each advisory is deduplicated and rate-limited in `/app/data/advisory-state.json` on the `monitor-data` Docker volume. Price rules are suspended when their relevant instrument or spot price is stale.
+
+`PROXIMITY_FRACTION=0.10` means an advisory is generated after price enters the final 10% of the applicable entry-to-level or adjacent-level range. T1, T2, T3, and SL each have independent deduplication keys and cooldowns. Mixed price-source trades, such as option entry with spot targets, use the configured target ladder to calculate a comparable monitoring range.
 
 ## Trader configuration
 

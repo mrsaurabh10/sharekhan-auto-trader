@@ -3,7 +3,9 @@ package org.com.sharekhan.service;
 import org.com.sharekhan.dto.StockAtrTradeRequest;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
@@ -15,6 +17,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
@@ -83,6 +86,63 @@ class StockAtrTradeServiceTest {
         verify(historicalService, atLeast(2)).getHistoricalCandles(eq(12345), eq("5minute"), any(), any());
     }
 
+    @Test
+    void refreshesAtrSignalSpotLevelsFromMStockAtConfirmedEntry() {
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        StockAtrTradeService service = new StockAtrTradeService(scriptMasterRepository, mock(SharekhanHistoricalService.class));
+        MStockHistoricalService mStockHistoricalService = mock(MStockHistoricalService.class);
+        ReflectionTestUtils.setField(service, "mStockHistoricalService", mStockHistoricalService);
+        when(mStockHistoricalService.getHistoricalCandles(eq(12345), any(), any(), any(), any(), any(),
+                eq("5minute"), anyString(), anyString()))
+                .thenReturn(MStockHistoricalService.HistoricalResponse.builder().candles(mStockCandles(76)).build());
+
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(10L)
+                .source("atr-signal")
+                .spotScripCode(12345)
+                .optionType("CE")
+                .useSpotForSl(true)
+                .useSpotForTarget(true)
+                .stopLoss(180.0)
+                .target1(220.0)
+                .build();
+
+        assertThat(service.refreshLevelsAtEntry(trade, 200.0)).isTrue();
+        assertThat(trade.getStopLoss()).isEqualTo(192.0);
+        assertThat(trade.getTarget1()).isEqualTo(208.0);
+        assertThat(trade.getTarget2()).isEqualTo(212.0);
+        assertThat(trade.getTarget3()).isEqualTo(216.0);
+    }
+
+    @Test
+    void keepsOriginalLevelsWhenMStockAtrRefreshFails() {
+        StockAtrTradeService service = new StockAtrTradeService(mock(ScriptMasterRepository.class), mock(SharekhanHistoricalService.class));
+        MStockHistoricalService mStockHistoricalService = mock(MStockHistoricalService.class);
+        ReflectionTestUtils.setField(service, "mStockHistoricalService", mStockHistoricalService);
+        when(mStockHistoricalService.getHistoricalCandles(eq(12345), any(), any(), any(), any(), any(),
+                eq("5minute"), anyString(), anyString()))
+                .thenThrow(new RuntimeException("MStock unavailable"));
+
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(11L)
+                .source("atr-signal")
+                .spotScripCode(12345)
+                .optionType("CE")
+                .useSpotForSl(true)
+                .useSpotForTarget(true)
+                .stopLoss(180.0)
+                .target1(220.0)
+                .target2(230.0)
+                .target3(240.0)
+                .build();
+
+        assertThat(service.refreshLevelsAtEntry(trade, 200.0)).isFalse();
+        assertThat(trade.getStopLoss()).isEqualTo(180.0);
+        assertThat(trade.getTarget1()).isEqualTo(220.0);
+        assertThat(trade.getTarget2()).isEqualTo(230.0);
+        assertThat(trade.getTarget3()).isEqualTo(240.0);
+    }
+
     private List<SharekhanHistoricalService.HistoricalCandle> candles(int count) {
         List<SharekhanHistoricalService.HistoricalCandle> candles = new ArrayList<>();
         LocalDate startDate = LocalDate.now().minusDays(2);
@@ -96,6 +156,23 @@ class StockAtrTradeServiceTest {
                     base - 2,
                     base + 1
             ));
+        }
+        return candles;
+    }
+
+    private List<MStockHistoricalService.HistoricalCandle> mStockCandles(int count) {
+        List<MStockHistoricalService.HistoricalCandle> candles = new ArrayList<>();
+        LocalDate startDate = LocalDate.now().minusDays(2);
+        for (int i = 0; i < count; i++) {
+            double base = 100 + i;
+            candles.add(MStockHistoricalService.HistoricalCandle.builder()
+                    .date(startDate.plusDays(i / 75))
+                    .time(LocalTime.of(9, 15).plusMinutes((long) (i % 75) * 5))
+                    .open(base)
+                    .high(base + 2)
+                    .low(base - 2)
+                    .close(base + 1)
+                    .build());
         }
         return candles;
     }

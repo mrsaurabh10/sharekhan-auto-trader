@@ -45,16 +45,17 @@ func (e *Evaluator) Evaluate(trade model.Trade, now time.Time) []model.Advisory 
 		return append(out, e.exitStuck(trade, now)...)
 	}
 
-	if trade.EntryPrice != nil && trade.StopLoss != nil && finitePositive(*trade.EntryPrice) && finitePositive(*trade.StopLoss) {
-		entry, stop, current := *trade.EntryPrice, *trade.StopLoss, *price
-		if stop < entry {
-			if current <= stop {
-				out = append(out, advisory(trade, "stop_breached", "CRITICAL", "🔴 STOP-LOSS BREACHED",
-					fmt.Sprintf("Current price %.2f is at or below stop-loss %.2f, but trade status is %s. Verify the exit immediately.", current, stop, trade.Status), 3*time.Minute))
-			} else if samePriceBasis(trade.UseSpotForEntry, trade.UseSpotForSL) && current <= stop+(entry-stop)*e.cfg.ProximityFraction {
-				out = append(out, advisory(trade, "stop_proximity", "HIGH", "🟠 STOP-LOSS NEAR",
-					fmt.Sprintf("Current price %.2f is close to stop-loss %.2f.", current, stop), 15*time.Minute))
-			}
+	if trade.StopLoss != nil && finitePositive(*trade.StopLoss) {
+		stop, current := *trade.StopLoss, *price
+		if current <= stop {
+			out = append(out, advisory(trade, "stop_breached", "CRITICAL", "🔴 STOP-LOSS BREACHED",
+				fmt.Sprintf("Current price %.2f is at or below stop-loss %.2f, but trade status is %s. Verify the exit immediately.", current, stop, trade.Status), 3*time.Minute))
+		} else if anchor, ok := stopAnchor(trade); ok && current <= stop+(anchor-stop)*e.cfg.ProximityFraction {
+			remaining := current - stop
+			remainingPercent := remaining / (anchor - stop) * 100
+			out = append(out, advisory(trade, "stop_proximity", "HIGH", "🟠 STOP-LOSS NEAR",
+				fmt.Sprintf("Current: %.2f\nStop-loss: %.2f\nRemaining: %.2f (%.1f%% of monitoring range)\nAdvisory: Watch closely; the stop-loss is near.",
+					current, stop, remaining, remainingPercent), 15*time.Minute))
 		}
 	}
 
@@ -62,17 +63,22 @@ func (e *Evaluator) Evaluate(trade model.Trade, now time.Time) []model.Advisory 
 	if targetPrice != nil && marketOpen(now.In(e.ist)) && (targetObservedAt.IsZero() || now.Sub(targetObservedAt) > e.cfg.StalePriceAfter) {
 		targetPrice = nil
 	}
-	if targetPrice != nil && trade.EntryPrice != nil {
-		if samePriceBasis(trade.UseSpotForEntry, trade.UseSpotForTarget) {
-			if target := nextTarget(trade, *targetPrice); target != nil && *target > *trade.EntryPrice {
-				trigger := *target - (*target-*trade.EntryPrice)*e.cfg.ProximityFraction
-				if *targetPrice >= trigger && *targetPrice < *target {
-					out = append(out, advisory(trade, fmt.Sprintf("target_proximity_%.2f", *target), "HIGH", "🟢 TARGET NEAR",
-						fmt.Sprintf("Current price %.2f is close to the next target %.2f.", *targetPrice, *target), 20*time.Minute))
+	if targetPrice != nil {
+		if target := nextTarget(trade, *targetPrice); target != nil {
+			if anchor, ok := targetAnchor(trade, *target); ok {
+				trigger := target.Price - (target.Price-anchor)*e.cfg.ProximityFraction
+				if *targetPrice >= trigger && *targetPrice < target.Price {
+					remaining := target.Price - *targetPrice
+					coveredPercent := (*targetPrice - anchor) / (target.Price - anchor) * 100
+					out = append(out, advisory(trade, fmt.Sprintf("target_%d_proximity", target.Number), "HIGH",
+						fmt.Sprintf("🟢 TARGET %d NEAR", target.Number),
+						fmt.Sprintf("Current: %.2f\nT%d: %.2f\nRemaining: %.2f\nProgress through monitoring range: %.1f%%\nAdvisory: Target %d is near.",
+							*targetPrice, target.Number, target.Price, remaining, coveredPercent, target.Number), 20*time.Minute))
 				}
 			}
 		}
-		if samePriceBasis(trade.UseSpotForEntry, trade.UseSpotForTarget) &&
+		if trade.EntryPrice != nil &&
+			samePriceBasis(trade.UseSpotForEntry, trade.UseSpotForTarget) &&
 			samePriceBasis(trade.UseSpotForEntry, trade.UseSpotForSL) &&
 			trade.Target1 != nil && trade.StopLoss != nil && *trade.StopLoss < *trade.EntryPrice && *trade.Target1 > *trade.EntryPrice {
 			moveTrigger := *trade.EntryPrice + (*trade.Target1-*trade.EntryPrice)*e.cfg.MoveToCostFraction
@@ -154,21 +160,74 @@ func referencePrice(t model.Trade, target bool) (*float64, time.Time) {
 	return t.InstrumentLTP, parseLocalTime(t.InstrumentLTPObservedAt, time.FixedZone("IST", 19800))
 }
 
-func nextTarget(t model.Trade, current float64) *float64 {
-	targets := make([]float64, 0, 3)
-	for _, p := range []*float64{t.Target1, t.Target2, t.Target3} {
-		if p != nil && finitePositive(*p) {
-			targets = append(targets, *p)
-		}
-	}
-	sort.Float64s(targets)
-	for _, target := range targets {
-		if target > current {
+type targetLevel struct {
+	Number int
+	Price  float64
+}
+
+func nextTarget(t model.Trade, current float64) *targetLevel {
+	for _, target := range configuredTargets(t) {
+		if target.Price > current {
 			value := target
 			return &value
 		}
 	}
 	return nil
+}
+
+func targetAnchor(t model.Trade, target targetLevel) (float64, bool) {
+	if t.EntryPrice != nil && finitePositive(*t.EntryPrice) &&
+		samePriceBasis(t.UseSpotForEntry, t.UseSpotForTarget) && *t.EntryPrice < target.Price {
+		return *t.EntryPrice, true
+	}
+
+	targets := configuredTargets(t)
+	for index, candidate := range targets {
+		if candidate.Number != target.Number {
+			continue
+		}
+		if index > 0 && targets[index-1].Price < target.Price {
+			return targets[index-1].Price, true
+		}
+		if index+1 < len(targets) && targets[index+1].Price > target.Price {
+			return target.Price - (targets[index+1].Price - target.Price), true
+		}
+	}
+	if t.StopLoss != nil && finitePositive(*t.StopLoss) && boolValue(t.UseSpotForSL) == boolValue(t.UseSpotForTarget) && *t.StopLoss < target.Price {
+		return *t.StopLoss, true
+	}
+	return 0, false
+}
+
+func stopAnchor(t model.Trade) (float64, bool) {
+	if t.StopLoss == nil {
+		return 0, false
+	}
+	if t.EntryPrice != nil && finitePositive(*t.EntryPrice) &&
+		samePriceBasis(t.UseSpotForEntry, t.UseSpotForSL) && *t.EntryPrice > *t.StopLoss {
+		return *t.EntryPrice, true
+	}
+	if boolValue(t.UseSpotForSL) == boolValue(t.UseSpotForTarget) {
+		targets := configuredTargets(t)
+		if len(targets) >= 2 {
+			inferredEntry := targets[0].Price - (targets[1].Price - targets[0].Price)
+			if inferredEntry > *t.StopLoss {
+				return inferredEntry, true
+			}
+		}
+	}
+	return 0, false
+}
+
+func configuredTargets(t model.Trade) []targetLevel {
+	targets := make([]targetLevel, 0, 3)
+	for index, price := range []*float64{t.Target1, t.Target2, t.Target3} {
+		if price != nil && finitePositive(*price) {
+			targets = append(targets, targetLevel{Number: index + 1, Price: *price})
+		}
+	}
+	sort.Slice(targets, func(left, right int) bool { return targets[left].Price < targets[right].Price })
+	return targets
 }
 
 func parseLocalTime(value string, location *time.Location) time.Time {

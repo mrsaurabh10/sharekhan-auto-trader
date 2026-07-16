@@ -165,6 +165,12 @@ public class TelegramSignalParser implements TradingSignalParser {
                 Optional.ofNullable(tryParseDouble(stopLossText)).orElse(entry != null ? entry * 0.90 : 0.0) :
                 (entry != null ? entry * 0.10 : 0.0);
 
+        Double firstTarget = tryParseDouble(target1);
+        if (entry != null && hasReversedStopLoss(stopLoss, firstTarget, optionType)) {
+            // A Telegram typo such as SL 1440 instead of 144 must not later be used as an option exit price.
+            stopLoss = entry * 0.90d;
+        }
+
         if (action == null || symbol == null || strike == null || optionType == null || entry == null) {
             return null;
         }
@@ -193,6 +199,16 @@ public class TelegramSignalParser implements TradingSignalParser {
         }
 
         return result;
+    }
+
+    private boolean hasReversedStopLoss(Double stopLoss, Double target, String optionType) {
+        if (stopLoss == null || target == null || optionType == null || stopLoss <= 0d || target <= 0d) {
+            return false;
+        }
+        if ("CE".equalsIgnoreCase(optionType)) {
+            return stopLoss > target;
+        }
+        return "PE".equalsIgnoreCase(optionType) && stopLoss < target;
     }
 
     private boolean containsBreakoutKeyword(String text) {
