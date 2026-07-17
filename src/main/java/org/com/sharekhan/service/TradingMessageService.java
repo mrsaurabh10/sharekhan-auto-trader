@@ -338,7 +338,7 @@ public class TradingMessageService {
     }
 
     private boolean isDuplicateTrade(TriggerRequest req, Long appUserId, Long brokerCredentialsId) {
-        if (!"Sharekhan".equalsIgnoreCase(req.getSource())) {
+        if (!isDuplicateProtectedSource(req.getSource())) {
             return false;
         }
 
@@ -374,6 +374,16 @@ public class TradingMessageService {
                 .filter(t -> sameBrokerCredential(t.getBrokerCredentialsId(), brokerCredentialsId))
                 .anyMatch(t -> matchesContract(requestedStrike, requestedOptionType,
                         t.getStrikePrice(), t.getOptionType()));
+    }
+
+    /**
+     * Signal providers that can send a repeated entry for the same contract.
+     * Keep this list narrow so sources that intentionally support repeated
+     * entries continue to retain their current behavior.
+     */
+    static boolean isDuplicateProtectedSource(String source) {
+        return "Sharekhan".equalsIgnoreCase(source)
+                || "StockBazaari".equalsIgnoreCase(source);
     }
 
     private boolean sameBrokerCredential(Long existingBrokerCredentialsId, Long requestedBrokerCredentialsId) {
