@@ -21,6 +21,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -36,6 +37,8 @@ import java.util.concurrent.ConcurrentMap;
 public class PriceTriggerService {
 
     private static final ZoneId IST_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime EQUITY_MARKET_OPEN = LocalTime.of(9, 15);
+    private static final LocalTime EQUITY_MARKET_CLOSE = LocalTime.of(15, 30);
     private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
     private static final String GAP_FILL_EXIT_REASON = "GAP_FILL_STOP";
@@ -65,13 +68,11 @@ public class PriceTriggerService {
     private final BrokerCredentialsRepository brokerCredentialsRepository;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
-        // Check if current time is after 9:20 AM IST
-         LocalDateTime nowIst = nowIst();
-         LocalTime now = nowIst.toLocalTime();
-         if (now.isBefore(LocalTime.of(9, 20))) {
-             log.debug("Skipping price trigger evaluation before 9:20 AM. Current time: {}", now);
-             return;
-         }
+        LocalDateTime nowIst = nowIst();
+        if (!isEquityMarketOpen(nowIst)) {
+            log.debug("Skipping price trigger evaluation outside equity market hours: {} IST", nowIst);
+            return;
+        }
 
         try {
             // 1. Check triggers where scripCode is the TRADED instrument
@@ -231,6 +232,10 @@ public class PriceTriggerService {
      */
     @Scheduled(fixedDelayString = "${app.trading.trigger-recovery-delay-ms:15000}")
     public void recoverStaleTriggeredRequests() {
+        if (!isEquityMarketOpen(nowIst())) {
+            log.debug("Skipping triggered-request recovery outside equity market hours.");
+            return;
+        }
         for (TriggerTradeRequestEntity request : triggerRepo.findByStatus(TriggeredTradeStatus.TRIGGERED)) {
             if (request.getId() == null || orderExecutionDispatcher.isInFlight(
                     orderExecutionKey("ENTRY:" + request.getId(), request.getBrokerCredentialsId()))) {
@@ -469,6 +474,15 @@ public class PriceTriggerService {
 
     LocalDateTime nowIst() {
         return LocalDateTime.now(IST_ZONE);
+    }
+
+    private boolean isEquityMarketOpen(LocalDateTime time) {
+        DayOfWeek day = time.getDayOfWeek();
+        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) {
+            return false;
+        }
+        LocalTime localTime = time.toLocalTime();
+        return !localTime.isBefore(EQUITY_MARKET_OPEN) && !localTime.isAfter(EQUITY_MARKET_CLOSE);
     }
 
     private Optional<ReferencePrice> getTodayOpenReferencePrice(Integer referenceScrip) {

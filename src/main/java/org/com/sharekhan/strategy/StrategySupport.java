@@ -235,6 +235,32 @@ public class StrategySupport {
         throw new IllegalArgumentException("Spot script not found for symbol " + symbol);
     }
 
+    /** Returns a user-safe reason when a spot instrument cannot be polled from MStock. */
+    public Optional<String> mstockAvailabilityFailure(ScriptMasterEntity spotScript) {
+        if (spotScript == null) {
+            return Optional.of("spot script is unavailable");
+        }
+        if (hardcodedMStockIndex(spotScript) != null) {
+            return Optional.empty();
+        }
+        try {
+            Optional<String> keyOpt = mStockInstrumentResolver.resolveInstrumentKey(spotScript);
+            if (keyOpt.isEmpty()) {
+                return Optional.of("MStock instrument key is unavailable");
+            }
+            Optional<MStockInstrumentEntity> instrumentOpt = mStockInstrumentRepository.findByInstrumentKey(keyOpt.get());
+            if (instrumentOpt.isEmpty()) {
+                return Optional.of("MStock instrument master row is unavailable");
+            }
+            if (!StringUtils.hasText(instrumentOpt.get().getExchangeToken())) {
+                return Optional.of("MStock exchange token is unavailable");
+            }
+            return Optional.empty();
+        } catch (Exception e) {
+            return Optional.of("MStock instrument lookup failed: " + e.getMessage());
+        }
+    }
+
     public String nearestExpiry(String symbol, String optionType) {
         LocalDateTime now = LocalDateTime.now(MARKET_ZONE);
         LocalTime expiryCutoff = LocalTime.of(15, 30);

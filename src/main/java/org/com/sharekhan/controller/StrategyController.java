@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.PutMapping;
 
 import java.util.Map;
 
@@ -93,6 +94,22 @@ public class StrategyController {
         try {
             return ResponseEntity.ok(strategySubscriptionService.cancel(
                     id,
+                    currentUserService.currentAppUserIdOrNull(),
+                    currentUserService.isAdmin()));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PutMapping("/subscriptions/{id}/symbols")
+    public ResponseEntity<?> updateSymbols(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        try {
+            String symbols = body != null ? body.get("symbols") : null;
+            return ResponseEntity.ok(strategySubscriptionService.updateSymbols(
+                    id,
+                    symbols,
                     currentUserService.currentAppUserIdOrNull(),
                     currentUserService.isAdmin()));
         } catch (IllegalArgumentException e) {

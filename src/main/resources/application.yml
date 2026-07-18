@@ -57,8 +57,13 @@ app:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
   strategy:
     fno-0925-mover:
-      # Set FNO_0925_MOVER_BREAKOUT_ATR_MULTIPLIER=1.0 to use a full ATR breakout.
-      breakout-atr-multiplier: ${FNO_0925_MOVER_BREAKOUT_ATR_MULTIPLIER:0.5}
+      volume-multiplier: ${FNO_0925_MOVER_VOLUME_MULTIPLIER:1.2}
+      volume-lookback: ${FNO_0925_MOVER_VOLUME_LOOKBACK:20}
+      max-opposing-wick-to-body: ${FNO_0925_MOVER_MAX_OPPOSING_WICK_TO_BODY:1.0}
+      max-risk-atr-multiplier: ${FNO_0925_MOVER_MAX_RISK_ATR_MULTIPLIER:1.5}
+      orb-cutoff: ${FNO_0925_MOVER_ORB_CUTOFF:10:45}
+      vwap-reclaim-cutoff: ${FNO_0925_MOVER_VWAP_RECLAIM_CUTOFF:13:00}
+      reclaim-base-candles: ${FNO_0925_MOVER_RECLAIM_BASE_CANDLES:3}
   market-data:
     sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
   trading:

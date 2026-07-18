@@ -8,7 +8,6 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.service.MStockGainerLoserService;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -26,9 +25,8 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * At 09:25 IST this template snapshots the F&O universe.  It chooses the five largest gainers
  * when advancing names outnumber declining names; otherwise it chooses the five largest losers.
- * The selected stocks are inserted into trading requests immediately. Their spot entry is the
- * 09:25 snapshot price plus/minus the configured ATR distance, and the option contract is always
- * ATM CE for gainers and ATM PE for losers.
+ * The scan only creates candidates. A candidate gets an ATM CE/PE trading request only after a
+ * five-minute opening-range breakout passes the volume, VWAP and candle-quality checks.
  */
 @Slf4j
 @Component
@@ -37,35 +35,28 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     public static final String TEMPLATE_ID = "FNO_0925_MOVER_ATR_BREAKOUT";
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID,
-            "F&O 9:25 Mover ATR Entry",
-            "At 9:25 chooses top 5 gainers when gainers outnumber losers, otherwise top 5 losers, and immediately submits ATM CE/PE requests with a configurable ATR(75) spot entry.",
+            "F&O 9:25 Mover Breakout",
+            "At 9:25 chooses top 5 F&O gainers when gainers outnumber losers, otherwise top 5 losers. It enters ATM CE/PE only on a qualified morning opening-range breakout or VWAP-reclaim base breakout.",
             "AUTO");
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
-    private static final int ATR_PERIOD = 75;
     private static final int TOP_COUNT = 5;
     private static final int DEFAULT_LOTS = 3;
-    private static final double STOP_LOSS_ATR_MULTIPLIER = 2d;
-    private static final double TARGET1_ATR_MULTIPLIER = 2d;
-    private static final double TARGET2_ATR_MULTIPLIER = 3d;
-    private static final double TARGET3_ATR_MULTIPLIER = 4d;
 
     private final StrategySupport support;
     private final ScriptMasterRepository scriptMasterRepository;
     private final MStockGainerLoserService gainerLoserService;
-    private final double breakoutAtrMultiplier;
-    private final Map<LocalDate, List<Selection>> selectionsByDay = new ConcurrentHashMap<>();
+    private final Fno925EntryQualificationService entryQualificationService;
+    private final Map<LocalDate, List<Fno925Candidate>> selectionsByDay = new ConcurrentHashMap<>();
+    private final Map<RunKey, Set<String>> submittedSymbolsByRun = new ConcurrentHashMap<>();
 
     public Fno0925MoverAtrBreakoutStrategy(StrategySupport support,
                                             ScriptMasterRepository scriptMasterRepository,
                                             MStockGainerLoserService gainerLoserService,
-                                            @Value("${app.strategy.fno-0925-mover.breakout-atr-multiplier:0.5}") double breakoutAtrMultiplier) {
-        if (!Double.isFinite(breakoutAtrMultiplier) || breakoutAtrMultiplier <= 0d) {
-            throw new IllegalArgumentException("app.strategy.fno-0925-mover.breakout-atr-multiplier must be greater than zero");
-        }
+                                            Fno925EntryQualificationService entryQualificationService) {
         this.support = support;
         this.scriptMasterRepository = scriptMasterRepository;
         this.gainerLoserService = gainerLoserService;
-        this.breakoutAtrMultiplier = breakoutAtrMultiplier;
+        this.entryQualificationService = entryQualificationService;
     }
 
     @Override
@@ -81,28 +72,50 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             return support.waiting(METADATA, symbol, "Waiting for the 09:25 F&O mover snapshot.");
         }
 
-        List<Selection> selections = selectionsByDay.computeIfAbsent(now.toLocalDate(), ignored -> snapshotUniverse());
+        List<Fno925Candidate> selections = selectionsByDay.computeIfAbsent(now.toLocalDate(), ignored -> snapshotUniverse());
         selectionsByDay.keySet().removeIf(day -> day.isBefore(now.toLocalDate()));
+        submittedSymbolsByRun.keySet().removeIf(key -> key.day().isBefore(now.toLocalDate()));
         if (selections.isEmpty()) {
             return support.waiting(METADATA, symbol, "No eligible F&O movers were available at 09:25; no trade will be created today.");
         }
 
+        Set<String> submitted = submittedSymbolsByRun.computeIfAbsent(
+                new RunKey(now.toLocalDate(), request.getUserId(), request.getBrokerCredentialsId(), sourceFor(request)),
+                ignored -> ConcurrentHashMap.newKeySet());
         List<Triggered> triggered = new ArrayList<>();
-        for (Selection selection : selections) {
-            TriggerRequest trigger = buildTrigger(request, selection);
-            TriggerTradeRequestEntity existing = support.findExisting(trigger);
-            if (existing != null) {
-                triggered.add(new Triggered(selection, trigger, existing, true));
+        List<String> waiting = new ArrayList<>();
+        for (Fno925Candidate selection : selections) {
+            if (submitted.contains(selection.symbol())) {
                 continue;
             }
-            triggered.add(new Triggered(selection, trigger, support.executeTriggeredTrade(trigger), false));
+            Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualify(selection, now);
+            if (!qualification.qualified()) {
+                waiting.add(selection.symbol() + ": " + qualification.reason());
+                continue;
+            }
+            TriggerRequest trigger = buildTrigger(request, selection, qualification.signal());
+            TriggerTradeRequestEntity existing = support.findExisting(trigger);
+            if (existing != null) {
+                triggered.add(new Triggered(selection, trigger, existing, true, qualification.signal().setup()));
+                submitted.add(selection.symbol());
+                continue;
+            }
+            triggered.add(new Triggered(selection, trigger, support.executeTriggeredTrade(trigger), false, qualification.signal().setup()));
+            submitted.add(selection.symbol());
+        }
+        if (triggered.isEmpty()) {
+            String message = waiting.isEmpty()
+                    ? "All selected F&O mover candidates already have trading requests today."
+                    : "F&O 09:25 candidates are waiting for confirmation: " + waiting + ".";
+            return support.waiting(METADATA, symbol, message);
         }
         Triggered first = triggered.get(0);
         long newRequests = triggered.stream().filter(item -> !item.duplicate()).count();
         return StrategyApplyResponse.builder()
                 .status(newRequests > 0 ? "triggered" : "duplicate")
-                .message("F&O 09:25 mover snapshot created " + newRequests + " immediate request(s) for "
-                        + triggered.stream().map(item -> item.selection().symbol()).sorted().toList() + ".")
+                .message("F&O 09:25 mover created " + newRequests + " qualified breakout request(s) for "
+                        + triggered.stream().map(item -> item.selection().symbol() + " (" + item.setup() + ")").sorted().toList()
+                        + "; remaining candidates continue to be monitored.")
                 .templateId(TEMPLATE_ID)
                 .symbol(first.selection().symbol())
                 .direction(first.selection().optionType())
@@ -112,7 +125,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                 .build();
     }
 
-    private List<Selection> snapshotUniverse() {
+    private List<Fno925Candidate> snapshotUniverse() {
         Set<String> fnoUniverse = new HashSet<>(scriptMasterRepository.findDistinctOptionUnderlyingSymbols());
         List<MStockGainerLoserService.Mover> gainers = gainerLoserService.topGainers().stream()
                 .filter(mover -> fnoUniverse.contains(mover.symbol()))
@@ -128,58 +141,35 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                 .limit(TOP_COUNT)
                 .toList();
         String optionType = chooseGainers ? "CE" : "PE";
-        List<Selection> selections = new ArrayList<>();
+        List<Fno925Candidate> selections = new ArrayList<>();
         for (MStockGainerLoserService.Mover mover : chosen) {
             try {
                 ScriptMasterEntity spot = support.resolveSpotScript(mover.symbol());
-                CandleLoad load = support.loadCandlesWithHistoricalFallback(spot, ATR_PERIOD + 1);
-                List<StrategyCandle> candles = load.candles().stream()
-                        .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
-                        .toList();
-                double atr = atr(candles);
-                if (atr > 0d) selections.add(new Selection(mover.symbol(), spot, mover.ltp(), atr, optionType));
+                selections.add(new Fno925Candidate(mover.symbol(), spot, optionType));
             } catch (Exception e) {
                 log.debug("Skipping F&O mover candidate {}: {}", mover.symbol(), e.getMessage());
             }
         }
         log.info("F&O 09:25 MStock snapshot: fnoGainers={}, fnoLosers={}, selectedSide={}, selected={}",
-                gainers.size(), losers.size(), optionType, selections.stream().map(Selection::symbol).toList());
+                gainers.size(), losers.size(), optionType, selections.stream().map(Fno925Candidate::symbol).toList());
         return selections;
     }
 
-    private double atr(List<StrategyCandle> candles) {
-        if (candles.size() < ATR_PERIOD + 1) return 0d;
-        List<StrategyCandle> tail = candles.subList(candles.size() - (ATR_PERIOD + 1), candles.size());
-        double total = 0d;
-        for (int index = 1; index < tail.size(); index++) {
-            StrategyCandle previous = tail.get(index - 1);
-            StrategyCandle current = tail.get(index);
-            total += Math.max(current.high() - current.low(), Math.max(Math.abs(current.high() - previous.close()), Math.abs(current.low() - previous.close())));
-        }
-        return total / ATR_PERIOD;
-    }
-
-    private TriggerRequest buildTrigger(StrategyApplyRequest request, Selection selection) {
+    private TriggerRequest buildTrigger(StrategyApplyRequest request,
+                                        Fno925Candidate selection,
+                                        Fno925EntryQualificationService.Signal signal) {
         boolean ce = "CE".equals(selection.optionType());
-        double distance = selection.atr() * breakoutAtrMultiplier;
-        double entry = support.roundPrice(ce ? selection.referencePrice() + distance : selection.referencePrice() - distance);
-        double stop = support.roundPrice(ce
-                ? entry - (STOP_LOSS_ATR_MULTIPLIER * selection.atr())
-                : entry + (STOP_LOSS_ATR_MULTIPLIER * selection.atr()));
+        double entry = signal.entryPrice();
+        double stop = signal.stopLoss();
+        double risk = Math.abs(entry - stop);
         String expiry = support.nearestExpiry(selection.symbol(), selection.optionType());
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(selection.symbol());
         trigger.setEntryPrice(entry);
         trigger.setStopLoss(stop);
-        trigger.setTarget1(support.roundPrice(ce
-                ? entry + (TARGET1_ATR_MULTIPLIER * selection.atr())
-                : entry - (TARGET1_ATR_MULTIPLIER * selection.atr())));
-        trigger.setTarget2(support.roundPrice(ce
-                ? entry + (TARGET2_ATR_MULTIPLIER * selection.atr())
-                : entry - (TARGET2_ATR_MULTIPLIER * selection.atr())));
-        trigger.setTarget3(support.roundPrice(ce
-                ? entry + (TARGET3_ATR_MULTIPLIER * selection.atr())
-                : entry - (TARGET3_ATR_MULTIPLIER * selection.atr())));
+        trigger.setTarget1(support.roundPrice(ce ? entry + risk : entry - risk));
+        trigger.setTarget2(support.roundPrice(ce ? entry + (2d * risk) : entry - (2d * risk)));
+        trigger.setTarget3(support.roundPrice(ce ? entry + (3d * risk) : entry - (3d * risk)));
         trigger.setOptionType(selection.optionType());
         trigger.setExpiry(expiry);
         trigger.setStrikePrice(support.nearestStrike(selection.symbol(), selection.optionType(), expiry, entry));
@@ -191,7 +181,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         trigger.setSpotScripCode(selection.spot().getScripCode());
         trigger.setUserId(request.getUserId());
         trigger.setBrokerCredentialsId(request.getBrokerCredentialsId());
-        trigger.setSource(request.getSource() == null || request.getSource().isBlank() ? "strategy:" + TEMPLATE_ID : request.getSource().trim());
+        trigger.setSource(sourceFor(request));
         int lots = request.getLots() != null && request.getLots() > 0 ? request.getLots() : DEFAULT_LOTS;
         trigger.setLots(lots);
         trigger.setQuantity(lots);
@@ -200,6 +190,14 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         return trigger;
     }
 
-    private record Selection(String symbol, ScriptMasterEntity spot, double referencePrice, double atr, String optionType) { }
-    private record Triggered(Selection selection, TriggerRequest trigger, TriggerTradeRequestEntity request, boolean duplicate) { }
+    private String sourceFor(StrategyApplyRequest request) {
+        return request.getSource() == null || request.getSource().isBlank() ? "strategy:" + TEMPLATE_ID : request.getSource().trim();
+    }
+
+    private record RunKey(LocalDate day, Long userId, Long brokerCredentialsId, String source) { }
+    private record Triggered(Fno925Candidate selection,
+                             TriggerRequest trigger,
+                             TriggerTradeRequestEntity request,
+                             boolean duplicate,
+                             String setup) { }
 }
