@@ -1,6 +1,7 @@
 package org.com.sharekhan.strategy;
 
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.repository.MStockInstrumentRepository;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -74,6 +76,37 @@ class StrategySupportTest {
 
         assertThat(result.candles()).hasSize(3);
         verify(sharekhanHistoricalService, never()).getHistoricalCandles(any(), any(), any(), any());
+    }
+
+    @Test
+    void usesBseEquityFallbackWhenNseInstrumentMasterRowIsMissing() {
+        MStockInstrumentResolver resolver = mock(MStockInstrumentResolver.class);
+        MStockInstrumentRepository instrumentRepository = mock(MStockInstrumentRepository.class);
+        MStockIntradayCandleService intraday = mock(MStockIntradayCandleService.class);
+        StrategySupport support = new StrategySupport(
+                mock(ScriptMasterRepository.class), resolver, instrumentRepository, intraday,
+                mock(SharekhanHistoricalService.class), mock(TradeExecutionService.class),
+                mock(TriggerTradeRequestRepository.class));
+        ScriptMasterEntity kotak = spotScript("KOTAKBANK", "NC", 1922);
+        MStockInstrumentEntity bseKotak = MStockInstrumentEntity.builder()
+                .instrumentToken(500247L)
+                .instrumentKey("BSE:KOTAKBANK-A")
+                .tradingSymbol("KOTAKBANK-A")
+                .exchange("BSE")
+                .instrumentType("Equity")
+                .build();
+
+        when(resolver.resolveInstrumentKey(kotak)).thenReturn(Optional.of("NSE:KOTAKBANK-EQ"));
+        when(instrumentRepository.findByInstrumentKey("NSE:KOTAKBANK-EQ")).thenReturn(Optional.empty());
+        when(instrumentRepository.findByExchangeAndTradingSymbolPattern("BSE", "KOTAKBANK%"))
+                .thenReturn(List.of(bseKotak));
+        when(intraday.getIntradayCandles("BSE", "500247", "5minute")).thenReturn(List.of());
+
+        assertThat(support.mstockAvailabilityFailure(kotak)).isEmpty();
+        CandleLoad result = support.loadCandles(kotak);
+
+        assertThat(result.reason()).contains("BSE:KOTAKBANK-A");
+        verify(intraday).getIntradayCandles("BSE", "500247", "5minute");
     }
 
     private StrategySupport support(MStockIntradayCandleService mStockIntradayCandleService,
