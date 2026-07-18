@@ -32,6 +32,7 @@ public class StrategySubscriptionService {
 
     private final StrategySubscriptionRepository repository;
     private final StrategyTemplateService strategyTemplateService;
+    private final NseMarketCalendar nseMarketCalendar;
 
     public StrategySubscriptionEntity start(StrategyApplyRequest request) {
         validate(request);
@@ -120,7 +121,8 @@ public class StrategySubscriptionService {
     @Scheduled(fixedDelayString = "${app.strategy.scheduler-delay-ms:60000}")
     public void evaluateActiveStrategies() {
         LocalTime now = LocalTime.now(MARKET_ZONE);
-        if (now.isBefore(LocalTime.of(9, 25)) || now.isAfter(LocalTime.of(15, 25))) {
+        if (!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())
+                || now.isBefore(LocalTime.of(9, 25)) || now.isAfter(LocalTime.of(15, 25))) {
             return;
         }
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
@@ -132,6 +134,9 @@ public class StrategySubscriptionService {
     /** The mover universe must be frozen at the stated market time, not at the next polling tick. */
     @Scheduled(cron = "0 25 9 * * MON-FRI", zone = "Asia/Kolkata")
     public void snapshotFno0925MoverStrategies() {
+        if (!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) {
+            return;
+        }
         repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
                 .filter(subscription -> Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID
                         .equalsIgnoreCase(subscription.getTemplateId()))
