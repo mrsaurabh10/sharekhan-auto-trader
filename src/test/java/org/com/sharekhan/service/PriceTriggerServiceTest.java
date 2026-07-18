@@ -69,6 +69,19 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void doesNotEvaluateOrRecoverEntriesOnWeekend() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 18, 10, 0)).when(timedService).nowIst();
+
+        timedService.evaluatePriceTrigger(20000, 100.0);
+        timedService.recoverStaleTriggeredRequests();
+
+        verify(triggerRepo, never()).findByScripCodeAndStatus(any(), any());
+        verify(triggerRepo, never()).findByStatus(TriggeredTradeStatus.TRIGGERED);
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+    }
+
+    @Test
     void atrSpotEntryWaitsWhenCurrentTickFallsBackAfterDirectionalClose() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 21, 1)).when(timedService).nowIst();

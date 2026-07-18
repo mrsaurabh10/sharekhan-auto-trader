@@ -2052,9 +2052,26 @@
           '<td>' + escapeHtml(row.generatedTradeRequestId || '-') + '</td>';
         const action = document.createElement('td');
         if (String(row.status || '').toUpperCase() === 'ACTIVE') {
+          const manualFno = ['FNO_VWAP_RECLAIM_BASE_CE', 'FNO_VWAP_RECLAIM_BASE_PE'].includes(String(row.templateId || '').toUpperCase());
+          if (manualFno) {
+            const update = document.createElement('button');
+            update.className = 'btn small';
+            update.innerText = 'Update symbols';
+            update.addEventListener('click', async function () {
+              const symbols = prompt('Comma-separated F&O symbols:', row.symbol || '');
+              if (symbols === null) return;
+              await ensureCsrf();
+              await fetchJson('/api/strategies/subscriptions/' + encodeURIComponent(row.id) + '/symbols', {
+                method: 'PUT', body: JSON.stringify({ symbols })
+              });
+              await loadStrategySubscriptions(uid);
+            });
+            action.appendChild(update);
+          }
           const cancel = document.createElement('button');
           cancel.className = 'btn small danger';
           cancel.innerText = 'Cancel';
+          if (manualFno) cancel.style.marginLeft = '4px';
           cancel.addEventListener('click', async function () {
             if (!confirm('Cancel strategy #' + row.id + '?')) return;
             await ensureCsrf();

@@ -7,6 +7,8 @@ import org.com.sharekhan.dto.StrategyApplyResponse;
 import org.com.sharekhan.entity.StrategySubscriptionEntity;
 import org.com.sharekhan.repository.StrategySubscriptionRepository;
 import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
+import org.com.sharekhan.strategy.ManualFnoVwapReclaimCeStrategy;
+import org.com.sharekhan.strategy.ManualFnoVwapReclaimPeStrategy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -16,6 +18,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -93,6 +96,27 @@ public class StrategySubscriptionService {
         return repository.save(entity);
     }
 
+    public StrategySubscriptionEntity updateSymbols(Long id, String symbols, Long currentUserId, boolean admin) {
+        StrategySubscriptionEntity entity = repository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Strategy subscription not found: " + id));
+        if (!admin && (currentUserId == null || entity.getAppUserId() == null || !currentUserId.equals(entity.getAppUserId()))) {
+            throw new IllegalArgumentException("Forbidden: strategy does not belong to user");
+        }
+        if (!isManualFnoTemplate(entity.getTemplateId())) {
+            throw new IllegalArgumentException("Only manually curated F&O CE/PE templates support symbol-list updates");
+        }
+        String normalized = normalizeSymbolList(symbols);
+        if (normalized.isBlank()) {
+            throw new IllegalArgumentException("Enter one or more symbols separated by commas, semicolons, or new lines");
+        }
+        if (normalized.length() > 255) {
+            throw new IllegalArgumentException("Configured symbol list is too long (maximum 255 characters)");
+        }
+        entity.setSymbol(normalized);
+        entity.setLastMessage("Configured instruments updated: " + normalized + ".");
+        return repository.save(entity);
+    }
+
     @Scheduled(fixedDelayString = "${app.strategy.scheduler-delay-ms:60000}")
     public void evaluateActiveStrategies() {
         LocalTime now = LocalTime.now(MARKET_ZONE);
@@ -116,7 +140,8 @@ public class StrategySubscriptionService {
 
     private void evaluate(StrategySubscriptionEntity subscription) {
         try {
-            if (triggeredToday(subscription)) {
+            boolean continuousFnoTemplate = isContinuousFnoTemplate(subscription.getTemplateId());
+            if (!continuousFnoTemplate && triggeredToday(subscription)) {
                 subscription.setStatus(ACTIVE);
                 subscription.setLastEvaluatedAt(LocalDateTime.now(MARKET_ZONE));
                 subscription.setLastEvaluationStatus("waiting");
@@ -145,10 +170,13 @@ public class StrategySubscriptionService {
             if (response.getTradeRequest() != null) {
                 subscription.setGeneratedTradeRequestId(response.getTradeRequest().getId());
             }
-            if ("triggered".equalsIgnoreCase(response.getStatus()) || "duplicate".equalsIgnoreCase(response.getStatus())) {
+            if (!continuousFnoTemplate && ("triggered".equalsIgnoreCase(response.getStatus()) || "duplicate".equalsIgnoreCase(response.getStatus()))) {
                 subscription.setStatus(ACTIVE);
                 subscription.setCompletedAt(LocalDateTime.now(MARKET_ZONE));
                 subscription.setLastMessage(response.getMessage() + " Strategy remains active and will reset for the next trading day unless cancelled.");
+            } else if (continuousFnoTemplate) {
+                subscription.setStatus(ACTIVE);
+                subscription.setCompletedAt(null);
             }
             repository.save(subscription);
         } catch (Exception e) {
@@ -184,5 +212,26 @@ public class StrategySubscriptionService {
 
     private boolean isFnoMoverTemplate(String templateId) {
         return Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+    }
+
+    private boolean isContinuousFnoTemplate(String templateId) {
+        return isFnoMoverTemplate(templateId)
+                || isManualFnoTemplate(templateId);
+    }
+
+    private boolean isManualFnoTemplate(String templateId) {
+        return ManualFnoVwapReclaimCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
+                || ManualFnoVwapReclaimPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+    }
+
+    private String normalizeSymbolList(String symbols) {
+        if (!StringUtils.hasText(symbols)) {
+            return "";
+        }
+        return java.util.Arrays.stream(symbols.split("[,;\\n\\r]+"))
+                .map(value -> value.trim().toUpperCase(Locale.ROOT))
+                .filter(StringUtils::hasText)
+                .distinct()
+                .collect(Collectors.joining(","));
     }
 }
