@@ -65,6 +65,8 @@ app:
       vwap-reclaim-cutoff: ${FNO_0925_MOVER_VWAP_RECLAIM_CUTOFF:13:00}
       reclaim-base-candles: ${FNO_0925_MOVER_RECLAIM_BASE_CANDLES:3}
   market-data:
+    # Comma-separated ISO dates, e.g. NSE_HOLIDAYS=2026-01-26,2026-03-03
+    nse-holidays: ${NSE_HOLIDAYS:}
     sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
   trading:
     order-execution:

@@ -76,8 +76,8 @@ public class StrategySupport {
                 return loadHardcodedIndexCandles(hardcodedIndex, symbol);
             }
 
-            Optional<String> keyOpt = mStockInstrumentResolver.resolveInstrumentKey(spotScript);
-            if (keyOpt.isEmpty()) {
+            Optional<MStockPollInstrument> pollInstrumentOpt = resolveMStockPollInstrument(spotScript);
+            if (pollInstrumentOpt.isEmpty()) {
                 String reason = "Unable to resolve MStock instrument key for symbol=" + symbol
                         + ", exchange=" + (spotScript != null ? spotScript.getExchange() : null)
                         + ", scripCode=" + (spotScript != null ? spotScript.getScripCode() : null);
@@ -86,20 +86,10 @@ public class StrategySupport {
                 return new CandleLoad(List.of(), false, reason);
             }
 
-            String key = keyOpt.get();
-            Optional<MStockInstrumentEntity> instrumentOpt = mStockInstrumentRepository.findByInstrumentKey(key);
-            if (instrumentOpt.isEmpty()) {
-                String reason = "MStock instrument master row not found for key=" + key
-                        + ". Refresh the MStock script master before loading intraday candles.";
-                log.warn(reason);
-                printDiagnostic(reason);
-                return new CandleLoad(List.of(), false, reason);
-            }
-
-            MStockInstrumentEntity instrument = instrumentOpt.get();
-            String symbolToken = StringUtils.hasText(instrument.getExchangeToken())
-                    ? instrument.getExchangeToken().trim()
-                    : null;
+            MStockPollInstrument pollInstrument = pollInstrumentOpt.get();
+            String key = pollInstrument.key();
+            MStockInstrumentEntity instrument = pollInstrument.instrument();
+            String symbolToken = pollInstrument.token();
             if (!StringUtils.hasText(symbolToken)) {
                 String reason = "MStock exchangeToken is missing for key=" + key
                         + ", instrumentToken=" + instrument.getInstrumentToken()
@@ -110,7 +100,13 @@ public class StrategySupport {
                 return new CandleLoad(List.of(), false, reason);
             }
 
-            String exchange = key.contains(":") ? key.substring(0, key.indexOf(':')) : normalizeMStockExchange(spotScript.getExchange());
+            String exchange = pollInstrument.exchange();
+            if (pollInstrument.bseFallback()) {
+                String message = "Using BSE spot fallback for symbol=" + symbol + ", key=" + key
+                        + ", token=" + symbolToken + " because no NSE MStock master row is available";
+                log.info(message);
+                printDiagnostic(message);
+            }
             log.info("Loading MStock intraday candles for symbol={}, key={}, exchange={}, symbolToken={}, interval={}",
                     symbol, key, exchange, symbolToken, "5minute");
             printDiagnostic("Loading candles symbol=" + symbol
@@ -244,15 +240,11 @@ public class StrategySupport {
             return Optional.empty();
         }
         try {
-            Optional<String> keyOpt = mStockInstrumentResolver.resolveInstrumentKey(spotScript);
-            if (keyOpt.isEmpty()) {
-                return Optional.of("MStock instrument key is unavailable");
-            }
-            Optional<MStockInstrumentEntity> instrumentOpt = mStockInstrumentRepository.findByInstrumentKey(keyOpt.get());
-            if (instrumentOpt.isEmpty()) {
+            Optional<MStockPollInstrument> pollInstrument = resolveMStockPollInstrument(spotScript);
+            if (pollInstrument.isEmpty()) {
                 return Optional.of("MStock instrument master row is unavailable");
             }
-            if (!StringUtils.hasText(instrumentOpt.get().getExchangeToken())) {
+            if (!StringUtils.hasText(pollInstrument.get().token())) {
                 return Optional.of("MStock exchange token is unavailable");
             }
             return Optional.empty();
@@ -405,6 +397,88 @@ public class StrategySupport {
         return exchange;
     }
 
+    /**
+     * Resolves the normal MStock master row first.  A few NSE cash symbols are absent from
+     * the MStock master although their BSE equity row is present (for example KOTAKBANK-A).
+     * For strategy candle polling only, use that BSE row as a last resort instead of leaving
+     * the configured symbol permanently unavailable.
+     */
+    private Optional<MStockPollInstrument> resolveMStockPollInstrument(ScriptMasterEntity spotScript) {
+        Optional<String> keyOpt = mStockInstrumentResolver.resolveInstrumentKey(spotScript);
+        if (keyOpt.isPresent()) {
+            Optional<MStockInstrumentEntity> exact = mStockInstrumentRepository.findByInstrumentKey(keyOpt.get());
+            if (exact.isPresent()) {
+                MStockInstrumentEntity instrument = exact.get();
+                return Optional.of(new MStockPollInstrument(
+                        keyOpt.get(),
+                        instrument,
+                        keyExchange(keyOpt.get(), spotScript),
+                        trimToNull(instrument.getExchangeToken()),
+                        false));
+            }
+        }
+
+        return resolveBseSpotFallback(spotScript);
+    }
+
+    private Optional<MStockPollInstrument> resolveBseSpotFallback(ScriptMasterEntity spotScript) {
+        if (spotScript == null || !"NC".equalsIgnoreCase(spotScript.getExchange())) {
+            return Optional.empty();
+        }
+
+        for (String candidate : SpotSymbolAliases.candidates(spotScript.getTradingSymbol())) {
+            String normalized = normalizeSymbolKey(candidate);
+            if (!StringUtils.hasText(normalized)) {
+                continue;
+            }
+            Optional<MStockInstrumentEntity> match = mStockInstrumentRepository
+                    .findByExchangeAndTradingSymbolPattern("BSE", normalized + "%")
+                    .stream()
+                    .filter(Objects::nonNull)
+                    .filter(this::isBseEquity)
+                    .filter(instrument -> isBseSymbolForCandidate(instrument.getTradingSymbol(), normalized))
+                    .filter(instrument -> StringUtils.hasText(bsePollingToken(instrument)))
+                    .min(Comparator.comparing(instrument -> instrument.getTradingSymbol().toUpperCase(Locale.ROOT)));
+            if (match.isPresent()) {
+                MStockInstrumentEntity instrument = match.get();
+                String key = StringUtils.hasText(instrument.getInstrumentKey())
+                        ? instrument.getInstrumentKey().trim()
+                        : "BSE:" + instrument.getTradingSymbol().trim();
+                return Optional.of(new MStockPollInstrument(key, instrument, "BSE", bsePollingToken(instrument), true));
+            }
+        }
+        return Optional.empty();
+    }
+
+    private boolean isBseEquity(MStockInstrumentEntity instrument) {
+        return "BSE".equalsIgnoreCase(instrument.getExchange())
+                && "EQUITY".equalsIgnoreCase(instrument.getInstrumentType());
+    }
+
+    private boolean isBseSymbolForCandidate(String tradingSymbol, String normalizedCandidate) {
+        if (!StringUtils.hasText(tradingSymbol) || !StringUtils.hasText(normalizedCandidate)) {
+            return false;
+        }
+        String normalizedSymbol = tradingSymbol.trim().toUpperCase(Locale.ROOT);
+        return normalizedSymbol.equals(normalizedCandidate) || normalizedSymbol.startsWith(normalizedCandidate + "-");
+    }
+
+    private String bsePollingToken(MStockInstrumentEntity instrument) {
+        String exchangeToken = trimToNull(instrument.getExchangeToken());
+        if (exchangeToken != null) {
+            return exchangeToken;
+        }
+        return instrument.getInstrumentToken() != null ? String.valueOf(instrument.getInstrumentToken()) : null;
+    }
+
+    private String keyExchange(String key, ScriptMasterEntity spotScript) {
+        return key.contains(":") ? key.substring(0, key.indexOf(':')) : normalizeMStockExchange(spotScript.getExchange());
+    }
+
+    private String trimToNull(String value) {
+        return StringUtils.hasText(value) ? value.trim() : null;
+    }
+
     private void printDiagnostic(String message) {
         System.out.println("[MSTOCK-STRATEGY] " + message);
     }
@@ -462,5 +536,12 @@ public class StrategySupport {
     }
 
     private record HardcodedMStockIndex(String script, String exchangeToken, String name, String exchange) {
+    }
+
+    private record MStockPollInstrument(String key,
+                                        MStockInstrumentEntity instrument,
+                                        String exchange,
+                                        String token,
+                                        boolean bseFallback) {
     }
 }
