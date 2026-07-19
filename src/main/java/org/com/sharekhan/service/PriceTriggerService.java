@@ -410,6 +410,7 @@ public class PriceTriggerService {
         }
         log.info("ATR one-minute entry confirmed for request {} direction={} candleMinute={} candleClose={} entry={} currentSpot={}",
                 trigger.getId(), isPe ? "PE" : "CE", candle.minute(), candle.close(), entryPrice, currentSpotPrice);
+        TradeEventLogger.logAtrSpotEntryConfirmed(trigger, candle.minute().toString(), candle.close(), entryPrice, currentSpotPrice);
         return OpeningDecision.READY;
     }
 
@@ -814,6 +815,7 @@ public class PriceTriggerService {
                 Double targetRefPrice = usesSpotForTarget(reloaded) ? spotLtp : tradedLtp;
 
                 String exitReason = reloaded.getExitReason();
+                TradeEventLogger.logExitTriggered(reloaded, exitReason, slRefPrice, targetRefPrice, tradedLtp, spotLtp);
                 boolean exitOrderAlreadyPresent = reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank();
                 if ("STOP_LOSS_HIT".equals(exitReason) || GAP_FILL_EXIT_REASON.equals(exitReason)) {
                     Double stopPriceOption = GAP_FILL_EXIT_REASON.equals(exitReason)

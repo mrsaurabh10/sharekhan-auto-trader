@@ -30,6 +30,34 @@ public class TradeEventLogger {
                 safe(conditionSummary));
     }
 
+    public static void logAtrSpotEntryConfirmed(TriggerTradeRequestEntity trigger,
+                                                String candleMinute,
+                                                Double candleClose,
+                                                Double entryPrice,
+                                                Double currentSpotPrice) {
+        log.info("ATR_SPOT_ENTRY_CONFIRMED | {} | candleMinute={} | candleClose={} | entry={} | currentSpot={}",
+                describeTrigger(trigger),
+                safe(candleMinute),
+                formatPrice(candleClose),
+                formatPrice(entryPrice),
+                formatPrice(currentSpotPrice));
+    }
+
+    public static void logExitTriggered(TriggeredTradeSetupEntity trade,
+                                        String exitReason,
+                                        Double slReferencePrice,
+                                        Double targetReferencePrice,
+                                        Double tradedLtp,
+                                        Double spotLtp) {
+        log.warn("EXIT_TRIGGERED | {} | exitReason={} | slRef={} | targetRef={} | tradedLtp={} | spotLtp={}",
+                describeTrade(trade),
+                safe(exitReason),
+                formatPrice(slReferencePrice),
+                formatPrice(targetReferencePrice),
+                formatPrice(tradedLtp),
+                formatPrice(spotLtp));
+    }
+
     public static void logGapRejection(TriggerTradeRequestEntity trigger,
                                        String gapLabel,
                                        double gapPrice,
@@ -152,6 +180,7 @@ public class TradeEventLogger {
         joiner.add("quantity=" + safe(trigger.getQuantity()));
         joiner.add("spotScrip=" + safe(trigger.getSpotScripCode()));
         joiner.add("useSpotEntry=" + safe(trigger.getUseSpotForEntry()));
+        joiner.add("source=" + safe(trigger.getSource()));
         joiner.add("userId=" + safe(trigger.getAppUserId()));
         return joiner.toString();
     }
@@ -173,7 +202,11 @@ public class TradeEventLogger {
         joiner.add("quantity=" + safe(trade.getQuantity()));
         joiner.add("orderId=" + safe(trade.getOrderId()));
         joiner.add("spotScrip=" + safe(trade.getSpotScripCode()));
+        joiner.add("source=" + safe(trade.getSource()));
+        joiner.add("useSpotSl=" + safe(trade.getUseSpotForSl()));
+        joiner.add("useSpotTarget=" + safe(trade.getUseSpotForTarget()));
         joiner.add("status=" + safe(trade.getStatus()));
+        joiner.add("exitReason=" + safe(trade.getExitReason()));
         joiner.add("userId=" + safe(trade.getAppUserId()));
         return joiner.toString();
     }
