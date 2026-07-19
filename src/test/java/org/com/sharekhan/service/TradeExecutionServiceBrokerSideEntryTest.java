@@ -34,6 +34,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -52,6 +53,42 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TradeExecutionServiceBrokerSideEntryTest {
+
+    @Test
+    void enablesTslForMultiLotAtrAndStockBazaariSignalsOnly() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                ctx.service, "resolveTslEnabled", false, "atr-signal", 2)).isTrue();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                ctx.service, "resolveTslEnabled", false, "StockBazaari", 3)).isTrue();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                ctx.service, "resolveTslEnabled", false, "atr-signal", 1)).isFalse();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                ctx.service, "resolveTslEnabled", false, "manual", 2)).isFalse();
+    }
+
+    @Test
+    void advancesStopsForLaterInitialTargetLegsWhenEarlierTargetFills() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity targetOne = new TriggeredTradeSetupEntity();
+        targetOne.setId(1L); targetOne.setTargetOrderGroupId(99L); targetOne.setTargetStage(1);
+        targetOne.setActualEntryPrice(120.0); targetOne.setTarget1(140.0);
+
+        TriggeredTradeSetupEntity targetTwo = new TriggeredTradeSetupEntity();
+        targetTwo.setId(2L); targetTwo.setTargetOrderGroupId(99L); targetTwo.setTargetStage(2);
+        TriggeredTradeSetupEntity targetThree = new TriggeredTradeSetupEntity();
+        targetThree.setId(3L); targetThree.setTargetOrderGroupId(99L); targetThree.setTargetStage(3);
+        when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(99L), any()))
+                .thenReturn(List.of(targetTwo, targetThree));
+
+        ctx.service.advanceStagedTargetStops(targetOne);
+
+        assertThat(targetTwo.getStopLoss()).isEqualTo(120.0);
+        assertThat(targetThree.getStopLoss()).isEqualTo(120.0);
+        verify(ctx.triggeredRepo).save(targetTwo);
+        verify(ctx.triggeredRepo).save(targetThree);
+    }
 
     @Test
     void acceptedBrokerSideEntryTriggerCreatesPendingTradeAndStartsPolling() {

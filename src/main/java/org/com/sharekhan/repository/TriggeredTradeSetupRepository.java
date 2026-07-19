@@ -39,6 +39,9 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findByTriggerRequestId(Long triggerRequestId);
 
+    List<TriggeredTradeSetupEntity> findByTargetOrderGroupIdAndStatusIn(
+            Long targetOrderGroupId, List<TriggeredTradeStatus> statuses);
+
     List<TriggeredTradeSetupEntity> findByIntradayTrueAndStatus(TriggeredTradeStatus status);
 
     List<TriggeredTradeSetupEntity> findTop10ByOrderByIdDesc();
