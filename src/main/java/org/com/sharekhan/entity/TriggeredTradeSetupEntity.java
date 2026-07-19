@@ -45,6 +45,10 @@ public class TriggeredTradeSetupEntity {
     
     private Integer originalLots; // Original number of lots for partial booking calculations
 
+    // Identifies the legs created together for a multi-target option trade.
+    private Long targetOrderGroupId;
+    private Integer targetStage;
+
     private Double entryPrice;
     
     // Actual entry price of the option/instrument (especially useful when entry is based on spot)

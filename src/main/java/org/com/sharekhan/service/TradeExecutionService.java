@@ -621,7 +621,7 @@ public class TradeExecutionService {
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
                 .lots(request.getQuantity()) // Store the lots
-                .tslEnabled(request.getTslEnabled()) // Store TSL flag
+                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
@@ -830,7 +830,7 @@ public class TradeExecutionService {
         trade.setSymbol(requestEntity.getSymbol());
         trade.setQuantity(requestEntity.getQuantity());
         trade.setLots(requestEntity.getLots());
-        trade.setTslEnabled(requestEntity.getTslEnabled());
+        trade.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots()));
         trade.setInstrumentType(requestEntity.getInstrumentType());
         trade.setStrikePrice(requestEntity.getStrikePrice());
         trade.setOptionType(requestEntity.getOptionType());
@@ -1115,7 +1115,7 @@ public class TradeExecutionService {
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
                 .lots(request.getQuantity())
-                .tslEnabled(request.getTslEnabled())
+                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
                 .status(TriggeredTradeStatus.TRIGGERED)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
@@ -1439,7 +1439,7 @@ public class TradeExecutionService {
         trade.setTrailingSl(request.getTrailingSl());
         trade.setQuantity(finalQuantity);
         trade.setLots(request.getQuantity()); // Store the lots
-        trade.setTslEnabled(request.getTslEnabled()); // Store TSL flag
+        trade.setTslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()));
         trade.setStatus(TriggeredTradeStatus.EXECUTED); // Mark as EXECUTED immediately
         trade.setTriggeredAt(LocalDateTime.now());
         trade.setEntryAt(LocalDateTime.now());
@@ -1699,7 +1699,8 @@ public class TradeExecutionService {
                     : trigger.getQuantity();
             triggeredTradeSetupEntity.setQuantity(confirmedEntryQuantity);
             triggeredTradeSetupEntity.setLots(resolveExecutedLots(trigger, confirmedEntryQuantity));
-            triggeredTradeSetupEntity.setTslEnabled(trigger.getTslEnabled()); // Pass TSL flag
+            triggeredTradeSetupEntity.setTslEnabled(resolveTslEnabled(
+                    trigger.getTslEnabled(), trigger.getSource(), resolveExecutedLots(trigger, confirmedEntryQuantity)));
             triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
             triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
             triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
@@ -3301,6 +3302,9 @@ public class TradeExecutionService {
     public void handleEntryOrderExecution(TriggeredTradeSetupEntity trade) {
         refreshAtrLevelsAtConfirmedEntry(trade);
         try {
+            if (createStagedOptionTargetOrders(trade)) {
+                return;
+            }
             maybePlaceTargetOrder(trade);
         } catch (Exception e) {
             log.warn("Failed to place target order for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
@@ -3347,8 +3351,10 @@ public class TradeExecutionService {
             return;
         }
 
-        // Skip when TSL logic is enabled or when target is based on spot price
-        if (Boolean.TRUE.equals(trade.getTslEnabled()) || isSpotTarget(trade)) {
+        // Staged option-premium legs are the exception: each one has a single
+        // target and must receive its broker target order immediately.
+        if ((Boolean.TRUE.equals(trade.getTslEnabled()) && !isStagedTargetLeg(trade))
+                || isSpotTarget(trade)) {
             return;
         }
 
@@ -3416,6 +3422,159 @@ public class TradeExecutionService {
         if (trade.getTarget2() != null && trade.getTarget2() > 0) return trade.getTarget2();
         if (trade.getTarget3() != null && trade.getTarget3() > 0) return trade.getTarget3();
         return null;
+    }
+
+    private boolean createStagedOptionTargetOrders(TriggeredTradeSetupEntity enteredTrade) {
+        if (!isEligibleForStagedTargetOrders(enteredTrade)) {
+            return false;
+        }
+
+        TriggeredTradeSetupEntity root = triggeredTradeRepo.findById(enteredTrade.getId()).orElse(enteredTrade);
+        if (root.getTargetOrderGroupId() != null) {
+            return true;
+        }
+
+        List<Double> targets = configuredTargets(root);
+        int stages = Math.min(Math.min(resolveLots(root), targets.size()), 3);
+        if (stages < 2) {
+            return false;
+        }
+
+        int totalLots = resolveLots(root);
+        long totalQuantity = root.getQuantity() != null ? root.getQuantity() : totalLots;
+        List<Integer> lotsByStage = splitLots(totalLots, stages);
+        Long groupId = root.getId();
+        root.setTargetOrderGroupId(groupId);
+        root.setTargetStage(1);
+        root.setOriginalLots(totalLots);
+        root.setLots(lotsByStage.get(0));
+        root.setQuantity(quantityForLots(root, lotsByStage.get(0)));
+        root.setTarget1(targets.get(0));
+        root.setTarget2(null);
+        root.setTarget3(null);
+        root = triggeredTradeRepo.save(root);
+
+        List<TriggeredTradeSetupEntity> legs = new ArrayList<>();
+        legs.add(root);
+        for (int stage = 2; stage <= stages; stage++) {
+            TriggeredTradeSetupEntity leg = copyTargetLeg(root, groupId, stage, lotsByStage.get(stage - 1),
+                    targets.get(stage - 1), totalQuantity);
+            legs.add(triggeredTradeRepo.save(leg));
+        }
+
+        for (TriggeredTradeSetupEntity leg : legs) {
+            maybePlaceTargetOrder(leg);
+        }
+        log.info("Created {} initial option target orders for trade group {} (lots={}, initialSL={})",
+                legs.size(), groupId, resolveLots(enteredTrade), root.getStopLoss());
+        return true;
+    }
+
+    private boolean isEligibleForStagedTargetOrders(TriggeredTradeSetupEntity trade) {
+        return trade != null && trade.getId() != null
+                && Boolean.TRUE.equals(trade.getTslEnabled())
+                && !isSpotStop(trade) && !isSpotTarget(trade)
+                && resolveLots(trade) > 1 && configuredTargets(trade).size() > 1;
+    }
+
+    private boolean isStagedTargetLeg(TriggeredTradeSetupEntity trade) {
+        return trade != null && trade.getTargetOrderGroupId() != null && trade.getTargetStage() != null;
+    }
+
+    private boolean isSpotStop(TriggeredTradeSetupEntity trade) {
+        return Boolean.TRUE.equals(trade.getUseSpotForSl())
+                || (trade.getUseSpotForSl() == null && Boolean.TRUE.equals(trade.getUseSpotPrice()));
+    }
+
+    private List<Double> configuredTargets(TriggeredTradeSetupEntity trade) {
+        List<Double> targets = new ArrayList<>(3);
+        if (trade.getTarget1() != null && trade.getTarget1() > 0d) targets.add(trade.getTarget1());
+        if (trade.getTarget2() != null && trade.getTarget2() > 0d) targets.add(trade.getTarget2());
+        if (trade.getTarget3() != null && trade.getTarget3() > 0d) targets.add(trade.getTarget3());
+        return targets;
+    }
+
+    private int resolveLots(TriggeredTradeSetupEntity trade) {
+        return trade.getLots() != null && trade.getLots() > 0 ? trade.getLots() : 1;
+    }
+
+    private List<Integer> splitLots(int totalLots, int stages) {
+        List<Integer> result = new ArrayList<>(stages);
+        int remaining = totalLots;
+        for (int stage = 1; stage <= stages; stage++) {
+            int lots = stage == stages ? remaining : Math.max(1, totalLots / stages);
+            result.add(lots);
+            remaining -= lots;
+        }
+        return result;
+    }
+
+    private long quantityForLots(TriggeredTradeSetupEntity trade, int lots) {
+        int totalLots = trade.getOriginalLots() != null && trade.getOriginalLots() > 0
+                ? trade.getOriginalLots() : resolveLots(trade);
+        if (trade.getQuantity() == null || totalLots <= 0) {
+            return lots;
+        }
+        return trade.getQuantity() / totalLots * lots;
+    }
+
+    private TriggeredTradeSetupEntity copyTargetLeg(TriggeredTradeSetupEntity root, Long groupId,
+                                                     int stage, int lots, double target, long totalQuantity) {
+        TriggeredTradeSetupEntity leg = new TriggeredTradeSetupEntity();
+        leg.setTriggerRequestId(root.getTriggerRequestId());
+        leg.setSymbol(root.getSymbol()); leg.setScripCode(root.getScripCode());
+        leg.setBrokerCredentialsId(root.getBrokerCredentialsId()); leg.setAppUserId(root.getAppUserId());
+        leg.setExchange(root.getExchange()); leg.setInstrumentType(root.getInstrumentType());
+        leg.setStrikePrice(root.getStrikePrice()); leg.setOptionType(root.getOptionType()); leg.setExpiry(root.getExpiry());
+        leg.setQuantity(totalQuantity / root.getOriginalLots() * lots); leg.setLots(lots); leg.setOriginalLots(root.getOriginalLots());
+        leg.setEntryPrice(root.getEntryPrice()); leg.setActualEntryPrice(root.getActualEntryPrice());
+        leg.setStopLoss(root.getStopLoss()); leg.setTarget1(target); leg.setTrailingSl(root.getTrailingSl());
+        leg.setTslEnabled(true); leg.setUseSpotPrice(root.getUseSpotPrice());
+        leg.setUseSpotForEntry(root.getUseSpotForEntry()); leg.setUseSpotForSl(false); leg.setUseSpotForTarget(false);
+        leg.setSpotScripCode(root.getSpotScripCode()); leg.setIntraday(root.getIntraday()); leg.setSource(root.getSource());
+        leg.setStatus(TriggeredTradeStatus.EXECUTED); leg.setTriggeredAt(root.getTriggeredAt()); leg.setEntryAt(root.getEntryAt());
+        leg.setTargetOrderGroupId(groupId); leg.setTargetStage(stage);
+        leg.setOrderId(root.getOrderId() != null ? root.getOrderId() + "-T" + stage : null);
+        return leg;
+    }
+
+    public void advanceStagedTargetStops(TriggeredTradeSetupEntity completedLeg) {
+        if (!isStagedTargetLeg(completedLeg)) {
+            return;
+        }
+        Double newStop = completedLeg.getTargetStage() == 1
+                ? resolveEntryPriceForPnl(completedLeg)
+                : completedLeg.getTarget1();
+        if (newStop == null || newStop <= 0d) {
+            return;
+        }
+        List<TriggeredTradeSetupEntity> openLegs = triggeredTradeRepo.findByTargetOrderGroupIdAndStatusIn(
+                completedLeg.getTargetOrderGroupId(), List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED));
+        for (TriggeredTradeSetupEntity leg : openLegs) {
+            if (!Objects.equals(leg.getId(), completedLeg.getId())
+                    && leg.getTargetStage() != null && leg.getTargetStage() > completedLeg.getTargetStage()) {
+                leg.setStopLoss(newStop);
+                leg.setUseSpotForSl(false);
+                triggeredTradeRepo.save(leg);
+            }
+        }
+    }
+
+    /**
+     * ATR and StockBazaari calls are staged recommendations: whenever they
+     * carry more than one lot, preserve a runner after each target instead of
+     * closing the entire position at target one.  This is intentionally
+     * source-scoped so a manually submitted multi-lot order still honours the
+     * user's explicit TSL choice.
+     */
+    private boolean resolveTslEnabled(Boolean requestedTslEnabled, String source, Integer lots) {
+        return Boolean.TRUE.equals(requestedTslEnabled)
+                || (lots != null && lots > 1 && isStagedSignalSource(source));
+    }
+
+    private boolean isStagedSignalSource(String source) {
+        return "atr-signal".equalsIgnoreCase(source)
+                || "StockBazaari".equalsIgnoreCase(source);
     }
 
     public boolean rescheduleTargetOrderAfterHours(Long tradeId) {
@@ -4284,7 +4443,7 @@ public class TradeExecutionService {
             temp.setQuantity(requestEntity.getQuantity());
         }
         temp.setLots(requestEntity.getLots()); // Pass lots
-        temp.setTslEnabled(requestEntity.getTslEnabled()); // Pass TSL flag
+        temp.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots()));
         temp.setInstrumentType(requestEntity.getInstrumentType());
         temp.setStrikePrice(requestEntity.getStrikePrice());
         temp.setOptionType(requestEntity.getOptionType());
