@@ -252,21 +252,22 @@ public class OrderStatusPollingService {
             if (!isMarketOpen(trade.getExchange())) {
                 return;
             }
-            String orderIdToMonitor;
-            if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus()) ||
-                    TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(trade.getStatus())) {
-                orderIdToMonitor = trade.getExitOrderId();
-            } else {
-                orderIdToMonitor = trade.getOrderId();
-            }
+            String orderIdToMonitor = null;
             try {
-
-                BrokerCtx ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+                // Reload before resolving both broker and order id. The original
+                // scheduled object can be stale after an entry/exit is persisted.
+                TriggeredTradeSetupEntity currentTrade = tradeRepo.findById(trade.getId()).orElse(trade);
+                orderIdToMonitor = isExitOrder(currentTrade)
+                        ? currentTrade.getExitOrderId()
+                        : currentTrade.getOrderId();
+                if (orderIdToMonitor == null || orderIdToMonitor.isBlank()) {
+                    log.warn("Skipping status poll for trade {} because its broker order id is missing", currentTrade.getId());
+                    return;
+                }
+                BrokerCtx ctx = resolveBrokerContext(currentTrade.getBrokerCredentialsId(), currentTrade.getAppUserId());
                 if (!isBrokerContextUsable(ctx)) {
                     throw new IllegalStateException("No active broker configured for this trade");
                 }
-                // Always operate on the latest persisted trade state
-                TriggeredTradeSetupEntity currentTrade = tradeRepo.findById(trade.getId()).orElse(trade);
                 JSONObject response = fetchBrokerOrderStatus(currentTrade, ctx, orderIdToMonitor);
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
                 if (TradeStatus.FULLY_EXECUTED.equals(tradeStatus)) {
@@ -420,13 +421,20 @@ public class OrderStatusPollingService {
         // even if the broker orderId/exitOrderId changes during the lifecycle.
         long delay = Math.max(orderPollDelayMs, 200L);
         String tradeKey1 = String.valueOf(trade.getId());
-        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(pollTask, 0, delay, TimeUnit.MILLISECONDS);
+        // Give the placement request a head start; status polling is best-effort and
+        // must never compete with the immediately preceding entry/exit submission.
+        ScheduledFuture<?> future = executor.scheduleWithFixedDelay(pollTask, 250L, delay, TimeUnit.MILLISECONDS);
         activePolls.put(tradeKey1, future);
 
         // Optional: Cancel polling after 2 minutes
 //        executor.schedule(() -> {
 //            log.warn("⚠️ Stopping polling after timeout for order {}", orderIdToMonitor);
 //        }, 2, TimeUnit.MINUTES);
+    }
+
+    private boolean isExitOrder(TriggeredTradeSetupEntity trade) {
+        return trade != null && (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())
+                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(trade.getStatus()));
     }
 
     void rearmGapFillRequest(TriggeredTradeSetupEntity exitedTrade) {

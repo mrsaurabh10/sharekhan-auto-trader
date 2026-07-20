@@ -1,8 +1,5 @@
 package org.com.sharekhan.util;
 
-import java.io.OutputStream;
-import java.io.PrintStream;
-import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * Utility to suppress the verbose System.out logs emitted by the Sharekhan SDK.
@@ -11,8 +8,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * stream while invoking the SDK and restore it afterwards.
  */
 public final class SharekhanConsoleSilencer {
-
-    private static final ReentrantLock lock = new ReentrantLock();
 
     private SharekhanConsoleSilencer() {
     }
@@ -28,17 +23,11 @@ public final class SharekhanConsoleSilencer {
     }
 
     public static <T> T call(SharekhanCallable<T> callable) throws Exception {
-        lock.lock();
-        PrintStream originalOut = System.out;
-        PrintStream silentOut = new PrintStream(OutputStream.nullOutputStream());
-        try {
-            System.setOut(silentOut);
-            return callable.call();
-        } finally {
-            System.setOut(originalOut);
-            silentOut.close();
-            lock.unlock();
-        }
+        // Do not redirect the process-wide System.out around a network request. The
+        // previous implementation held one global lock until the SDK returned,
+        // serialising entries, exits and status polls behind a slow broker call.
+        // SDK output is handled by normal application log configuration instead.
+        return callable.call();
     }
 
     public static void run(SharekhanRunnable runnable) throws Exception {
