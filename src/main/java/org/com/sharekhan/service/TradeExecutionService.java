@@ -722,8 +722,8 @@ public class TradeExecutionService {
         boolean brokerAccepted = false;
 
         try {
-            double entryPrice = roundPrice(latest.getEntryPrice());
-            TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now());
+            double entryPrice = normalisePriceToTick(latest.getEntryPrice());
+            TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now(), ctx);
             TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", entryPrice, null);
 
             OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice);
@@ -818,13 +818,16 @@ public class TradeExecutionService {
     }
 
     private TriggeredTradeSetupEntity buildPendingEntryTradeFromRequest(TriggerTradeRequestEntity requestEntity,
-                                                                        LocalDateTime triggeredAt) {
+                                                                        LocalDateTime triggeredAt,
+                                                                        BrokerContext brokerContext) {
         TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
         trade.setTriggerRequestId(requestEntity.getId());
         trade.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
         trade.setTriggeredAt(triggeredAt != null ? triggeredAt : LocalDateTime.now());
         trade.setScripCode(requestEntity.getScripCode());
-        trade.setBrokerCredentialsId(requestEntity.getBrokerCredentialsId());
+        trade.setBrokerCredentialsId(brokerContext != null && brokerContext.getBrokerCredentialsId() != null
+                ? brokerContext.getBrokerCredentialsId()
+                : requestEntity.getBrokerCredentialsId());
         trade.setAppUserId(requestEntity.getAppUserId());
         trade.setExchange(requestEntity.getExchange());
         trade.setSymbol(requestEntity.getSymbol());
@@ -1621,6 +1624,11 @@ public class TradeExecutionService {
                 throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
             }
 
+            long triggerToPlacementStartMs = triggeredAt == null ? -1L
+                    : Math.max(0L, java.time.Duration.between(triggeredAt, java.time.LocalDateTime.now()).toMillis());
+            log.info("ENTRY_TRIGGER_TO_BROKER_START | triggerId={} | broker={} | triggerToPlacementStartMs={}",
+                    triggerLogId(trigger), ctx.getBrokerName(), triggerToPlacementStartMs);
+
             OrderPlacementResult result = attemptEntryPlacement(trigger, ltp, ctx, brokerService, chaseEntryUntilExecuted);
 
             if (!result.isSuccess()) {
@@ -1706,7 +1714,10 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
             triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
             triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
-            triggeredTradeSetupEntity.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
+            // Persist the credential actually used to place the order. A trigger can
+            // omit its credential and be routed to a default broker; polling must not
+            // later re-resolve to a different broker.
+            triggeredTradeSetupEntity.setBrokerCredentialsId(ctx.getBrokerCredentialsId());
             triggeredTradeSetupEntity.setAppUserId(trigger.getAppUserId());
             triggeredTradeSetupEntity.setUseSpotForEntry(trigger.getUseSpotForEntry());
             triggeredTradeSetupEntity.setUseSpotForSl(trigger.getUseSpotForSl());
@@ -3038,6 +3049,8 @@ public class TradeExecutionService {
         if (brokerService == null) {
             throw new IllegalStateException("No broker service found for: " + exitCtx.getBrokerName());
         }
+        // Keep subsequent polling pinned to the broker that accepted this exit.
+        persisted.setBrokerCredentialsId(exitCtx.getBrokerCredentialsId());
 
         Double safeExitPrice = sanitizeExitPriceCandidate(persisted, exitPrice, "EXIT_PLACE");
         if (safeExitPrice == null) {
@@ -3246,7 +3259,7 @@ public class TradeExecutionService {
         if (candidatePrice == null || !Double.isFinite(candidatePrice) || candidatePrice <= 0d) {
             return null;
         }
-        double rounded = roundPrice(candidatePrice);
+        double rounded = normalisePriceToTick(candidatePrice);
         if (isImplausibleOptionPriceCandidate(trade, rounded)) {
             log.warn("Ignoring implausible option exit price {} for trade {} (reason={}) entry={} actualEntry={}",
                     rounded,
@@ -3257,6 +3270,11 @@ public class TradeExecutionService {
             return null;
         }
         return rounded;
+    }
+
+    private double normalisePriceToTick(double price) {
+        double scaled = Math.round(price / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
+        return Math.round(scaled * 100.0d) / 100.0d;
     }
 
     private boolean isImplausibleOptionPriceCandidate(TriggeredTradeSetupEntity trade, double candidatePrice) {

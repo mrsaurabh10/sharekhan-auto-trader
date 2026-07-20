@@ -219,8 +219,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                     String respOrderId = d.optString("orderId", d.optString("orsOrderId", null));
                     if (isUsableOrderId(respOrderId)) {
                         orderId = respOrderId;
-                        log.info("{}_BROKER_ATTEMPT_ACCEPTED | tradeId={} | attempt={} | attemptedPrice={} | orderId={} | elapsedMs={}",
-                                stage, trade.getId(), attempt, price, orderId, elapsedMillis(attemptStartedAt));
+                        long sdkHttpMs = elapsedMillis(attemptStartedAt);
+                        log.info("{}_BROKER_ATTEMPT_ACCEPTED | tradeId={} | attempt={} | attemptedPrice={} | orderId={} | sdkHttpMs={} | totalMs={}",
+                                stage, trade.getId(), attempt, price, orderId, sdkHttpMs, sdkHttpMs);
                         break;
                     }
                 }
