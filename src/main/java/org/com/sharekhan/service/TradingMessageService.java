@@ -451,6 +451,7 @@ public class TradingMessageService {
                     notifySourceDisabled(c.getAppUserId(), req);
                     continue;
                 }
+                applySourceDefaultLots(req);
 
                 if (isDuplicateTrade(req, c.getAppUserId(), c.getId())) {
                     System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId()
@@ -506,6 +507,7 @@ public class TradingMessageService {
                         notifySourceDisabled(c.getAppUserId(), req);
                         continue;
                     }
+                    applySourceDefaultLots(req);
 
                     if (isDuplicateTrade(req, c.getAppUserId(), c.getId())) {
                         System.out.println("⏭️ Skipping duplicate trade for user #" + c.getAppUserId()
@@ -567,6 +569,67 @@ public class TradingMessageService {
             case "true", "1", "yes", "on" -> true;
             default -> false;
         };
+    }
+
+    /**
+     * Applies a per-source lot default only when the signal did not specify a
+     * lot count. A user can override the built-in value with the configuration
+     * key {@code source_default_lots.<source>}; source names are normalized to
+     * lower case so, for example, StockBazaari uses
+     * {@code source_default_lots.stockbazaari}. This keeps a provider's
+     * explicit "LOTS" instruction authoritative.
+     */
+    private void applySourceDefaultLots(TriggerRequest request) {
+        if (request == null || hasPositiveLots(request)) {
+            return;
+        }
+
+        String normalizedSource = normalizeSource(request.getSource());
+        if (normalizedSource == null) {
+            return;
+        }
+
+        int defaultLots = "stockbazaari".equals(normalizedSource) ? 3 : -1;
+        try {
+            String configuredLots = userConfigService.getConfig(
+                    request.getUserId(), "source_default_lots." + normalizedSource, null);
+            int parsedLots = parsePositiveInt(configuredLots);
+            if (parsedLots > 0) {
+                defaultLots = parsedLots;
+            }
+        } catch (Exception e) {
+            System.err.println("Unable to read source lot configuration for user #" + request.getUserId()
+                    + ", source=" + request.getSource() + ": " + e.getMessage());
+        }
+
+        if (defaultLots > 0) {
+            request.setQuantity(defaultLots);
+            request.setLots(defaultLots);
+        }
+    }
+
+    private boolean hasPositiveLots(TriggerRequest request) {
+        return (request.getQuantity() != null && request.getQuantity() > 0)
+                || (request.getLots() != null && request.getLots() > 0);
+    }
+
+    private String normalizeSource(String source) {
+        if (source == null || source.isBlank()) {
+            return null;
+        }
+        return source.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9._-]", "_");
+    }
+
+    private int parsePositiveInt(String value) {
+        if (value == null || value.isBlank()) {
+            return -1;
+        }
+        try {
+            int parsed = Integer.parseInt(value.trim());
+            return parsed > 0 ? parsed : -1;
+        } catch (NumberFormatException ignored) {
+            return -1;
+        }
     }
 
     private void notifySourceDisabled(Long appUserId, TriggerRequest request) {

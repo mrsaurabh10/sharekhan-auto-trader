@@ -82,6 +82,35 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void doesNotEvaluateOrRecoverEntriesBeforeNineTwenty() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 19, 59)).when(timedService).nowIst();
+
+        timedService.evaluatePriceTrigger(20000, 100.0);
+        timedService.recoverStaleTriggeredRequests();
+
+        verify(triggerRepo, never()).findByScripCodeAndStatus(any(), any());
+        verify(triggerRepo, never()).findByStatus(TriggeredTradeStatus.TRIGGERED);
+    }
+
+    @Test
+    void evaluatesAndRecoversEntriesAtNineTwenty() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 20)).when(timedService).nowIst();
+        when(triggerRepo.findByScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findByStatus(TriggeredTradeStatus.TRIGGERED)).thenReturn(List.of());
+
+        timedService.evaluatePriceTrigger(20000, 100.0);
+        timedService.recoverStaleTriggeredRequests();
+
+        verify(triggerRepo).findByScripCodeAndStatus(20000, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        verify(triggerRepo).findByStatus(TriggeredTradeStatus.TRIGGERED);
+    }
+
+    @Test
     void atrSpotEntryWaitsWhenCurrentTickFallsBackAfterDirectionalClose() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 21, 1)).when(timedService).nowIst();
