@@ -1,6 +1,7 @@
 package org.com.sharekhan.config;
 
 import com.sharekhan.SharekhanConnect;
+import org.com.sharekhan.util.SharekhanConsoleSilencer;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -14,6 +15,6 @@ public class SharekhanConfig {
         // serialising live requests through a global stdout lock.
         SharekhanConnect.ENABLE_LOGGING = false;
         // Inject access token later — here it's null by default
-        return new SharekhanConnect(null, "your-api-key", "your-access-token");
+        return SharekhanConsoleSilencer.createClient(null, "your-api-key", "your-access-token");
     }
 }

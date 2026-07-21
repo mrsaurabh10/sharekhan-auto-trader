@@ -58,7 +58,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             if (accessToken == null || context.getApiKey() == null || context.getCustomerId() == null) {
                 return null;
             }
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
             return SharekhanConsoleSilencer.call(() ->
                     sharekhanConnect.orderHistory(trade.getExchange(), context.getCustomerId(), orderId)
             );
@@ -77,7 +77,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
 
             JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, newPrice, context.getCustomerId(), context.getClientCode());
             String updatedOrderId = orderId;
@@ -135,7 +135,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
             ShareKhanOrderUtil.cancelOrder(sharekhanConnect, trade, orderId, context.getCustomerId(), context.getClientCode());
             log.info("🚫 Cancelled entry order {} for trade {}", orderId, trade.getId());
         } catch (com.sharekhan.http.exceptions.SharekhanAPIException e) {
@@ -162,7 +162,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = new SharekhanConnect(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
 
             OrderParams order = new OrderParams();
             order.customerId = context.getCustomerId();

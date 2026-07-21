@@ -23,7 +23,7 @@ import java.util.Map;
 public class SharekhanTokenFetcher {
 
     public String fetchAccessToken(String clientCode, String password, String totpSecret, String apiKey, String secretKey) {
-        SharekhanConnect sharekhanConnect = new SharekhanConnect();
+        SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient();
         // Note: clientCode is not used in getLoginURL but might be needed if the flow changes.
         // The original TokenLoginAutomationService used apiKey, null, "1234", 1234L
         String loginUrl;
