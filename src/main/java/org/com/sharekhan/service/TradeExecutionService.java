@@ -3793,7 +3793,7 @@ public class TradeExecutionService {
             }
 
             TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", safeNewPrice, trade.getExitOrderId());
-            com.sharekhan.SharekhanConnect sharekhanConnect = new com.sharekhan.SharekhanConnect(null, ctx.getApiKey(), accessToken);
+            com.sharekhan.SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, ctx.getApiKey(), accessToken);
             JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, safeNewPrice, ctx.getCustomerId(), ctx.getClientCode());
 
             if (response == null) {

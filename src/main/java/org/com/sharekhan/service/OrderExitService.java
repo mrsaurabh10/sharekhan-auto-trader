@@ -121,7 +121,7 @@ public class OrderExitService {
         // Prefer a per-customer token when placing the exit order
         String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, custId);
         if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-        SharekhanConnect sharekhanConnect = new SharekhanConnect(null, ctx != null ? ctx.getApiKey() : null, accessToken);
+        SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, ctx != null ? ctx.getApiKey() : null, accessToken);
 
         JSONObject response;
         try {

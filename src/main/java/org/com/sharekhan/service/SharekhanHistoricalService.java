@@ -161,7 +161,7 @@ public class SharekhanHistoricalService {
 
         try {
             String intervalPath = buildIntervalPath(intervalSegment, from, to);
-            SharekhanConnect client = new SharekhanConnect(null, apiKey, accessToken);
+            SharekhanConnect client = SharekhanConsoleSilencer.createClient(null, apiKey, accessToken);
             JSONObject response = SharekhanConsoleSilencer.call(() ->
                     client.getHistorical(exchange, String.valueOf(scripCode), intervalPath));
             return parseHistoricalCandles(response);
@@ -195,7 +195,7 @@ public class SharekhanHistoricalService {
 
         try {
             String intervalPath = buildIntervalPath(targetDate);
-            SharekhanConnect client = new SharekhanConnect(null, apiKey, accessToken);
+            SharekhanConnect client = SharekhanConsoleSilencer.createClient(null, apiKey, accessToken);
             JSONObject response = SharekhanConsoleSilencer.call(() ->
                     client.getHistorical(exchange, String.valueOf(scripCode), intervalPath));
             OptionalDouble parsed = parseOpenPrice(response, targetDate);
