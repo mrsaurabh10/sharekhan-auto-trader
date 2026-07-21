@@ -37,7 +37,11 @@ import java.util.concurrent.ConcurrentMap;
 public class PriceTriggerService {
 
     private static final ZoneId IST_ZONE = ZoneId.of("Asia/Kolkata");
-    private static final LocalTime EQUITY_MARKET_OPEN = LocalTime.of(9, 15);
+    /**
+     * Live price-trigger entries must not evaluate during the initial five minutes
+     * of the equity session, when opening volatility can produce false triggers.
+     */
+    private static final LocalTime ENTRY_EVALUATION_START = LocalTime.of(9, 20);
     private static final LocalTime EQUITY_MARKET_CLOSE = LocalTime.of(15, 30);
     private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
@@ -483,7 +487,7 @@ public class PriceTriggerService {
             return false;
         }
         LocalTime localTime = time.toLocalTime();
-        return !localTime.isBefore(EQUITY_MARKET_OPEN) && !localTime.isAfter(EQUITY_MARKET_CLOSE);
+        return !localTime.isBefore(ENTRY_EVALUATION_START) && !localTime.isAfter(EQUITY_MARKET_CLOSE);
     }
 
     private Optional<ReferencePrice> getTodayOpenReferencePrice(Integer referenceScrip) {
