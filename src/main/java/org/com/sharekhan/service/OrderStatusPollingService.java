@@ -341,7 +341,20 @@ public class OrderStatusPollingService {
                         if (currentTrade.getEntryPrice() != null) body.append("\nEntry: ").append(currentTrade.getEntryPrice());
                         if (currentTrade.getExitPrice() != null) body.append("\nExit: ").append(currentTrade.getExitPrice());
                         if (currentTrade.getPnl() != null) body.append("\nPnL: ").append(currentTrade.getPnl());
-                        telegramNotificationService.sendTradeMessageForUser(currentTrade.getAppUserId(), title, body.toString());
+                        TriggeredTradeSetupEntity completedTrade = reloaded != null ? reloaded : currentTrade;
+                        boolean profitableStockBazaariExit = wasExitOrder
+                                && "StockBazaari".equalsIgnoreCase(completedTrade.getSource())
+                                && completedTrade.getPnl() != null
+                                && completedTrade.getPnl() > 0;
+                        if (profitableStockBazaariExit) {
+                            title = "StockBazaari Profit Hit ✅";
+                            body.append("\n\nDisable this source for the user before the next signal if you want to stop further StockBazaari trades.");
+                            telegramNotificationService.sendTradeMessageForUser(
+                                    completedTrade.getAppUserId(), title, body.toString(),
+                                    "disable-stockbazaari:" + completedTrade.getAppUserId());
+                        } else {
+                            telegramNotificationService.sendTradeMessageForUser(currentTrade.getAppUserId(), title, body.toString());
+                        }
                     } catch (Exception e) {
                         log.warn("Failed sending telegram notification for execution: {}", e.getMessage());
                     }

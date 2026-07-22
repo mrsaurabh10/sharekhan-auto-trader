@@ -2,6 +2,7 @@ package org.com.sharekhan.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -15,9 +16,18 @@ public class TelegramUpdateHandler {
     private static final Logger log = LoggerFactory.getLogger(TelegramUpdateHandler.class);
 
     private final TradingMessageService tradingMessageService;
+    private final UserConfigService userConfigService;
+    private final TelegramNotificationService telegramNotificationService;
+    private final String authorizedChatId;
 
-    public TelegramUpdateHandler(TradingMessageService tradingMessageService) {
+    public TelegramUpdateHandler(TradingMessageService tradingMessageService,
+                                 UserConfigService userConfigService,
+                                 TelegramNotificationService telegramNotificationService,
+                                 @Value("${app.telegram.chat-id:}") String authorizedChatId) {
         this.tradingMessageService = tradingMessageService;
+        this.userConfigService = userConfigService;
+        this.telegramNotificationService = telegramNotificationService;
+        this.authorizedChatId = authorizedChatId == null ? "" : authorizedChatId.trim();
     }
 
     /**
@@ -27,6 +37,10 @@ public class TelegramUpdateHandler {
     public void handleUpdate(Map<String, Object> update) {
         if (update == null || update.isEmpty()) {
             log.debug("Skipping empty Telegram update");
+            return;
+        }
+
+        if (handleSourceControlCallback(update)) {
             return;
         }
 
@@ -52,6 +66,62 @@ public class TelegramUpdateHandler {
         String uniqueId = buildUniqueId(update, message);
 
         tradingMessageService.handleRawMessage(text, sender, uniqueId);
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean handleSourceControlCallback(Map<String, Object> update) {
+        Object callbackObject = update.get("callback_query");
+        if (!(callbackObject instanceof Map<?, ?> rawCallback)) {
+            return false;
+        }
+        Map<String, Object> callback = (Map<String, Object>) rawCallback;
+        Object data = callback.get("data");
+        if (!(data instanceof String callbackData) || !callbackData.startsWith("disable-stockbazaari:")) {
+            return false;
+        }
+
+        String callbackId = stringOrNull(callback.get("id"));
+        Long appUserId = parseUserId(callbackData.substring("disable-stockbazaari:".length()));
+        if (!isAuthorizedCallbackChat(callback)) {
+            log.warn("Rejected StockBazaari disable callback from an unauthorized Telegram chat");
+            telegramNotificationService.answerCallbackQuery(callbackId, "This action is not allowed in this chat.");
+            return true;
+        }
+        if (appUserId == null) {
+            telegramNotificationService.answerCallbackQuery(callbackId, "Invalid user selection.");
+            return true;
+        }
+
+        // Keep the value true so an administrator can later re-enable the same config in the dashboard.
+        userConfigService.setConfig(appUserId, "StockBazaari", "true", false);
+        log.info("Disabled StockBazaari source configuration for user #{} via Telegram", appUserId);
+        telegramNotificationService.answerCallbackQuery(callbackId, "StockBazaari disabled for user #" + appUserId + ".");
+        return true;
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean isAuthorizedCallbackChat(Map<String, Object> callback) {
+        if (authorizedChatId.isBlank()) {
+            return false;
+        }
+        Object messageObject = callback.get("message");
+        if (!(messageObject instanceof Map<?, ?> rawMessage)) {
+            return false;
+        }
+        Object chatObject = ((Map<String, Object>) rawMessage).get("chat");
+        if (!(chatObject instanceof Map<?, ?> rawChat)) {
+            return false;
+        }
+        Object id = ((Map<String, Object>) rawChat).get("id");
+        return id != null && authorizedChatId.equals(String.valueOf(id));
+    }
+
+    private Long parseUserId(String value) {
+        try {
+            return Long.valueOf(value);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
     }
 
     @SuppressWarnings("unchecked")

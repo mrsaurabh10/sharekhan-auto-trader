@@ -499,6 +499,48 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void spotCeStopWaitsWhenCurrentSpotHasRecoveredAboveBreachedCandleClose() {
+        TriggeredTradeSetupEntity trade = optionTrade(7008L, 999999, 20000);
+        trade.setOptionType("CE");
+        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+        trade.setUseSpotForSl(true);
+        trade.setStopLoss(95.0);
+        trade.setEntryAt(LocalDateTime.of(2026, 7, 3, 9, 25));
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of(trade));
+        when(ltpCacheService.getLtp(999999)).thenReturn(48.0);
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                new LtpCacheService.MinuteCandle(LocalDateTime.of(2026, 7, 3, 9, 36), 97.0, 97.0, 94.0, 94.5));
+        when(triggeredRepo.findById(7008L)).thenReturn(Optional.of(trade));
+
+        service.monitorOpenTrades(20000, 96.0);
+
+        verify(triggeredRepo, never()).claimIfStatusEquals(eq(7008L), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void spotPeStopWaitsWhenCurrentSpotHasRecoveredBelowBreachedCandleClose() {
+        TriggeredTradeSetupEntity trade = optionTrade(7009L, 999999, 20000);
+        trade.setOptionType("PE");
+        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+        trade.setUseSpotForSl(true);
+        trade.setStopLoss(105.0);
+        trade.setEntryAt(LocalDateTime.of(2026, 7, 3, 9, 25));
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(20000), anyList())).thenReturn(List.of(trade));
+        when(ltpCacheService.getLtp(999999)).thenReturn(48.0);
+        when(ltpCacheService.getLastCompletedMinuteCandle(20000)).thenReturn(
+                new LtpCacheService.MinuteCandle(LocalDateTime.of(2026, 7, 3, 9, 36), 103.0, 106.0, 103.0, 105.5));
+        when(triggeredRepo.findById(7009L)).thenReturn(Optional.of(trade));
+
+        service.monitorOpenTrades(20000, 104.0);
+
+        verify(triggeredRepo, never()).claimIfStatusEquals(eq(7009L), anyString(), anyString(), anyString());
+    }
+
+    @Test
     void spotTargetIsEvaluatedBeforeFirstCompletedSpotCandleExists() {
         TriggeredTradeSetupEntity trade = optionTrade(7010L, 999999, 20000);
         trade.setOptionType("PE");

@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -84,6 +85,14 @@ public class TelegramNotificationService {
      * Convenience: prepend the AppUser's username (when available) to the body before sending.
      */
     public void sendTradeMessageForUser(Long appUserId, String title, String body) {
+        sendTradeMessageForUser(appUserId, title, body, null);
+    }
+
+    /**
+     * Sends a user-scoped trade alert with an optional inline action button.
+     * The callback is handled by the authenticated Telegram webhook flow.
+     */
+    public void sendTradeMessageForUser(Long appUserId, String title, String body, String callbackData) {
         String prefix = "";
         try {
             if (appUserId != null && appUserRepository != null) {
@@ -98,6 +107,51 @@ public class TelegramNotificationService {
             // ignore lookup failures and send without username
             prefix = (appUserId != null) ? ("UserId: #" + appUserId + "\n") : "";
         }
-        sendTradeMessage(title, prefix + (body == null ? "" : body));
+        sendTradeMessageWithCallback(title, prefix + (body == null ? "" : body), callbackData);
+    }
+
+    private void sendTradeMessageWithCallback(String title, String body, String callbackData) {
+        if (botToken.isBlank() || chatId.isBlank()) {
+            log.debug("Telegram not configured (botToken/chatId missing) - skipping message");
+            return;
+        }
+        try {
+            String uri = "https://api.telegram.org/bot" + botToken + "/sendMessage";
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON_UTF8);
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("chat_id", chatId);
+            payload.put("text", (title == null ? "" : title) + "\n" + (body == null ? "" : body));
+            payload.put("disable_web_page_preview", true);
+            if (callbackData != null && !callbackData.isBlank()) {
+                payload.put("reply_markup", Map.of("inline_keyboard", List.of(List.of(Map.of(
+                        "text", "Disable StockBazaari",
+                        "callback_data", callbackData)) )));
+            }
+            ResponseEntity<String> response = restTemplate.postForEntity(uri, new HttpEntity<>(payload, headers), String.class);
+            if (response == null || !response.getStatusCode().is2xxSuccessful()) {
+                log.warn("Telegram sendMessage returned non-2xx: {}", response);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to send Telegram action message: {}", e.getMessage());
+        }
+    }
+
+    public void answerCallbackQuery(String callbackQueryId, String text) {
+        if (botToken.isBlank() || callbackQueryId == null || callbackQueryId.isBlank()) {
+            return;
+        }
+        try {
+            String uri = "https://api.telegram.org/bot" + botToken + "/answerCallbackQuery";
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON_UTF8);
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("callback_query_id", callbackQueryId);
+            payload.put("text", text == null ? "" : text);
+            payload.put("show_alert", true);
+            restTemplate.postForEntity(uri, new HttpEntity<>(payload, headers), String.class);
+        } catch (Exception e) {
+            log.warn("Failed answering Telegram callback: {}", e.getMessage());
+        }
     }
 }
