@@ -197,6 +197,19 @@ public class PriceTriggerService {
         }
         Long requestId = request.getId();
 
+        // Claim a durable non-triggerable state before doing any broker work.  The
+        // in-memory dispatcher protects a normal single-JVM run, but it is not a
+        // sufficient guard for the recovery job (or after a process restart).  In
+        // particular, never put a request back into the triggerable pending state
+        // while its first broker order can still be open.
+        int executionClaimed = triggerRepo.claimIfStatusEquals(requestId,
+                TriggeredTradeStatus.TRIGGERED.name(),
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
+        if (executionClaimed != 1) {
+            log.info("Entry request {} was already claimed for execution; skipping duplicate dispatch.", requestId);
+            return;
+        }
+
         // A previous attempt may have reached the broker and persisted a trade before
         // the request status update. Never submit another entry in that case.
         List<TriggeredTradeSetupEntity> existing = triggeredRepo.findByTriggerRequestId(requestId);
@@ -207,15 +220,13 @@ public class PriceTriggerService {
                     : latest.getStatus() == TriggeredTradeStatus.REJECTED
                     ? TriggeredTradeStatus.REJECTED
                     : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
-            triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.TRIGGERED.name(), status.name());
+            triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), status.name());
             log.info("Entry request {} already has persisted trade {}; not placing a duplicate order.", requestId, latest.getId());
             return;
         }
 
         TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(request);
         if (executed == null) {
-            triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.TRIGGERED.name(),
-                    TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
             log.warn("Trigger {} did not produce an order; reset to pending for a fresh LTP evaluation.", requestId);
             return;
         }
@@ -225,7 +236,7 @@ public class PriceTriggerService {
                 : executed.getStatus() == TriggeredTradeStatus.REJECTED
                 ? TriggeredTradeStatus.REJECTED
                 : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
-        triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.TRIGGERED.name(), status.name());
+        triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), status.name());
         log.info("Trigger {} execution completed with trade {} status={}", requestId, executed.getId(), status);
     }
 
