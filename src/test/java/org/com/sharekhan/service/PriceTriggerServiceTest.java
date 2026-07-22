@@ -23,6 +23,7 @@ import java.time.LocalTime;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -62,6 +63,10 @@ class PriceTriggerServiceTest {
     );
 
     {
+        // A dispatched entry must atomically move out of TRIGGERED before broker work.
+        when(triggerRepo.claimIfStatusEquals(anyLong(),
+                eq(TriggeredTradeStatus.TRIGGERED.name()),
+                eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name()))).thenReturn(1);
         when(orderExecutionDispatcher.submit(anyString(), any(Runnable.class))).thenAnswer(invocation -> {
             ((Runnable) invocation.getArgument(1)).run();
             return true;
@@ -108,6 +113,28 @@ class PriceTriggerServiceTest {
 
         verify(triggerRepo).findByScripCodeAndStatus(20000, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
         verify(triggerRepo).findByStatus(TriggeredTradeStatus.TRIGGERED);
+    }
+
+    @Test
+    void skipsBrokerExecutionWhenAnotherWorkerAlreadyClaimedTriggeredRequest() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
+        var trigger = manualSpotTrigger(7099L, 100.0);
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(triggerRepo.claimIfStatusEquals(7099L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                TriggeredTradeStatus.TRIGGERED.name())).thenReturn(1);
+        when(triggerRepo.claimIfStatusEquals(7099L,
+                TriggeredTradeStatus.TRIGGERED.name(),
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name())).thenReturn(0);
+
+        timedService.evaluatePriceTrigger(20000, 100.1);
+
+        verify(tradeExecutionService, never()).executeTradeFromEntity(trigger);
     }
 
     @Test
@@ -689,6 +716,20 @@ class PriceTriggerServiceTest {
                 .source("atr-signal")
                 .useSpotForEntry(true)
                 .createdAt(LocalDateTime.of(2026, 7, 3, 9, 20, 10))
+                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                .build();
+    }
+
+    private org.com.sharekhan.entity.TriggerTradeRequestEntity manualSpotTrigger(Long id, double entry) {
+        return org.com.sharekhan.entity.TriggerTradeRequestEntity.builder()
+                .id(id)
+                .symbol("TEST")
+                .scripCode(999999)
+                .spotScripCode(20000)
+                .optionType("CE")
+                .entryPrice(entry)
+                .source("manual")
+                .useSpotForEntry(true)
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .build();
     }
