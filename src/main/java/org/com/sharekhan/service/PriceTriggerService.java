@@ -722,17 +722,26 @@ public class PriceTriggerService {
                             GAP_FILL_EXIT_REASON);
                 }
 
-                // Check SL against effective reference price
+                // A spot-based SL is candle-confirmed, but the live spot price must still be
+                // beyond the level. This prevents an exit after a completed candle briefly
+                // breached the SL but the market has already recovered by evaluation time.
                 boolean slHit = false;
                 if (slRefPrice != null && hasValidSl) {
                     boolean isSpotSl = usesSpotSl;
                     boolean isPE = "PE".equalsIgnoreCase(persisted.getOptionType());
 
-                    if (isSpotSl && isPE) {
-                        // For PE with Spot SL: Hit if Spot Price goes ABOVE SL
-                        slHit = slRefPrice >= slVal;
+                    if (isSpotSl) {
+                        if (spotLtp == null) {
+                            log.debug("Spot SL requested for trade {} but current spot LTP unavailable; skipping SL evaluation", tradeId);
+                        } else if (isPE) {
+                            // For PE, both the completed candle close and current spot must be at/above SL.
+                            slHit = slRefPrice >= slVal && spotLtp >= slVal;
+                        } else {
+                            // For CE, both the completed candle close and current spot must be at/below SL.
+                            slHit = slRefPrice <= slVal && spotLtp <= slVal;
+                        }
                     } else {
-                        // For CE (or non-spot SL): Hit if Price goes BELOW SL
+                        // Option-price SL: hit immediately from the traded instrument LTP.
                         slHit = slRefPrice <= slVal;
                     }
                 }
