@@ -49,6 +49,12 @@ public class PriceTriggerService {
     private static final int CLAIM_NONE = 0;
     private static final int CLAIM_EXIT_TRIGGERED = 1;
     private static final int CLAIM_RECOVER_UNPLACED_EXIT = 2;
+    /**
+     * EXIT_TRIGGERED is an ownership state, not an invitation for another tick
+     * worker to repeat the partial-booking flow.  Only recover a genuinely
+     * abandoned claim after this grace period.
+     */
+    private static final Duration EXIT_RECOVERY_GRACE_PERIOD = Duration.ofSeconds(30);
     private static final List<TriggeredTradeStatus> MONITORABLE_TRADE_STATUSES = List.of(
             TriggeredTradeStatus.EXECUTED,
             TriggeredTradeStatus.TARGET_ORDER_PLACED,
@@ -693,7 +699,9 @@ public class PriceTriggerService {
                 // Only act if still in EXECUTED or TARGET_ORDER_PLACED
                 TriggeredTradeStatus currentStatus = persisted.getStatus();
                 if (currentStatus == TriggeredTradeStatus.EXIT_TRIGGERED) {
-                    return hasNoExitOrderId(persisted) ? CLAIM_RECOVER_UNPLACED_EXIT : CLAIM_NONE;
+                    return hasNoExitOrderId(persisted) && isExitRecoveryDue(persisted)
+                            ? CLAIM_RECOVER_UNPLACED_EXIT
+                            : CLAIM_NONE;
                 }
                 if (currentStatus != TriggeredTradeStatus.EXECUTED && currentStatus != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
                     return CLAIM_NONE;
@@ -911,6 +919,15 @@ public class PriceTriggerService {
 
     private boolean hasNoExitOrderId(TriggeredTradeSetupEntity trade) {
         return trade == null || trade.getExitOrderId() == null || trade.getExitOrderId().isBlank();
+    }
+
+    private boolean isExitRecoveryDue(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getExitClaimedAt() == null) {
+            // Legacy rows created before exit_claimed_at was introduced can be
+            // recovered immediately; newly claimed rows always carry a timestamp.
+            return true;
+        }
+        return !trade.getExitClaimedAt().isAfter(nowIst().minus(EXIT_RECOVERY_GRACE_PERIOD));
     }
 
     private void dispatchSquareOff(TriggeredTradeSetupEntity trade, double tradedLtp, String exitReason) {
@@ -1392,6 +1409,16 @@ public class PriceTriggerService {
             if (opt.isEmpty()) return;
 
             TriggeredTradeSetupEntity saved = opt.get();
+
+            // P&L is realised only after the broker/order poller has confirmed a
+            // terminal exit.  In particular, do not turn a freshly claimed
+            // EXIT_TRIGGERED trade into EXITED_SUCCESS while its exit order is
+            // merely queued; that used to race with partial booking.
+            if (saved.getStatus() != TriggeredTradeStatus.EXITED_SUCCESS) {
+                log.debug("Skipping PnL persistence for trade {} because its exit is not confirmed (status={})",
+                        saved.getId(), saved.getStatus());
+                return;
+            }
 
             if (saved.getExitOrderId() != null && !saved.getExitOrderId().isBlank()) {
                 log.debug("Skipping persistPnlIfMissing for trade {} because exitOrderId={} is present; order polling will update status.", saved.getId(), saved.getExitOrderId());

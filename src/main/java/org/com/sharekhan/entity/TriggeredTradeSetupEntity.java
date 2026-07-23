@@ -113,4 +113,12 @@ public class TriggeredTradeSetupEntity {
     private Double effectivePnl;
 
     private LocalDateTime exitOrderPlacedAt;
+
+    /**
+     * Timestamp of the atomic transition into EXIT_TRIGGERED.  This is distinct
+     * from exitOrderPlacedAt: an exit worker may need a short time to create the
+     * broker order after it has claimed the trade.
+     */
+    @Column(name = "exit_claimed_at")
+    private LocalDateTime exitClaimedAt;
 }
