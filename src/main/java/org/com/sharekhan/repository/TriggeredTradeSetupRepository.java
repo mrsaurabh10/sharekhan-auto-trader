@@ -257,7 +257,10 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     // Stricter claim: only update status when current status equals expectedStatus. Returns 1 when transition succeeded.
     @Modifying
     @Transactional
-    @Query(value = "UPDATE triggered_trade_setups SET status = :newStatus, exit_reason = :exitReason WHERE id = :id AND status = :expectedStatus", nativeQuery = true)
+    @Query(value = "UPDATE triggered_trade_setups " +
+            "SET status = :newStatus, exit_reason = :exitReason, " +
+            "exit_claimed_at = CASE WHEN :newStatus = 'EXIT_TRIGGERED' THEN CURRENT_TIMESTAMP ELSE exit_claimed_at END " +
+            "WHERE id = :id AND status = :expectedStatus", nativeQuery = true)
     int claimIfStatusEquals(@Param("id") Long id,
                             @Param("expectedStatus") String expectedStatus,
                             @Param("newStatus") String newStatus,

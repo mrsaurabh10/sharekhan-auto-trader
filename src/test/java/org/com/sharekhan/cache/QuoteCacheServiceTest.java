@@ -28,6 +28,8 @@ class QuoteCacheServiceTest {
     @Test
     void recordQuoteWithPartialDataKeepsPreviousValues() {
         service.recordQuote(202, 198.0, 202.0, 200.0);
+        QuoteCacheService.QuoteSnapshot initial = service.getSnapshot(202)
+                .orElseThrow(() -> new AssertionError("Snapshot missing"));
         service.recordQuote(202, null, null, 201.5);
 
         QuoteCacheService.QuoteSnapshot snapshot = service.getSnapshot(202)
@@ -36,6 +38,9 @@ class QuoteCacheServiceTest {
         assertEquals(198.0, snapshot.getBestBid());
         assertEquals(202.0, snapshot.getBestAsk());
         assertEquals(200.0, snapshot.getMidPrice());
+        assertEquals(initial.getLastBookAt(), snapshot.getLastBookAt());
+        assertFalse(service.isLtpStale(snapshot, Duration.ofSeconds(1)));
+        assertTrue(service.isBookStale(snapshot, Duration.ZERO));
     }
 
     @Test
@@ -49,4 +54,3 @@ class QuoteCacheServiceTest {
         assertTrue(service.isStale(snapshot, Duration.ofMillis(1)));
     }
 }
-

@@ -655,6 +655,7 @@ class PriceTriggerServiceTest {
         trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
         trade.setExitReason("TARGET_HIT_PARTIAL");
         trade.setExitOrderId(null);
+        trade.setExitClaimedAt(LocalDateTime.of(2026, 7, 3, 9, 29));
         trade.setQuantity(1275L);
         trade.setLots(1);
         trade.setOriginalLots(2);
@@ -670,6 +671,26 @@ class PriceTriggerServiceTest {
                 statuses != null && statuses.contains(TriggeredTradeStatus.EXIT_TRIGGERED)));
         verify(tradeExecutionService).squareOff(trade, 15.95, "TARGET_HIT_PARTIAL");
         verify(triggeredRepo, never()).claimIfStatusEquals(eq(6353L), anyString(), anyString(), anyString());
+    }
+
+    @Test
+    void monitorOpenTradesDoesNotRecoverFreshExitClaimFromAnotherTickWorker() {
+        TriggeredTradeSetupEntity trade = optionTrade(6354L, 999999, 20000);
+        trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+        trade.setExitReason("TARGET_HIT");
+        trade.setExitOrderId(null);
+        trade.setExitClaimedAt(LocalDateTime.of(2026, 7, 3, 9, 30));
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(999999), anyList())).thenReturn(List.of(trade));
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(999999), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findById(6354L)).thenReturn(Optional.of(trade));
+
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 30, 15)).when(timedService).nowIst();
+
+        timedService.monitorOpenTrades(999999, 15.95);
+
+        verify(tradeExecutionService, never()).squareOff(trade, 15.95, "TARGET_HIT");
     }
 
     private void stubIntradayCandle(int hour,

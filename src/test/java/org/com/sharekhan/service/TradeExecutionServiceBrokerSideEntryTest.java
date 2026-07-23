@@ -244,6 +244,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 .orderId("TRIGGER-ORDER")
                 .status("Pending")
                 .build());
+        configureTightFreshQuote(ctx, 124.0, 124.0, 124.0);
         when(ctx.ltpCache.getLtp(123456)).thenReturn(124.0);
         when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
                 .thenReturn(OrderPlacementResult.builder()
@@ -474,7 +475,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
     private static void configureTightFreshQuote(TestContext ctx, double bid, double ask, double mid) {
         QuoteCacheService.QuoteSnapshot quote = quote(bid, ask, mid);
         when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(quote));
-        when(ctx.quoteCache.isStale(any(), any(Duration.class))).thenReturn(false);
+        when(ctx.quoteCache.isBookStale(any(), any(Duration.class))).thenReturn(false);
     }
 
     private static QuoteCacheService.QuoteSnapshot quote(double bid, double ask, double mid) {
@@ -486,6 +487,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 .midPrice(mid)
                 .spreadAbsolute(ask - bid)
                 .spreadPercent((ask - bid) * 100d / mid)
+                .lastLtpAt(Instant.now())
+                .lastBookAt(Instant.now())
                 .updatedAt(Instant.now())
                 .build();
     }

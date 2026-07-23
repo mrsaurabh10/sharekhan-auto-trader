@@ -191,7 +191,7 @@ public class TradeExecutionService {
     @Value("${app.trading.entry.max-spread-percent:1.5}")
     private double entryMaxSpreadPercent;
 
-    @Value("${app.trading.entry.quote-stale-ms:2000}")
+    @Value("${app.trading.entry.quote-stale-ms:5000}")
     private long entryQuoteStaleMillis;
 
     @Value("${app.trading.entry.max-attempts:5}")
@@ -209,7 +209,7 @@ public class TradeExecutionService {
     @Value("${app.trading.entry.wide-spread-confirmations:2}")
     private int entryWideSpreadConfirmations;
 
-    private static final Duration DEFAULT_QUOTE_STALENESS = Duration.ofMillis(2000);
+    private static final Duration DEFAULT_QUOTE_STALENESS = Duration.ofSeconds(5);
 
     private record EntryDiagnostics(boolean shouldPlace,
                                     String reason,
@@ -250,17 +250,21 @@ public class TradeExecutionService {
         }
 
         QuoteCacheService.QuoteSnapshot snapshot = snapshotOpt.get();
-        boolean stale = quoteCacheService.isStale(snapshot, entryQuoteMaxAge());
+        if (!snapshot.hasBook()) {
+            return new EntryDiagnostics(true, "BOOK_UNVERIFIED", null,
+                    null, null, null, snapshot.getLastBookAt());
+        }
+        boolean stale = quoteCacheService.isBookStale(snapshot, entryQuoteMaxAge());
         if (stale) {
-            return new EntryDiagnostics(true, "STALE_QUOTE", snapshot.getSpreadPercent(),
-                    snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getUpdatedAt());
+            return new EntryDiagnostics(true, "STALE_BOOK", snapshot.getSpreadPercent(),
+                    snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getLastBookAt());
         }
 
         Double spreadPercent = snapshot.getSpreadPercent();
         boolean shouldPlace = spreadPercent == null || spreadPercent <= entryMaxSpreadPercent;
         String reason = shouldPlace ? "SPREAD_OK" : "SPREAD_THRESHOLD_EXCEEDED";
         return new EntryDiagnostics(shouldPlace, reason, spreadPercent,
-                snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getUpdatedAt());
+                snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getLastBookAt());
     }
 
     private Duration entryQuoteMaxAge() {
@@ -2040,6 +2044,17 @@ public class TradeExecutionService {
                             requestedQuantity, "ENTRY_SIGNAL_INVALIDATED", lastResult);
                 }
 
+                if (!hasFreshEntryBook(entryDiagnostics)) {
+                    log.info("⏸️ Waiting for a fresh bid/ask book before entry attempt {} for trigger {} ({})",
+                            attempt + 1, triggerLogId(trigger), entryDiagnostics.reason());
+                    if (attempt == maxAttempts - 1) {
+                        return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
+                                requestedQuantity, "ENTRY_BOOK_UNVERIFIED", lastResult);
+                    }
+                    sleepBeforeEntryRetry(trigger);
+                    continue;
+                }
+
                 Double spread = entryDiagnostics.spreadPercent();
                 if (spread != null && spread > configuredEntryHardSpreadPercent()) {
                     return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
@@ -2232,7 +2247,8 @@ public class TradeExecutionService {
                 && diagnostics.bestBid() != null
                 && diagnostics.bestAsk() != null
                 && diagnostics.recommendedLimit() != null
-                && !"STALE_QUOTE".equals(diagnostics.reason());
+                && !"STALE_BOOK".equals(diagnostics.reason())
+                && !"BOOK_UNVERIFIED".equals(diagnostics.reason());
     }
 
     private boolean isEntrySignalStillValid(TriggeredTradeSetupEntity trigger) {

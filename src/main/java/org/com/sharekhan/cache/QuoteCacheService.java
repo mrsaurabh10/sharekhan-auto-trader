@@ -31,6 +31,14 @@ public class QuoteCacheService {
         Double midPrice;
         Double spreadAbsolute;
         Double spreadPercent;
+        /** Time at which this process last received an LTP value for the scrip. */
+        Instant lastLtpAt;
+        /**
+         * Time at which this process last received both sides of the order book in one feed message.
+         * This is deliberately not refreshed by LTP-only messages.
+         */
+        Instant lastBookAt;
+        /** Time at which this process last received any quote-related feed message. */
         Instant updatedAt;
 
         public boolean hasBook() {
@@ -47,9 +55,12 @@ public class QuoteCacheService {
                                 Double newBid,
                                 Double newAsk,
                                 Double newLtp) {
+        Instant receivedAt = Instant.now();
         Double bid = coalesce(newBid, existing != null ? existing.getBestBid() : null);
         Double ask = coalesce(newAsk, existing != null ? existing.getBestAsk() : null);
         Double ltp = coalesce(newLtp, existing != null ? existing.getLastTradedPrice() : null);
+        boolean receivedLtp = isUsablePrice(newLtp);
+        boolean receivedCompleteBook = isUsablePrice(newBid) && isUsablePrice(newAsk);
 
         Double mid = null;
         Double spreadAbs = null;
@@ -73,7 +84,9 @@ public class QuoteCacheService {
                 .midPrice(mid)
                 .spreadAbsolute(spreadAbs)
                 .spreadPercent(spreadPct)
-                .updatedAt(Instant.now())
+                .lastLtpAt(receivedLtp ? receivedAt : existing != null ? existing.getLastLtpAt() : null)
+                .lastBookAt(receivedCompleteBook ? receivedAt : existing != null ? existing.getLastBookAt() : null)
+                .updatedAt(receivedAt)
                 .build();
 
         if (log.isDebugEnabled()) {
@@ -83,10 +96,14 @@ public class QuoteCacheService {
     }
 
     private Double coalesce(Double candidate, Double fallback) {
-        if (candidate != null && Double.isFinite(candidate) && candidate > 0) {
+        if (isUsablePrice(candidate)) {
             return candidate;
         }
         return fallback;
+    }
+
+    private boolean isUsablePrice(Double value) {
+        return value != null && Double.isFinite(value) && value > 0;
     }
 
     public Optional<QuoteSnapshot> getSnapshot(int scripCode) {
@@ -101,8 +118,27 @@ public class QuoteCacheService {
         return snapshot.getUpdatedAt().isBefore(cutoff);
     }
 
+    /**
+     * Returns whether the executable bid/ask book is too old to use for spread or slippage checks.
+     * A later LTP-only tick must not make an old order book appear fresh.
+     */
+    public boolean isBookStale(QuoteSnapshot snapshot, Duration maxAge) {
+        return isTimestampStale(snapshot != null ? snapshot.getLastBookAt() : null, maxAge);
+    }
+
+    public boolean isLtpStale(QuoteSnapshot snapshot, Duration maxAge) {
+        return isTimestampStale(snapshot != null ? snapshot.getLastLtpAt() : null, maxAge);
+    }
+
+    private boolean isTimestampStale(Instant timestamp, Duration maxAge) {
+        if (timestamp == null) {
+            return true;
+        }
+        Instant cutoff = Instant.now().minus(maxAge);
+        return timestamp.isBefore(cutoff);
+    }
+
     public void clear() {
         quotesByScrip.clear();
     }
 }
-
