@@ -22,7 +22,7 @@ public class WhatsappSignalParser implements TradingSignalParser {
             String instrumentFull = instrumentMatcher.find() ? instrumentMatcher.group(1).trim() : null;
 
             // Extract Entry price
-            Double entryPrice = extractDoubleValue(text, "ENTRY");
+            Double entryPrice = extractEntryPrice(text);
             // Extract Stop Loss
             Double stopLoss = extractDoubleValue(text, "STOP LOSS");
             // Extract Target(s)
@@ -113,6 +113,18 @@ public class WhatsappSignalParser implements TradingSignalParser {
 
     private Double extractDoubleValue(String text, String key) {
         Pattern pattern = Pattern.compile(key + ":\\s*([\\d.]+)", Pattern.CASE_INSENSITIVE);
+        Matcher matcher = pattern.matcher(text);
+        return matcher.find() ? tryParseDouble(matcher.group(1)) : null;
+    }
+
+    /**
+     * Signal providers may qualify an entry level as "ABOVE 150" or "BELOW 150".
+     * The trade engine uses the numeric level as its trigger price, so retain that
+     * level while accepting the optional qualifier.
+     */
+    private Double extractEntryPrice(String text) {
+        Pattern pattern = Pattern.compile("ENTRY:\\s*(?:(?:ABOVE|BELOW)\\s+)?([\\d.]+)",
+                Pattern.CASE_INSENSITIVE);
         Matcher matcher = pattern.matcher(text);
         return matcher.find() ? tryParseDouble(matcher.group(1)) : null;
     }
