@@ -78,6 +78,28 @@ class WhatsappSignalParserTest {
     }
 
     @Test
+    public void testOptionPutWithQualifiedEntry() {
+        String text = "*Hi, Your Subscribed Trading Signal Is Ready:*\n" +
+                "INSTRUMENT: DIXON 28 JUL 13600 PUT\n" +
+                "ENTRY: ABOVE 150\n" +
+                "STOP LOSS: 110\n" +
+                "TARGET: 170/190/210\n\n" +
+                "This is based on your chosen alert preferences.";
+
+        Map<String, Object> result = parser.parse(text);
+
+        assertNotNull(result);
+        assertEquals("DIXON", result.get("symbol"));
+        assertEquals(13600.0, (Double) result.get("strike"), 0.01);
+        assertEquals("PE", result.get("optionType"));
+        assertEquals(150.0, (Double) result.get("entry"), 0.01);
+        assertEquals(110.0, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(170.0, (Double) result.get("target1"), 0.01);
+        assertEquals(190.0, (Double) result.get("target2"), 0.01);
+        assertEquals(210.0, (Double) result.get("target3"), 0.01);
+    }
+
+    @Test
     public void testInvalidInputReturnsNull() {
         String text = "Random invalid text without required fields";
         Map<String, Object> result = parser.parse(text);
