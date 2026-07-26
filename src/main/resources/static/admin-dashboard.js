@@ -1113,7 +1113,7 @@
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="15">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="16">No user selected</td></tr>'; updatePaginationUI(null); return; }
     loadExecutionSourcesForUser(uid, tradeScope).catch(function(){});
 
     try {
@@ -1133,7 +1133,7 @@
       }
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="15">No executed trades</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="16">No executed trades</td></tr>';
         refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
         updatePaginationUI(pageInfo);
         return;
@@ -1214,7 +1214,7 @@
             await fetchJson(url, { method: 'POST' });
             setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); refreshAnalyticsForSelectedUser(); } catch (e) { } }, 800);
           }); actionCell.appendChild(closeBtn);
-          if (['EXIT_TRIGGERED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED'].includes(statusUpper) && !t.intraday) {
+          if (['EXECUTED', 'EXIT_TRIGGERED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED'].includes(statusUpper) && !t.intraday) {
             const resetBtn = document.createElement('button'); resetBtn.className = 'btn small'; resetBtn.style.marginLeft = '4px'; resetBtn.innerText = 'Reset to Executed';
             resetBtn.title = 'Checks the broker order first. Resets only when the exit order is inactive.';
             resetBtn.addEventListener('click', async function () {
@@ -1234,6 +1234,7 @@
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
                        tradeScopeCellHtml(t) +
                        '<td>' + escapeHtml(String(source)) + '</td>' +
+                       '<td>' + escapeHtml(String(status)) + '</td>' +
                        '<td>' + escapeHtml(String(symbol)) + '</td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
@@ -1307,7 +1308,7 @@
       }
       refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
       updatePaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="16">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
