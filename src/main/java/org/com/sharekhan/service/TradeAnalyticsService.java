@@ -190,7 +190,10 @@ public class TradeAnalyticsService {
         if (isSimulatorScope(scope)) {
             sources = tradeRepository.findAnalyticsSourcesBySimulator(Broker.SIMULATOR.getDisplayName());
         } else if (isOwnScope(scope) && userId != null) {
-            sources = tradeRepository.findAnalyticsSourcesByUserExcludingSimulator(userId, Broker.SIMULATOR.getDisplayName());
+            // The Trading Setup "own" view is scoped by application user and
+            // therefore includes that user's Simulator-backed setups as well.
+            // Keep its source options aligned with the setups displayed there.
+            sources = tradeRepository.findAnalyticsSourcesByAppUserId(userId);
         } else if (isAllScope(scope) && userId != null) {
             sources = tradeRepository.findAnalyticsSourcesByUserOrSimulator(userId, Broker.SIMULATOR.getDisplayName());
         } else if (userId != null) {

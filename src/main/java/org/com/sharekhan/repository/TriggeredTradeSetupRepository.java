@@ -475,6 +475,16 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     List<String> findAnalyticsSourcesByUserOrSimulator(@Param("userId") Long userId,
                                                        @Param("simulatorBrokerName") String simulatorBrokerName);
 
+    @Query("""
+            SELECT DISTINCT TRIM(t.source)
+            FROM TriggeredTradeSetupEntity t
+            WHERE t.appUserId = :userId
+              AND t.source IS NOT NULL
+              AND TRIM(t.source) <> ''
+            ORDER BY TRIM(t.source)
+            """)
+    List<String> findAnalyticsSourcesByAppUserId(@Param("userId") Long userId);
+
     @Query(
             value = """
                     SELECT t.*
