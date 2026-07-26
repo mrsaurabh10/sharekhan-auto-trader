@@ -11,6 +11,7 @@
   let currentExecPage = 0;
   const execPageSize = 10;
   let execLoadSeq = 0;
+  let executionSourcesLoadSeq = 0;
   let pnlSummaryLoadSeq = 0;
   let dayPnlSummaryState = { userId: null, scope: null, marketDate: null, openTrades: [], bookedPnl: null, runningPnl: null };
   window.currentSession = null;
@@ -713,12 +714,14 @@
     }
     const key = String(uid) + '|' + String(tradeScope || '');
     if (select.dataset.sourceKey === key) return;
+    const loadSeq = ++executionSourcesLoadSeq;
     const previous = select.value;
     try {
       const params = new URLSearchParams();
       params.set('userId', uid);
       if (tradeScope) params.set('scope', tradeScope);
       const sources = await fetchJson('/api/analytics/sources?' + params.toString());
+      if (loadSeq !== executionSourcesLoadSeq) return;
       const sourceList = Array.isArray(sources) ? sources.filter(function(source) {
         return source != null && String(source).trim();
       }).map(function(source) { return String(source).trim(); }) : [];
@@ -728,6 +731,7 @@
       if (previous && sourceList.includes(previous)) select.value = previous;
       select.dataset.sourceKey = key;
     } catch (e) {
+      if (loadSeq !== executionSourcesLoadSeq) return;
       console.error('Failed to load execution sources', e);
     }
   }
