@@ -2792,6 +2792,7 @@ public class TradeExecutionService {
         int updated = triggeredTradeRepo.resetInactiveNonIntradayExitState(
                 trade.getId(),
                 List.of(
+                        TriggeredTradeStatus.EXECUTED.name(),
                         TriggeredTradeStatus.EXIT_TRIGGERED.name(),
                         TriggeredTradeStatus.EXIT_ORDER_PLACED.name(),
                         TriggeredTradeStatus.TARGET_ORDER_PLACED.name()));
@@ -2805,7 +2806,8 @@ public class TradeExecutionService {
     }
 
     private boolean isResettableNonIntradayExitStatus(TriggeredTradeStatus status) {
-        return status == TriggeredTradeStatus.EXIT_TRIGGERED
+        return status == TriggeredTradeStatus.EXECUTED
+                || status == TriggeredTradeStatus.EXIT_TRIGGERED
                 || status == TriggeredTradeStatus.EXIT_ORDER_PLACED
                 || status == TriggeredTradeStatus.TARGET_ORDER_PLACED;
     }
