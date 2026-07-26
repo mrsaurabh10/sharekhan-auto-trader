@@ -109,6 +109,23 @@ class StrategySupportTest {
         verify(intraday).getIntradayCandles("BSE", "500247", "5minute");
     }
 
+    @Test
+    void fnoExpirySkipsExpiryWithinThreeCalendarDays() {
+        ScriptMasterRepository repository = mock(ScriptMasterRepository.class);
+        StrategySupport support = new StrategySupport(
+                repository, mock(MStockInstrumentResolver.class), mock(MStockInstrumentRepository.class),
+                mock(MStockIntradayCandleService.class), mock(SharekhanHistoricalService.class),
+                mock(TradeExecutionService.class), mock(TriggerTradeRequestRepository.class));
+        LocalDate tradeDate = LocalDate.of(2026, 7, 27);
+        when(repository.findAllOptionExpiriesByTradingSymbolAndOptionType("RELIANCE", "CE"))
+                .thenReturn(List.of(
+                        tradeDate.plusDays(1).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/uuuu")),
+                        tradeDate.plusDays(3).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/uuuu")),
+                        tradeDate.plusDays(8).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/uuuu"))));
+
+        assertThat(support.preferredFnoExpiry("RELIANCE", "CE", tradeDate)).isEqualTo("04/08/2026");
+    }
+
     private StrategySupport support(MStockIntradayCandleService mStockIntradayCandleService,
                                     SharekhanHistoricalService sharekhanHistoricalService) {
         return new StrategySupport(

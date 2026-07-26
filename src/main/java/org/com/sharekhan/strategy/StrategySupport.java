@@ -42,6 +42,7 @@ public class StrategySupport {
 
     public static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     public static final int CANDLE_MINUTES = 5;
+    private static final int FNO_MINIMUM_EXPIRY_DAYS = 3;
 
     private static final DateTimeFormatter EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
     private static final List<DateTimeFormatter> EXPIRY_INPUT_FORMATS = List.of(
@@ -266,6 +267,29 @@ public class StrategySupport {
                 .min(Comparator.naturalOrder())
                 .map(EXPIRY_FORMAT::format)
                 .orElseThrow(() -> new IllegalArgumentException("No valid option expiry found for " + symbol + " " + optionType));
+    }
+
+    /**
+     * F&O 09:25 strategies avoid near-expiry contracts. An expiry that is at
+     * most three calendar days away is skipped in favour of the next available
+     * expiry, which avoids taking a new position into expiry-week decay.
+     */
+    public String preferredFnoExpiry(String symbol, String optionType) {
+        return preferredFnoExpiry(symbol, optionType, LocalDate.now(MARKET_ZONE));
+    }
+
+    String preferredFnoExpiry(String symbol, String optionType, LocalDate tradeDate) {
+        LocalDate minimumExpiryDate = tradeDate.plusDays(FNO_MINIMUM_EXPIRY_DAYS);
+        return scriptMasterRepository.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol, optionType)
+                .stream()
+                .filter(StringUtils::hasText)
+                .map(this::parseExpiry)
+                .filter(Objects::nonNull)
+                .filter(expiry -> expiry.isAfter(minimumExpiryDate))
+                .min(Comparator.naturalOrder())
+                .map(EXPIRY_FORMAT::format)
+                .orElseThrow(() -> new IllegalArgumentException("No F&O option expiry more than "
+                        + FNO_MINIMUM_EXPIRY_DAYS + " days away found for " + symbol + " " + optionType));
     }
 
     public double nearestStrike(String symbol, String optionType, String expiry, double referencePrice) {

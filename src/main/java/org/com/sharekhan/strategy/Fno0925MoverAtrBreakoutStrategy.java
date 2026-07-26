@@ -162,7 +162,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         double entry = signal.entryPrice();
         double stop = signal.stopLoss();
         double risk = Math.abs(entry - stop);
-        String expiry = support.nearestExpiry(selection.symbol(), selection.optionType());
+        String expiry = support.preferredFnoExpiry(selection.symbol(), selection.optionType());
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(selection.symbol());
         trigger.setEntryPrice(entry);
