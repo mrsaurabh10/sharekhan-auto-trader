@@ -64,6 +64,7 @@ public class OrderViewController {
     @GetMapping("/executed")
     public ResponseEntity<?> getExecuted(@RequestParam(name = "userId", required = false) Long userId,
                                          @RequestParam(name = "status", required = false) List<String> statuses,
+                                         @RequestParam(name = "source", required = false) String source,
                                          @RequestParam(name = "scope", defaultValue = "own") String scope,
                                          @RequestParam(defaultValue = "0") int page,
                                          @RequestParam(defaultValue = "10") int size) {
@@ -72,7 +73,8 @@ public class OrderViewController {
                 Sort.Order.desc("id")));
         Long scopedUserId = currentUserService.scopedUserId(userId);
         String orderScope = normalizeOrderScopeForSession(scope);
-        Page<TriggeredTradeSetupEntity> executions = tradeExecutionService.getRecentExecutionsForUser(scopedUserId, statuses, pageable, orderScope);
+        Page<TriggeredTradeSetupEntity> executions = tradeExecutionService.getRecentExecutionsForUser(
+                scopedUserId, statuses, pageable, orderScope, source);
         return ResponseEntity.ok(executions.map(trade -> enrichExecution(trade, scopedUserId)));
     }
 

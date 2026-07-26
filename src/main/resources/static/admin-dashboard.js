@@ -701,6 +701,37 @@
     }
   }
 
+  async function loadExecutionSourcesForUser(userId, scope) {
+    const select = document.getElementById('executionSourceFilter');
+    if (!select) return;
+    const uid = userId || window.selectedUserId;
+    const tradeScope = scope || currentTradeScope();
+    if (!uid) {
+      select.innerHTML = '<option value="">All sources</option>';
+      delete select.dataset.sourceKey;
+      return;
+    }
+    const key = String(uid) + '|' + String(tradeScope || '');
+    if (select.dataset.sourceKey === key) return;
+    const previous = select.value;
+    try {
+      const params = new URLSearchParams();
+      params.set('userId', uid);
+      if (tradeScope) params.set('scope', tradeScope);
+      const sources = await fetchJson('/api/analytics/sources?' + params.toString());
+      const sourceList = Array.isArray(sources) ? sources.filter(function(source) {
+        return source != null && String(source).trim();
+      }).map(function(source) { return String(source).trim(); }) : [];
+      select.innerHTML = '<option value="">All sources</option>' + sourceList.map(function(source) {
+        return '<option value="' + escapeHtml(source) + '">' + escapeHtml(source) + '</option>';
+      }).join('');
+      if (previous && sourceList.includes(previous)) select.value = previous;
+      select.dataset.sourceKey = key;
+    } catch (e) {
+      console.error('Failed to load execution sources', e);
+    }
+  }
+
   async function loadAnalyticsForUser(userId, useGemini, scope) {
     const uid = userId || window.selectedUserId;
     if (!uid) { renderAnalyticsEmpty('No user selected'); return; }
@@ -1082,11 +1113,14 @@
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="16">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="15">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    loadExecutionSourcesForUser(uid, tradeScope).catch(function(){});
 
     try {
       let url = '/api/orders/executed?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(tradeScope) + '&page=' + currentExecPage + '&size=' + execPageSize;
       if (filterStatuses && filterStatuses.length > 0) filterStatuses.forEach(s => { url += '&status=' + encodeURIComponent(s); });
+      const sourceFilter = document.getElementById('executionSourceFilter');
+      if (sourceFilter && sourceFilter.value) url += '&source=' + encodeURIComponent(sourceFilter.value);
 
       const responseData = await fetchJson(url);
       if (loadSeq !== execLoadSeq) return;
@@ -1099,7 +1133,7 @@
       }
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="16">No executed trades</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="15">No executed trades</td></tr>';
         refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
         updatePaginationUI(pageInfo);
         return;
@@ -1127,6 +1161,7 @@
         const t1 = t.target1 != null ? t.target1 : (t.t1 || '-');
         const qty = t.quantity != null ? t.quantity : (t.qty || '-');
         const status = t.status || '-';
+        const source = t.source || '-';
         const statusUpper = String(status).toUpperCase();
         const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
 
@@ -1179,10 +1214,26 @@
             await fetchJson(url, { method: 'POST' });
             setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); refreshAnalyticsForSelectedUser(); } catch (e) { } }, 800);
           }); actionCell.appendChild(closeBtn);
+          if (['EXIT_TRIGGERED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED'].includes(statusUpper) && !t.intraday) {
+            const resetBtn = document.createElement('button'); resetBtn.className = 'btn small'; resetBtn.style.marginLeft = '4px'; resetBtn.innerText = 'Reset to Executed';
+            resetBtn.title = 'Checks the broker order first. Resets only when the exit order is inactive.';
+            resetBtn.addEventListener('click', async function () {
+              if (!confirm('Reset trade ' + id + ' to EXECUTED? This only succeeds if its broker exit order is inactive.')) return;
+              await ensureCsrf();
+              try {
+                const message = await fetchJson('/api/trades/execution/' + id + '/reset-to-executed', { method: 'POST' });
+                alert(typeof message === 'string' ? message : 'Trade reset to EXECUTED.');
+                await loadExecutedForUser(uid, getSelectedStatuses(), currentExecPage, currentTradeScope());
+              } catch (e) {
+                alert('Reset was not completed: ' + (e && e.message ? e.message : e));
+              }
+            }); actionCell.appendChild(resetBtn);
+          }
         } else { actionCell.innerText = '-'; }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
                        tradeScopeCellHtml(t) +
+                       '<td>' + escapeHtml(String(source)) + '</td>' +
                        '<td>' + escapeHtml(String(symbol)) + '</td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
@@ -1196,8 +1247,6 @@
         const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
         const spotLtpTd = document.createElement('td'); spotLtpTd.innerText = '-'; tr.appendChild(spotLtpTd);
         const pnlTd = document.createElement('td'); pnlTd.innerText = '-'; tr.appendChild(pnlTd);
-        const tradeCostTd = document.createElement('td'); tradeCostTd.innerText = '-'; tr.appendChild(tradeCostTd);
-        const effectivePnlTd = document.createElement('td'); effectivePnlTd.innerText = '-'; tr.appendChild(effectivePnlTd);
 
         // Store data for PNL
         try { tr.setAttribute('data-entry', (pnlEntry != null && pnlEntry !== '-' ? String(pnlEntry) : '')); } catch (e) {}
@@ -1213,21 +1262,6 @@
              } else if (finalPnl != null) {
                  pnlTd.innerText = String(finalPnl);
              }
-        }
-
-        if (t.totalTradeCost != null && !isNaN(t.totalTradeCost)) {
-          tradeCostTd.innerText = Number(t.totalTradeCost).toFixed(2);
-          const sttLabel = t.exercised ? 'STT (exercised)' : 'STT (sell)';
-          tradeCostTd.title = 'Brokerage: ' + Number(t.brokerage || 0).toFixed(2) +
-            '\n' + sttLabel + ': ' + Number(t.stt || 0).toFixed(2) +
-            '\nExchange: ' + Number(t.exchangeTransactionCharges || 0).toFixed(2) +
-            '\nStamp: ' + Number(t.stampCharges || 0).toFixed(2) +
-            '\nSEBI: ' + Number(t.sebiTransactionFees || 0).toFixed(2) +
-            '\nGST: ' + Number(t.gst || 0).toFixed(2);
-        }
-        if (t.effectivePnl != null && !isNaN(t.effectivePnl)) {
-          effectivePnlTd.innerText = Number(t.effectivePnl).toFixed(2);
-          updatePnlStyle(effectivePnlTd, t.effectivePnl);
         }
 
         // Determine Keys
@@ -1273,7 +1307,7 @@
       }
       refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
       updatePaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="16">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="15">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
@@ -1316,6 +1350,8 @@
   function wireStatusFilter() {
     const btn = document.getElementById('applyStatusFilterBtn');
     if (btn) btn.addEventListener('click', function() { if (window.selectedUserId) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0, currentTradeScope()); });
+    const source = document.getElementById('executionSourceFilter');
+    if (source) source.addEventListener('change', function() { if (window.selectedUserId) loadExecutedForUser(window.selectedUserId, getSelectedStatuses(), 0, currentTradeScope()); });
   }
 
   // --- LTP helpers ---

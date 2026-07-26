@@ -70,6 +70,24 @@ public class TradeExecutionController {
         }
     }
 
+    @PostMapping("/execution/{id}/reset-to-executed")
+    public ResponseEntity<String> resetExitStateToExecuted(@PathVariable Long id) {
+        if (!canMutateTrade(id)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: trade does not belong to user");
+        }
+        TradeExecutionService.EndOfDayExitResetResult result =
+                tradeExecutionService.resetNonIntradayExitOrderIfInactive(id);
+        return switch (result) {
+            case RESET -> ResponseEntity.ok("Trade reset to EXECUTED; exit-order state cleared.");
+            case SKIPPED_FILLED -> ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Exit order is filled; trade cannot be reset to EXECUTED.");
+            case SKIPPED_BROKER_UNAVAILABLE -> ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Broker order is still active or its status cannot be verified; trade was not reset.");
+            case SKIPPED_NOT_ELIGIBLE -> ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body("Only non-intraday trades in an exit-order state can be reset to EXECUTED.");
+        };
+    }
+
     @PostMapping("/exit-order/{id}/modify")
     public ResponseEntity<?> modifyExitOrder(@PathVariable Long id, @RequestBody ModifyOrderRequest request) {
         if (!canMutateTrade(id)) {

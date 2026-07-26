@@ -38,9 +38,11 @@ class Fno925EntryQualificationServiceTest {
                 .thenReturn(new CandleLoad(candles, true, null));
 
         Fno925EntryQualificationService service = new Fno925EntryQualificationService(support);
-        ReflectionTestUtils.setField(service, "volumeMultiplier", 1.2d);
+        ReflectionTestUtils.setField(service, "orbVolumeMultiplier", 0.9d);
+        ReflectionTestUtils.setField(service, "baseVolumeMultiplier", 1.15d);
         ReflectionTestUtils.setField(service, "volumeLookback", 20);
-        ReflectionTestUtils.setField(service, "maxOpposingWickToBody", 1d);
+        ReflectionTestUtils.setField(service, "maxOpposingWickToRange", 0.55d);
+        ReflectionTestUtils.setField(service, "minBodyToRange", 0.40d);
         ReflectionTestUtils.setField(service, "maxRiskAtrMultiplier", 1.5d);
 
         Fno925Candidate candidate = new Fno925Candidate("TECHM", ScriptMasterEntity.builder().build(), "CE");
@@ -79,11 +81,36 @@ class Fno925EntryQualificationServiceTest {
         assertThat(result.signal().stopLoss()).isEqualTo(99d);
     }
 
+    @Test
+    void orbVolumeUsesPostOpeningMedianInsteadOfDistortedOpeningAverage() {
+        StrategySupport support = mock(StrategySupport.class, Answers.RETURNS_DEFAULTS);
+        when(support.roundPrice(anyDouble())).thenAnswer(invocation -> invocation.getArgument(0));
+        LocalDate day = LocalDate.of(2026, 7, 17);
+        List<StrategyCandle> candles = historicalCandles(day);
+        candles.add(new StrategyCandle(day, LocalTime.of(9, 15), 100d, 105d, 95d, 102d, 10_000L));
+        candles.add(new StrategyCandle(day, LocalTime.of(9, 20), 102d, 106d, 98d, 104d, 10_000L));
+        candles.add(new StrategyCandle(day, LocalTime.of(9, 25), 104d, 105d, 101d, 102d, 100L));
+        candles.add(new StrategyCandle(day, LocalTime.of(9, 30), 102d, 104d, 100d, 103d, 100L));
+        candles.add(new StrategyCandle(day, LocalTime.of(9, 35), 103d, 108d, 102d, 107d, 90L));
+        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(76)))
+                .thenReturn(new CandleLoad(candles, true, null));
+
+        Fno925EntryQualificationService service = configuredService(support);
+        Fno925Candidate candidate = new Fno925Candidate("TEST", ScriptMasterEntity.builder().build(), "CE");
+
+        Fno925EntryQualificationService.Qualification result = service.qualify(candidate, day.atTime(9, 40));
+
+        assertThat(result.qualified()).isTrue();
+        assertThat(result.signal().setup()).isEqualTo("MORNING_ORB");
+    }
+
     private Fno925EntryQualificationService configuredService(StrategySupport support) {
         Fno925EntryQualificationService service = new Fno925EntryQualificationService(support);
-        ReflectionTestUtils.setField(service, "volumeMultiplier", 1.2d);
-        ReflectionTestUtils.setField(service, "volumeLookback", 20);
-        ReflectionTestUtils.setField(service, "maxOpposingWickToBody", 1d);
+        ReflectionTestUtils.setField(service, "orbVolumeMultiplier", 0.9d);
+        ReflectionTestUtils.setField(service, "baseVolumeMultiplier", 1.15d);
+        ReflectionTestUtils.setField(service, "volumeLookback", 5);
+        ReflectionTestUtils.setField(service, "maxOpposingWickToRange", 0.55d);
+        ReflectionTestUtils.setField(service, "minBodyToRange", 0.40d);
         ReflectionTestUtils.setField(service, "maxRiskAtrMultiplier", 1.5d);
         return service;
     }

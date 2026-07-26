@@ -57,11 +57,14 @@ app:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
   strategy:
     fno-0925-mover:
-      volume-multiplier: ${FNO_0925_MOVER_VOLUME_MULTIPLIER:1.2}
-      volume-lookback: ${FNO_0925_MOVER_VOLUME_LOOKBACK:20}
-      max-opposing-wick-to-body: ${FNO_0925_MOVER_MAX_OPPOSING_WICK_TO_BODY:1.0}
+      # Do not compare a later breakout to the unusually high opening-auction volume.
+      orb-volume-multiplier: ${FNO_0925_MOVER_ORB_VOLUME_MULTIPLIER:0.9}
+      base-volume-multiplier: ${FNO_0925_MOVER_BASE_VOLUME_MULTIPLIER:1.15}
+      volume-lookback: ${FNO_0925_MOVER_VOLUME_LOOKBACK:5}
+      max-opposing-wick-to-range: ${FNO_0925_MOVER_MAX_OPPOSING_WICK_TO_RANGE:0.55}
+      min-body-to-range: ${FNO_0925_MOVER_MIN_BODY_TO_RANGE:0.40}
       max-risk-atr-multiplier: ${FNO_0925_MOVER_MAX_RISK_ATR_MULTIPLIER:1.5}
-      orb-cutoff: ${FNO_0925_MOVER_ORB_CUTOFF:10:45}
+      orb-cutoff: ${FNO_0925_MOVER_ORB_CUTOFF:11:00}
       vwap-reclaim-cutoff: ${FNO_0925_MOVER_VWAP_RECLAIM_CUTOFF:13:00}
       reclaim-base-candles: ${FNO_0925_MOVER_RECLAIM_BASE_CANDLES:3}
   market-data:
@@ -85,7 +88,7 @@ app:
       hard-spread-percent: ${ENTRY_HARD_SPREAD_PERCENT:2.5}
       wide-spread-confirmations: ${ENTRY_WIDE_SPREAD_CONFIRMATIONS:2}
       max-slippage-percent: ${ENTRY_MAX_SLIPPAGE_PERCENT:2.0}
-      quote-stale-ms: ${ENTRY_QUOTE_STALE_MS:2000}
+      quote-stale-ms: ${ENTRY_QUOTE_STALE_MS:5000}
   admin:
     token: "u7Hk9jN2vP4xM8yC5wQ1aR3fT6sZ0dE9bL4gJ2hK5mN8vX1zC4qW7eR9tY3a" # REPLACE THIS WITH A STRONG SECRET IN PRODUCTION
   default-broker: SHAREKHAN
