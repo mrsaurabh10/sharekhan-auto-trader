@@ -128,7 +128,7 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
         double entry = signal.entryPrice();
         double stop = signal.stopLoss();
         double risk = Math.abs(entry - stop);
-        String expiry = support.nearestExpiry(symbol, metadata.optionType());
+        String expiry = support.preferredFnoExpiry(symbol, metadata.optionType());
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(symbol);
         trigger.setEntryPrice(entry);
