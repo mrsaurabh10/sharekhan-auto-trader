@@ -2746,6 +2746,70 @@ public class TradeExecutionService {
         exitChaseStates.remove(tradeId);
     }
 
+    /**
+     * Resets a delivery trade only after its broker exit order has been
+     * confirmed cancelled/rejected. A missing/unknown broker response is not
+     * treated as expired, because forgetting an active sell order would leave
+     * an unmanaged broker-side order for the following session.
+     */
+    public EndOfDayExitResetResult resetNonIntradayExitOrderIfInactive(Long tradeId) {
+        if (tradeId == null) {
+            return EndOfDayExitResetResult.SKIPPED_NOT_ELIGIBLE;
+        }
+
+        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(tradeId).orElse(null);
+        if (trade == null
+                || Boolean.TRUE.equals(trade.getIntraday())
+                || !isResettableNonIntradayExitStatus(trade.getStatus())) {
+            return EndOfDayExitResetResult.SKIPPED_NOT_ELIGIBLE;
+        }
+
+        String exitOrderId = trade.getExitOrderId();
+        if (exitOrderId == null || exitOrderId.isBlank()) {
+            return resetInactiveNonIntradayExitState(trade);
+        }
+
+        BrokerContext context = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+        if (context == null || context.getBrokerName() == null) {
+            log.warn("EOD_EXIT_RESET_SKIPPED | trade={} | orderId={} | reason=BROKER_CONTEXT_UNAVAILABLE",
+                    tradeId, exitOrderId);
+            return EndOfDayExitResetResult.SKIPPED_BROKER_UNAVAILABLE;
+        }
+
+        TradeStatus brokerStatus = fetchOrderStatus(trade, context, exitOrderId);
+        if (brokerStatus == TradeStatus.REJECTED) {
+            return resetInactiveNonIntradayExitState(trade);
+        }
+
+        log.info("EOD_EXIT_RESET_SKIPPED | trade={} | orderId={} | brokerStatus={}",
+                tradeId, exitOrderId, brokerStatus);
+        return brokerStatus == TradeStatus.FULLY_EXECUTED
+                ? EndOfDayExitResetResult.SKIPPED_FILLED
+                : EndOfDayExitResetResult.SKIPPED_BROKER_UNAVAILABLE;
+    }
+
+    private EndOfDayExitResetResult resetInactiveNonIntradayExitState(TriggeredTradeSetupEntity trade) {
+        int updated = triggeredTradeRepo.resetInactiveNonIntradayExitState(
+                trade.getId(),
+                List.of(
+                        TriggeredTradeStatus.EXIT_TRIGGERED.name(),
+                        TriggeredTradeStatus.EXIT_ORDER_PLACED.name(),
+                        TriggeredTradeStatus.TARGET_ORDER_PLACED.name()));
+        if (updated == 0) {
+            return EndOfDayExitResetResult.SKIPPED_NOT_ELIGIBLE;
+        }
+        stopExitOrderChase(trade.getId());
+        log.info("EOD_EXIT_RESET | trade={} | symbol={} | priorStatus={} | orderId={}",
+                trade.getId(), trade.getSymbol(), trade.getStatus(), trade.getExitOrderId());
+        return EndOfDayExitResetResult.RESET;
+    }
+
+    private boolean isResettableNonIntradayExitStatus(TriggeredTradeStatus status) {
+        return status == TriggeredTradeStatus.EXIT_TRIGGERED
+                || status == TriggeredTradeStatus.EXIT_ORDER_PLACED
+                || status == TriggeredTradeStatus.TARGET_ORDER_PLACED;
+    }
+
     private Double determineExitChasePrice(TriggeredTradeSetupEntity trade, ExitChaseState state) {
         if (trade == null) {
             return null;
@@ -3905,6 +3969,13 @@ public class TradeExecutionService {
         NO_RECORDS
     }
 
+    public enum EndOfDayExitResetResult {
+        RESET,
+        SKIPPED_NOT_ELIGIBLE,
+        SKIPPED_FILLED,
+        SKIPPED_BROKER_UNAVAILABLE
+    }
+
     public TradeStatus evaluateOrderFinalStatus(TriggeredTradeSetupEntity tradeSetupEntity, JSONObject orderHistoryResponse) {
         if (orderHistoryResponse == null) {
             return TradeStatus.NO_RECORDS;
@@ -4228,6 +4299,46 @@ public class TradeExecutionService {
                 return triggeredTradeRepo.findByAppUserIdExcludingSimulator(userId, Broker.SIMULATOR.getDisplayName(), unsortedPageable(pageable));
             }
         }
+    }
+
+    public Page<TriggeredTradeSetupEntity> getRecentExecutionsForUser(Long userId,
+                                                                        List<String> statusList,
+                                                                        Pageable pageable,
+                                                                        String scope,
+                                                                        String source) {
+        if (source == null || source.isBlank()) {
+            return getRecentExecutionsForUser(userId, statusList, pageable, scope);
+        }
+        if (userId == null) {
+            return getRecentExecutionsForUser(userId, statusList, pageable, scope);
+        }
+
+        List<String> statusNames = (statusList == null || statusList.isEmpty()
+                ? Arrays.stream(TriggeredTradeStatus.values()).map(Enum::name).toList()
+                : statusList.stream()
+                        .map(value -> {
+                            try {
+                                return TriggeredTradeStatus.valueOf(value.toUpperCase()).name();
+                            } catch (Exception ignored) {
+                                return null;
+                            }
+                        })
+                        .filter(Objects::nonNull)
+                        .toList());
+        if (statusNames.isEmpty()) {
+            return Page.empty(pageable);
+        }
+
+        String normalizedScope = isSimulatorDashboardScope(scope) ? "simulator"
+                : isUserDashboardScope(scope) ? "user"
+                : isAllDashboardScope(scope) ? "all" : "own";
+        return triggeredTradeRepo.findBySourceForDashboard(
+                userId,
+                Broker.SIMULATOR.getDisplayName(),
+                normalizedScope,
+                source.trim(),
+                statusNames,
+                unsortedPageable(pageable));
     }
 
     private Pageable unsortedPageable(Pageable pageable) {

@@ -301,6 +301,7 @@
                         <label for="statusFilter" class="small inline" style="font-weight:normal;">Filter Status:</label>
                         <select id="statusFilter" multiple style="height: 2.5em; vertical-align: middle;">
                             <option value="EXECUTED">EXECUTED</option>
+                            <option value="EXIT_TRIGGERED">EXIT_TRIGGERED</option>
                             <option value="EXIT_ORDER_PLACED">EXIT_ORDER_PLACED</option>
                             <option value="TARGET_ORDER_PLACED">TARGET_ORDER_PLACED</option>
                             <option value="EXITED_SUCCESS">EXITED_SUCCESS</option>
@@ -309,6 +310,10 @@
                             <option value="PLACED_PENDING_CONFIRMATION">PLACED_PENDING_CONFIRMATION</option>
                         </select>
                         <button id="applyStatusFilterBtn" class="btn small">Apply</button>
+                        <label for="executionSourceFilter" class="small inline" style="font-weight:normal; margin-left:8px;">Source:</label>
+                        <select id="executionSourceFilter" style="max-width:190px; vertical-align:middle;">
+                            <option value="">All sources</option>
+                        </select>
                     </div>
                 </div>
                 <div id="dayPnlSummary" class="pnl-summary">
@@ -317,7 +322,7 @@
                     <div id="todayPnlSummaryNote" class="pnl-summary-note">Uses today's trades, independent of status filter.</div>
                 </div>
                 <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
-                    <thead><tr><th>ID</th><th>Type</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>Gross PNL</th><th>Trade Cost</th><th>Effective PNL</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Type</th><th>Source</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>Gross PNL</th></tr></thead>
                     <tbody></tbody>
                 </table>
                 <div id="executed-pagination" style="margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 8px;">

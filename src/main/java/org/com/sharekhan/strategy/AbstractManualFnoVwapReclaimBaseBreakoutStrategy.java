@@ -29,6 +29,7 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
     private final TelegramNotificationService telegramNotificationService;
     private final Set<RunKey> submittedSymbols = ConcurrentHashMap.newKeySet();
     private final ConcurrentHashMap<RunKey, LocalDateTime> unavailableAlertedAt = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<RunKey, RejectionAudit> rejectionAudits = new ConcurrentHashMap<>();
 
     protected AbstractManualFnoVwapReclaimBaseBreakoutStrategy(StrategyMetadata metadata,
                                                                  StrategySupport support,
@@ -56,6 +57,8 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
             return support.waiting(metadata, String.join(",", symbols), "Waiting for the 09:25 market open.");
         }
         submittedSymbols.removeIf(key -> key.day().isBefore(now.toLocalDate()));
+        unavailableAlertedAt.keySet().removeIf(key -> key.day().isBefore(now.toLocalDate()));
+        rejectionAudits.keySet().removeIf(key -> key.day().isBefore(now.toLocalDate()));
 
         List<Triggered> triggered = new ArrayList<>();
         List<String> waiting = new ArrayList<>();
@@ -69,14 +72,16 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
                 java.util.Optional<String> availabilityFailure = support.mstockAvailabilityFailure(spot);
                 if (availabilityFailure.isPresent()) {
                     notifyUnavailable(key, request.getUserId(), symbol, availabilityFailure.get(), now);
-                    waiting.add(symbol + ": " + availabilityFailure.get());
+                    recordRejection(key, availabilityFailure.get(), now);
+                    waiting.add(symbol + ": " + compactRejection(availabilityFailure.get()));
                     continue;
                 }
                 unavailableAlertedAt.remove(key);
                 Fno925EntryQualificationService.Qualification qualification = qualificationService
                         .qualify(new Fno925Candidate(symbol, spot, metadata.optionType()), now);
                 if (!qualification.qualified()) {
-                    waiting.add(symbol + ": " + qualification.reason());
+                    recordRejection(key, qualification.reason(), now);
+                    waiting.add(symbol + ": " + displayReason(key, qualification.reason()));
                     continue;
                 }
                 TriggerRequest trigger = buildTrigger(request, symbol, spot, qualification.signal());
@@ -84,16 +89,19 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
                 TriggerTradeRequestEntity trade = existing != null ? existing : support.executeTriggeredTrade(trigger);
                 triggered.add(new Triggered(symbol, trigger, trade, existing != null, qualification.signal().setup()));
                 submittedSymbols.add(key);
+                rejectionAudits.remove(key);
             } catch (Exception e) {
                 String reason = "instrument cannot be polled: " + e.getMessage();
                 notifyUnavailable(key, request.getUserId(), symbol, reason, now);
-                waiting.add(symbol + ": " + reason);
+                recordRejection(key, reason, now);
+                waiting.add(symbol + ": " + compactRejection(reason));
             }
         }
         if (triggered.isEmpty()) {
             String message = waiting.isEmpty()
                     ? "All configured instruments already have a request today."
-                    : "Configured instruments are waiting for confirmation: " + waiting + ".";
+                    : "Configured instruments are waiting for confirmation; a closed window shows the last meaningful rejection: "
+                    + waiting + ".";
             return support.waiting(metadata, String.join(",", symbols), message);
         }
         Triggered first = triggered.get(0);
@@ -177,6 +185,39 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
                         + "\nThe strategy will keep checking; this alert repeats at most every five minutes.");
     }
 
+    private void recordRejection(RunKey key, String reason, LocalDateTime now) {
+        if (reason == null || allEntryWindowsClosed(reason)) {
+            return;
+        }
+        rejectionAudits.put(key, new RejectionAudit(now.toLocalTime(), compactRejection(reason)));
+    }
+
+    private String displayReason(RunKey key, String currentReason) {
+        if (!allEntryWindowsClosed(currentReason)) {
+            return compactRejection(currentReason);
+        }
+        RejectionAudit audit = rejectionAudits.get(key);
+        return audit == null
+                ? "entry windows closed"
+                : "last rejection " + audit.time() + " " + audit.reason();
+    }
+
+    private boolean allEntryWindowsClosed(String reason) {
+        return reason != null
+                && reason.contains("morning ORB window closed")
+                && reason.contains("VWAP reclaim window closed");
+    }
+
+    private String compactRejection(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return "qualification unavailable";
+        }
+        String compact = reason.replace("ORB: ", "ORB ")
+                .replace("; VWAP reclaim: ", " | VWAP ");
+        return compact.length() <= 180 ? compact : compact.substring(0, 177) + "...";
+    }
+
     private record RunKey(LocalDate day, Long userId, Long brokerCredentialsId, String source, String symbol) { }
+    private record RejectionAudit(LocalTime time, String reason) { }
     private record Triggered(String symbol, TriggerRequest trigger, TriggerTradeRequestEntity trade, boolean duplicate, String setup) { }
 }

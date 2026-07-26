@@ -44,6 +44,15 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findByIntradayTrueAndStatus(TriggeredTradeStatus status);
 
+    @Query("""
+            SELECT t
+            FROM TriggeredTradeSetupEntity t
+            WHERE (t.intraday = false OR t.intraday IS NULL)
+              AND t.status IN :statuses
+            """)
+    List<TriggeredTradeSetupEntity> findNonIntradayExitStateTrades(
+            @Param("statuses") List<TriggeredTradeStatus> statuses);
+
     List<TriggeredTradeSetupEntity> findTop10ByOrderByIdDesc();
 
     // app-user-scoped recent executions
@@ -173,6 +182,45 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                     SELECT t.*
                     FROM triggered_trade_setups t
                     LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(TRIM(COALESCE(t.source, ''))) = LOWER(TRIM(:source))
+                      AND t.status IN (:statuses)
+                      AND (
+                            (:scope = 'simulator' AND LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
+                         OR (:scope = 'user' AND t.app_user_id = :appUserId)
+                         OR (:scope = 'all' AND (t.app_user_id = :appUserId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)))
+                         OR (:scope = 'own' AND t.app_user_id = :appUserId
+                             AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName)))
+                      )
+                    ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
+                    """,
+            countQuery = """
+                    SELECT COUNT(*)
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
+                    WHERE LOWER(TRIM(COALESCE(t.source, ''))) = LOWER(TRIM(:source))
+                      AND t.status IN (:statuses)
+                      AND (
+                            (:scope = 'simulator' AND LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
+                         OR (:scope = 'user' AND t.app_user_id = :appUserId)
+                         OR (:scope = 'all' AND (t.app_user_id = :appUserId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName)))
+                         OR (:scope = 'own' AND t.app_user_id = :appUserId
+                             AND (b.broker_name IS NULL OR LOWER(b.broker_name) <> LOWER(:simulatorBrokerName)))
+                      )
+                    """,
+            nativeQuery = true)
+    Page<TriggeredTradeSetupEntity> findBySourceForDashboard(
+            @Param("appUserId") Long appUserId,
+            @Param("simulatorBrokerName") String simulatorBrokerName,
+            @Param("scope") String scope,
+            @Param("source") String source,
+            @Param("statuses") List<String> statuses,
+            Pageable pageable);
+
+    @Query(
+            value = """
+                    SELECT t.*
+                    FROM triggered_trade_setups t
+                    LEFT JOIN broker_credentials b ON b.id = t.broker_credentials_id
                     WHERE (t.app_user_id = :appUserId OR LOWER(b.broker_name) = LOWER(:simulatorBrokerName))
                       AND t.status IN (:statuses)
                     ORDER BY CASE WHEN t.entry_at IS NULL THEN 1 ELSE 0 END, t.entry_at DESC, t.id DESC
@@ -272,6 +320,26 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     int setExitOrderId(@Param("id") Long id,
                        @Param("exitOrderId") String exitOrderId,
                        @Param("placedAt") java.time.LocalDateTime placedAt);
+
+    /**
+     * Releases an inactive exit-order state so that the still-open delivery
+     * position resumes normal monitoring on the next market session.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = """
+            UPDATE triggered_trade_setups
+               SET status = 'EXECUTED',
+                   exit_order_id = NULL,
+                   exit_order_placed_at = NULL,
+                   exit_claimed_at = NULL,
+                   exit_reason = NULL
+             WHERE id = :id
+               AND (intraday = false OR intraday IS NULL)
+               AND status IN (:statuses)
+            """, nativeQuery = true)
+    int resetInactiveNonIntradayExitState(@Param("id") Long id,
+                                           @Param("statuses") List<String> statuses);
 
     // Atomically mark trade as exited with exitPrice, exitedAt and pnl to avoid lost-update concurrency
     @Modifying

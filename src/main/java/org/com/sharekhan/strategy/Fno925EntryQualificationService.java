@@ -24,14 +24,20 @@ public class Fno925EntryQualificationService {
 
     private final StrategySupport support;
 
-    @Value("${app.strategy.fno-0925-mover.volume-multiplier:1.2}")
-    private double volumeMultiplier;
+    @Value("${app.strategy.fno-0925-mover.orb-volume-multiplier:0.9}")
+    private double orbVolumeMultiplier;
 
-    @Value("${app.strategy.fno-0925-mover.volume-lookback:20}")
+    @Value("${app.strategy.fno-0925-mover.base-volume-multiplier:1.15}")
+    private double baseVolumeMultiplier;
+
+    @Value("${app.strategy.fno-0925-mover.volume-lookback:5}")
     private int volumeLookback;
 
-    @Value("${app.strategy.fno-0925-mover.max-opposing-wick-to-body:1.0}")
-    private double maxOpposingWickToBody;
+    @Value("${app.strategy.fno-0925-mover.max-opposing-wick-to-range:0.55}")
+    private double maxOpposingWickToRange;
+
+    @Value("${app.strategy.fno-0925-mover.min-body-to-range:0.40}")
+    private double minBodyToRange;
 
     @Value("${app.strategy.fno-0925-mover.max-risk-atr-multiplier:1.5}")
     private double maxRiskAtrMultiplier;
@@ -98,7 +104,8 @@ public class Fno925EntryQualificationService {
         if (!breaksRange(candidate.optionType(), breakout, rangeHigh, rangeLow)) {
             return Qualification.waiting("no opening-range breakout");
         }
-        Optional<String> failure = filterFailure(todayCandles, breakout, candidate.optionType());
+        Optional<String> failure = filterFailure(todayCandles, breakout, candidate.optionType(),
+                recentPostOpenVolumeReference(todayCandles, breakout), orbVolumeMultiplier);
         if (failure.isPresent()) {
             return Qualification.waiting(failure.get());
         }
@@ -133,7 +140,7 @@ public class Fno925EntryQualificationService {
         if ("CE".equalsIgnoreCase(candidate.optionType()) ? breakout.close() <= baseBreak : breakout.close() >= baseBreak) {
             return Qualification.waiting("no VWAP-reclaim base breakout");
         }
-        Optional<String> failure = filterFailure(todayCandles, breakout, candidate.optionType());
+        Optional<String> failure = filterFailure(todayCandles, breakout, candidate.optionType(), base, baseVolumeMultiplier);
         if (failure.isPresent()) {
             return Qualification.waiting(failure.get());
         }
@@ -168,37 +175,58 @@ public class Fno925EntryQualificationService {
         return "CE".equalsIgnoreCase(optionType) ? candle.close() > rangeHigh : candle.close() < rangeLow;
     }
 
-    private Optional<String> filterFailure(List<StrategyCandle> candles, StrategyCandle breakout, String optionType) {
-        List<StrategyCandle> previousWithVolume = candles.stream()
-                .filter(candle -> candle.time().isBefore(breakout.time()))
+    private Optional<String> filterFailure(List<StrategyCandle> candles,
+                                           StrategyCandle breakout,
+                                           String optionType,
+                                           List<StrategyCandle> volumeReference,
+                                           double volumeMultiplier) {
+        List<StrategyCandle> referenceWithVolume = volumeReference.stream()
                 .filter(StrategyCandle::hasVolume)
                 .toList();
-        if (!breakout.hasVolume() || previousWithVolume.isEmpty()) {
-            return Optional.of("volume is unavailable");
+        if (!breakout.hasVolume() || referenceWithVolume.isEmpty()) {
+            return Optional.of("volume baseline is unavailable");
         }
-        int start = Math.max(0, previousWithVolume.size() - Math.max(1, volumeLookback));
-        double averageVolume = previousWithVolume.subList(start, previousWithVolume.size()).stream()
-                .mapToLong(StrategyCandle::volume)
-                .average()
-                .orElse(0d);
-        if (breakout.volume() < averageVolume * volumeMultiplier) {
-            return Optional.of("breakout volume is below " + volumeMultiplier + "x recent average");
+        double medianVolume = medianVolume(referenceWithVolume);
+        if (breakout.volume() < medianVolume * volumeMultiplier) {
+            return Optional.of("breakout volume is below " + volumeMultiplier + "x recent median");
         }
         Double vwap = vwap(candles, breakout);
         if (vwap == null || ("CE".equalsIgnoreCase(optionType) ? breakout.close() <= vwap : breakout.close() >= vwap)) {
             return Optional.of("breakout close is on the wrong side of VWAP");
         }
         double body = Math.abs(breakout.close() - breakout.open());
-        if (body <= 0d) {
+        double range = breakout.high() - breakout.low();
+        if (body <= 0d || range <= 0d) {
             return Optional.of("breakout candle has no body");
+        }
+        if (body / range < minBodyToRange) {
+            return Optional.of("breakout candle body is too small for its range");
         }
         double opposingWick = "CE".equalsIgnoreCase(optionType)
                 ? Math.min(breakout.open(), breakout.close()) - breakout.low()
                 : breakout.high() - Math.max(breakout.open(), breakout.close());
-        if (opposingWick / body > maxOpposingWickToBody) {
+        if (opposingWick / range > maxOpposingWickToRange) {
             return Optional.of("breakout candle has an immediate rejection wick");
         }
         return Optional.empty();
+    }
+
+    private List<StrategyCandle> recentPostOpenVolumeReference(List<StrategyCandle> candles, StrategyCandle breakout) {
+        List<StrategyCandle> postOpen = candles.stream()
+                .filter(candle -> !candle.time().isBefore(OR_END))
+                .filter(candle -> candle.time().isBefore(breakout.time()))
+                .filter(StrategyCandle::hasVolume)
+                .toList();
+        int start = Math.max(0, postOpen.size() - Math.max(1, volumeLookback));
+        return postOpen.subList(start, postOpen.size());
+    }
+
+    private double medianVolume(List<StrategyCandle> candles) {
+        List<Long> volumes = candles.stream().map(StrategyCandle::volume).sorted().toList();
+        int middle = volumes.size() / 2;
+        return volumes.size() % 2 == 0
+                ? (volumes.get(middle - 1) + volumes.get(middle)) / 2d
+                : volumes.get(middle);
     }
 
     private Double vwap(List<StrategyCandle> candles, StrategyCandle through) {
