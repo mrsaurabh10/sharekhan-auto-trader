@@ -84,25 +84,43 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                 ignored -> ConcurrentHashMap.newKeySet());
         List<Triggered> triggered = new ArrayList<>();
         List<String> waiting = new ArrayList<>();
+        int evaluated = 0;
+        int qualified = 0;
         for (Fno925Candidate selection : selections) {
             if (submitted.contains(selection.symbol())) {
+                logQualification(selection, "ALREADY_SUBMITTED", null, null);
                 continue;
             }
+            evaluated++;
+            support.warmUpPreferredFnoFeeds(request, metadataFor(selection.optionType()), selection.symbol(), selection.spot());
             Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualify(selection, now);
             if (!qualification.qualified()) {
+                support.auditStrategy(request, metadataFor(selection.optionType()), selection.symbol(),
+                        "STRATEGY_EVALUATION", "REJECTED", qualification.reason(), null, null);
+                logQualification(selection, "WAITING", qualification.reason(), null);
                 waiting.add(selection.symbol() + ": " + qualification.reason());
                 continue;
             }
+            qualified++;
             TriggerRequest trigger = buildTrigger(request, selection, qualification.signal());
+            support.auditStrategy(request, metadataFor(selection.optionType()), selection.symbol(),
+                    "STRATEGY_EVALUATION", "QUALIFIED", qualification.signal().setup(), qualification.signal(), trigger);
             TriggerTradeRequestEntity existing = support.findExisting(trigger);
             if (existing != null) {
+                logQualification(selection, "DUPLICATE", null, qualification.signal());
                 triggered.add(new Triggered(selection, trigger, existing, true, qualification.signal().setup()));
                 submitted.add(selection.symbol());
                 continue;
             }
-            triggered.add(new Triggered(selection, trigger, support.executeTriggeredTrade(trigger), false, qualification.signal().setup()));
+            TriggerTradeRequestEntity trade = support.executeTriggeredTrade(trigger);
+            support.auditTradeRequest(request, metadataFor(selection.optionType()), selection.symbol(), "CREATED", trigger, trade);
+            logQualification(selection, "SUBMITTED", null, qualification.signal());
+            triggered.add(new Triggered(selection, trigger, trade, false, qualification.signal().setup()));
             submitted.add(selection.symbol());
         }
+        log.info("FNO_QUALIFICATION_SUMMARY | template={} | selected={} | evaluated={} | qualified={} | submitted={} | waiting={}",
+                TEMPLATE_ID, selections.size(), evaluated, qualified,
+                triggered.stream().filter(item -> !item.duplicate()).count(), waiting.size());
         if (triggered.isEmpty()) {
             String message = waiting.isEmpty()
                     ? "All selected F&O mover candidates already have trading requests today."
@@ -163,6 +181,9 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         double stop = signal.stopLoss();
         double risk = Math.abs(entry - stop);
         String expiry = support.preferredFnoExpiry(selection.symbol(), selection.optionType());
+        StrategySupport.FnoOptionContract optionContract = support.resolveFnoEntryContract(
+                request, metadataFor(selection.optionType()), selection.symbol(), expiry,
+                support.nearestStrike(selection.symbol(), selection.optionType(), expiry, entry));
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(selection.symbol());
         trigger.setEntryPrice(entry);
@@ -171,8 +192,8 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         trigger.setTarget2(support.roundPrice(ce ? entry + (2d * risk) : entry - (2d * risk)));
         trigger.setTarget3(support.roundPrice(ce ? entry + (3d * risk) : entry - (3d * risk)));
         trigger.setOptionType(selection.optionType());
-        trigger.setExpiry(expiry);
-        trigger.setStrikePrice(support.nearestStrike(selection.symbol(), selection.optionType(), expiry, entry));
+        trigger.setExpiry(optionContract.expiry());
+        trigger.setStrikePrice(optionContract.strike());
         trigger.setIntraday(request.getIntraday() == null || request.getIntraday());
         trigger.setUseSpotPrice(true);
         trigger.setUseSpotForEntry(true);
@@ -190,8 +211,29 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         return trigger;
     }
 
+    private StrategyMetadata metadataFor(String optionType) {
+        return new StrategyMetadata(TEMPLATE_ID, METADATA.name(), METADATA.description(), optionType);
+    }
+
     private String sourceFor(StrategyApplyRequest request) {
         return request.getSource() == null || request.getSource().isBlank() ? "strategy:" + TEMPLATE_ID : request.getSource().trim();
+    }
+
+    private void logQualification(Fno925Candidate candidate,
+                                  String outcome,
+                                  String reason,
+                                  Fno925EntryQualificationService.Signal signal) {
+        if (signal == null) {
+            log.info("FNO_QUALIFICATION | template={} | symbol={} | optionType={} | outcome={} | reason={}",
+                    TEMPLATE_ID, candidate.symbol(), candidate.optionType(), outcome,
+                    reason == null ? "NA" : reason);
+            return;
+        }
+        log.info("FNO_QUALIFICATION | template={} | symbol={} | optionType={} | outcome={} | setup={} | "
+                        + "breakoutTime={} | entry={} | stop={} | rangeHigh={} | rangeLow={}",
+                TEMPLATE_ID, candidate.symbol(), candidate.optionType(), outcome, signal.setup(),
+                signal.breakoutCandle().time(), support.roundPrice(signal.entryPrice()), support.roundPrice(signal.stopLoss()),
+                support.roundPrice(signal.openingRangeHigh()), support.roundPrice(signal.openingRangeLow()));
     }
 
     private record RunKey(LocalDate day, Long userId, Long brokerCredentialsId, String source) { }

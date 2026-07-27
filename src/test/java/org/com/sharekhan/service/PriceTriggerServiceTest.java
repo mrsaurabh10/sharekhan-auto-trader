@@ -2,6 +2,7 @@ package org.com.sharekhan.service;
 
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
@@ -402,6 +403,77 @@ class PriceTriggerServiceTest {
 
         verify(tradeExecutionService).executeTradeFromEntity(trigger);
         verify(intradayCandleService, never()).getCompletedMinuteCandle(eq(20000), any());
+    }
+
+    @Test
+    void dynamicStrategySpotSignalSkipsTheOpeningGapGuard() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
+        TriggerTradeRequestEntity trigger = manualSpotTrigger(7030L, 100.0);
+        trigger.setSource("strategy:FNO_0925_MOVER_ATR_BREAKOUT");
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(triggerRepo.claimIfStatusEquals(7030L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                .thenReturn(1);
+        when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
+
+        timedService.evaluatePriceTrigger(20000, 100.1);
+
+        verify(tradeExecutionService).executeTradeFromEntity(trigger);
+        verify(historicalService, never()).getTodayOpenPrice(any());
+    }
+
+    @Test
+    void nonAtrOptionEntrySkipsOpeningGapGuardEvenWhenCapturedOpenIsAboveEntry() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
+        TriggerTradeRequestEntity trigger = TriggerTradeRequestEntity.builder()
+                .id(7031L)
+                .symbol("SENSEX")
+                .scripCode(1137827)
+                .entryPrice(440.0)
+                .source("manual")
+                .useSpotForEntry(false)
+                .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                .build();
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(1137827), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(1137827), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(ltpCacheService.getTodayOpeningPrice(1137827)).thenReturn(1830.0);
+        when(triggerRepo.claimIfStatusEquals(7031L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                .thenReturn(1);
+        when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
+
+        timedService.evaluatePriceTrigger(1137827, 440.0);
+
+        verify(historicalService, never()).getTodayOpenPrice(any());
+        verify(tradeExecutionService).executeTradeFromEntity(trigger);
+    }
+
+    @Test
+    void doesNotReevaluateARequestWhileEntryExecutionIsInFlight() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
+        TriggerTradeRequestEntity trigger = manualSpotTrigger(7032L, 100.0);
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        when(orderExecutionDispatcher.isInFlight(anyString())).thenReturn(true);
+
+        timedService.evaluatePriceTrigger(20000, 100.1);
+
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+        verify(triggerRepo, never()).claimIfStatusEquals(7032L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
     }
 
     @Test

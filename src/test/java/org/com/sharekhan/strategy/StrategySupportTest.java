@@ -1,5 +1,6 @@
 package org.com.sharekhan.strategy;
 
+import org.com.sharekhan.dto.StrategyApplyRequest;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.repository.MStockInstrumentRepository;
@@ -124,6 +125,86 @@ class StrategySupportTest {
                         tradeDate.plusDays(8).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/uuuu"))));
 
         assertThat(support.preferredFnoExpiry("RELIANCE", "CE", tradeDate)).isEqualTo("04/08/2026");
+    }
+
+    @Test
+    void warmsSpotAndPreferredExpiryAtmOptionForManualFnoMonitoring() {
+        ScriptMasterRepository repository = mock(ScriptMasterRepository.class);
+        MStockInstrumentResolver resolver = mock(MStockInstrumentResolver.class);
+        MStockInstrumentRepository instrumentRepository = mock(MStockInstrumentRepository.class);
+        MStockIntradayCandleService intraday = mock(MStockIntradayCandleService.class);
+        TradeExecutionService execution = mock(TradeExecutionService.class);
+        StrategySupport support = new StrategySupport(
+                repository, resolver, instrumentRepository, intraday,
+                mock(SharekhanHistoricalService.class), execution, mock(TriggerTradeRequestRepository.class));
+        ScriptMasterEntity spot = spotScript("360ONE", "NC", 13061);
+        MStockInstrumentEntity instrument = MStockInstrumentEntity.builder()
+                .instrumentToken(13061L).instrumentKey("NSE:360ONE-EQ")
+                .exchangeToken("13061").tradingSymbol("360ONE-EQ")
+                .exchange("NSE").instrumentType("Equity").build();
+        LocalDate today = LocalDate.now(StrategySupport.MARKET_ZONE);
+        String expiry = today.plusDays(8).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/uuuu"));
+        when(resolver.resolveInstrumentKey(spot)).thenReturn(Optional.of("NSE:360ONE-EQ"));
+        when(instrumentRepository.findByInstrumentKey("NSE:360ONE-EQ")).thenReturn(Optional.of(instrument));
+        when(intraday.getIntradayCandles("NSE", "13061", "5minute"))
+                .thenReturn(List.of(new MStockIntradayCandleService.IntradayCandle(
+                        today, LocalTime.of(9, 25), 1120, 1124, 1119, 1123, 1_000L)));
+        when(repository.findAllOptionExpiriesByTradingSymbolAndOptionType("360ONE", "CE"))
+                .thenReturn(List.of(expiry));
+        when(repository.findStrikePricesByTradingSymbolAndOptionTypeAndExpiry("360ONE", "CE", expiry))
+                .thenReturn(List.of(1120d, 1140d));
+        when(execution.warmUpOptionLtp(any(), eq("F&O strategy monitoring"))).thenReturn(Optional.of(66826));
+
+        StrategyApplyRequest request = new StrategyApplyRequest();
+        request.setUserId(1L);
+        request.setBrokerCredentialsId(2L);
+        support.warmUpPreferredFnoFeeds(request, new StrategyMetadata("FNO", "FNO", "", "CE"), "360ONE", spot);
+
+        verify(execution).warmUpSpotLtp(spot, "F&O strategy monitoring");
+        verify(execution).warmUpOptionLtp(org.mockito.ArgumentMatchers.argThat(trigger ->
+                        "360ONE".equals(trigger.getInstrument())
+                                && Double.valueOf(1120d).equals(trigger.getStrikePrice())
+                                && expiry.equals(trigger.getExpiry())),
+                eq("F&O strategy monitoring"));
+    }
+
+    @Test
+    void fallsBackToThePrewarmedStrikeWhenTheNewAtmBookIsUnavailable() {
+        ScriptMasterRepository repository = mock(ScriptMasterRepository.class);
+        MStockInstrumentResolver resolver = mock(MStockInstrumentResolver.class);
+        MStockInstrumentRepository instrumentRepository = mock(MStockInstrumentRepository.class);
+        MStockIntradayCandleService intraday = mock(MStockIntradayCandleService.class);
+        TradeExecutionService execution = mock(TradeExecutionService.class);
+        StrategySupport support = new StrategySupport(repository, resolver, instrumentRepository, intraday,
+                mock(SharekhanHistoricalService.class), execution, mock(TriggerTradeRequestRepository.class));
+        ScriptMasterEntity spot = spotScript("360ONE", "NC", 13061);
+        MStockInstrumentEntity instrument = MStockInstrumentEntity.builder().instrumentToken(13061L)
+                .exchangeToken("13061").instrumentKey("NSE:360ONE-EQ").tradingSymbol("360ONE-EQ")
+                .exchange("NSE").instrumentType("Equity").build();
+        LocalDate today = LocalDate.now(StrategySupport.MARKET_ZONE);
+        String expiry = today.plusDays(8).format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/uuuu"));
+        when(resolver.resolveInstrumentKey(spot)).thenReturn(Optional.of("NSE:360ONE-EQ"));
+        when(instrumentRepository.findByInstrumentKey("NSE:360ONE-EQ")).thenReturn(Optional.of(instrument));
+        when(intraday.getIntradayCandles("NSE", "13061", "5minute"))
+                .thenReturn(List.of(new MStockIntradayCandleService.IntradayCandle(
+                        today, LocalTime.of(9, 25), 1120, 1124, 1119, 1123, 1_000L)));
+        when(repository.findAllOptionExpiriesByTradingSymbolAndOptionType("360ONE", "CE")).thenReturn(List.of(expiry));
+        when(repository.findStrikePricesByTradingSymbolAndOptionTypeAndExpiry("360ONE", "CE", expiry))
+                .thenReturn(List.of(1120d, 1140d));
+        when(execution.warmUpOptionLtp(any(), any())).thenReturn(Optional.of(66826));
+
+        StrategyApplyRequest request = new StrategyApplyRequest();
+        request.setUserId(1L);
+        request.setBrokerCredentialsId(2L);
+        StrategyMetadata metadata = new StrategyMetadata("FNO", "FNO", "", "CE");
+        support.warmUpPreferredFnoFeeds(request, metadata, "360ONE", spot);
+
+        StrategySupport.FnoOptionContract resolved = support.resolveFnoEntryContract(
+                request, metadata, "360ONE", expiry, 1140d);
+
+        assertThat(resolved).isEqualTo(new StrategySupport.FnoOptionContract(expiry, 1120d));
+        verify(execution).hasFreshOptionBook(org.mockito.ArgumentMatchers.argThat(candidate ->
+                Double.valueOf(1140d).equals(candidate.getStrikePrice())));
     }
 
     private StrategySupport support(MStockIntradayCandleService mStockIntradayCandleService,

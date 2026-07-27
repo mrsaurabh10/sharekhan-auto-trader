@@ -294,6 +294,41 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void simulatorPlacesEntryAtLtpWhenNoBidAskBookArrives() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker();
+        configureFiveAttemptPolicy(ctx);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
+                .thenReturn(OrderPlacementResult.builder()
+                        .success(true)
+                        .orderId("SIM-ENTRY-1")
+                        .status("Fully Executed")
+                        .attemptedPrice(10.55)
+                        .executedPrice(10.55)
+                        .executedQuantity(50L)
+                        .build());
+
+        TriggeredTradeSetupEntity executed = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(executed.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(10.55));
+    }
+
+    @Test
+    void realBrokerStillRejectsEntryWhenNoBidAskBookArrives() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+
+        TriggeredTradeSetupEntity rejected = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(rejected.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        assertThat(rejected.getExitReason()).isEqualTo("ENTRY_BOOK_UNVERIFIED");
+        verify(ctx.broker, never()).placeOrder(any(), any(BrokerContext.class), anyDouble());
+    }
+
+    @Test
     void automaticEntryUsesFiveBoundedPriceLevelsThenCancels() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         configureFiveAttemptPolicy(ctx);
@@ -632,6 +667,17 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     null
             );
             ReflectionTestUtils.setField(service, "telegramNotificationService", telegramNotificationService);
+        }
+
+        private void useSimulatorBroker() {
+            when(brokerCredentialsRepo.findById(55L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder()
+                    .id(55L)
+                    .brokerName(Broker.SIMULATOR.getDisplayName())
+                    .customerId(999L)
+                    .apiKey("api-key")
+                    .clientCode("client-code")
+                    .active(true)
+                    .build()));
         }
     }
 

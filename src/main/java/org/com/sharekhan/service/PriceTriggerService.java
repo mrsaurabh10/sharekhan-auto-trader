@@ -91,6 +91,9 @@ public class PriceTriggerService {
             );
 
             for (TriggerTradeRequestEntity trigger : candidates) {
+                if (entryExecutionOwnsOrHasPersistedTrade(trigger)) {
+                    continue;
+                }
                 // Check if entry is based on spot price (using granular flag or legacy flag)
                 boolean isSpotEntry = Boolean.TRUE.equals(trigger.getUseSpotForEntry()) 
                         || (trigger.getUseSpotForEntry() == null && Boolean.TRUE.equals(trigger.getUseSpotPrice()));
@@ -128,6 +131,9 @@ public class PriceTriggerService {
             );
 
             for (TriggerTradeRequestEntity trigger : spotCandidates) {
+                if (entryExecutionOwnsOrHasPersistedTrade(trigger)) {
+                    continue;
+                }
                 // Check if entry is based on spot price
                 boolean isSpotEntry = Boolean.TRUE.equals(trigger.getUseSpotForEntry()) 
                         || (trigger.getUseSpotForEntry() == null && Boolean.TRUE.equals(trigger.getUseSpotPrice()));
@@ -292,11 +298,18 @@ public class PriceTriggerService {
             return false;
         }
 
+        // Opening-gap protection belongs exclusively to the ATR opening signal.
+        // Manual, Telegram and strategy-generated levels are created intraday, so
+        // comparing them with the market open can falsely reject a valid entry.
+        if (!ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())) {
+            return false;
+        }
+
         boolean atrSpotEntry = ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
                 && (Boolean.TRUE.equals(trigger.getUseSpotForEntry())
                     || (trigger.getUseSpotForEntry() == null && Boolean.TRUE.equals(trigger.getUseSpotPrice())));
 
-        Optional<ReferencePrice> openPrice = getTodayOpenReferencePrice(referenceScrip);
+        Optional<ReferencePrice> openPrice = getTodayOpenReferencePrice(trigger, referenceScrip);
         if (openPrice.isPresent()) {
             ReferencePrice open = openPrice.get();
             if (isComparableToEntryPrice(open.price(), entryPrice)) {
@@ -507,20 +520,35 @@ public class PriceTriggerService {
         return !localTime.isBefore(ENTRY_EVALUATION_START) && !localTime.isAfter(EQUITY_MARKET_CLOSE);
     }
 
-    private Optional<ReferencePrice> getTodayOpenReferencePrice(Integer referenceScrip) {
-        if (referenceScrip == null) {
+    private Optional<ReferencePrice> getTodayOpenReferencePrice(TriggerTradeRequestEntity trigger,
+                                                                 Integer referenceScrip) {
+        // An entry price can only be compared with an opening price captured for the
+        // same traded instrument. Spot/index historical responses must never be used
+        // to validate an option premium.
+        if (trigger == null || referenceScrip == null || !referenceScrip.equals(trigger.getScripCode())) {
             return Optional.empty();
         }
 
+        // Do not fall back to the broker historical endpoint here. It can return an
+        // incorrectly mapped index/contract candle; the live cache is keyed by the
+        // subscribed traded scrip and is therefore safe to compare.
         Double openingPrice = ltpCacheService.getTodayOpeningPrice(referenceScrip);
-        if (openingPrice != null) {
-            return Optional.of(new ReferencePrice("captured open", openingPrice));
+        if (openingPrice == null || !Double.isFinite(openingPrice) || openingPrice <= 0d) {
+            return Optional.empty();
         }
+        return Optional.of(new ReferencePrice("captured open", openingPrice));
+    }
 
-        OptionalDouble openPriceOpt = sharekhanHistoricalService.getTodayOpenPrice(referenceScrip);
-        return openPriceOpt.isPresent()
-                ? Optional.of(new ReferencePrice("historical open", openPriceOpt.getAsDouble()))
-                : Optional.empty();
+    private boolean entryExecutionOwnsOrHasPersistedTrade(TriggerTradeRequestEntity trigger) {
+        if (trigger == null || trigger.getId() == null) {
+            return false;
+        }
+        if (orderExecutionDispatcher.isInFlight(orderExecutionKey("ENTRY:" + trigger.getId(),
+                trigger.getBrokerCredentialsId()))) {
+            return true;
+        }
+        List<TriggeredTradeSetupEntity> persisted = triggeredRepo.findByTriggerRequestId(trigger.getId());
+        return persisted != null && !persisted.isEmpty();
     }
 
     private boolean rejectIfReferencePriceInvalid(TriggerTradeRequestEntity trigger,

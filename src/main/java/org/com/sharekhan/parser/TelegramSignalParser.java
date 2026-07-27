@@ -17,6 +17,24 @@ public class TelegramSignalParser implements TradingSignalParser {
             "\\b(above|abive|abv|abve|below|belwo|blow)\\b",
             Pattern.CASE_INSENSITIVE
     );
+    private static final Pattern STOCK_BAZAARI_TRADE_PATTERN = Pattern.compile(
+            "\\bTRADE\\s*:\\s*([A-Z0-9_&\\-]+)\\s+"
+                    + "(JANUARY|JAN|FEBRUARY|FEB|MARCH|MAR|APRIL|APR|MAY|JUNE|JUN|JULY|JUL|"
+                    + "AUGUST|AUG|SEPTEMBER|SEP|OCTOBER|OCT|NOVEMBER|NOV|DECEMBER|DEC)\\s+"
+                    + "([\\d.]+)\\s+(CE|PE)\\b",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern STOCK_BAZAARI_TRIGGER_PATTERN = Pattern.compile(
+            "\\bTRIGGER\\s+PRICE\\s*:\\s*(?:BUY|SELL)?\\s*"
+                    + "(?:ABOVE|ABIVE|ABV|ABVE|BELOW|BELWO|BLOW)\\s*([\\d.]+)",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern STOCK_BAZAARI_TARGET_PATTERN = Pattern.compile(
+            "\\bTARGET\\s*:\\s*([\\d.]+)(?:\\s*/\\s*([\\d.]+))?(?:\\s*/\\s*([\\d.]+))?",
+            Pattern.CASE_INSENSITIVE
+    );
+    private static final Pattern STOCK_BAZAARI_STOP_LOSS_PATTERN = Pattern.compile(
+            "\\bSL\\s*:\\s*([\\d.]+)", Pattern.CASE_INSENSITIVE);
 
     @Override
     public Map<String, Object> parse(String text) {
@@ -34,6 +52,11 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .collect(Collectors.toList());
 
         String normalizedForQuick = cleanedText.replace("\n", " ").replaceAll("\\s+", " ").trim();
+        Map<String, Object> stockBazaariResult = parseStockBazaariSignal(normalizedForQuick);
+        if (stockBazaariResult != null) {
+            return stockBazaariResult;
+        }
+
         if (!normalizedForQuick.isEmpty() && !containsBreakoutKeyword(normalizedForQuick)) {
             Matcher quickMatcher = QUICK_PATTERN.matcher(normalizedForQuick);
             if (quickMatcher.matches()) {
@@ -198,6 +221,42 @@ public class TelegramSignalParser implements TradingSignalParser {
             result.put("quantity", quantity);
         }
 
+        return result;
+    }
+
+    /**
+     * Stock Bazaari publishes the contract month between the underlying and
+     * strike, for example {@code Trade: LODHA AUG 1160 CE}. Keep that month
+     * when resolving the contract; otherwise order placement selects the
+     * nearest expiry for the same strike.
+     */
+    private Map<String, Object> parseStockBazaariSignal(String normalizedText) {
+        Matcher tradeMatcher = STOCK_BAZAARI_TRADE_PATTERN.matcher(normalizedText);
+        Matcher triggerMatcher = STOCK_BAZAARI_TRIGGER_PATTERN.matcher(normalizedText);
+        if (!tradeMatcher.find() || !triggerMatcher.find()) {
+            return null;
+        }
+
+        Matcher targetMatcher = STOCK_BAZAARI_TARGET_PATTERN.matcher(normalizedText);
+        Matcher stopLossMatcher = STOCK_BAZAARI_STOP_LOSS_PATTERN.matcher(normalizedText);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("source", "StockBazaari");
+        result.put("action", "BUY");
+        result.put("symbol", tradeMatcher.group(1).toUpperCase(Locale.ROOT));
+        result.put("strike", tradeMatcher.group(3));
+        result.put("optionType", tradeMatcher.group(4).toUpperCase(Locale.ROOT));
+        result.put("entry", tryParseDouble(triggerMatcher.group(1)));
+        result.put("expiry", parseExpiry(tradeMatcher.group(2), tradeMatcher.group(1)));
+        result.put("exchange", null);
+        result.put("intraday", true);
+        if (targetMatcher.find()) {
+            result.put("target1", targetMatcher.group(1));
+            result.put("target2", targetMatcher.group(2));
+            result.put("target3", targetMatcher.group(3));
+        }
+        if (stopLossMatcher.find()) {
+            result.put("stopLoss", tryParseDouble(stopLossMatcher.group(1)));
+        }
         return result;
     }
 

@@ -3,6 +3,9 @@ package org.com.sharekhan.parser;
 import org.junit.jupiter.api.Test;
 
 import java.util.Map;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.YearMonth;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -100,5 +103,47 @@ class TelegramSignalParserTest {
         assertEquals("CE", result.get("optionType"));
         assertEquals(true, result.get("quickTrade"));
         assertEquals(1, result.get("quantity"));
+    }
+
+    @Test
+    void parsesStockBazaariSignalAndKeepsTheContractMonth() {
+        Map<String, Object> result = parser.parse("""
+                New Trade Opportunity – Delivered as part of your subscription plan
+
+                📈 Trade: LODHA AUG 1160 CE
+                📍 Trigger Price: BUY ABOVE 38.3
+                🎯 Target: 40.5/43/46
+                🛑 SL: 32
+                """);
+
+        assertNotNull(result);
+        assertEquals("StockBazaari", result.get("source"));
+        assertEquals("LODHA", result.get("symbol"));
+        assertEquals("1160", result.get("strike"));
+        assertEquals("CE", result.get("optionType"));
+        assertEquals(38.3, (Double) result.get("entry"), 0.01);
+        assertEquals("40.5", result.get("target1"));
+        assertEquals("43", result.get("target2"));
+        assertEquals("46", result.get("target3"));
+        assertEquals(32.0, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(lastTuesdayOfAugust().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")), result.get("expiry"));
+    }
+
+    private LocalDate lastTuesdayOfAugust() {
+        LocalDate today = LocalDate.now();
+        int year = today.getYear();
+        LocalDate expiry = lastWeekdayOfMonth(year, 8, DayOfWeek.TUESDAY);
+        if (!expiry.isAfter(today)) {
+            expiry = lastWeekdayOfMonth(year + 1, 8, DayOfWeek.TUESDAY);
+        }
+        return expiry;
+    }
+
+    private LocalDate lastWeekdayOfMonth(int year, int month, DayOfWeek weekday) {
+        LocalDate date = YearMonth.of(year, month).atEndOfMonth();
+        while (date.getDayOfWeek() != weekday) {
+            date = date.minusDays(1);
+        }
+        return date;
     }
 }

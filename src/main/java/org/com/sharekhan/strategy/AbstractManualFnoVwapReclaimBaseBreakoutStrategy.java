@@ -71,27 +71,36 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
                 ScriptMasterEntity spot = support.resolveSpotScript(symbol);
                 java.util.Optional<String> availabilityFailure = support.mstockAvailabilityFailure(spot);
                 if (availabilityFailure.isPresent()) {
+                    support.auditStrategy(request, metadata, symbol, "STRATEGY_EVALUATION", "UNAVAILABLE",
+                            availabilityFailure.get(), null, null);
                     notifyUnavailable(key, request.getUserId(), symbol, availabilityFailure.get(), now);
                     recordRejection(key, availabilityFailure.get(), now);
                     waiting.add(symbol + ": " + compactRejection(availabilityFailure.get()));
                     continue;
                 }
                 unavailableAlertedAt.remove(key);
+                support.warmUpPreferredFnoFeeds(request, metadata, symbol, spot);
                 Fno925EntryQualificationService.Qualification qualification = qualificationService
                         .qualify(new Fno925Candidate(symbol, spot, metadata.optionType()), now);
                 if (!qualification.qualified()) {
+                    support.auditStrategy(request, metadata, symbol, "STRATEGY_EVALUATION", "REJECTED",
+                            qualification.reason(), null, null);
                     recordRejection(key, qualification.reason(), now);
                     waiting.add(symbol + ": " + displayReason(key, qualification.reason()));
                     continue;
                 }
                 TriggerRequest trigger = buildTrigger(request, symbol, spot, qualification.signal());
+                support.auditStrategy(request, metadata, symbol, "STRATEGY_EVALUATION", "QUALIFIED",
+                        qualification.signal().setup(), qualification.signal(), trigger);
                 TriggerTradeRequestEntity existing = support.findExisting(trigger);
                 TriggerTradeRequestEntity trade = existing != null ? existing : support.executeTriggeredTrade(trigger);
+                support.auditTradeRequest(request, metadata, symbol, existing != null ? "DUPLICATE" : "CREATED", trigger, trade);
                 triggered.add(new Triggered(symbol, trigger, trade, existing != null, qualification.signal().setup()));
                 submittedSymbols.add(key);
                 rejectionAudits.remove(key);
             } catch (Exception e) {
                 String reason = "instrument cannot be polled: " + e.getMessage();
+                support.auditStrategy(request, metadata, symbol, "STRATEGY_EVALUATION", "ERROR", reason, null, null);
                 notifyUnavailable(key, request.getUserId(), symbol, reason, now);
                 recordRejection(key, reason, now);
                 waiting.add(symbol + ": " + compactRejection(reason));
@@ -129,6 +138,9 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
         double stop = signal.stopLoss();
         double risk = Math.abs(entry - stop);
         String expiry = support.preferredFnoExpiry(symbol, metadata.optionType());
+        StrategySupport.FnoOptionContract optionContract = support.resolveFnoEntryContract(
+                request, metadata, symbol, expiry,
+                support.nearestStrike(symbol, metadata.optionType(), expiry, entry));
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(symbol);
         trigger.setEntryPrice(entry);
@@ -137,8 +149,8 @@ abstract class AbstractManualFnoVwapReclaimBaseBreakoutStrategy implements Strat
         trigger.setTarget2(support.roundPrice(ce ? entry + (2d * risk) : entry - (2d * risk)));
         trigger.setTarget3(support.roundPrice(ce ? entry + (3d * risk) : entry - (3d * risk)));
         trigger.setOptionType(metadata.optionType());
-        trigger.setExpiry(expiry);
-        trigger.setStrikePrice(support.nearestStrike(symbol, metadata.optionType(), expiry, entry));
+        trigger.setExpiry(optionContract.expiry());
+        trigger.setStrikePrice(optionContract.strike());
         trigger.setIntraday(request.getIntraday() == null || request.getIntraday());
         trigger.setUseSpotPrice(true);
         trigger.setUseSpotForEntry(true);
