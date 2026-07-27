@@ -19,7 +19,7 @@ public class Fno925EntryQualificationService {
     private static final LocalTime OR_START = LocalTime.of(9, 15);
     private static final LocalTime OR_END = LocalTime.of(9, 25);
     private static final LocalTime DEFAULT_ORB_CUTOFF = LocalTime.of(10, 45);
-    private static final LocalTime DEFAULT_RECLAIM_CUTOFF = LocalTime.of(13, 0);
+    private static final LocalTime DEFAULT_RECLAIM_CUTOFF = LocalTime.of(14, 0);
     private static final int ATR_PERIOD = 75;
 
     private final StrategySupport support;
@@ -45,7 +45,7 @@ public class Fno925EntryQualificationService {
     @Value("${app.strategy.fno-0925-mover.orb-cutoff:10:45}")
     private LocalTime orbCutoff;
 
-    @Value("${app.strategy.fno-0925-mover.vwap-reclaim-cutoff:13:00}")
+    @Value("${app.strategy.fno-0925-mover.vwap-reclaim-cutoff:14:00}")
     private LocalTime vwapReclaimCutoff;
 
     @Value("${app.strategy.fno-0925-mover.reclaim-base-candles:3}")

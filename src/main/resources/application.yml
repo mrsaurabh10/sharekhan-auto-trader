@@ -65,7 +65,7 @@ app:
       min-body-to-range: ${FNO_0925_MOVER_MIN_BODY_TO_RANGE:0.40}
       max-risk-atr-multiplier: ${FNO_0925_MOVER_MAX_RISK_ATR_MULTIPLIER:1.5}
       orb-cutoff: ${FNO_0925_MOVER_ORB_CUTOFF:11:00}
-      vwap-reclaim-cutoff: ${FNO_0925_MOVER_VWAP_RECLAIM_CUTOFF:13:00}
+      vwap-reclaim-cutoff: ${FNO_0925_MOVER_VWAP_RECLAIM_CUTOFF:14:00}
       reclaim-base-candles: ${FNO_0925_MOVER_RECLAIM_BASE_CANDLES:3}
   market-data:
     # Comma-separated ISO dates, e.g. NSE_HOLIDAYS=2026-01-26,2026-03-03
