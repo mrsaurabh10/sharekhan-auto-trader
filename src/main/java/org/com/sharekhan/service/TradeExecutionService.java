@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.cache.QuoteCacheService;
+import org.com.sharekhan.entity.TradeAuditEventEntity;
 import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.dto.TriggerRequest;
@@ -36,8 +37,8 @@ import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.json.JSONArray;
 import org.json.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.data.domain.Page;
@@ -133,6 +134,8 @@ public class TradeExecutionService {
     private final TokenStoreService tokenStoreService; // ✅ holds current token
     private final LtpCacheService ltpCacheService;
     private final QuoteCacheService quoteCacheService;
+    @Autowired(required = false)
+    private TradeAuditService tradeAuditService;
 
     private final ApplicationEventPublisher eventPublisher;
 
@@ -208,6 +211,9 @@ public class TradeExecutionService {
 
     @Value("${app.trading.entry.wide-spread-confirmations:2}")
     private int entryWideSpreadConfirmations;
+
+    @Value("${app.trading.entry.simulator-ltp-fallback-enabled:true}")
+    private boolean simulatorLtpFallbackEnabled = true;
 
     private static final Duration DEFAULT_QUOTE_STALENESS = Duration.ofSeconds(5);
 
@@ -1269,6 +1275,49 @@ public class TradeExecutionService {
         }
     }
 
+    /** Returns whether this option has an executable, fresh Sharekhan top-of-book. */
+    public boolean hasFreshOptionBook(TriggerRequest request) {
+        try {
+            ScriptMasterEntity script = resolveScriptForRequest(request, false);
+            if (script == null || script.getScripCode() == null || quoteCacheService == null) {
+                return false;
+            }
+            Optional<QuoteCacheService.QuoteSnapshot> snapshot = quoteCacheService.getSnapshot(script.getScripCode());
+            return snapshot.isPresent()
+                    && snapshot.get().hasBook()
+                    && !quoteCacheService.isBookStale(snapshot.get(), entryQuoteMaxAge());
+        } catch (Exception e) {
+            log.debug("Unable to verify fresh option book for {} {} {}: {}",
+                    request != null ? request.getInstrument() : null,
+                    request != null ? request.getStrikePrice() : null,
+                    request != null ? request.getOptionType() : null,
+                    e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Keeps the underlying feed live while a strategy is monitoring a possible
+     * option entry.  Unlike a pending order, a strategy has no persisted trade
+     * yet, so it must explicitly retain the spot subscription during warm-up.
+     */
+    public void warmUpSpotLtp(ScriptMasterEntity spotScript, String reason) {
+        if (spotScript == null || spotScript.getScripCode() == null) {
+            return;
+        }
+        String spotKey = spotFeedKey(spotScript);
+        if (webSocketSubscriptionService.getActiveScripKeys().contains(spotKey)) {
+            return;
+        }
+        boolean subscribed = isSharekhanIndexSpot(spotScript)
+                ? webSocketSubscriptionService.subscribeToScripLtp(spotKey)
+                : webSocketSubscriptionService.subscribeToScrip(spotKey);
+        if (subscribed) {
+            log.info("🔁 Warmed spot subscription for {} scrip={} reason={}",
+                    spotScript.getTradingSymbol(), spotKey, reason);
+        }
+    }
+
     public TriggeredTradeSetupEntity createExecutedTrade(TriggerRequest request) {
         // Reuse logic to resolve script and calculate quantity
         // We can call executeTrade to get the request entity, but we need to intercept it before saving or modify it after
@@ -2047,12 +2096,22 @@ public class TradeExecutionService {
                 if (!hasFreshEntryBook(entryDiagnostics)) {
                     log.info("⏸️ Waiting for a fresh bid/ask book before entry attempt {} for trigger {} ({})",
                             attempt + 1, triggerLogId(trigger), entryDiagnostics.reason());
-                    if (attempt == maxAttempts - 1) {
-                        return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
-                                requestedQuantity, "ENTRY_BOOK_UNVERIFIED", lastResult);
+                    boolean simulatorFallback = canUseSimulatorLtpFallback(ctx, ltp);
+                    if (simulatorFallback) {
+                        log.warn("SIMULATOR_LTP_FALLBACK | triggerId={} | reason={} | ltp={}. "
+                                        + "No bid/ask book arrived; placing simulator entry at the bounded LTP.",
+                                triggerLogId(trigger), entryDiagnostics.reason(), formatPrice(ltp));
+                        entryDiagnostics = new EntryDiagnostics(true,
+                                "SIMULATOR_LTP_FALLBACK_" + entryDiagnostics.reason(),
+                                null, ltp, null, null, entryDiagnostics.quoteTimestamp());
+                    } else if (attempt == maxAttempts - 1) {
+                            return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
+                                    requestedQuantity, "ENTRY_BOOK_UNVERIFIED", lastResult);
                     }
-                    sleepBeforeEntryRetry(trigger);
-                    continue;
+                    if (!simulatorFallback) {
+                        sleepBeforeEntryRetry(trigger);
+                        continue;
+                    }
                 }
 
                 Double spread = entryDiagnostics.spreadPercent();
@@ -2251,6 +2310,14 @@ public class TradeExecutionService {
                 && !"BOOK_UNVERIFIED".equals(diagnostics.reason());
     }
 
+    private boolean canUseSimulatorLtpFallback(BrokerContext ctx, double ltp) {
+        return simulatorLtpFallbackEnabled
+                && ctx != null
+                && Broker.SIMULATOR.getDisplayName().equalsIgnoreCase(ctx.getBrokerName())
+                && Double.isFinite(ltp)
+                && ltp > 0d;
+    }
+
     private boolean isEntrySignalStillValid(TriggeredTradeSetupEntity trigger) {
         if (trigger == null || !usesSpotEntryReference(trigger)) {
             return true;
@@ -2370,6 +2437,7 @@ public class TradeExecutionService {
                                                          OrderPlacementResult priorResult) {
         if (orderId == null || orderId.isBlank()) {
             TradeEventLogger.logOrderRejected("ENTRY", trigger, reason, null);
+            auditEntryOutcome(trigger, "ENTRY_REJECTED", reason, null, priorResult);
             return rejectedEntryResult(null, priorResult, reason);
         }
         if (!(brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker)) {
@@ -2400,7 +2468,26 @@ public class TradeExecutionService {
                     triggerLogId(trigger), orderId, effective.filledQuantity(), requestedQuantity, reason);
             return entryFilledResult(trigger, orderId, effective, requestedQuantity, configuredEntryMaxAttempts());
         }
+        auditEntryOutcome(trigger, "ENTRY_REJECTED", reason, orderId, priorResult);
         return rejectedEntryResult(orderId, priorResult, reason);
+    }
+
+    private void auditEntryOutcome(TriggeredTradeSetupEntity trigger, String eventType, String reason,
+                                   String orderId, OrderPlacementResult result) {
+        if (tradeAuditService == null || trigger == null) return;
+        QuoteCacheService.QuoteSnapshot quote = null;
+        if (quoteCacheService != null && trigger.getScripCode() != null) {
+            quote = quoteCacheService.getSnapshot(trigger.getScripCode()).orElse(null);
+        }
+        tradeAuditService.record(TradeAuditEventEntity.builder()
+                .appUserId(trigger.getAppUserId()).triggerRequestId(trigger.getTriggerRequestId()).tradeId(trigger.getId())
+                .source(trigger.getSource()).symbol(trigger.getSymbol()).eventType(eventType).outcome("REJECTED")
+                .reason(reason).optionType(trigger.getOptionType()).expiry(trigger.getExpiry()).strikePrice(trigger.getStrikePrice())
+                .optionLtp(quote != null ? quote.getLastTradedPrice() : null)
+                .bestBid(quote != null ? quote.getBestBid() : null).bestAsk(quote != null ? quote.getBestAsk() : null)
+                .details("orderId=" + orderId + ", attemptedPrice=" + (result != null ? result.getAttemptedPrice() : null)
+                        + ", quoteTime=" + (quote != null ? quote.getLastBookAt() : null))
+                .build());
     }
 
     private OrderPlacementResult rejectedEntryResult(String orderId,

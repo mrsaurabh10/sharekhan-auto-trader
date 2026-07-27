@@ -8,6 +8,7 @@ import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
+import org.com.sharekhan.entity.TradeAuditEventEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.MStockInstrumentRepository;
 import org.com.sharekhan.repository.ScriptMasterRepository;
@@ -17,6 +18,8 @@ import org.com.sharekhan.service.MStockIntradayCandleService;
 import org.com.sharekhan.service.SharekhanHistoricalService;
 import org.com.sharekhan.service.SpotSymbolAliases;
 import org.com.sharekhan.service.TradeExecutionService;
+import org.com.sharekhan.service.TradeAuditService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -34,6 +37,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Component
@@ -58,6 +62,9 @@ public class StrategySupport {
     private final SharekhanHistoricalService sharekhanHistoricalService;
     private final TradeExecutionService tradeExecutionService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
+    @Autowired(required = false)
+    private TradeAuditService tradeAuditService;
+    private final ConcurrentHashMap<FnoWarmupKey, FnoOptionContract> warmedFnoOptions = new ConcurrentHashMap<>();
 
     public StrategyApplyResponse waiting(StrategyMetadata metadata, String symbol, String message) {
         return StrategyApplyResponse.builder()
@@ -179,6 +186,41 @@ public class StrategySupport {
         return tradeExecutionService.executeTriggeredTrade(trigger);
     }
 
+    public void auditStrategy(StrategyApplyRequest request, StrategyMetadata metadata, String symbol,
+                              String eventType, String outcome, String reason,
+                              Fno925EntryQualificationService.Signal signal, TriggerRequest trigger) {
+        if (tradeAuditService == null) return;
+        tradeAuditService.record(TradeAuditEventEntity.builder()
+                .appUserId(request != null ? request.getUserId() : null)
+                .strategyId(metadata != null ? metadata.id() : null)
+                .source(request != null ? request.getSource() : null)
+                .symbol(symbol).eventType(eventType).outcome(outcome).reason(reason)
+                .optionType(trigger != null ? trigger.getOptionType() : metadata != null ? metadata.optionType() : null)
+                .expiry(trigger != null ? trigger.getExpiry() : null)
+                .strikePrice(trigger != null ? trigger.getStrikePrice() : null)
+                .spotPrice(signal != null ? signal.entryPrice() : null)
+                .details(signal == null ? null : "setup=" + signal.setup() + ", entry=" + signal.entryPrice()
+                        + ", stop=" + signal.stopLoss())
+                .build());
+    }
+
+    public void auditTradeRequest(StrategyApplyRequest request, StrategyMetadata metadata, String symbol,
+                                  String outcome, TriggerRequest trigger, TriggerTradeRequestEntity tradeRequest) {
+        if (tradeAuditService == null) return;
+        tradeAuditService.record(TradeAuditEventEntity.builder()
+                .appUserId(request != null ? request.getUserId() : null)
+                .triggerRequestId(tradeRequest != null ? tradeRequest.getId() : null)
+                .strategyId(metadata != null ? metadata.id() : null)
+                .source(trigger != null ? trigger.getSource() : request != null ? request.getSource() : null)
+                .symbol(symbol).eventType("TRADE_REQUEST").outcome(outcome)
+                .optionType(trigger != null ? trigger.getOptionType() : null)
+                .expiry(trigger != null ? trigger.getExpiry() : null)
+                .strikePrice(trigger != null ? trigger.getStrikePrice() : null)
+                .details("entry=" + (trigger != null ? trigger.getEntryPrice() : null)
+                        + ", stop=" + (trigger != null ? trigger.getStopLoss() : null))
+                .build());
+    }
+
     public void warmUpAtmOptionLtp(StrategyApplyRequest request,
                                    StrategyMetadata metadata,
                                    String symbol,
@@ -203,6 +245,97 @@ public class StrategySupport {
             log.debug("Strategy ATM option warmup failed", e);
         }
     }
+
+    /**
+     * Prepares the exact spot and preferred-expiry ATM option feeds for the
+     * manually configured F&O strategies before a breakout is eligible.
+     */
+    public void warmUpPreferredFnoFeeds(StrategyApplyRequest request,
+                                         StrategyMetadata metadata,
+                                         String symbol,
+                                         ScriptMasterEntity spotScript) {
+        tradeExecutionService.warmUpSpotLtp(spotScript, "F&O strategy monitoring");
+        try {
+            CandleLoad candleLoad = loadCandles(spotScript);
+            StrategyCandle latest = candleLoad.candles().stream()
+                    .max(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
+                    .orElseThrow(() -> new IllegalStateException("no current spot candle is available"));
+            double referencePrice = latest.close();
+            if (!Double.isFinite(referencePrice) || referencePrice <= 0d) {
+                throw new IllegalStateException("current spot price is invalid");
+            }
+
+            String expiry = preferredFnoExpiry(symbol, metadata.optionType());
+            double strike = nearestStrike(symbol, metadata.optionType(), expiry, referencePrice);
+            TriggerRequest warmup = new TriggerRequest();
+            warmup.setInstrument(symbol);
+            warmup.setStrikePrice(strike);
+            warmup.setOptionType(metadata.optionType());
+            warmup.setExpiry(expiry);
+            warmup.setUserId(request.getUserId());
+            warmup.setBrokerCredentialsId(request.getBrokerCredentialsId());
+            warmup.setSource(StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + metadata.id());
+
+            if (tradeExecutionService.warmUpOptionLtp(warmup, "F&O strategy monitoring").isPresent()) {
+                warmedFnoOptions.put(fnoWarmupKey(request, metadata, symbol), new FnoOptionContract(expiry, strike));
+            }
+        } catch (Exception e) {
+            log.warn("Unable to warm preferred F&O option feed for strategy template={} symbol={} direction={}: {}",
+                    metadata.id(), symbol, metadata.optionType(), e.getMessage());
+            log.debug("Preferred F&O option warm-up failed", e);
+        }
+    }
+
+    /**
+     * If spot movement has changed the calculated ATM strike, retain the
+     * pre-warmed contract when the new ATM contract has no executable book.
+     */
+    public FnoOptionContract resolveFnoEntryContract(StrategyApplyRequest request,
+                                                      StrategyMetadata metadata,
+                                                      String symbol,
+                                                      String currentExpiry,
+                                                      double currentStrike) {
+        FnoOptionContract current = new FnoOptionContract(currentExpiry, currentStrike);
+        FnoOptionContract warmed = warmedFnoOptions.get(fnoWarmupKey(request, metadata, symbol));
+        if (warmed == null || warmed.matches(current)) {
+            return current;
+        }
+        TriggerRequest candidate = optionRequest(symbol, metadata.optionType(), current);
+        if (tradeExecutionService.hasFreshOptionBook(candidate)) {
+            return current;
+        }
+        log.warn("FNO_PREWARMED_STRIKE_FALLBACK | strategy={} symbol={} currentExpiry={} currentStrike={} "
+                        + "warmedExpiry={} warmedStrike={} reason=NEW_ATM_BOOK_UNAVAILABLE",
+                metadata.id(), symbol, current.expiry(), current.strike(), warmed.expiry(), warmed.strike());
+        return warmed;
+    }
+
+    private FnoWarmupKey fnoWarmupKey(StrategyApplyRequest request, StrategyMetadata metadata, String symbol) {
+        return new FnoWarmupKey(LocalDate.now(MARKET_ZONE),
+                request != null ? request.getUserId() : null,
+                request != null ? request.getBrokerCredentialsId() : null,
+                metadata != null ? metadata.id() : null,
+                symbol != null ? symbol.trim().toUpperCase(Locale.ROOT) : null);
+    }
+
+    private TriggerRequest optionRequest(String symbol, String optionType, FnoOptionContract contract) {
+        TriggerRequest request = new TriggerRequest();
+        request.setInstrument(symbol);
+        request.setOptionType(optionType);
+        request.setExpiry(contract.expiry());
+        request.setStrikePrice(contract.strike());
+        return request;
+    }
+
+    public record FnoOptionContract(String expiry, double strike) {
+        boolean matches(FnoOptionContract other) {
+            return other != null && Objects.equals(expiry, other.expiry)
+                    && Double.compare(strike, other.strike) == 0;
+        }
+    }
+
+    private record FnoWarmupKey(LocalDate day, Long userId, Long brokerCredentialsId,
+                                String strategyId, String symbol) { }
 
     public TriggerTradeRequestEntity findExisting(TriggerRequest trigger) {
         if (trigger.getUserId() == null) {

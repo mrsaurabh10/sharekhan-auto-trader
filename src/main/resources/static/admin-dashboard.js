@@ -947,6 +947,74 @@
     });
   }
 
+  // --- Trade audit dialog ---
+  function createTradeAuditModalIfNeeded() {
+    if (document.getElementById('tradeAuditModal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'tradeAuditModal';
+    modal.style.cssText = 'position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.45);z-index:10000;padding:24px;box-sizing:border-box;';
+    modal.innerHTML = '<div role="dialog" aria-modal="true" aria-labelledby="tradeAuditModalTitle" style="background:#fff;border-radius:8px;width:min(900px,100%);max-height:90vh;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.28)">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid #e5e7eb"><h3 id="tradeAuditModalTitle" style="margin:0">Trade Audit</h3><button id="tradeAuditModalClose" class="btn" aria-label="Close audit dialog">Close</button></div>' +
+      '<div id="tradeAuditModalBody" style="padding:16px 18px;overflow:auto"></div>' +
+      '</div>';
+    document.body.appendChild(modal);
+    document.getElementById('tradeAuditModalClose').addEventListener('click', function () { modal.style.display = 'none'; });
+    modal.addEventListener('click', function (event) { if (event.target === modal) modal.style.display = 'none'; });
+  }
+
+  function auditValue(value) {
+    return value == null || value === '' ? '-' : escapeHtml(String(value));
+  }
+
+  function auditTime(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    return isNaN(date.getTime()) ? escapeHtml(String(value)) : escapeHtml(date.toLocaleString());
+  }
+
+  function auditQuote(event) {
+    const quote = [];
+    if (event.spotPrice != null) quote.push('Spot ' + event.spotPrice);
+    if (event.optionLtp != null) quote.push('LTP ' + event.optionLtp);
+    if (event.bestBid != null) quote.push('Bid ' + event.bestBid);
+    if (event.bestAsk != null) quote.push('Ask ' + event.bestAsk);
+    return quote.length ? quote.join(' · ') : '-';
+  }
+
+  async function openTradeAuditDialog(title, filter) {
+    createTradeAuditModalIfNeeded();
+    const modal = document.getElementById('tradeAuditModal');
+    const heading = document.getElementById('tradeAuditModalTitle');
+    const body = document.getElementById('tradeAuditModalBody');
+    heading.innerText = title || 'Trade Audit';
+    body.innerHTML = '<div style="color:#64748b">Loading audit events…</div>';
+    modal.style.display = 'flex';
+    try {
+      const query = filter && filter.triggerRequestId != null
+        ? 'triggerRequestId=' + encodeURIComponent(filter.triggerRequestId)
+        : 'tradeId=' + encodeURIComponent(filter && filter.tradeId != null ? filter.tradeId : '');
+      const events = await fetchJson('/api/trades/audit?' + query);
+      if (!Array.isArray(events) || events.length === 0) {
+        body.innerHTML = '<div style="color:#64748b">No audit events have been recorded for this item yet.</div>';
+        return;
+      }
+      body.innerHTML = events.map(function (event) {
+        const contract = [event.optionType, event.strikePrice != null ? event.strikePrice : null, event.expiry].filter(function (value) { return value != null && value !== ''; }).join(' ');
+        const outcomeColor = String(event.outcome || '').toUpperCase() === 'REJECTED' || String(event.outcome || '').toUpperCase() === 'ERROR' ? '#b91c1c' : '#166534';
+        return '<article style="border-left:4px solid ' + outcomeColor + ';background:#f8fafc;margin:0 0 12px;padding:12px 14px;border-radius:4px">' +
+          '<div style="display:flex;gap:10px;justify-content:space-between;flex-wrap:wrap"><strong>' + auditValue(event.eventType) + '</strong><span style="color:' + outcomeColor + ';font-weight:600">' + auditValue(event.outcome) + '</span></div>' +
+          '<div style="font-size:12px;color:#64748b;margin-top:3px">' + auditTime(event.occurredAt) + ' · ' + auditValue(event.strategyId || event.source) + '</div>' +
+          '<div style="margin-top:8px"><strong>Reason:</strong> ' + auditValue(event.reason) + '</div>' +
+          '<div style="margin-top:5px;color:#334155"><strong>Instrument:</strong> ' + auditValue(event.symbol) + (contract ? ' · ' + auditValue(contract) : '') + '</div>' +
+          '<div style="margin-top:5px;color:#334155"><strong>Quote:</strong> ' + auditValue(auditQuote(event)) + '</div>' +
+          (event.details ? '<details style="margin-top:8px"><summary style="cursor:pointer">Details</summary><pre style="white-space:pre-wrap;word-break:break-word;margin:6px 0 0;font:12px/1.45 monospace">' + auditValue(event.details) + '</pre></details>' : '') +
+          '</article>';
+      }).join('');
+    } catch (error) {
+      body.innerHTML = '<div style="color:#b91c1c">Could not load audit events: ' + auditValue(error && error.message ? error.message : error) + '</div>';
+    }
+  }
+
   // --- Loaders ---
   async function loadRequestedOrdersForUser(userId, page, scope) {
     const uid = userId || window.selectedUserId; const tbody = document.querySelector('#user-requests-table tbody'); if (!tbody) return; tbody.innerHTML = '';
@@ -991,6 +1059,8 @@
 
         // Action cell
         const actionCell = document.createElement('td');
+        const auditBtn = document.createElement('button'); auditBtn.className = 'btn small'; auditBtn.style.marginRight = '6px'; auditBtn.innerText = 'Audit';
+        auditBtn.addEventListener('click', function () { openTradeAuditDialog('Audit — Request ' + id, { triggerRequestId: id }); }); actionCell.appendChild(auditBtn);
         const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
         editBtn.addEventListener('click', function () {
           openEditModal('Edit Request ' + id, {
@@ -1170,6 +1240,11 @@
         const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
 
         const actionCell = document.createElement('td');
+        const auditBtn = document.createElement('button'); auditBtn.className = 'btn small'; auditBtn.style.marginRight = '4px'; auditBtn.innerText = 'Audit';
+        auditBtn.addEventListener('click', function () {
+          const requestId = t.triggerRequestId != null ? t.triggerRequestId : (t.trigger_request_id != null ? t.trigger_request_id : null);
+          openTradeAuditDialog('Audit — Trade ' + id, requestId != null ? { triggerRequestId: requestId } : { tradeId: id });
+        });
         const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXIT_FAILED', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(statusUpper)) {
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.innerText = 'Edit';
@@ -1233,7 +1308,8 @@
               }
             }); actionCell.appendChild(resetBtn);
           }
-        } else { actionCell.innerText = '-'; }
+        }
+        actionCell.appendChild(auditBtn);
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
                        tradeScopeCellHtml(t) +
