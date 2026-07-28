@@ -96,6 +96,15 @@ app:
     api-key: "MusnORunrjCcP+x8+Fw0YSaiELJKBT5OL3ipnUptoD4="
     totp-secret: "3TWOBV56LA63H7JLWEY57K6DFIXOR5ED"
     poll-delay-ms: 5000
+  shoonya:
+    # Keep secrets out of source control: set SHOONYA_* environment variables in deployment.
+    api-url: ${SHOONYA_API_URL:https://api.shoonya.com/NorenWClientAPI}
+    user-id: ${SHOONYA_USER_ID:}
+    password: ${SHOONYA_PASSWORD:}
+    vendor-code: ${SHOONYA_VENDOR_CODE:}
+    api-key: ${SHOONYA_API_KEY:}
+    device-id: ${SHOONYA_DEVICE_ID:}
+    totp-secret: ${SHOONYA_TOTP_SECRET:}
   sharekhan:
     client-code: "SGUPTA78"
     password: "Anvi@2023"

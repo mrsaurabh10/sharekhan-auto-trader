@@ -1,0 +1,67 @@
+package org.com.sharekhan.service;
+
+import lombok.RequiredArgsConstructor;
+import org.com.sharekhan.auth.AuthTokenResult;
+import org.com.sharekhan.auth.BrokerAuthProvider;
+import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
+import org.com.sharekhan.auth.TokenStoreService;
+import org.com.sharekhan.config.ShoonyaProperties;
+import org.com.sharekhan.enums.Broker;
+import org.json.JSONObject;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.stream.Collectors;
+
+/** Read-only Shoonya client. It intentionally exposes only NorenWClientAPI/GetQuotes. */
+@Service
+@RequiredArgsConstructor
+public class ShoonyaQuoteService {
+    private final ShoonyaProperties properties;
+    private final TokenStoreService tokenStoreService;
+    private final BrokerAuthProviderRegistry providerRegistry;
+
+    public JSONObject getQuotes(String exchange, String token) {
+        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(token)) throw new IllegalArgumentException("exchange and token are required");
+        String sessionToken = tokenStoreService.getAccessToken(Broker.SHOONYA);
+        if (!StringUtils.hasText(sessionToken)) {
+            BrokerAuthProvider provider = providerRegistry.getProvider(Broker.SHOONYA);
+            if (provider == null) throw new IllegalStateException("No Shoonya authentication provider is registered");
+            AuthTokenResult result = provider.loginAndFetchToken();
+            tokenStoreService.updateToken(Broker.SHOONYA, result.token(), result.expiresIn());
+            sessionToken = result.token();
+        }
+        JSONObject request = new JSONObject().put("uid", properties.getUserId()).put("exch", exchange).put("token", token);
+        return post(request, sessionToken);
+    }
+
+    private JSONObject post(JSONObject request, String sessionToken) {
+        try {
+            HttpURLConnection connection = (HttpURLConnection) URI.create(properties.getApiUrl() + "/GetQuotes").toURL().openConnection();
+            connection.setRequestMethod("POST");
+            connection.setConnectTimeout(15_000);
+            connection.setReadTimeout(30_000);
+            connection.setDoOutput(true);
+            connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
+            String body = "jData=" + URLEncoder.encode(request.toString(), StandardCharsets.UTF_8)
+                    + "&jKey=" + URLEncoder.encode(sessionToken, StandardCharsets.UTF_8);
+            try (OutputStream output = connection.getOutputStream()) { output.write(body.getBytes(StandardCharsets.UTF_8)); }
+            int status = connection.getResponseCode();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream(), StandardCharsets.UTF_8))) {
+                String response = reader.lines().collect(Collectors.joining());
+                if (response.isBlank()) throw new IllegalStateException("Shoonya GetQuotes returned HTTP " + status + " with no body");
+                return new JSONObject(response);
+            }
+        } catch (Exception e) {
+            throw new IllegalStateException("Shoonya GetQuotes failed: " + e.getMessage(), e);
+        }
+    }
+}
