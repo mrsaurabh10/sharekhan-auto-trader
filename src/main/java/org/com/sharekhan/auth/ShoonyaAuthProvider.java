@@ -1,6 +1,7 @@
 package org.com.sharekhan.auth;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.config.ShoonyaProperties;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.enums.Broker;
@@ -19,6 +20,7 @@ import java.security.MessageDigest;
 
 /** Authenticates with Shoonya's Noren QuickAuth endpoint and returns its session token. */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class ShoonyaAuthProvider implements BrokerAuthProvider {
     private final ShoonyaProperties properties;
@@ -75,6 +77,9 @@ public class ShoonyaAuthProvider implements BrokerAuthProvider {
             // makes the application authenticate again instead of attempting any unsupported refresh API.
             return new AuthTokenResult(token, 8 * 60 * 60);
         } catch (Exception e) {
+            // Do not log request fields: they contain the password hash, TOTP, and API-key hash.
+            // The response is safe to retain and is essential when Shoonya returns an HTML gateway page.
+            log.error("Shoonya authentication request failed: {}", e.getMessage());
             throw new IllegalStateException("Shoonya authentication failed: " + e.getMessage(), e);
         }
     }
@@ -93,8 +98,13 @@ public class ShoonyaAuthProvider implements BrokerAuthProvider {
         try (var reader = new java.io.BufferedReader(new InputStreamReader(
                 status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream(), StandardCharsets.UTF_8))) {
             String response = reader.lines().collect(java.util.stream.Collectors.joining());
-            if (response.isBlank()) throw new IllegalStateException("Shoonya HTTP " + status + " returned an empty response");
-            return new JSONObject(response);
+            if (response.isBlank()) throw new IllegalStateException("Shoonya QuickAuth returned HTTP " + status + " with an empty response");
+            try {
+                return new JSONObject(response);
+            } catch (Exception e) {
+                throw new IllegalStateException("Shoonya QuickAuth returned HTTP " + status
+                        + " with non-JSON response: " + abbreviate(response), e);
+            }
         }
     }
 
@@ -105,4 +115,5 @@ public class ShoonyaAuthProvider implements BrokerAuthProvider {
     private static String value(String preferred, String fallback) { return StringUtils.hasText(preferred) ? preferred : fallback; }
     private static void require(String value, String name) { if (!StringUtils.hasText(value)) throw new IllegalStateException("Shoonya " + name + " is not configured"); }
     private static String sha256(String value) throws Exception { return java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8))); }
+    private static String abbreviate(String value) { return value.length() <= 500 ? value : value.substring(0, 500) + "..."; }
 }
