@@ -27,9 +27,11 @@ public class ShoonyaQuoteService {
     private final ShoonyaProperties properties;
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
+    private final ShoonyaInstrumentMasterService instrumentMasterService;
 
-    public JSONObject getQuotes(String exchange, String token) {
-        if (!StringUtils.hasText(exchange) || !StringUtils.hasText(token)) throw new IllegalArgumentException("exchange and token are required");
+    public JSONObject getQuotes(String exchange, String token, String symbol) {
+        if (!StringUtils.hasText(exchange)) throw new IllegalArgumentException("exchange is required");
+        if (!StringUtils.hasText(token)) token = instrumentMasterService.resolveToken(exchange, symbol);
         String sessionToken = tokenStoreService.getAccessToken(Broker.SHOONYA);
         if (!StringUtils.hasText(sessionToken)) {
             BrokerAuthProvider provider = providerRegistry.getProvider(Broker.SHOONYA);

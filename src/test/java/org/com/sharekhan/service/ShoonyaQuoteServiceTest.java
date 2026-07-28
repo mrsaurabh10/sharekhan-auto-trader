@@ -40,7 +40,8 @@ class ShoonyaQuoteServiceTest {
         TokenStoreService tokens = mock(TokenStoreService.class);
         when(tokens.getAccessToken(Broker.SHOONYA)).thenReturn("session-token");
 
-        JSONObject result = new ShoonyaQuoteService(properties, tokens, mock(BrokerAuthProviderRegistry.class)).getQuotes("NFO", "12345");
+        JSONObject result = new ShoonyaQuoteService(properties, tokens, mock(BrokerAuthProviderRegistry.class),
+                mock(ShoonyaInstrumentMasterService.class)).getQuotes("NFO", "12345", null);
 
         assertThat(result.getString("bp1")).isEqualTo("101.25");
         String[] parts = body.get().split("&", 2);
