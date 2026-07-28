@@ -24,19 +24,36 @@ public class ShoonyaTokenFetcher {
             page.navigate(authorizationUrl, new Page.NavigateOptions().setTimeout(120_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
             Locator user = visible(page, List.of("#uid", "#user_id", "#userid", "input[name='uid']", "input[name='user_id']", "input[type='text']"));
             user.fill(properties.getUid());
-            Locator password = visible(page, List.of("#password", "#pwd", "input[name='password']", "input[type='password']"));
-            password.fill(properties.getPassword());
-            click(visible(page, List.of("button[type='submit']", "input[type='submit']", "button:has-text('Login')", "button:has-text('Continue')")));
-            Locator totp = visible(page, List.of("#totp", "#otp", "input[name='totp']", "input[name='otp']", "input[autocomplete='one-time-code']"));
-            totp.fill(new Totp(properties.getTotpSecret()).now());
-            click(visible(page, List.of("button[type='submit']", "input[type='submit']", "button:has-text('Verify')", "button:has-text('Submit')")));
+            Locator passwordInputs = page.locator("input[type='password']");
+            if (passwordInputs.count() >= 2) {
+                // Shoonya's OAuth page presents user ID, password and TOTP together.
+                passwordInputs.nth(0).fill(properties.getPassword());
+                passwordInputs.nth(1).fill(new Totp(properties.getTotpSecret()).now());
+                click(visible(page, List.of("button:has-text('LOGIN')", "button[type='submit']", "input[type='submit']", "button")));
+            } else {
+                Locator password = visible(page, List.of("#password", "#pwd", "input[name='password']", "input[type='password']"));
+                password.fill(properties.getPassword());
+                click(visible(page, List.of("button[type='submit']", "input[type='submit']", "button:has-text('Login')", "button:has-text('Continue')", "button")));
+                Locator totp = visible(page, List.of("#totp", "#otp", "input[name='totp']", "input[name='otp']", "input[autocomplete='one-time-code']"));
+                totp.fill(new Totp(properties.getTotpSecret()).now());
+                click(visible(page, List.of("button[type='submit']", "input[type='submit']", "button:has-text('Verify')", "button:has-text('Submit')", "button")));
+            }
             page.waitForURL(url -> url.contains("code="), new Page.WaitForURLOptions().setTimeout(120_000));
             String code = queryParameter(page.url(), "code");
             if (code == null || code.isBlank()) throw new IllegalStateException("Shoonya OAuth redirect did not include code");
             return code;
         } catch (Exception e) { throw new IllegalStateException("Shoonya browser OAuth login failed: " + e.getMessage(), e); }
     }
-    private static Locator visible(Page page, List<String> selectors) { for (String selector : selectors) { Locator candidate = page.locator(selector); if (candidate.count() > 0 && candidate.first().isVisible()) return candidate.first(); } throw new IllegalStateException("Shoonya login page did not expose an expected input/button"); }
+    private static Locator visible(Page page, List<String> selectors) {
+        for (String selector : selectors) {
+            Locator candidate = page.locator(selector);
+            for (int index = 0; index < candidate.count(); index++) {
+                Locator element = candidate.nth(index);
+                if (element.isVisible()) return element;
+            }
+        }
+        throw new IllegalStateException("Shoonya login page did not expose an expected input/button");
+    }
     private static void click(Locator locator) { locator.click(new Locator.ClickOptions().setTimeout(30_000)); }
     private static String queryParameter(String url, String name) { try { String query = new URI(url).getRawQuery(); if (query == null) return null; for (String part : query.split("&")) { String[] pair = part.split("=", 2); if (pair.length == 2 && name.equals(URLDecoder.decode(pair[0], StandardCharsets.UTF_8))) return URLDecoder.decode(pair[1], StandardCharsets.UTF_8); } return null; } catch (Exception e) { throw new IllegalStateException("Unable to parse Shoonya OAuth redirect", e); } }
     private static void require(String value, String name) { if (value == null || value.isBlank()) throw new IllegalStateException("Shoonya " + name + " is not configured"); }
