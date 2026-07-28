@@ -18,12 +18,14 @@ import java.util.List;
 public class ShoonyaTokenFetcher {
     public String fetchAuthorizationCode(ShoonyaProperties properties, String authorizationUrl) {
         require(properties.getUid(), "uid"); require(properties.getPassword(), "password"); require(properties.getTotpSecret(), "totp-secret");
+        log.info("Shoonya OAuth browser login started for configured UID");
         try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch(
                 new BrowserType.LaunchOptions().setHeadless(true).setArgs(List.of("--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu")))) {
             Page page = browser.newPage();
             page.navigate(authorizationUrl, new Page.NavigateOptions().setTimeout(120_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
             // The OAuth page is a client-rendered app: DOMContentLoaded happens before its form controls appear.
             page.waitForSelector("input[type='text']", new Page.WaitForSelectorOptions().setTimeout(30_000));
+            log.info("Shoonya OAuth login form loaded");
             Locator user = visible(page, List.of("#uid", "#user_id", "#userid", "input[name='uid']", "input[name='user_id']", "input[type='text']"));
             user.fill(properties.getUid());
             Locator passwordInputs = page.locator("input[type='password']");
@@ -32,6 +34,7 @@ public class ShoonyaTokenFetcher {
                 passwordInputs.nth(0).fill(properties.getPassword());
                 passwordInputs.nth(1).fill(currentTotp(properties.getTotpSecret()));
                 click(visible(page, List.of("button:has-text('LOGIN')", "button[type='submit']", "input[type='submit']", "button")));
+                log.info("Shoonya OAuth one-screen credentials submitted");
             } else {
                 Locator password = visible(page, List.of("#password", "#pwd", "input[name='password']", "input[type='password']"));
                 password.fill(properties.getPassword());
@@ -39,13 +42,18 @@ public class ShoonyaTokenFetcher {
                 Locator totp = visible(page, List.of("#totp", "#otp", "input[name='totp']", "input[name='otp']", "input[autocomplete='one-time-code']"));
                 totp.fill(currentTotp(properties.getTotpSecret()));
                 click(visible(page, List.of("button[type='submit']", "input[type='submit']", "button:has-text('Verify')", "button:has-text('Submit')", "button")));
+                log.info("Shoonya OAuth second-step TOTP submitted");
             }
             // The registered redirect is external (test.com); wait for the URL change, not for that page to finish loading.
             page.waitForURL(url -> url.contains("code="), new Page.WaitForURLOptions().setTimeout(60_000).setWaitUntil(WaitUntilState.COMMIT));
             String code = queryParameter(page.url(), "code");
             if (code == null || code.isBlank()) throw new IllegalStateException("Shoonya OAuth redirect did not include code");
+            log.info("Shoonya OAuth authorization redirect received");
             return code;
-        } catch (Exception e) { throw new IllegalStateException("Shoonya browser OAuth login failed: " + e.getMessage(), e); }
+        } catch (Exception e) {
+            log.warn("Shoonya OAuth browser login stopped: {}", e.getMessage());
+            throw new IllegalStateException("Shoonya browser OAuth login failed: " + e.getMessage(), e);
+        }
     }
     private static Locator visible(Page page, List<String> selectors) {
         for (String selector : selectors) {
