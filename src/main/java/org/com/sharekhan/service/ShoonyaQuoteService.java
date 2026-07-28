@@ -34,12 +34,12 @@ public class ShoonyaQuoteService {
         String sessionToken = tokenStoreService.getAccessToken(Broker.SHOONYA);
         if (!StringUtils.hasText(sessionToken)) {
             BrokerAuthProvider provider = providerRegistry.getProvider(Broker.SHOONYA);
-            if (provider == null) throw new IllegalStateException("No Shoonya authentication provider is registered");
-            AuthTokenResult result = provider.loginAndFetchToken();
-            tokenStoreService.updateToken(Broker.SHOONYA, result.token(), result.expiresIn());
-            sessionToken = result.token();
+            if (provider == null) throw new IllegalStateException("Shoonya authentication provider is not registered");
+            AuthTokenResult authenticated = provider.loginAndFetchToken();
+            tokenStoreService.updateToken(Broker.SHOONYA, authenticated.token(), authenticated.expiresIn());
+            sessionToken = authenticated.token();
         }
-        JSONObject request = new JSONObject().put("uid", properties.getUserId()).put("exch", exchange).put("token", token);
+        JSONObject request = new JSONObject().put("uid", properties.getUid()).put("exch", exchange).put("token", token);
         return post(request, sessionToken);
     }
 
@@ -51,7 +51,8 @@ public class ShoonyaQuoteService {
             connection.setReadTimeout(30_000);
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-            String body = "jData=" + request + "&jKey=" + sessionToken;
+            connection.setRequestProperty("Authorization", "Bearer " + sessionToken);
+            String body = "jData=" + request;
             try (OutputStream output = connection.getOutputStream()) { output.write(body.getBytes(StandardCharsets.UTF_8)); }
             int status = connection.getResponseCode();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(

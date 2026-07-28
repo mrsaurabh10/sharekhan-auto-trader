@@ -10,12 +10,13 @@ import org.springframework.stereotype.Component;
 public class ShoonyaProperties {
     /** The Noren REST base. GetQuotes is invoked at {api-url}/GetQuotes. */
     private String apiUrl = "https://api.shoonya.com/NorenWClientAPI";
-    /** Shoonya documents QuickAuth on the NorenWClientTP host, separately from GetQuotes. */
-    private String authUrl = "https://api.shoonya.com/NorenWClientTP";
-    private String userId;
+    /** OAuth authorization endpoint; Shoonya redirects the user back with a short-lived code. */
+    private String oauthUrl = "https://api.shoonya.com/OAuthlogin/authorize/oauth";
+    private String clientId;
+    private String secretCode;
+    private String uid;
     private String password;
-    private String vendorCode;
-    private String apiKey;
-    private String deviceId;
     private String totpSecret;
+    /** Shoonya's OAuth response does not provide a documented expiry. */
+    private long accessTokenTtlSeconds = 8 * 60 * 60;
 }
