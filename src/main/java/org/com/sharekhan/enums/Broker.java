@@ -3,6 +3,7 @@ package org.com.sharekhan.enums;
 public enum Broker {
     SHAREKHAN("Sharekhan"),
     MSTOCK("MStock"),
+    SHOONYA("Shoonya"),
     SIMULATOR("Simulator");
 
     private final String displayName;
