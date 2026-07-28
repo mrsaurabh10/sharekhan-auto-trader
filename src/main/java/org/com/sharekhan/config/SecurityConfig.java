@@ -83,6 +83,7 @@ public class SecurityConfig {
             new AntPathRequestMatcher("/api/trades/close-all"),
             new AntPathRequestMatcher("/api/trades/close-all/**"),
             new AntPathRequestMatcher("/api/backtests/**"),
+            new AntPathRequestMatcher("/api/shoonya/oauth/exchange"),
             new AntPathRequestMatcher("/telegram/webhook") // Telegram supplies its own shared secret header
         ));
         return http.build();

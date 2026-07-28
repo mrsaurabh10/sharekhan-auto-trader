@@ -1,8 +1,12 @@
 package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
+import org.com.sharekhan.auth.AuthTokenResult;
+import org.com.sharekhan.auth.TokenStoreService;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.service.ShoonyaQuoteService;
 import org.com.sharekhan.service.ShoonyaInstrumentMasterService;
+import org.com.sharekhan.service.ShoonyaOAuthService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -17,6 +21,33 @@ import java.util.Map;
 public class ShoonyaController {
     private final ShoonyaQuoteService quoteService;
     private final ShoonyaInstrumentMasterService instrumentMasterService;
+    private final ShoonyaOAuthService oauthService;
+    private final TokenStoreService tokenStoreService;
+
+    @GetMapping("/oauth/authorize-url")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> authorizationUrl() {
+        try {
+            return ResponseEntity.ok(Map.of("authorizationUrl", oauthService.authorizationUrl()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+    }
+
+    @org.springframework.web.bind.annotation.PostMapping("/oauth/exchange")
+    @org.springframework.security.access.prepost.PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> exchangeAuthorizationCode(@org.springframework.web.bind.annotation.RequestBody Map<String, String> body) {
+        try {
+            String code = body == null ? null : body.get("code");
+            AuthTokenResult token = oauthService.exchangeAuthorizationCode(code);
+            tokenStoreService.updateToken(Broker.SHOONYA, token.token(), token.expiresIn());
+            return ResponseEntity.ok(Map.of("status", "success", "message", "Shoonya OAuth access token stored"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("status", "error", "message", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("status", "error", "message", e.getMessage()));
+        }
+    }
 
     @GetMapping("/quotes")
     public ResponseEntity<?> quotes(@RequestParam String exchange,
