@@ -105,6 +105,10 @@ app:
     api-key: ${SHOONYA_API_KEY:}
     device-id: ${SHOONYA_DEVICE_ID:}
     totp-secret: ${SHOONYA_TOTP_SECRET:}
+    symbol-master:
+      # The public NFO master is refreshed before the market opens; disable with SHOONYA_SYMBOL_MASTER_ENABLED=false.
+      enabled: ${SHOONYA_SYMBOL_MASTER_ENABLED:true}
+      refresh-cron: ${SHOONYA_SYMBOL_MASTER_REFRESH_CRON:0 15 8 * * MON-FRI}
   sharekhan:
     client-code: "SGUPTA78"
     password: "Anvi@2023"
