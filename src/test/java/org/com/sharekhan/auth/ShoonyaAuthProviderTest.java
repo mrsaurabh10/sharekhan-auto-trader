@@ -34,6 +34,7 @@ class ShoonyaAuthProviderTest {
 
         ShoonyaProperties properties = properties();
         properties.setApiUrl("http://localhost:" + server.getAddress().getPort() + "/NorenWClientAPI");
+        properties.setAuthUrl("http://localhost:" + server.getAddress().getPort() + "/NorenWClientAPI");
         AuthTokenResult result = new ShoonyaAuthProvider(properties, mock(CryptoService.class)).loginAndFetchToken();
 
         assertThat(result.token()).isEqualTo("session-token");

@@ -10,6 +10,8 @@ import org.springframework.stereotype.Component;
 public class ShoonyaProperties {
     /** The Noren REST base. GetQuotes is invoked at {api-url}/GetQuotes. */
     private String apiUrl = "https://api.shoonya.com/NorenWClientAPI";
+    /** Shoonya documents QuickAuth on the NorenWClientTP host, separately from GetQuotes. */
+    private String authUrl = "https://api.shoonya.com/NorenWClientTP";
     private String userId;
     private String password;
     private String vendorCode;
