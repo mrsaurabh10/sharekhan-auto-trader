@@ -30,17 +30,18 @@ public class ShoonyaTokenFetcher {
             if (passwordInputs.count() >= 2) {
                 // Shoonya's OAuth page presents user ID, password and TOTP together.
                 passwordInputs.nth(0).fill(properties.getPassword());
-                passwordInputs.nth(1).fill(new Totp(properties.getTotpSecret()).now());
+                passwordInputs.nth(1).fill(currentTotp(properties.getTotpSecret()));
                 click(visible(page, List.of("button:has-text('LOGIN')", "button[type='submit']", "input[type='submit']", "button")));
             } else {
                 Locator password = visible(page, List.of("#password", "#pwd", "input[name='password']", "input[type='password']"));
                 password.fill(properties.getPassword());
                 click(visible(page, List.of("button[type='submit']", "input[type='submit']", "button:has-text('Login')", "button:has-text('Continue')", "button")));
                 Locator totp = visible(page, List.of("#totp", "#otp", "input[name='totp']", "input[name='otp']", "input[autocomplete='one-time-code']"));
-                totp.fill(new Totp(properties.getTotpSecret()).now());
+                totp.fill(currentTotp(properties.getTotpSecret()));
                 click(visible(page, List.of("button[type='submit']", "input[type='submit']", "button:has-text('Verify')", "button:has-text('Submit')", "button")));
             }
-            page.waitForURL(url -> url.contains("code="), new Page.WaitForURLOptions().setTimeout(120_000));
+            // The registered redirect is external (test.com); wait for the URL change, not for that page to finish loading.
+            page.waitForURL(url -> url.contains("code="), new Page.WaitForURLOptions().setTimeout(60_000).setWaitUntil(WaitUntilState.COMMIT));
             String code = queryParameter(page.url(), "code");
             if (code == null || code.isBlank()) throw new IllegalStateException("Shoonya OAuth redirect did not include code");
             return code;
@@ -57,6 +58,7 @@ public class ShoonyaTokenFetcher {
         throw new IllegalStateException("Shoonya login page did not expose an expected input/button");
     }
     private static void click(Locator locator) { locator.click(new Locator.ClickOptions().setTimeout(30_000)); }
+    private static String currentTotp(String secret) { return new Totp(secret.replaceAll("\\s", "")).now(); }
     private static String queryParameter(String url, String name) { try { String query = new URI(url).getRawQuery(); if (query == null) return null; for (String part : query.split("&")) { String[] pair = part.split("=", 2); if (pair.length == 2 && name.equals(URLDecoder.decode(pair[0], StandardCharsets.UTF_8))) return URLDecoder.decode(pair[1], StandardCharsets.UTF_8); } return null; } catch (Exception e) { throw new IllegalStateException("Unable to parse Shoonya OAuth redirect", e); } }
     private static void require(String value, String name) { if (value == null || value.isBlank()) throw new IllegalStateException("Shoonya " + name + " is not configured"); }
 }
