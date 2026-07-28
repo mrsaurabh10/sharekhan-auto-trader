@@ -99,6 +99,7 @@ app:
   shoonya:
     # Keep secrets out of source control: set SHOONYA_* environment variables in deployment.
     api-url: ${SHOONYA_API_URL:https://api.shoonya.com/NorenWClientAPI}
+    auth-url: ${SHOONYA_AUTH_URL:https://api.shoonya.com/NorenWClientTP}
     user-id: ${SHOONYA_USER_ID:}
     password: ${SHOONYA_PASSWORD:}
     vendor-code: ${SHOONYA_VENDOR_CODE:}

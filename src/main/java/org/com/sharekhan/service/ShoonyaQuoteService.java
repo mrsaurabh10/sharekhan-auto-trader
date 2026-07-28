@@ -16,7 +16,6 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.stream.Collectors;
 
@@ -52,8 +51,7 @@ public class ShoonyaQuoteService {
             connection.setReadTimeout(30_000);
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-            String body = "jData=" + URLEncoder.encode(request.toString(), StandardCharsets.UTF_8)
-                    + "&jKey=" + URLEncoder.encode(sessionToken, StandardCharsets.UTF_8);
+            String body = "jData=" + request + "&jKey=" + sessionToken;
             try (OutputStream output = connection.getOutputStream()) { output.write(body.getBytes(StandardCharsets.UTF_8)); }
             int status = connection.getResponseCode();
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(

@@ -80,14 +80,14 @@ public class ShoonyaAuthProvider implements BrokerAuthProvider {
     }
 
     private JSONObject post(String path, JSONObject request, String sessionToken) throws Exception {
-        HttpURLConnection connection = (HttpURLConnection) URI.create(properties.getApiUrl() + path).toURL().openConnection();
+        HttpURLConnection connection = (HttpURLConnection) URI.create(properties.getAuthUrl() + path).toURL().openConnection();
         connection.setRequestMethod("POST");
         connection.setConnectTimeout(15_000);
         connection.setReadTimeout(30_000);
         connection.setDoOutput(true);
         connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
-        String body = "jData=" + java.net.URLEncoder.encode(request.toString(), StandardCharsets.UTF_8)
-                + (sessionToken == null ? "" : "&jKey=" + java.net.URLEncoder.encode(sessionToken, StandardCharsets.UTF_8));
+        // Noren's endpoint expects the JSON object as the raw jData form value (per its curl example).
+        String body = "jData=" + request + (sessionToken == null ? "" : "&jKey=" + sessionToken);
         try (OutputStream output = connection.getOutputStream()) { output.write(body.getBytes(StandardCharsets.UTF_8)); }
         int status = connection.getResponseCode();
         try (var reader = new java.io.BufferedReader(new InputStreamReader(
