@@ -2910,6 +2910,19 @@ public class TradeExecutionService {
             return resetInactiveNonIntradayExitState(trade);
         }
 
+        // NFO option exit orders are day-validity orders. After the 15:30 close
+        // the broker may no longer return their status, although the order has
+        // expired and cannot remain active for the next session. Do not leave
+        // these delivery trades stuck in TARGET_ORDER_PLACED merely because the
+        // post-close status endpoint returns no record. Keep the stricter broker
+        // verification for equities, futures, intraday orders, and all exchanges
+        // other than NFO options.
+        if (isClosedNfoOptionExitOrder(trade, LocalDateTime.now(ZoneId.of("Asia/Kolkata")))) {
+            log.info("EOD_NFO_OPTION_EXIT_RESET | trade={} | symbol={} | orderId={} | reason=DAY_VALIDITY_EXPIRED",
+                    tradeId, trade.getSymbol(), exitOrderId);
+            return resetInactiveNonIntradayExitState(trade);
+        }
+
         BrokerContext context = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
         if (context == null || context.getBrokerName() == null) {
             log.warn("EOD_EXIT_RESET_SKIPPED | trade={} | orderId={} | reason=BROKER_CONTEXT_UNAVAILABLE",
@@ -2951,6 +2964,18 @@ public class TradeExecutionService {
                 || status == TriggeredTradeStatus.EXIT_TRIGGERED
                 || status == TriggeredTradeStatus.EXIT_ORDER_PLACED
                 || status == TriggeredTradeStatus.TARGET_ORDER_PLACED;
+    }
+
+    boolean isClosedNfoOptionExitOrder(TriggeredTradeSetupEntity trade, LocalDateTime nowIst) {
+        if (trade == null || nowIst == null || Boolean.TRUE.equals(trade.getIntraday())
+                || !isResettableNonIntradayExitStatus(trade.getStatus())) {
+            return false;
+        }
+        String exchange = trade.getExchange();
+        boolean nfo = "NF".equalsIgnoreCase(exchange) || "NFO".equalsIgnoreCase(exchange);
+        boolean option = "CE".equalsIgnoreCase(trade.getOptionType())
+                || "PE".equalsIgnoreCase(trade.getOptionType());
+        return nfo && option && !nowIst.toLocalTime().isBefore(DEFAULT_OPTION_EXPIRY_CUTOFF);
     }
 
     private Double determineExitChasePrice(TriggeredTradeSetupEntity trade, ExitChaseState state) {
