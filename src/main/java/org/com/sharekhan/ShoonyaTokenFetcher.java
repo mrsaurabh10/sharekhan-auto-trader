@@ -20,21 +20,22 @@ public class ShoonyaTokenFetcher {
         require(properties.getUid(), "uid"); require(properties.getPassword(), "password"); require(properties.getTotpSecret(), "totp-secret");
         log.info("Shoonya OAuth browser login started for configured UID");
         try (Playwright playwright = Playwright.create(); Browser browser = playwright.chromium().launch(
-                new BrowserType.LaunchOptions().setHeadless(true).setArgs(List.of("--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu")))) {
+                new BrowserType.LaunchOptions().setHeadless(properties.isBrowserHeadless())
+                        .setArgs(List.of("--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu")))) {
             Page page = browser.newPage();
             page.navigate(authorizationUrl, new Page.NavigateOptions().setTimeout(120_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
             // The OAuth page is a client-rendered app: DOMContentLoaded happens before its form controls appear.
-            page.waitForSelector("input[type='text']", new Page.WaitForSelectorOptions().setTimeout(30_000));
-            page.waitForSelector("input[type='password']", new Page.WaitForSelectorOptions().setTimeout(30_000));
-            page.waitForSelector("button:has-text('LOGIN')", new Page.WaitForSelectorOptions().setTimeout(30_000));
+            waitForVisible(page, List.of("#uid", "#user_id", "#userid", "input[name='uid']", "input[name='user_id']", "input[type='text']"));
+            waitForVisible(page, List.of("input[type='password']"));
+            waitForVisible(page, List.of("button:has-text('LOGIN')", "button[type='submit']", "input[type='submit']", "button"));
             log.info("Shoonya OAuth login form loaded");
             Locator user = visible(page, List.of("#uid", "#user_id", "#userid", "input[name='uid']", "input[name='user_id']", "input[type='text']"));
             user.fill(properties.getUid());
-            Locator passwordInputs = page.locator("input[type='password']");
-            if (passwordInputs.count() >= 2) {
+            List<Locator> passwordInputs = visibleAll(page, "input[type='password']");
+            if (passwordInputs.size() >= 2) {
                 // Shoonya's OAuth page presents user ID, password and TOTP together.
-                passwordInputs.nth(0).fill(properties.getPassword());
-                passwordInputs.nth(1).fill(currentTotp(properties.getTotpSecret()));
+                passwordInputs.get(0).fill(properties.getPassword());
+                passwordInputs.get(1).fill(currentTotp(properties.getTotpSecret()));
                 click(visible(page, List.of("button:has-text('LOGIN')", "button[type='submit']", "input[type='submit']", "button")));
                 log.info("Shoonya OAuth one-screen credentials submitted");
             } else {
@@ -66,6 +67,21 @@ public class ShoonyaTokenFetcher {
             }
         }
         throw new IllegalStateException("Shoonya login page did not expose an expected input/button");
+    }
+    private static List<Locator> visibleAll(Page page, String selector) {
+        Locator candidate = page.locator(selector);
+        List<Locator> visible = new java.util.ArrayList<>();
+        for (int index = 0; index < candidate.count(); index++) {
+            Locator element = candidate.nth(index);
+            if (element.isVisible()) visible.add(element);
+        }
+        return visible;
+    }
+    private static void waitForVisible(Page page, List<String> selectors) {
+        page.waitForCondition(() -> {
+            for (String selector : selectors) if (!visibleAll(page, selector).isEmpty()) return true;
+            return false;
+        }, new Page.WaitForConditionOptions().setTimeout(30_000));
     }
     private static void click(Locator locator) { locator.click(new Locator.ClickOptions().setTimeout(30_000)); }
     private static String currentTotp(String secret) { return new Totp(secret.replaceAll("\\s", "")).now(); }
