@@ -5,12 +5,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.dto.CloseTradesRequest;
 import org.com.sharekhan.dto.CloseTradesResponse;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -21,6 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -64,6 +67,11 @@ public class TradeCloseService {
     private final TradeExecutionService tradeExecutionService;
     private final LtpCacheService ltpCacheService;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
+
+    @Autowired(required = false)
+    private ShoonyaQuoteService shoonyaQuoteService;
+    @Autowired(required = false)
+    private org.com.sharekhan.repository.ScriptMasterRepository scriptMasterRepository;
 
     public CloseTradesResponse closeAllByContract(CloseTradesRequest closeRequest) {
         String rawInstrument = closeRequest != null && closeRequest.getInstrument() != null
@@ -161,6 +169,10 @@ public class TradeCloseService {
             return requestedPrice;
         }
         if (trade.getScripCode() != null) {
+            Double shoonyaPrice = fetchShoonyaOptionQuote(trade.getScripCode());
+            if (shoonyaPrice != null) {
+                return shoonyaPrice;
+            }
             Double ltp = ltpCacheService.getLtp(trade.getScripCode());
             if (ltp != null && ltp > 0) {
                 return ltp;
@@ -170,6 +182,41 @@ public class TradeCloseService {
             return trade.getActualEntryPrice();
         }
         return trade.getEntryPrice() != null && trade.getEntryPrice() > 0 ? trade.getEntryPrice() : null;
+    }
+
+    private Double fetchShoonyaOptionQuote(Integer scripCode) {
+        if (shoonyaQuoteService == null || scriptMasterRepository == null || scripCode == null) {
+            return null;
+        }
+        ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
+        if (!isFnoOption(script)) {
+            return null;
+        }
+        try {
+            Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
+            if (quoteOpt.isEmpty()) {
+                return null;
+            }
+            ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            Double price = quote.referencePrice();
+            if (price == null || !Double.isFinite(price) || price <= 0d) {
+                return null;
+            }
+            ltpCacheService.updateLtp(scripCode, price);
+            return price;
+        } catch (Exception e) {
+            log.debug("Shoonya quote unavailable for manual close scrip {}: {}", scripCode, e.getMessage());
+            return null;
+        }
+    }
+
+    private boolean isFnoOption(ScriptMasterEntity script) {
+        if (script == null || script.getOptionType() == null || script.getOptionType().isBlank()) {
+            return false;
+        }
+        String exchange = script.getExchange() == null ? "" : script.getExchange().trim();
+        return "NF".equalsIgnoreCase(exchange) || "NFO".equalsIgnoreCase(exchange)
+                || "BF".equalsIgnoreCase(exchange) || "BFO".equalsIgnoreCase(exchange);
     }
 
     private void unsubscribe(String exchange, Integer scripCode) {

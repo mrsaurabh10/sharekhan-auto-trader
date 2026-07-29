@@ -2031,6 +2031,7 @@ public class TradeExecutionService {
 
         ExitDiagnostics exitDiagnostics = analyseExit(persisted, sanitizedRequestedExitPrice, exitReason);
         logExitDiagnostics(persisted, exitDiagnostics, sanitizedRequestedExitPrice);
+        auditExitAttempt(persisted, exitDiagnostics, sanitizedRequestedExitPrice);
 
         Double resolvedExitPrice = exitDiagnostics.recommendedLimit() != null
                 ? exitDiagnostics.recommendedLimit()
@@ -2523,6 +2524,25 @@ public class TradeExecutionService {
                 .build());
     }
 
+    private void auditExitAttempt(TriggeredTradeSetupEntity trade, ExitDiagnostics diagnostics, Double requestedPrice) {
+        if (tradeAuditService == null || trade == null) return;
+        QuoteCacheService.QuoteSnapshot quote = null;
+        if (quoteCacheService != null && trade.getScripCode() != null) {
+            quote = quoteCacheService.getSnapshot(trade.getScripCode()).orElse(null);
+        }
+        tradeAuditService.record(TradeAuditEventEntity.builder()
+                .appUserId(trade.getAppUserId()).triggerRequestId(trade.getTriggerRequestId()).tradeId(trade.getId())
+                .source(trade.getSource()).symbol(trade.getSymbol()).eventType("EXIT_ORDER_ATTEMPT").outcome("PENDING")
+                .reason(diagnostics != null ? diagnostics.exitReason() : null)
+                .optionType(trade.getOptionType()).expiry(trade.getExpiry()).strikePrice(trade.getStrikePrice())
+                .optionLtp(quote != null ? quote.getLastTradedPrice() : null)
+                .bestBid(quote != null ? quote.getBestBid() : null).bestAsk(quote != null ? quote.getBestAsk() : null)
+                .details("requestedPrice=" + requestedPrice + ", recommendedLimit="
+                        + (diagnostics != null ? diagnostics.recommendedLimit() : null)
+                        + ", quoteTime=" + (quote != null ? quote.getLastBookAt() : null))
+                .build());
+    }
+
     private OrderPlacementResult rejectedEntryResult(String orderId,
                                                      OrderPlacementResult priorResult,
                                                      String reason) {
@@ -2935,6 +2955,15 @@ public class TradeExecutionService {
     private Double determineExitChasePrice(TriggeredTradeSetupEntity trade, ExitChaseState state) {
         if (trade == null) {
             return null;
+        }
+
+        // Refresh the F&O book immediately before repricing a pending exit order.
+        // fetchShoonyaOptionQuote updates the LTP and bid/ask caches used below.
+        if (trade.getScripCode() != null) {
+            ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
+            if (isFnoOption(script)) {
+                fetchShoonyaOptionQuote(script, "determineExitChasePrice");
+            }
         }
 
         Double stopLoss = trade.getStopLoss();
@@ -4078,7 +4107,7 @@ public class TradeExecutionService {
         if (price != null) {
             exitPrice = price;
         } else {
-            exitPrice = ltpCacheService.getLtp(tradeSetupEntity.getScripCode());
+            exitPrice = resolveEntryReferencePrice(tradeSetupEntity.getScripCode(), "manualSquareOff");
         }
         squareOff(tradeSetupEntity, exitPrice, "Manual Exit", placedStatus);
     }
