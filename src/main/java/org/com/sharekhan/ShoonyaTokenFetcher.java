@@ -25,6 +25,8 @@ public class ShoonyaTokenFetcher {
             page.navigate(authorizationUrl, new Page.NavigateOptions().setTimeout(120_000).setWaitUntil(WaitUntilState.DOMCONTENTLOADED));
             // The OAuth page is a client-rendered app: DOMContentLoaded happens before its form controls appear.
             page.waitForSelector("input[type='text']", new Page.WaitForSelectorOptions().setTimeout(30_000));
+            page.waitForSelector("input[type='password']", new Page.WaitForSelectorOptions().setTimeout(30_000));
+            page.waitForSelector("button:has-text('LOGIN')", new Page.WaitForSelectorOptions().setTimeout(30_000));
             log.info("Shoonya OAuth login form loaded");
             Locator user = visible(page, List.of("#uid", "#user_id", "#userid", "input[name='uid']", "input[name='user_id']", "input[type='text']"));
             user.fill(properties.getUid());

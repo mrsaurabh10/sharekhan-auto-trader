@@ -33,6 +33,11 @@ public class ShoonyaQuoteService {
         if (!StringUtils.hasText(token)) token = instrumentMasterService.resolveToken(exchange, symbol);
         String sessionToken = tokenStoreService.getAccessToken(Broker.SHOONYA);
         if (!StringUtils.hasText(sessionToken)) {
+            // The access token is persisted; reload it after a service/container restart before re-authenticating.
+            tokenStoreService.loadFromDb(Broker.SHOONYA);
+            sessionToken = tokenStoreService.getAccessToken(Broker.SHOONYA);
+        }
+        if (!StringUtils.hasText(sessionToken)) {
             BrokerAuthProvider provider = providerRegistry.getProvider(Broker.SHOONYA);
             if (provider == null) throw new IllegalStateException("Shoonya authentication provider is not registered");
             AuthTokenResult authenticated = provider.loginAndFetchToken();
