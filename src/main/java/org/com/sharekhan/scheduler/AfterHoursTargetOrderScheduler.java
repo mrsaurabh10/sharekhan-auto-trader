@@ -66,4 +66,18 @@ public class AfterHoursTargetOrderScheduler {
         log.info("End-of-day delivery exit reset complete. Candidates={}, reset={}, skipped={}",
                 exitStateTrades.size(), reset, skipped);
     }
+
+    /**
+     * Recreate the day-valid broker target orders for eligible F&O option
+     * delivery trades released by the previous session's end-of-day reset.
+     */
+    @Scheduled(cron = "0 16 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void rearmOptionPriceTargetsAtMarketOpen() {
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        if (!nseMarketCalendar.isTradingDay(LocalDate.now(zone))) {
+            return;
+        }
+        int rearmed = tradeExecutionService.rearmNonIntradayOptionPriceTargetsAtMarketOpen();
+        log.info("Market-open F&O option target rearm complete. Re-armed={}", rearmed);
+    }
 }
