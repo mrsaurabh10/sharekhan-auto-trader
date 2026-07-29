@@ -17,6 +17,8 @@ public class ShoonyaProperties {
     private String uid;
     private String password;
     private String totpSecret;
+    /** Set false for local visual debugging; a server container normally needs true unless it has Xvfb. */
+    private boolean browserHeadless = true;
     /** Shoonya's OAuth response does not provide a documented expiry. */
     private long accessTokenTtlSeconds = 8 * 60 * 60;
 }

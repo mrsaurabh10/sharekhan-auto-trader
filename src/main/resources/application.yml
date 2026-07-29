@@ -105,6 +105,7 @@ app:
     uid: ${SHOONYA_UID:}
     password: ${SHOONYA_PASSWORD:}
     totp-secret: ${SHOONYA_TOTP_SECRET:}
+    browser-headless: ${SHOONYA_BROWSER_HEADLESS:true}
     access-token-ttl-seconds: ${SHOONYA_ACCESS_TOKEN_TTL_SECONDS:28800}
     symbol-master:
       # The public NFO master is refreshed before the market opens; disable with SHOONYA_SYMBOL_MASTER_ENABLED=false.
