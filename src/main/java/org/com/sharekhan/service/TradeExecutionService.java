@@ -1904,6 +1904,7 @@ public class TradeExecutionService {
         trade.setStatus(TriggeredTradeStatus.REJECTED);
         stopEntryOrderChase(trade.getId());
         triggeredTradeRepo.save(trade);
+        syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.REJECTED);
         webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
 
         log.warn("❌ Order rejected for orderId {}", orderId);
@@ -3549,6 +3550,7 @@ public class TradeExecutionService {
     }
 
     public void handleEntryOrderExecution(TriggeredTradeSetupEntity trade) {
+        syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.EXECUTED);
         refreshAtrLevelsAtConfirmedEntry(trade);
         try {
             if (createStagedOptionTargetOrders(trade)) {
@@ -3557,6 +3559,41 @@ public class TradeExecutionService {
             maybePlaceTargetOrder(trade);
         } catch (Exception e) {
             log.warn("Failed to place target order for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
+        }
+    }
+
+    /**
+     * Keep the dashboard-facing request lifecycle aligned with the broker-confirmed
+     * entry lifecycle. A request is intentionally put back into
+     * PLACED_PENDING_CONFIRMATION while its broker order is open so it cannot be
+     * triggered twice; once the linked trade reaches a terminal entry state, that
+     * temporary status must not be left behind.
+     */
+    public void syncLinkedEntryRequestStatus(TriggeredTradeSetupEntity trade,
+                                             TriggeredTradeStatus terminalEntryStatus) {
+        if (trade == null || trade.getTriggerRequestId() == null
+                || (terminalEntryStatus != TriggeredTradeStatus.EXECUTED
+                && terminalEntryStatus != TriggeredTradeStatus.REJECTED)) {
+            return;
+        }
+
+        Long requestId = trade.getTriggerRequestId();
+        int updated = triggerTradeRequestRepo.claimIfStatusEquals(
+                requestId,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                terminalEntryStatus.name());
+        if (updated == 0) {
+            // Broker-side trigger placement can leave the request in TRIGGERED
+            // until the first status poll. Synchronize that legitimate race too,
+            // without overwriting a cancellation or any later terminal state.
+            updated = triggerTradeRequestRepo.claimIfStatusEquals(
+                    requestId,
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    terminalEntryStatus.name());
+        }
+        if (updated == 1) {
+            log.info("Synchronized trigger request {} to {} after entry order confirmation for trade {}",
+                    requestId, terminalEntryStatus, trade.getId());
         }
     }
 
