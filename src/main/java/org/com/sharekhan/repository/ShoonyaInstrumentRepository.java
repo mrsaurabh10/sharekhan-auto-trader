@@ -7,5 +7,7 @@ import java.util.Optional;
 
 public interface ShoonyaInstrumentRepository extends JpaRepository<ShoonyaInstrumentEntity, Long> {
     Optional<ShoonyaInstrumentEntity> findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(String exchange, String tradingSymbol);
+    Optional<ShoonyaInstrumentEntity> findFirstByExchangeIgnoreCaseAndSymbolIgnoreCaseAndExpiryIgnoreCaseAndOptionTypeIgnoreCaseAndStrikePrice(
+            String exchange, String symbol, String expiry, String optionType, Double strikePrice);
     long deleteByExchangeIgnoreCase(String exchange);
 }

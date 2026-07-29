@@ -3,6 +3,7 @@ package org.com.sharekhan.service;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.entity.ShoonyaInstrumentEntity;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.repository.ShoonyaInstrumentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +16,9 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.zip.ZipInputStream;
 
@@ -68,6 +72,35 @@ public class ShoonyaInstrumentMasterService {
                 .map(ShoonyaInstrumentEntity::getToken)
                 .orElseThrow(() -> new IllegalArgumentException("Shoonya symbol not found in local " + normalizedExchange
                         + " master: " + tradingSymbol + ". Refresh the symbol master first."));
+    }
+
+    /** Resolves an F&O option from the existing Sharekhan script master to Shoonya's daily symbol master. */
+    public Optional<ShoonyaInstrumentEntity> resolveOption(ScriptMasterEntity script) {
+        if (script == null || !StringUtils.hasText(script.getOptionType()) || script.getStrikePrice() == null) return Optional.empty();
+        String exchange = switch (script.getExchange() == null ? "" : script.getExchange().trim().toUpperCase(Locale.ROOT)) {
+            case "NF", "NFO" -> "NFO";
+            case "BF", "BFO" -> "BFO";
+            default -> null;
+        };
+        if (exchange == null || !StringUtils.hasText(script.getTradingSymbol())) return Optional.empty();
+        Optional<ShoonyaInstrumentEntity> byTradingSymbol = repository
+                .findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange, script.getTradingSymbol().trim());
+        if (byTradingSymbol.isPresent()) return byTradingSymbol;
+
+        String expiry = shoonyaExpiry(script.getExpiry());
+        if (!StringUtils.hasText(expiry)) return Optional.empty();
+        return repository.findFirstByExchangeIgnoreCaseAndSymbolIgnoreCaseAndExpiryIgnoreCaseAndOptionTypeIgnoreCaseAndStrikePrice(
+                exchange, script.getTradingSymbol().trim(), expiry, script.getOptionType().trim().toUpperCase(Locale.ROOT), script.getStrikePrice());
+    }
+
+    private static String shoonyaExpiry(String value) {
+        if (!StringUtils.hasText(value)) return null;
+        for (DateTimeFormatter formatter : List.of(DateTimeFormatter.ofPattern("dd/MM/uuuu"), DateTimeFormatter.ISO_LOCAL_DATE,
+                DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT))) {
+            try { return LocalDate.parse(value.trim(), formatter).format(DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)).toUpperCase(Locale.ROOT); }
+            catch (DateTimeParseException ignored) { }
+        }
+        return value.trim().toUpperCase(Locale.ROOT);
     }
 
     @Transactional

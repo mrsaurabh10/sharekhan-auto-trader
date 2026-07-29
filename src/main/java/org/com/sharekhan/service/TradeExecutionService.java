@@ -145,6 +145,8 @@ public class TradeExecutionService {
     private final ScriptMasterRepository scriptMasterRepository;
     private final MStockInstrumentResolver mStockInstrumentResolver;
     private final MStockLtpService mStockLtpService;
+    @Autowired(required = false)
+    private ShoonyaQuoteService shoonyaQuoteService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final BrokerServiceFactory brokerServiceFactory;
@@ -279,6 +281,13 @@ public class TradeExecutionService {
     }
 
     private Double resolveEntryReferencePrice(Integer scripCode, String context) {
+        ScriptMasterEntity script = scripCode == null ? null : scriptMasterRepository.findByScripCode(scripCode);
+        if (isFnoOption(script) && !"strategyOptionWarmup".equals(context)) {
+            Double shoonyaPrice = fetchShoonyaOptionQuote(script, context);
+            if (isUsableMarketPrice(shoonyaPrice)) return shoonyaPrice;
+            log.warn("[{}] Shoonya option quote unavailable for scrip {}. Falling back to MStock LTP.", context, scripCode);
+            return fetchLtpViaMStockFallback(scripCode, context);
+        }
         Double sharekhanQuotePrice = resolveFreshSharekhanReferencePrice(scripCode, context);
         if (isUsableMarketPrice(sharekhanQuotePrice)) {
             return sharekhanQuotePrice;
@@ -300,6 +309,30 @@ public class TradeExecutionService {
 
         log.debug("[{}] No fresh Sharekhan quote/cache LTP for scrip {}. Trying MStock fallback.", context, scripCode);
         return fetchLtpViaMStockFallback(scripCode, context);
+    }
+
+    private boolean isFnoOption(ScriptMasterEntity script) {
+        if (script == null || !hasOptionType(script.getOptionType())) return false;
+        String exchange = script.getExchange() == null ? "" : script.getExchange().trim().toUpperCase(Locale.ROOT);
+        return "NF".equals(exchange) || "NFO".equals(exchange) || "BF".equals(exchange) || "BFO".equals(exchange);
+    }
+
+    private Double fetchShoonyaOptionQuote(ScriptMasterEntity script, String context) {
+        if (shoonyaQuoteService == null) return null;
+        try {
+            Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
+            if (quoteOpt.isEmpty()) return null;
+            ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            double price = quote.referencePrice();
+            ltpCacheService.updateLtp(script.getScripCode(), price);
+            if (quoteCacheService != null) quoteCacheService.recordQuote(script.getScripCode(), quote.bestBid(), quote.bestAsk(), quote.lastPrice());
+            log.info("[{}] Using Shoonya option quote for {} token={}: ltp={} bid={} ask={}", context,
+                    quote.tradingSymbol(), quote.token(), quote.lastPrice(), quote.bestBid(), quote.bestAsk());
+            return price;
+        } catch (Exception e) {
+            log.warn("[{}] Shoonya option quote failed for scrip {}: {}", context, script.getScripCode(), e.getMessage());
+            return null;
+        }
     }
 
     private Double resolveFreshSharekhanReferencePrice(Integer scripCode, String context) {
@@ -2705,7 +2738,7 @@ public class TradeExecutionService {
             return null;
         }
 
-        Double fallbackLtp = resolveFreshSharekhanReferencePrice(trade.getScripCode(), "determineEntryChasePrice");
+        Double fallbackLtp = resolveEntryReferencePrice(trade.getScripCode(), "determineEntryChasePrice");
         if (fallbackLtp == null && ltpCacheService != null && trade.getScripCode() != null) {
             fallbackLtp = ltpCacheService.getLtp(trade.getScripCode());
         }
