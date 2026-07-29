@@ -145,6 +145,8 @@ public class TradeExecutionService {
     private final ScriptMasterRepository scriptMasterRepository;
     private final MStockInstrumentResolver mStockInstrumentResolver;
     private final MStockLtpService mStockLtpService;
+    @Autowired(required = false)
+    private ShoonyaQuoteService shoonyaQuoteService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final BrokerServiceFactory brokerServiceFactory;
@@ -206,7 +208,7 @@ public class TradeExecutionService {
     @Value("${app.trading.entry.max-slippage-percent:2.0}")
     private double entryMaxSlippagePercent;
 
-    @Value("${app.trading.entry.hard-spread-percent:2.5}")
+    @Value("${app.trading.entry.hard-spread-percent:3.5}")
     private double entryHardSpreadPercent;
 
     @Value("${app.trading.entry.wide-spread-confirmations:2}")
@@ -279,6 +281,13 @@ public class TradeExecutionService {
     }
 
     private Double resolveEntryReferencePrice(Integer scripCode, String context) {
+        ScriptMasterEntity script = scripCode == null ? null : scriptMasterRepository.findByScripCode(scripCode);
+        if (isFnoOption(script) && !"strategyOptionWarmup".equals(context)) {
+            Double shoonyaPrice = fetchShoonyaOptionQuote(script, context);
+            if (isUsableMarketPrice(shoonyaPrice)) return shoonyaPrice;
+            log.warn("[{}] Shoonya option quote unavailable for scrip {}. Falling back to MStock LTP.", context, scripCode);
+            return fetchLtpViaMStockFallback(scripCode, context);
+        }
         Double sharekhanQuotePrice = resolveFreshSharekhanReferencePrice(scripCode, context);
         if (isUsableMarketPrice(sharekhanQuotePrice)) {
             return sharekhanQuotePrice;
@@ -300,6 +309,30 @@ public class TradeExecutionService {
 
         log.debug("[{}] No fresh Sharekhan quote/cache LTP for scrip {}. Trying MStock fallback.", context, scripCode);
         return fetchLtpViaMStockFallback(scripCode, context);
+    }
+
+    private boolean isFnoOption(ScriptMasterEntity script) {
+        if (script == null || !hasOptionType(script.getOptionType())) return false;
+        String exchange = script.getExchange() == null ? "" : script.getExchange().trim().toUpperCase(Locale.ROOT);
+        return "NF".equals(exchange) || "NFO".equals(exchange) || "BF".equals(exchange) || "BFO".equals(exchange);
+    }
+
+    private Double fetchShoonyaOptionQuote(ScriptMasterEntity script, String context) {
+        if (shoonyaQuoteService == null) return null;
+        try {
+            Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
+            if (quoteOpt.isEmpty()) return null;
+            ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            double price = quote.referencePrice();
+            ltpCacheService.updateLtp(script.getScripCode(), price);
+            if (quoteCacheService != null) quoteCacheService.recordQuote(script.getScripCode(), quote.bestBid(), quote.bestAsk(), quote.lastPrice());
+            log.info("[{}] Using Shoonya option quote for {} token={}: ltp={} bid={} ask={}", context,
+                    quote.tradingSymbol(), quote.token(), quote.lastPrice(), quote.bestBid(), quote.bestAsk());
+            return price;
+        } catch (Exception e) {
+            log.warn("[{}] Shoonya option quote failed for scrip {}: {}", context, script.getScripCode(), e.getMessage());
+            return null;
+        }
     }
 
     private Double resolveFreshSharekhanReferencePrice(Integer scripCode, String context) {
@@ -1871,6 +1904,7 @@ public class TradeExecutionService {
         trade.setStatus(TriggeredTradeStatus.REJECTED);
         stopEntryOrderChase(trade.getId());
         triggeredTradeRepo.save(trade);
+        syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.REJECTED);
         webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
 
         log.warn("❌ Order rejected for orderId {}", orderId);
@@ -1998,6 +2032,7 @@ public class TradeExecutionService {
 
         ExitDiagnostics exitDiagnostics = analyseExit(persisted, sanitizedRequestedExitPrice, exitReason);
         logExitDiagnostics(persisted, exitDiagnostics, sanitizedRequestedExitPrice);
+        auditExitAttempt(persisted, exitDiagnostics, sanitizedRequestedExitPrice);
 
         Double resolvedExitPrice = exitDiagnostics.recommendedLimit() != null
                 ? exitDiagnostics.recommendedLimit()
@@ -2490,6 +2525,25 @@ public class TradeExecutionService {
                 .build());
     }
 
+    private void auditExitAttempt(TriggeredTradeSetupEntity trade, ExitDiagnostics diagnostics, Double requestedPrice) {
+        if (tradeAuditService == null || trade == null) return;
+        QuoteCacheService.QuoteSnapshot quote = null;
+        if (quoteCacheService != null && trade.getScripCode() != null) {
+            quote = quoteCacheService.getSnapshot(trade.getScripCode()).orElse(null);
+        }
+        tradeAuditService.record(TradeAuditEventEntity.builder()
+                .appUserId(trade.getAppUserId()).triggerRequestId(trade.getTriggerRequestId()).tradeId(trade.getId())
+                .source(trade.getSource()).symbol(trade.getSymbol()).eventType("EXIT_ORDER_ATTEMPT").outcome("PENDING")
+                .reason(diagnostics != null ? diagnostics.exitReason() : null)
+                .optionType(trade.getOptionType()).expiry(trade.getExpiry()).strikePrice(trade.getStrikePrice())
+                .optionLtp(quote != null ? quote.getLastTradedPrice() : null)
+                .bestBid(quote != null ? quote.getBestBid() : null).bestAsk(quote != null ? quote.getBestAsk() : null)
+                .details("requestedPrice=" + requestedPrice + ", recommendedLimit="
+                        + (diagnostics != null ? diagnostics.recommendedLimit() : null)
+                        + ", quoteTime=" + (quote != null ? quote.getLastBookAt() : null))
+                .build());
+    }
+
     private OrderPlacementResult rejectedEntryResult(String orderId,
                                                      OrderPlacementResult priorResult,
                                                      String reason) {
@@ -2705,7 +2759,7 @@ public class TradeExecutionService {
             return null;
         }
 
-        Double fallbackLtp = resolveFreshSharekhanReferencePrice(trade.getScripCode(), "determineEntryChasePrice");
+        Double fallbackLtp = resolveEntryReferencePrice(trade.getScripCode(), "determineEntryChasePrice");
         if (fallbackLtp == null && ltpCacheService != null && trade.getScripCode() != null) {
             fallbackLtp = ltpCacheService.getLtp(trade.getScripCode());
         }
@@ -2856,6 +2910,19 @@ public class TradeExecutionService {
             return resetInactiveNonIntradayExitState(trade);
         }
 
+        // NFO option exit orders are day-validity orders. After the 15:30 close
+        // the broker may no longer return their status, although the order has
+        // expired and cannot remain active for the next session. Do not leave
+        // these delivery trades stuck in TARGET_ORDER_PLACED merely because the
+        // post-close status endpoint returns no record. Keep the stricter broker
+        // verification for equities, futures, intraday orders, and all exchanges
+        // other than NFO options.
+        if (isClosedNfoOptionExitOrder(trade, LocalDateTime.now(ZoneId.of("Asia/Kolkata")))) {
+            log.info("EOD_NFO_OPTION_EXIT_RESET | trade={} | symbol={} | orderId={} | reason=DAY_VALIDITY_EXPIRED",
+                    tradeId, trade.getSymbol(), exitOrderId);
+            return resetInactiveNonIntradayExitState(trade);
+        }
+
         BrokerContext context = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
         if (context == null || context.getBrokerName() == null) {
             log.warn("EOD_EXIT_RESET_SKIPPED | trade={} | orderId={} | reason=BROKER_CONTEXT_UNAVAILABLE",
@@ -2899,9 +2966,30 @@ public class TradeExecutionService {
                 || status == TriggeredTradeStatus.TARGET_ORDER_PLACED;
     }
 
+    boolean isClosedNfoOptionExitOrder(TriggeredTradeSetupEntity trade, LocalDateTime nowIst) {
+        if (trade == null || nowIst == null || Boolean.TRUE.equals(trade.getIntraday())
+                || !isResettableNonIntradayExitStatus(trade.getStatus())) {
+            return false;
+        }
+        String exchange = trade.getExchange();
+        boolean nfo = "NF".equalsIgnoreCase(exchange) || "NFO".equalsIgnoreCase(exchange);
+        boolean option = "CE".equalsIgnoreCase(trade.getOptionType())
+                || "PE".equalsIgnoreCase(trade.getOptionType());
+        return nfo && option && !nowIst.toLocalTime().isBefore(DEFAULT_OPTION_EXPIRY_CUTOFF);
+    }
+
     private Double determineExitChasePrice(TriggeredTradeSetupEntity trade, ExitChaseState state) {
         if (trade == null) {
             return null;
+        }
+
+        // Refresh the F&O book immediately before repricing a pending exit order.
+        // fetchShoonyaOptionQuote updates the LTP and bid/ask caches used below.
+        if (trade.getScripCode() != null) {
+            ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
+            if (isFnoOption(script)) {
+                fetchShoonyaOptionQuote(script, "determineExitChasePrice");
+            }
         }
 
         Double stopLoss = trade.getStopLoss();
@@ -3487,6 +3575,7 @@ public class TradeExecutionService {
     }
 
     public void handleEntryOrderExecution(TriggeredTradeSetupEntity trade) {
+        syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.EXECUTED);
         refreshAtrLevelsAtConfirmedEntry(trade);
         try {
             if (createStagedOptionTargetOrders(trade)) {
@@ -3495,6 +3584,41 @@ public class TradeExecutionService {
             maybePlaceTargetOrder(trade);
         } catch (Exception e) {
             log.warn("Failed to place target order for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
+        }
+    }
+
+    /**
+     * Keep the dashboard-facing request lifecycle aligned with the broker-confirmed
+     * entry lifecycle. A request is intentionally put back into
+     * PLACED_PENDING_CONFIRMATION while its broker order is open so it cannot be
+     * triggered twice; once the linked trade reaches a terminal entry state, that
+     * temporary status must not be left behind.
+     */
+    public void syncLinkedEntryRequestStatus(TriggeredTradeSetupEntity trade,
+                                             TriggeredTradeStatus terminalEntryStatus) {
+        if (trade == null || trade.getTriggerRequestId() == null
+                || (terminalEntryStatus != TriggeredTradeStatus.EXECUTED
+                && terminalEntryStatus != TriggeredTradeStatus.REJECTED)) {
+            return;
+        }
+
+        Long requestId = trade.getTriggerRequestId();
+        int updated = triggerTradeRequestRepo.claimIfStatusEquals(
+                requestId,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                terminalEntryStatus.name());
+        if (updated == 0) {
+            // Broker-side trigger placement can leave the request in TRIGGERED
+            // until the first status poll. Synchronize that legitimate race too,
+            // without overwriting a cancellation or any later terminal state.
+            updated = triggerTradeRequestRepo.claimIfStatusEquals(
+                    requestId,
+                    TriggeredTradeStatus.TRIGGERED.name(),
+                    terminalEntryStatus.name());
+        }
+        if (updated == 1) {
+            log.info("Synchronized trigger request {} to {} after entry order confirmation for trade {}",
+                    requestId, terminalEntryStatus, trade.getId());
         }
     }
 
@@ -4045,7 +4169,7 @@ public class TradeExecutionService {
         if (price != null) {
             exitPrice = price;
         } else {
-            exitPrice = ltpCacheService.getLtp(tradeSetupEntity.getScripCode());
+            exitPrice = resolveEntryReferencePrice(tradeSetupEntity.getScripCode(), "manualSquareOff");
         }
         squareOff(tradeSetupEntity, exitPrice, "Manual Exit", placedStatus);
     }

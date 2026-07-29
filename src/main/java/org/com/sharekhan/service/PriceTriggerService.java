@@ -13,6 +13,7 @@ import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -76,6 +77,10 @@ public class PriceTriggerService {
     private final ScripExecutorManager scripExecutorManager;
     private final OrderExecutionDispatcher orderExecutionDispatcher;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
+
+    /** Optional while Shoonya is being rolled out; existing trigger processing remains available. */
+    @Autowired(required = false)
+    private ShoonyaQuoteService shoonyaQuoteService;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         LocalDateTime nowIst = nowIst();
@@ -1593,6 +1598,15 @@ public class PriceTriggerService {
                 return null;
             }
 
+            if (isFnoOption(script)) {
+                Double shoonyaLtp = fetchLtpFromShoonya(script, tradeId, priceRole);
+                if (shoonyaLtp != null) {
+                    return shoonyaLtp;
+                }
+                log.warn("Shoonya quote unavailable for {} F&O scrip {}. Falling back to MStock LTP.",
+                        priceRole, scripCode);
+            }
+
             Optional<String> mstockKeyOpt = instrumentResolver.resolveInstrumentKey(script);
             if (mstockKeyOpt.isEmpty()) {
                 log.debug("Unable to resolve MStock instrument for {} scrip {} while fetching fallback LTP", priceRole, scripCode);
@@ -1620,5 +1634,39 @@ public class PriceTriggerService {
                     priceRole, tradeId, scripCode, ex.getMessage());
             return null;
         }
+    }
+
+    private Double fetchLtpFromShoonya(ScriptMasterEntity script, Long tradeId, String priceRole) {
+        if (shoonyaQuoteService == null) {
+            return null;
+        }
+        try {
+            Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
+            if (quoteOpt.isEmpty()) {
+                return null;
+            }
+            ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            Double ltp = quote.referencePrice();
+            if (ltp == null || !Double.isFinite(ltp) || ltp <= 0d) {
+                return null;
+            }
+            ltpCacheService.updateLtp(script.getScripCode(), ltp);
+            log.info("Fetched missing {} LTP from Shoonya for trade {} scrip {} symbol {}: ltp={} bid={} ask={}",
+                    priceRole, tradeId, script.getScripCode(), quote.tradingSymbol(), ltp, quote.bestBid(), quote.bestAsk());
+            return ltp;
+        } catch (Exception ex) {
+            log.warn("Failed to fetch {} fallback LTP from Shoonya for trade {} scrip {}: {}",
+                    priceRole, tradeId, script.getScripCode(), ex.getMessage());
+            return null;
+        }
+    }
+
+    private boolean isFnoOption(ScriptMasterEntity script) {
+        if (script == null || script.getOptionType() == null || script.getOptionType().isBlank()) {
+            return false;
+        }
+        String exchange = script.getExchange() == null ? "" : script.getExchange().trim();
+        return "NF".equalsIgnoreCase(exchange) || "NFO".equalsIgnoreCase(exchange)
+                || "BF".equalsIgnoreCase(exchange) || "BFO".equalsIgnoreCase(exchange);
     }
 }

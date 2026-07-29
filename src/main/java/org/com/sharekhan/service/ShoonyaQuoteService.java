@@ -6,6 +6,8 @@ import org.com.sharekhan.auth.BrokerAuthProvider;
 import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.config.ShoonyaProperties;
+import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.entity.ShoonyaInstrumentEntity;
 import org.com.sharekhan.enums.Broker;
 import org.json.JSONObject;
 import org.springframework.stereotype.Service;
@@ -17,6 +19,7 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 /** Read-only Shoonya client. It intentionally exposes only NorenWClientAPI/GetQuotes. */
@@ -27,6 +30,12 @@ public class ShoonyaQuoteService {
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
     private final ShoonyaInstrumentMasterService instrumentMasterService;
+
+    public record LiveQuote(String tradingSymbol, String token, Double lastPrice, Double bestBid, Double bestAsk) {
+        public boolean hasUsablePrice() { return usable(lastPrice) || usable(bestAsk) || usable(bestBid); }
+        public Double referencePrice() { return usable(lastPrice) ? lastPrice : usable(bestAsk) ? bestAsk : bestBid; }
+        private static boolean usable(Double value) { return value != null && Double.isFinite(value) && value > 0d; }
+    }
 
     public JSONObject getQuotes(String exchange, String token, String symbol) {
         if (!StringUtils.hasText(exchange)) throw new IllegalArgumentException("exchange is required");
@@ -46,6 +55,28 @@ public class ShoonyaQuoteService {
         }
         JSONObject request = new JSONObject().put("uid", properties.getUid()).put("exch", exchange).put("token", token);
         return post(request, sessionToken);
+    }
+
+    /** Fetches a current option quote using the persisted Shoonya symbol master mapping. */
+    public Optional<LiveQuote> getOptionQuote(ScriptMasterEntity script) {
+        Optional<ShoonyaInstrumentEntity> instrument = instrumentMasterService.resolveOption(script);
+        if (instrument.isEmpty()) return Optional.empty();
+        ShoonyaInstrumentEntity resolved = instrument.get();
+        try {
+            JSONObject quote = getQuotes(resolved.getExchange(), resolved.getToken(), null);
+            if (!"Ok".equalsIgnoreCase(quote.optString("stat"))) return Optional.empty();
+            LiveQuote result = new LiveQuote(resolved.getTradingSymbol(), resolved.getToken(),
+                    decimal(quote, "lp"), decimal(quote, "bp1"), decimal(quote, "sp1"));
+            return result.hasUsablePrice() ? Optional.of(result) : Optional.empty();
+        } catch (Exception e) {
+            return Optional.empty();
+        }
+    }
+
+    private static Double decimal(JSONObject quote, String key) {
+        String value = quote.optString(key, "");
+        try { return StringUtils.hasText(value) ? Double.valueOf(value) : null; }
+        catch (NumberFormatException ignored) { return null; }
     }
 
     private JSONObject post(JSONObject request, String sessionToken) {

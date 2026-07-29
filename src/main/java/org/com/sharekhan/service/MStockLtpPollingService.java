@@ -5,8 +5,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.cache.QuoteCacheService;
+import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -18,12 +21,14 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Service
@@ -39,6 +44,11 @@ public class MStockLtpPollingService {
     private final MStockInstrumentResolver instrumentResolver;
     private final TokenStoreService tokenStoreService;
 
+    @Autowired(required = false)
+    private ShoonyaQuoteService shoonyaQuoteService;
+    @Autowired(required = false)
+    private ScriptMasterRepository scriptMasterRepository;
+
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final LocalTime MARKET_CLOSE_TIME = LocalTime.of(15, 30);
     private static final long MAX_TRANSIENT_BACKOFF_MS = 60_000L;
@@ -47,6 +57,8 @@ public class MStockLtpPollingService {
     private final Map<String, Integer> mStockKeyToScripCodeCache = new ConcurrentHashMap<>();
     private final AtomicBoolean afterHoursLogged = new AtomicBoolean(false);
     private final AtomicBoolean missingTokenLogged = new AtomicBoolean(false);
+    private final Map<Integer, Instant> shoonyaLastRefreshAt = new ConcurrentHashMap<>();
+    private final AtomicInteger shoonyaPollCursor = new AtomicInteger();
     private volatile Instant nextPollAttemptAt = Instant.EPOCH;
     private volatile int consecutiveTransientFailures = 0;
 
@@ -55,6 +67,12 @@ public class MStockLtpPollingService {
 
     @Value("${app.market-data.sharekhan-quote-stale-ms:2000}")
     private long sharekhanQuoteStaleMs;
+
+    @Value("${app.shoonya.poll-max-active-options:5}")
+    private int shoonyaPollMaxActiveOptions;
+
+    @Value("${app.shoonya.poll-min-interval-ms:5000}")
+    private long shoonyaPollMinIntervalMs;
 
     @Scheduled(fixedDelayString = "${app.mstock.poll-delay-ms:1500}")
     public void pollMStockLtp() {
@@ -75,6 +93,10 @@ public class MStockLtpPollingService {
                 return;
             }
 
+            // Shoonya GetQuotes is a single-instrument API. Restrict it to active F&O contracts,
+            // where we need bid/ask as well as LTP, and leave the broad universe to MStock batching.
+            Set<Integer> shoonyaRefreshedScrips = refreshActiveFnoQuotesFromShoonya(activeScripKeys);
+
             if (!hasMStockToken()) {
                 if (missingTokenLogged.compareAndSet(false, true)) {
                     log.info("Skipping MStock LTP polling until a valid MStock access token is available.");
@@ -91,6 +113,10 @@ public class MStockLtpPollingService {
             for (String scripKey : activeScripKeys) {
                 Integer scripCode = extractScripCode(scripKey);
                 if (scripCode == null) continue;
+
+                if (shoonyaRefreshedScrips.contains(scripCode)) {
+                    continue;
+                }
 
                 if (hasFreshSharekhanQuote(scripCode)) {
                     log.debug("Skipping MStock LTP fallback for scrip {} because Sharekhan quote is fresh.", scripCode);
@@ -170,6 +196,79 @@ public class MStockLtpPollingService {
         return tokenStoreService.getFirstNonExpiredTokenInfo(Broker.MSTOCK) != null
                 || StringUtils.hasText(tokenStoreService.getFirstNonExpiredTokenForBroker(Broker.MSTOCK))
                 || StringUtils.hasText(tokenStoreService.getAccessToken(Broker.MSTOCK));
+    }
+
+    private Set<Integer> refreshActiveFnoQuotesFromShoonya(Set<String> activeScripKeys) {
+        if (shoonyaQuoteService == null || scriptMasterRepository == null || shoonyaPollMaxActiveOptions <= 0) {
+            return Set.of();
+        }
+        Set<Integer> refreshed = new java.util.HashSet<>();
+        List<ScriptMasterEntity> activeOptions = new ArrayList<>();
+        for (String scripKey : activeScripKeys) {
+            Integer scripCode = extractScripCode(scripKey);
+            if (scripCode == null || hasFreshSharekhanQuote(scripCode)) {
+                continue;
+            }
+            ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
+            if (isFnoOption(script)) {
+                activeOptions.add(script);
+            }
+        }
+        activeOptions.sort(Comparator.comparing(ScriptMasterEntity::getScripCode));
+        if (activeOptions.isEmpty()) {
+            return refreshed;
+        }
+
+        Instant now = Instant.now();
+        int attempted = 0;
+        int start = Math.floorMod(shoonyaPollCursor.getAndAdd(shoonyaPollMaxActiveOptions), activeOptions.size());
+        for (int offset = 0; offset < activeOptions.size() && attempted < shoonyaPollMaxActiveOptions; offset++) {
+            ScriptMasterEntity script = activeOptions.get((start + offset) % activeOptions.size());
+            Integer scripCode = script.getScripCode();
+            if (scripCode == null) {
+                continue;
+            }
+            Instant lastRefresh = shoonyaLastRefreshAt.get(scripCode);
+            if (lastRefresh != null && lastRefresh.plusMillis(configuredShoonyaPollMinIntervalMs()).isAfter(now)) {
+                continue;
+            }
+            attempted++;
+            try {
+                Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
+                if (quoteOpt.isEmpty()) {
+                    continue;
+                }
+                ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+                Double price = quote.referencePrice();
+                if (!isUsablePrice(price)) {
+                    continue;
+                }
+                ltpCacheService.updateLtp(scripCode, price);
+                quoteCacheService.recordQuote(scripCode, quote.bestBid(), quote.bestAsk(), quote.lastPrice());
+                shoonyaLastRefreshAt.put(scripCode, now);
+                refreshed.add(scripCode);
+                scripExecutorManager.submitTriggerTask(scripCode,
+                        () -> priceTriggerService.evaluatePriceTrigger(scripCode, price));
+                scripExecutorManager.submitMonitorTask(scripCode,
+                        () -> priceTriggerService.monitorOpenTrades(scripCode, price));
+            } catch (Exception e) {
+                log.debug("Shoonya active F&O quote refresh failed for scrip {}: {}", scripCode, e.getMessage());
+            }
+        }
+        return refreshed;
+    }
+
+    private long configuredShoonyaPollMinIntervalMs() {
+        return shoonyaPollMinIntervalMs > 0 ? shoonyaPollMinIntervalMs : 5000L;
+    }
+
+    private boolean isFnoOption(ScriptMasterEntity script) {
+        if (script == null || !StringUtils.hasText(script.getOptionType())) {
+            return false;
+        }
+        String exchange = script.getExchange() == null ? "" : script.getExchange().trim();
+        return "NF".equalsIgnoreCase(exchange) || "NFO".equalsIgnoreCase(exchange)
+                || "BF".equalsIgnoreCase(exchange) || "BFO".equalsIgnoreCase(exchange);
     }
 
     private boolean hasFreshSharekhanQuote(Integer scripCode) {

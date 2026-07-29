@@ -85,7 +85,7 @@ app:
       max-attempts: ${ENTRY_MAX_ATTEMPTS:5}
       retry-delay-ms: ${ENTRY_RETRY_DELAY_MS:2000}
       max-spread-percent: ${ENTRY_MAX_SPREAD_PERCENT:1.5}
-      hard-spread-percent: ${ENTRY_HARD_SPREAD_PERCENT:2.5}
+      hard-spread-percent: ${ENTRY_HARD_SPREAD_PERCENT:3.5}
       wide-spread-confirmations: ${ENTRY_WIDE_SPREAD_CONFIRMATIONS:2}
       max-slippage-percent: ${ENTRY_MAX_SLIPPAGE_PERCENT:2.0}
       quote-stale-ms: ${ENTRY_QUOTE_STALE_MS:5000}
