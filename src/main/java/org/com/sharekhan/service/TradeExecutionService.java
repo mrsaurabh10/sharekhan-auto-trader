@@ -3727,6 +3727,44 @@ public class TradeExecutionService {
         }
     }
 
+    /**
+     * Broker target orders for F&O options expire at the end of the trading day.
+     * Trades released from that expired state remain EXECUTED overnight, so they
+     * need a fresh target order once the next market session is live.
+     */
+    public int rearmNonIntradayOptionPriceTargetsAtMarketOpen() {
+        List<TriggeredTradeSetupEntity> executedTrades = triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXECUTED);
+        int rearmed = 0;
+        for (TriggeredTradeSetupEntity trade : executedTrades) {
+            if (!isEligibleForMarketOpenOptionTargetRearm(trade)) {
+                continue;
+            }
+            try {
+                maybePlaceTargetOrder(trade);
+                TriggeredTradeSetupEntity reloaded = triggeredTradeRepo.findById(trade.getId()).orElse(null);
+                if (reloaded != null && TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(reloaded.getStatus())
+                        && reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank()) {
+                    rearmed++;
+                }
+            } catch (Exception e) {
+                log.warn("Failed to rearm market-open target order for trade {}: {}", trade.getId(), e.getMessage());
+            }
+        }
+        return rearmed;
+    }
+
+    boolean isEligibleForMarketOpenOptionTargetRearm(TriggeredTradeSetupEntity trade) {
+        if (trade == null || trade.getId() == null || Boolean.TRUE.equals(trade.getIntraday())
+                || !TriggeredTradeStatus.EXECUTED.equals(trade.getStatus())
+                || trade.getExitOrderId() != null || isSpotTarget(trade)) {
+            return false;
+        }
+        String exchange = trade.getExchange();
+        boolean nfo = "NF".equalsIgnoreCase(exchange) || "NFO".equalsIgnoreCase(exchange);
+        boolean option = "CE".equalsIgnoreCase(trade.getOptionType()) || "PE".equalsIgnoreCase(trade.getOptionType());
+        return nfo && option && pickTargetPrice(trade) != null;
+    }
+
     private Double pickTargetPrice(TriggeredTradeSetupEntity trade) {
         if (trade == null) return null;
         if (trade.getTarget1() != null && trade.getTarget1() > 0) return trade.getTarget1();
