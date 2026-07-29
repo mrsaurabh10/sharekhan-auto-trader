@@ -208,7 +208,7 @@ public class TradeExecutionService {
     @Value("${app.trading.entry.max-slippage-percent:2.0}")
     private double entryMaxSlippagePercent;
 
-    @Value("${app.trading.entry.hard-spread-percent:2.5}")
+    @Value("${app.trading.entry.hard-spread-percent:3.5}")
     private double entryHardSpreadPercent;
 
     @Value("${app.trading.entry.wide-spread-confirmations:2}")
