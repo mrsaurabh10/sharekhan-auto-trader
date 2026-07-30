@@ -117,14 +117,14 @@ public class PriceTriggerService {
                 }
 
                 if (ltp >= trigger.getEntryPrice()) {
-                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
                     if (claimed == 1) {
                         String conditionSummary = String.format("option LTP %.2f >= entry %.2f", ltp, trigger.getEntryPrice());
                         TradeEventLogger.logEntryTriggered(trigger, ltp, "OPTION_LTP", conditionSummary);
                         log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
 
                         // convert request -> executed entity and run execution flow
-                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED); // Update entity status reference
+                        trigger.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
                         dispatchEntryExecution(trigger);
                     }
                 }
@@ -176,7 +176,7 @@ public class PriceTriggerService {
                 }
 
                 if (conditionMet || openingDecision == OpeningDecision.READY) {
-                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                    int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
                     if (claimed == 1) {
                         String conditionSummary = openingDecision == OpeningDecision.READY
                                 ? "directional one-minute close confirmed and current spot remains beyond entry"
@@ -187,7 +187,7 @@ public class PriceTriggerService {
                         log.info("🚀 Spot Entry condition met for {} ({}) at SpotLTP: {}", trigger.getSymbol(), trigger.getOptionType(), ltp);
 
                         // convert request -> executed entity and run execution flow
-                        trigger.setStatus(TriggeredTradeStatus.TRIGGERED); // Update entity status reference
+                        trigger.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
                         dispatchEntryExecution(trigger);
                     }
                 }
@@ -195,6 +195,28 @@ public class PriceTriggerService {
         } catch (Exception e) {
             log.error("❌ Error evaluating price trigger for scripCode {}: {}", scripCode, e.getMessage(), e);
         }
+    }
+
+    /**
+     * Re-evaluates only one active, option-target trade after its TSL flag is
+     * edited. This intentionally avoids the general tick evaluator because that
+     * would also consider every pending request for the same option scrip.
+     */
+    public void reEvaluateOptionTradeAfterTslChange(Long tradeId) {
+        if (tradeId == null) {
+            return;
+        }
+        TriggeredTradeSetupEntity trade = triggeredRepo.findById(tradeId).orElse(null);
+        if (trade == null || trade.getScripCode() == null || usesSpotForTarget(trade)) {
+            return;
+        }
+        Double optionLtp = ltpCacheService.getLtp(trade.getScripCode());
+        if (optionLtp == null || !Double.isFinite(optionLtp) || optionLtp <= 0d) {
+            log.debug("TSL change for trade {} will be evaluated on the next option tick; no cached LTP is available.", tradeId);
+            return;
+        }
+        Double spotLtp = trade.getSpotScripCode() == null ? null : ltpCacheService.getLtp(trade.getSpotScripCode());
+        handleTradeWithLock(tradeId, optionLtp, spotLtp);
     }
 
     private void dispatchEntryExecution(TriggerTradeRequestEntity request) {
@@ -209,26 +231,14 @@ public class PriceTriggerService {
     }
 
     private void executeTriggeredRequest(TriggerTradeRequestEntity request) {
-        if (request == null || request.getId() == null || request.getStatus() != TriggeredTradeStatus.TRIGGERED) {
+        if (request == null || request.getId() == null || request.getStatus() != TriggeredTradeStatus.ENTRY_SUBMITTING) {
             return;
         }
         Long requestId = request.getId();
 
-        // Claim a durable non-triggerable state before doing any broker work.  The
-        // in-memory dispatcher protects a normal single-JVM run, but it is not a
-        // sufficient guard for the recovery job (or after a process restart).  In
-        // particular, never put a request back into the triggerable pending state
-        // while its first broker order can still be open.
-        int executionClaimed = triggerRepo.claimIfStatusEquals(requestId,
-                TriggeredTradeStatus.TRIGGERED.name(),
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
-        if (executionClaimed != 1) {
-            log.info("Entry request {} was already claimed for execution; skipping duplicate dispatch.", requestId);
-            return;
-        }
-
-        // A previous attempt may have reached the broker and persisted a trade before
-        // the request status update. Never submit another entry in that case.
+        // ENTRY_SUBMITTING was atomically persisted before this work was queued.
+        // It is deliberately not a triggerable state: a restart or slow broker
+        // response must never submit the same request a second time.
         List<TriggeredTradeSetupEntity> existing = triggeredRepo.findByTriggerRequestId(requestId);
         if (existing != null && !existing.isEmpty()) {
             TriggeredTradeSetupEntity latest = existing.get(existing.size() - 1);
@@ -236,15 +246,22 @@ public class PriceTriggerService {
                     ? TriggeredTradeStatus.EXECUTED
                     : latest.getStatus() == TriggeredTradeStatus.REJECTED
                     ? TriggeredTradeStatus.REJECTED
-                    : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
-            triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), status.name());
+                    : TriggeredTradeStatus.ENTRY_SUBMITTING;
+            triggerRepo.claimIfStatusEqualsWithOutcome(requestId,
+                    TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
+                    status.name(), latest.getReason(), latest.getComment());
             log.info("Entry request {} already has persisted trade {}; not placing a duplicate order.", requestId, latest.getId());
             return;
         }
 
         TriggeredTradeSetupEntity executed = tradeExecutionService.executeTradeFromEntity(request);
         if (executed == null) {
-            log.warn("Trigger {} did not produce an order; reset to pending for a fresh LTP evaluation.", requestId);
+            triggerRepo.claimIfStatusEqualsWithOutcome(requestId,
+                    TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
+                    TriggeredTradeStatus.FAILED.name(),
+                    "ENTRY_EXECUTION_UNAVAILABLE",
+                    "No trade record was created after the entry submission was claimed; retry is blocked to prevent a duplicate broker order.");
+            log.error("Trigger {} did not produce an order; marked FAILED to prevent an unsafe duplicate submission.", requestId);
             return;
         }
 
@@ -252,15 +269,17 @@ public class PriceTriggerService {
                 ? TriggeredTradeStatus.EXECUTED
                 : executed.getStatus() == TriggeredTradeStatus.REJECTED
                 ? TriggeredTradeStatus.REJECTED
-                : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
-        triggerRepo.claimIfStatusEquals(requestId, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), status.name());
+                : TriggeredTradeStatus.ENTRY_SUBMITTING;
+        triggerRepo.claimIfStatusEqualsWithOutcome(requestId,
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
+                status.name(), executed.getReason(), executed.getComment());
         log.info("Trigger {} execution completed with trade {} status={}", requestId, executed.getId(), status);
     }
 
     /**
-     * Recover requests left in TRIGGERED by an interrupted execution. Recovery only
-     * re-arms a request when no linked trade was persisted, so it cannot duplicate
-     * a broker order after a restart.
+     * Reconcile incomplete entry submissions.  A request that may already have
+     * reached the broker is never rearmed automatically: without a persisted order
+     * identifier we cannot prove that submitting it again is safe.
      */
     @Scheduled(fixedDelayString = "${app.trading.trigger-recovery-delay-ms:15000}")
     public void recoverStaleTriggeredRequests() {
@@ -268,7 +287,12 @@ public class PriceTriggerService {
             log.debug("Skipping triggered-request recovery outside equity market hours.");
             return;
         }
-        for (TriggerTradeRequestEntity request : triggerRepo.findByStatus(TriggeredTradeStatus.TRIGGERED)) {
+        recoverIncompleteEntrySubmissions(TriggeredTradeStatus.TRIGGERED);
+        recoverIncompleteEntrySubmissions(TriggeredTradeStatus.ENTRY_SUBMITTING);
+    }
+
+    private void recoverIncompleteEntrySubmissions(TriggeredTradeStatus incompleteStatus) {
+        for (TriggerTradeRequestEntity request : triggerRepo.findByStatus(incompleteStatus)) {
             if (request.getId() == null || orderExecutionDispatcher.isInFlight(
                     orderExecutionKey("ENTRY:" + request.getId(), request.getBrokerCredentialsId()))) {
                 continue;
@@ -280,14 +304,17 @@ public class PriceTriggerService {
                         ? TriggeredTradeStatus.EXECUTED
                         : latest.getStatus() == TriggeredTradeStatus.REJECTED
                         ? TriggeredTradeStatus.REJECTED
-                        : TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION;
-                triggerRepo.claimIfStatusEquals(request.getId(), TriggeredTradeStatus.TRIGGERED.name(), status.name());
+                        : TriggeredTradeStatus.ENTRY_SUBMITTING;
+                triggerRepo.claimIfStatusEquals(request.getId(), incompleteStatus.name(), status.name());
                 continue;
             }
-            int reset = triggerRepo.claimIfStatusEquals(request.getId(), TriggeredTradeStatus.TRIGGERED.name(),
-                    TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
-            if (reset == 1) {
-                log.warn("Recovered stale triggered request {} by resetting it to pending; no broker order was persisted.", request.getId());
+            int failed = triggerRepo.claimIfStatusEqualsWithOutcome(request.getId(),
+                    incompleteStatus.name(),
+                    TriggeredTradeStatus.FAILED.name(),
+                    "ENTRY_SUBMISSION_STATE_UNKNOWN",
+                    "Recovery found no persisted trade after an incomplete entry submission; retry is blocked because broker submission state cannot be proven.");
+            if (failed == 1) {
+                log.error("Marked incomplete entry request {} as FAILED; broker submission state is unknown and was not rearmed.", request.getId());
             }
         }
     }

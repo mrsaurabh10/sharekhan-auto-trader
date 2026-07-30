@@ -754,14 +754,14 @@ public class TradeExecutionService {
         int claimed = triggerTradeRequestRepository.claimIfStatusEquals(
                 latest.getId(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                TriggeredTradeStatus.TRIGGERED.name());
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name());
         if (claimed != 1) {
             log.debug("Broker-side entry trigger request {} was not claimable; current flow will handle it", latest.getId());
             return;
         }
 
-        latest.setStatus(TriggeredTradeStatus.TRIGGERED);
-        requestEntity.setStatus(TriggeredTradeStatus.TRIGGERED);
+        latest.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
+        requestEntity.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
         boolean brokerAccepted = false;
 
         try {
@@ -847,7 +847,7 @@ public class TradeExecutionService {
         }
         int reverted = triggerTradeRequestRepository.claimIfStatusEquals(
                 latest.getId(),
-                TriggeredTradeStatus.TRIGGERED.name(),
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
         if (reverted == 1) {
             latest.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
@@ -1238,19 +1238,25 @@ public class TradeExecutionService {
 
         TriggeredTradeSetupEntity executed = executeTradeFromEntity(saved);
         if (executed == null) {
-            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+            triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(saved.getId(),
                     TriggeredTradeStatus.TRIGGERED.name(),
-                    TriggeredTradeStatus.REJECTED.name());
+                    TriggeredTradeStatus.REJECTED.name(),
+                    "ENTRY_EXECUTION_UNAVAILABLE",
+                    "No trade record was created immediately after the strategy breakout.");
             saved.setStatus(TriggeredTradeStatus.REJECTED);
+            saved.setReason("ENTRY_EXECUTION_UNAVAILABLE");
+            saved.setComment("No trade record was created immediately after the strategy breakout.");
             triggerTradeRequestRepository.save(saved);
             throw new InvalidTradeRequestException("Strategy entry could not be executed immediately after breakout");
         }
 
         if (TriggeredTradeStatus.REJECTED.equals(executed.getStatus())) {
-            triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
+            triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(saved.getId(),
                     TriggeredTradeStatus.TRIGGERED.name(),
-                    TriggeredTradeStatus.REJECTED.name());
+                    TriggeredTradeStatus.REJECTED.name(), executed.getReason(), executed.getComment());
             saved.setStatus(TriggeredTradeStatus.REJECTED);
+            saved.setReason(executed.getReason());
+            saved.setComment(executed.getComment());
             triggerTradeRequestRepository.save(saved);
             throw new InvalidTradeRequestException("Strategy entry order was rejected: " + executed.getExitReason());
         }
@@ -1622,6 +1628,8 @@ public class TradeExecutionService {
                 rejected.setTriggerRequestId(trigger.getTriggerRequestId());
                 rejected.setStatus(TriggeredTradeStatus.REJECTED);
                 rejected.setExitReason("Quantity must be greater than zero");
+                rejected.setReason("ENTRY_INVALID_QUANTITY");
+                rejected.setComment("Entry was not sent to the broker because quantity=" + trigger.getQuantity() + ".");
                 rejected.setScripCode(trigger.getScripCode());
                 rejected.setExchange(trigger.getExchange());
                 rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
@@ -1724,6 +1732,8 @@ public class TradeExecutionService {
                 rejected.setTriggerRequestId(trigger.getTriggerRequestId());
                 rejected.setStatus(TriggeredTradeStatus.REJECTED);
                 rejected.setExitReason(result.getRejectionReason());
+                rejected.setReason(result.getRejectionReason());
+                rejected.setComment(buildEntryFailureComment(trigger, result, ltp));
                 rejected.setScripCode(trigger.getScripCode());
                 rejected.setExchange(trigger.getExchange());
                 rejected.setBrokerCredentialsId(trigger.getBrokerCredentialsId());
@@ -1902,6 +1912,15 @@ public class TradeExecutionService {
                 .orElseThrow(() -> new RuntimeException("Trade not found"));
 
         trade.setStatus(TriggeredTradeStatus.REJECTED);
+        if (trade.getReason() == null || trade.getReason().isBlank()) {
+            trade.setReason("ENTRY_BROKER_REJECTED");
+        }
+        if (trade.getComment() == null || trade.getComment().isBlank()) {
+            trade.setComment("Broker reported the entry order as rejected; orderId=" + orderId + ".");
+        }
+        if (trade.getExitReason() == null || trade.getExitReason().isBlank()) {
+            trade.setExitReason(trade.getReason());
+        }
         stopEntryOrderChase(trade.getId());
         triggeredTradeRepo.save(trade);
         syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.REJECTED);
@@ -3603,23 +3622,44 @@ public class TradeExecutionService {
         }
 
         Long requestId = trade.getTriggerRequestId();
-        int updated = triggerTradeRequestRepo.claimIfStatusEquals(
+        String reason = terminalEntryStatus == TriggeredTradeStatus.REJECTED ? trade.getReason() : null;
+        String comment = terminalEntryStatus == TriggeredTradeStatus.REJECTED ? trade.getComment() : null;
+        int updated = triggerTradeRequestRepo.claimIfStatusEqualsWithOutcome(
                 requestId,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                terminalEntryStatus.name());
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
+                terminalEntryStatus.name(), reason, comment);
         if (updated == 0) {
-            // Broker-side trigger placement can leave the request in TRIGGERED
-            // until the first status poll. Synchronize that legitimate race too,
-            // without overwriting a cancellation or any later terminal state.
-            updated = triggerTradeRequestRepo.claimIfStatusEquals(
-                    requestId,
-                    TriggeredTradeStatus.TRIGGERED.name(),
-                    terminalEntryStatus.name());
+            // Compatibility with entries created before ENTRY_SUBMITTING was
+            // introduced. Do not overwrite a cancellation or later terminal state.
+            updated = triggerTradeRequestRepo.claimIfStatusEqualsWithOutcome(
+                requestId,
+                TriggeredTradeStatus.TRIGGERED.name(),
+                terminalEntryStatus.name(), reason, comment);
         }
         if (updated == 1) {
             log.info("Synchronized trigger request {} to {} after entry order confirmation for trade {}",
                     requestId, terminalEntryStatus, trade.getId());
         }
+    }
+
+    private String buildEntryFailureComment(TriggeredTradeSetupEntity trigger,
+                                            OrderPlacementResult result,
+                                            double referenceLtp) {
+        StringBuilder comment = new StringBuilder("Entry placement failed before confirmation");
+        if (trigger != null && trigger.getId() != null) {
+            comment.append("; tradeId=").append(trigger.getId());
+        }
+        if (trigger != null && trigger.getTriggerRequestId() != null) {
+            comment.append("; requestId=").append(trigger.getTriggerRequestId());
+        }
+        if (result != null && isUsableBrokerOrderId(result.getOrderId())) {
+            comment.append("; orderId=").append(result.getOrderId());
+        }
+        if (result != null && result.getAttemptedPrice() != null) {
+            comment.append("; attemptedPrice=").append(result.getAttemptedPrice());
+        }
+        comment.append("; referenceLtp=").append(referenceLtp);
+        return comment.toString();
     }
 
     private void refreshAtrLevelsAtConfirmedEntry(TriggeredTradeSetupEntity trade) {

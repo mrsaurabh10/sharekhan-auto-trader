@@ -892,6 +892,7 @@
       '<div style="margin-bottom:8px"><label>Target3</label><br/><input id="modal_target3" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Quantity</label><br/><input id="modal_quantity" type="number" min="1" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_intraday" type="checkbox"/> Intraday</label></div>' +
+      '<div style="margin-bottom:8px"><label><input id="modal_tslEnabled" type="checkbox"/> Enable TSL (partial booking)</label></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_useSpotPrice" type="checkbox"/> Use Spot Price (All)</label></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_useSpotForEntry" type="checkbox"/> Spot for Entry</label></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_useSpotForSl" type="checkbox"/> Spot for SL</label></div>' +
@@ -911,6 +912,7 @@
     document.getElementById('modal_target3').value = values.target3 != null ? values.target3 : '';
     document.getElementById('modal_quantity').value = values.quantity != null ? values.quantity : '';
     document.getElementById('modal_intraday').checked = !!values.intraday;
+    document.getElementById('modal_tslEnabled').checked = !!values.tslEnabled;
     document.getElementById('modal_useSpotPrice').checked = !!values.useSpotPrice;
     document.getElementById('modal_useSpotForEntry').checked = !!values.useSpotForEntry;
     document.getElementById('modal_useSpotForSl').checked = !!values.useSpotForSl;
@@ -926,6 +928,7 @@
       const t3 = document.getElementById('modal_target3').value.trim();
       const q = document.getElementById('modal_quantity').value.trim();
       const intraday = document.getElementById('modal_intraday').checked;
+      const tslEnabled = document.getElementById('modal_tslEnabled').checked;
       const useSpotPrice = document.getElementById('modal_useSpotPrice').checked;
       const useSpotForEntry = document.getElementById('modal_useSpotForEntry').checked;
       const useSpotForSl = document.getElementById('modal_useSpotForSl').checked;
@@ -938,6 +941,7 @@
       if (t3 !== '') payload.target3 = Number(t3);
       if (q !== '') payload.quantity = Number(q);
       payload.intraday = intraday;
+      payload.tslEnabled = tslEnabled;
       payload.useSpotPrice = useSpotPrice;
       payload.useSpotForEntry = useSpotForEntry;
       payload.useSpotForSl = useSpotForSl;
@@ -1064,7 +1068,7 @@
         const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
         editBtn.addEventListener('click', function () {
           openEditModal('Edit Request ' + id, {
-              entryPrice: r.entryPrice, intraday: r.intraday, stopLoss: r.stopLoss, target1: r.target1, target2: r.target2, target3: r.target3, quantity: r.quantity,
+              entryPrice: r.entryPrice, intraday: r.intraday, tslEnabled: r.tslEnabled, stopLoss: r.stopLoss, target1: r.target1, target2: r.target2, target3: r.target3, quantity: r.quantity,
               useSpotPrice: r.useSpotPrice, useSpotForEntry: r.useSpotForEntry, useSpotForSl: r.useSpotForSl, useSpotForTarget: r.useSpotForTarget
           }, async function (payload) {
             if (Object.keys(payload).length === 0) throw new Error('No changes'); await ensureCsrf(); await fetchJson('/api/trades/request/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadRequestedOrdersForUser(uid);
@@ -1248,7 +1252,7 @@
         const forbidden = new Set(['REJECTED', 'EXITED_SUCCESS', 'EXIT_FAILED', 'EXITED_FAILURE', 'EXITED']);
         if (!forbidden.has(statusUpper)) {
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.innerText = 'Edit';
-          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); await loadAnalyticsForUser(uid); }); }); actionCell.appendChild(editBtn);
+          editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, tslEnabled: t.tslEnabled, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); await loadAnalyticsForUser(uid); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginLeft = '4px'; moveBtn.innerText = 'Move SL to Cost';
           moveBtn.addEventListener('click', async function () { await ensureCsrf(); try { await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); } catch(e) { alert('Failed to move SL to cost: ' + (e && e.message ? e.message : e)); } }); actionCell.appendChild(moveBtn);
           const modifyExitBtn = document.createElement('button'); modifyExitBtn.className = 'btn small'; modifyExitBtn.style.marginLeft = '4px'; modifyExitBtn.innerText = 'Modify Exit';

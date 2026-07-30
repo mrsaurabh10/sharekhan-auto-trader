@@ -71,6 +71,10 @@ public class TradeRequestController {
                         request.setIntraday(update.getIntraday());
                         changed = true;
                     }
+                    if (update.getTslEnabled() != null) {
+                        request.setTslEnabled(update.getTslEnabled());
+                        changed = true;
+                    }
                     if (update.getUseSpotPrice() != null) {
                         request.setUseSpotPrice(update.getUseSpotPrice());
                         changed = true;

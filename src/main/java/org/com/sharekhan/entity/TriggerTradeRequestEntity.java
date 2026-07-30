@@ -76,5 +76,13 @@ public class TriggerTradeRequestEntity {
     @Enumerated(EnumType.STRING)
     private TriggeredTradeStatus status;
 
+    /** Short, machine-readable outcome code or broker rejection reason. */
+    @Column(name = "reason", length = 255)
+    private String reason;
+
+    /** Human-readable context that explains the outcome. */
+    @Column(name = "comment", length = 2000)
+    private String comment;
+
     private LocalDateTime createdAt;
 }

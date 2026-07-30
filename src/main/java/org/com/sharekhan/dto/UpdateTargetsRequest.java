@@ -11,6 +11,7 @@ public class UpdateTargetsRequest {
     private Double target3;
     private Long quantity;
     private Boolean intraday;
+    private Boolean tslEnabled;
     private Long userId; // optional user id to validate ownership
     
     private Boolean useSpotPrice; // Legacy flag for backward compatibility

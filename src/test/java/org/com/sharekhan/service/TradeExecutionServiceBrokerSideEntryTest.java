@@ -128,7 +128,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggerTradeRequestEntity saved = ctx.service.executeTrade(optionRequest());
 
-        assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.TRIGGERED);
+        assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.ENTRY_SUBMITTING);
         TriggeredTradeSetupEntity liveTrade = ctx.savedTrade.get();
         assertThat(liveTrade).isNotNull();
         assertThat(liveTrade.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
@@ -139,7 +139,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
         verify(ctx.triggerRepo).claimIfStatusEquals(
                 77L,
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                TriggeredTradeStatus.TRIGGERED.name());
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name());
         verify(ctx.broker).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble());
         verify(ctx.eventPublisher).publishEvent(any(OrderPlacedEvent.class));
     }
@@ -159,7 +159,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(ctx.savedTrade.get()).isNull();
         verify(ctx.triggerRepo).claimIfStatusEquals(
                 77L,
-                TriggeredTradeStatus.TRIGGERED.name(),
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
         verify(ctx.triggeredRepo, never()).save(any());
         verify(ctx.eventPublisher, never()).publishEvent(any());
@@ -642,14 +642,14 @@ class TradeExecutionServiceBrokerSideEntryTest {
             when(triggerRepo.claimIfStatusEquals(
                     77L,
                     TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                    TriggeredTradeStatus.TRIGGERED.name()))
+                    TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                     .thenAnswer(invocation -> {
-                        savedRequest.get().setStatus(TriggeredTradeStatus.TRIGGERED);
+                        savedRequest.get().setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
                         return 1;
                     });
             when(triggerRepo.claimIfStatusEquals(
                     77L,
-                    TriggeredTradeStatus.TRIGGERED.name(),
+                    TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
                     TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name()))
                     .thenAnswer(invocation -> {
                         savedRequest.get().setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);

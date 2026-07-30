@@ -6,6 +6,7 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.CurrentUserService;
+import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -24,13 +25,16 @@ public class TradeExecutionController {
     private final TradeExecutionService tradeExecutionService;
     private final TriggeredTradeSetupRepository triggeredTradeSetupRepository;
     private final CurrentUserService currentUserService;
+    private final PriceTriggerService priceTriggerService;
 
     public TradeExecutionController(TradeExecutionService tradeExecutionService,
                                     TriggeredTradeSetupRepository triggeredTradeSetupRepository,
-                                    CurrentUserService currentUserService) {
+                                    CurrentUserService currentUserService,
+                                    PriceTriggerService priceTriggerService) {
         this.tradeExecutionService = tradeExecutionService;
         this.triggeredTradeSetupRepository = triggeredTradeSetupRepository;
         this.currentUserService = currentUserService;
+        this.priceTriggerService = priceTriggerService;
     }
 
     @PostMapping("/square-off/{id}")
@@ -114,7 +118,11 @@ public class TradeExecutionController {
     public ResponseEntity<?> updateExecution(@PathVariable Long id, @RequestBody UpdateTargetsRequest update) {
         return triggeredTradeSetupRepository.findById(id)
                 .map(trade -> {
+                    if (!currentUserService.isAdmin() && !ownedByCurrentUser(trade.getAppUserId())) {
+                        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: cannot update another user's execution");
+                    }
                     boolean changed = false;
+                    boolean tslChanged = false;
                     if (update.getEntryPrice() != null) {
                         trade.setEntryPrice(update.getEntryPrice());
                         changed = true;
@@ -137,6 +145,11 @@ public class TradeExecutionController {
                     }
                     if (update.getIntraday() != null) {
                         trade.setIntraday(update.getIntraday());
+                        changed = true;
+                    }
+                    if (update.getTslEnabled() != null) {
+                        tslChanged = !update.getTslEnabled().equals(trade.getTslEnabled());
+                        trade.setTslEnabled(update.getTslEnabled());
                         changed = true;
                     }
                     if (update.getQuantity() != null) {
@@ -166,15 +179,30 @@ public class TradeExecutionController {
                     }
 
                     if (changed) {
-                        if (!currentUserService.isAdmin() && !ownedByCurrentUser(trade.getAppUserId())) {
-                            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: cannot update another user's execution");
-                        }
                         TriggeredTradeSetupEntity saved = triggeredTradeSetupRepository.save(trade);
+                        reEvaluateOptionTradeAfterTslChange(saved, tslChanged);
                         return ResponseEntity.ok(saved);
                     }
                     return ResponseEntity.badRequest().body("No updatable fields provided");
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * TSL target handling is driven by traded-option ticks. Re-run that path on a
+     * user change so an already-hit option target follows the newly selected TSL
+     * behavior immediately, rather than waiting for an unrelated subsequent tick.
+     */
+    private void reEvaluateOptionTradeAfterTslChange(TriggeredTradeSetupEntity trade, boolean tslChanged) {
+        if (!tslChanged || trade == null || trade.getScripCode() == null || usesSpotForTarget(trade)) {
+            return;
+        }
+        priceTriggerService.reEvaluateOptionTradeAfterTslChange(trade.getId());
+    }
+
+    private boolean usesSpotForTarget(TriggeredTradeSetupEntity trade) {
+        return Boolean.TRUE.equals(trade.getUseSpotForTarget())
+                || (trade.getUseSpotForTarget() == null && Boolean.TRUE.equals(trade.getUseSpotPrice()));
     }
 
     private boolean canMutateTrade(Long tradeId) {

@@ -381,8 +381,21 @@ public class OrderStatusPollingService {
                     } else {
                         tradeExecutionService.stopEntryOrderChase(currentTrade.getId());
                         currentTrade.setStatus(TriggeredTradeStatus.REJECTED);
+                        if (currentTrade.getReason() == null || currentTrade.getReason().isBlank()) {
+                            currentTrade.setReason("ENTRY_BROKER_REJECTED");
+                        }
+                        if (currentTrade.getComment() == null || currentTrade.getComment().isBlank()) {
+                            currentTrade.setComment("Broker polling reported the entry order as rejected; orderId="
+                                    + orderIdToMonitor + ".");
+                        }
+                        if (currentTrade.getExitReason() == null || currentTrade.getExitReason().isBlank()) {
+                            currentTrade.setExitReason(currentTrade.getReason());
+                        }
                     }
                     tradeRepo.save(currentTrade);
+                    if (TriggeredTradeStatus.REJECTED.equals(currentTrade.getStatus())) {
+                        tradeExecutionService.syncLinkedEntryRequestStatus(currentTrade, TriggeredTradeStatus.REJECTED);
+                    }
                     // Send telegram for rejection
                     try {
                         String title = "Order Rejected ❌";

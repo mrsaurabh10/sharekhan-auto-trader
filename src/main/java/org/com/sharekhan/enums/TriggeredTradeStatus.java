@@ -5,6 +5,8 @@ public enum TriggeredTradeStatus {
     EXECUTED,
     REJECTED,// Waiting for entry price
     TRIGGERED,    // Order placed
+    /** Entry ownership was persisted and a broker submission may be in flight. */
+    ENTRY_SUBMITTING,
     COMPLETED,    // SL or target hit
     CANCELLED,    // Manually cancelled before entry
     FAILED,

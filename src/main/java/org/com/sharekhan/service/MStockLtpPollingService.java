@@ -68,13 +68,13 @@ public class MStockLtpPollingService {
     @Value("${app.market-data.sharekhan-quote-stale-ms:2000}")
     private long sharekhanQuoteStaleMs;
 
-    @Value("${app.shoonya.poll-max-active-options:5}")
-    private int shoonyaPollMaxActiveOptions;
+    @Value("${app.shoonya.poll-max-active-scrips:20}")
+    private int shoonyaPollMaxActiveScrips;
 
     @Value("${app.shoonya.poll-min-interval-ms:5000}")
     private long shoonyaPollMinIntervalMs;
 
-    @Scheduled(fixedDelayString = "${app.mstock.poll-delay-ms:1500}")
+    @Scheduled(fixedDelayString = "${app.shoonya.poll-delay-ms:1500}")
     public void pollMStockLtp() {
         try {
             ZonedDateTime now = ZonedDateTime.now(MARKET_ZONE);
@@ -93,102 +93,10 @@ public class MStockLtpPollingService {
                 return;
             }
 
-            // Shoonya GetQuotes is a single-instrument API. Restrict it to active F&O contracts,
-            // where we need bid/ask as well as LTP, and leave the broad universe to MStock batching.
-            Set<Integer> shoonyaRefreshedScrips = refreshActiveFnoQuotesFromShoonya(activeScripKeys);
-
-            if (!hasMStockToken()) {
-                if (missingTokenLogged.compareAndSet(false, true)) {
-                    log.info("Skipping MStock LTP polling until a valid MStock access token is available.");
-                }
-                return;
-            }
-            missingTokenLogged.set(false);
-
-            if (isInTransientBackoff(now.toInstant())) {
-                return;
-            }
-
-            java.util.LinkedHashSet<String> instrumentSet = new java.util.LinkedHashSet<>();
-            for (String scripKey : activeScripKeys) {
-                Integer scripCode = extractScripCode(scripKey);
-                if (scripCode == null) continue;
-
-                if (shoonyaRefreshedScrips.contains(scripCode)) {
-                    continue;
-                }
-
-                if (hasFreshSharekhanQuote(scripCode)) {
-                    log.debug("Skipping MStock LTP fallback for scrip {} because Sharekhan quote is fresh.", scripCode);
-                    continue;
-                }
-
-                String mstockKey = getMStockKey(scripCode);
-                if (StringUtils.hasText(mstockKey)) {
-                    instrumentSet.add(mstockKey);
-                }
-            }
-
-            if (instrumentSet.isEmpty()) {
-                return;
-            }
-
-            Map<String, Map<String, Object>> ltpData = mStockLtpService.fetchLtp(new ArrayList<>(instrumentSet));
-            if (ltpData == null || ltpData.isEmpty()) {
-                resetTransientBackoffIfNeeded();
-                return;
-            }
-
-            for (Map.Entry<String, Map<String, Object>> entry : ltpData.entrySet()) {
-                String mstockKey = entry.getKey();
-                Map<String, Object> data = entry.getValue();
-
-                if (data == null) continue;
-                Object priceObj = data.get("last_price");
-                if (!(priceObj instanceof Number)) continue;
-
-                double newLtp = ((Number) priceObj).doubleValue();
-                Integer scripCode = mStockKeyToScripCodeCache.get(mstockKey);
-                if (scripCode == null) continue;
-
-                if (shouldTraceSensexMapping(mstockKey, scripCode)) {
-                    log.info("MStock poll trace: scripCode={} mstockKey={} last_price={}",
-                            scripCode, mstockKey, newLtp);
-                }
-
-                Double cachedLtp = ltpCacheService.getLtp(scripCode);
-                if (cachedLtp != null && Double.compare(cachedLtp, newLtp) == 0) {
-                    continue;
-                }
-
-                ltpCacheService.updateLtp(scripCode, newLtp);
-                // Never run trigger/exit logic on the scheduler thread. A slow broker
-                // request must not stall polling for every subscribed instrument.
-                scripExecutorManager.submitTriggerTask(scripCode,
-                        () -> priceTriggerService.evaluatePriceTrigger(scripCode, newLtp));
-                scripExecutorManager.submitMonitorTask(scripCode,
-                        () -> priceTriggerService.monitorOpenTrades(scripCode, newLtp));
-            }
-            resetTransientBackoffIfNeeded();
-        } catch (MStockLtpException e) {
-            if (e.isTransientFailure()) {
-                applyTransientBackoff(e);
-            } else {
-                log.warn("Error during MStock LTP polling: {}", e.getMessage());
-                log.debug("MStock LTP polling error trace", e);
-            }
-        } catch (IllegalStateException e) {
-            if (e.getMessage() != null && e.getMessage().contains("No MStock access token")) {
-                if (missingTokenLogged.compareAndSet(false, true)) {
-                    log.info("Skipping MStock LTP polling until a valid MStock access token is available.");
-                }
-            } else {
-                log.warn("Error during MStock LTP polling: {}", e.getMessage());
-                log.debug("MStock LTP polling error trace", e);
-            }
+            refreshActiveQuotesFromShoonya(activeScripKeys);
         } catch (Exception e) {
-            log.warn("Error during MStock LTP polling: {}", e.getMessage());
-            log.debug("MStock LTP polling error trace", e);
+            log.warn("Error during Shoonya LTP polling: {}", e.getMessage());
+            log.debug("Shoonya LTP polling error trace", e);
         }
     }
 
@@ -198,32 +106,32 @@ public class MStockLtpPollingService {
                 || StringUtils.hasText(tokenStoreService.getAccessToken(Broker.MSTOCK));
     }
 
-    private Set<Integer> refreshActiveFnoQuotesFromShoonya(Set<String> activeScripKeys) {
-        if (shoonyaQuoteService == null || scriptMasterRepository == null || shoonyaPollMaxActiveOptions <= 0) {
+    private Set<Integer> refreshActiveQuotesFromShoonya(Set<String> activeScripKeys) {
+        if (shoonyaQuoteService == null || scriptMasterRepository == null || shoonyaPollMaxActiveScrips <= 0) {
             return Set.of();
         }
         Set<Integer> refreshed = new java.util.HashSet<>();
-        List<ScriptMasterEntity> activeOptions = new ArrayList<>();
+        List<ScriptMasterEntity> activeScripts = new ArrayList<>();
         for (String scripKey : activeScripKeys) {
             Integer scripCode = extractScripCode(scripKey);
-            if (scripCode == null || hasFreshSharekhanQuote(scripCode)) {
+            if (scripCode == null) {
                 continue;
             }
             ScriptMasterEntity script = scriptMasterRepository.findByScripCode(scripCode);
-            if (isFnoOption(script)) {
-                activeOptions.add(script);
+            if (script != null) {
+                activeScripts.add(script);
             }
         }
-        activeOptions.sort(Comparator.comparing(ScriptMasterEntity::getScripCode));
-        if (activeOptions.isEmpty()) {
+        activeScripts.sort(Comparator.comparing(ScriptMasterEntity::getScripCode));
+        if (activeScripts.isEmpty()) {
             return refreshed;
         }
 
         Instant now = Instant.now();
         int attempted = 0;
-        int start = Math.floorMod(shoonyaPollCursor.getAndAdd(shoonyaPollMaxActiveOptions), activeOptions.size());
-        for (int offset = 0; offset < activeOptions.size() && attempted < shoonyaPollMaxActiveOptions; offset++) {
-            ScriptMasterEntity script = activeOptions.get((start + offset) % activeOptions.size());
+        int start = Math.floorMod(shoonyaPollCursor.getAndAdd(shoonyaPollMaxActiveScrips), activeScripts.size());
+        for (int offset = 0; offset < activeScripts.size() && attempted < shoonyaPollMaxActiveScrips; offset++) {
+            ScriptMasterEntity script = activeScripts.get((start + offset) % activeScripts.size());
             Integer scripCode = script.getScripCode();
             if (scripCode == null) {
                 continue;
@@ -234,7 +142,7 @@ public class MStockLtpPollingService {
             }
             attempted++;
             try {
-                Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
+                Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getQuote(script);
                 if (quoteOpt.isEmpty()) {
                     continue;
                 }
@@ -252,7 +160,7 @@ public class MStockLtpPollingService {
                 scripExecutorManager.submitMonitorTask(scripCode,
                         () -> priceTriggerService.monitorOpenTrades(scripCode, price));
             } catch (Exception e) {
-                log.debug("Shoonya active F&O quote refresh failed for scrip {}: {}", scripCode, e.getMessage());
+                log.debug("Shoonya quote refresh failed for scrip {}: {}", scripCode, e.getMessage());
             }
         }
         return refreshed;
