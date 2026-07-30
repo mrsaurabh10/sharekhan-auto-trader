@@ -34,13 +34,15 @@ public class ShoonyaInstrumentMasterService {
     private boolean scheduledRefreshEnabled;
 
     @Scheduled(cron = "${app.shoonya.symbol-master.refresh-cron:0 15 8 * * MON-FRI}", zone = "Asia/Kolkata")
-    public void refreshNfoMasterEachTradingDay() {
+    public void refreshMastersEachTradingDay() {
         if (!scheduledRefreshEnabled) return;
-        try {
-            int rows = refresh("NFO");
-            log.info("Refreshed {} Shoonya NFO instrument rows from the daily symbol master", rows);
-        } catch (Exception e) {
-            log.error("Shoonya NFO symbol-master refresh failed", e);
+        for (String exchange : List.of("NSE", "NFO", "BSE", "BFO")) {
+            try {
+                int rows = refresh(exchange);
+                log.info("Refreshed {} Shoonya {} instrument rows from the daily symbol master", rows, exchange);
+            } catch (Exception e) {
+                log.error("Shoonya {} symbol-master refresh failed", exchange, e);
+            }
         }
     }
 
@@ -91,6 +93,35 @@ public class ShoonyaInstrumentMasterService {
         if (!StringUtils.hasText(expiry)) return Optional.empty();
         return repository.findFirstByExchangeIgnoreCaseAndSymbolIgnoreCaseAndExpiryIgnoreCaseAndOptionTypeIgnoreCaseAndStrikePrice(
                 exchange, script.getTradingSymbol().trim(), expiry, script.getOptionType().trim().toUpperCase(Locale.ROOT), script.getStrikePrice());
+    }
+
+    /** Resolves either a cash or F&O script from the Sharekhan master to Shoonya. */
+    public Optional<ShoonyaInstrumentEntity> resolveScript(ScriptMasterEntity script) {
+        if (script == null || !StringUtils.hasText(script.getTradingSymbol())) {
+            return Optional.empty();
+        }
+        if (StringUtils.hasText(script.getOptionType()) && script.getStrikePrice() != null) {
+            return resolveOption(script);
+        }
+        String exchange = switch (script.getExchange() == null ? "" : script.getExchange().trim().toUpperCase(Locale.ROOT)) {
+            case "NC", "NSE" -> "NSE";
+            case "BC", "BSE" -> "BSE";
+            case "NF", "NFO" -> "NFO";
+            case "BF", "BFO" -> "BFO";
+            default -> null;
+        };
+        if (exchange == null) {
+            return Optional.empty();
+        }
+        String tradingSymbol = script.getTradingSymbol().trim();
+        Optional<ShoonyaInstrumentEntity> exact = repository
+                .findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange, tradingSymbol);
+        if (exact.isPresent() || tradingSymbol.toUpperCase(Locale.ROOT).endsWith("-EQ")) {
+            return exact;
+        }
+        // Cash symbols in the Sharekhan master are generally bare (for example
+        // SWIGGY), while Shoonya's NSE/BSE symbol masters use SWIGGY-EQ.
+        return repository.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange, tradingSymbol + "-EQ");
     }
 
     private static String shoonyaExpiry(String value) {

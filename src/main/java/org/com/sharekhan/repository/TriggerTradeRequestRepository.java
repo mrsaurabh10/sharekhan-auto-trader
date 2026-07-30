@@ -218,6 +218,21 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
                             @Param("expectedStatus") String expectedStatus,
                             @Param("newStatus") String newStatus);
 
+    /**
+     * Atomically records the terminal entry outcome with its diagnostic details.
+     * Keeping this in the same update as the status transition avoids a second
+     * worker replacing the reason for a request it no longer owns.
+     */
+    @Modifying
+    @Transactional
+    @Query(value = "UPDATE trigger_trade_requests SET status = :newStatus, reason = :reason, comment = :comment "
+            + "WHERE id = :id AND status = :expectedStatus", nativeQuery = true)
+    int claimIfStatusEqualsWithOutcome(@Param("id") Long id,
+                                       @Param("expectedStatus") String expectedStatus,
+                                       @Param("newStatus") String newStatus,
+                                       @Param("reason") String reason,
+                                       @Param("comment") String comment);
+
     /** Atomically permits exactly one gap-fill re-entry for the original trigger request. */
     @Modifying
     @Transactional

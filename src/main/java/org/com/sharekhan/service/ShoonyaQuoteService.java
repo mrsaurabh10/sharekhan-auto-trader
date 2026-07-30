@@ -59,7 +59,12 @@ public class ShoonyaQuoteService {
 
     /** Fetches a current option quote using the persisted Shoonya symbol master mapping. */
     public Optional<LiveQuote> getOptionQuote(ScriptMasterEntity script) {
-        Optional<ShoonyaInstrumentEntity> instrument = instrumentMasterService.resolveOption(script);
+        return getQuote(script);
+    }
+
+    /** Fetches a current quote for any script represented in the Shoonya symbol master. */
+    public Optional<LiveQuote> getQuote(ScriptMasterEntity script) {
+        Optional<ShoonyaInstrumentEntity> instrument = instrumentMasterService.resolveScript(script);
         if (instrument.isEmpty()) return Optional.empty();
         ShoonyaInstrumentEntity resolved = instrument.get();
         try {

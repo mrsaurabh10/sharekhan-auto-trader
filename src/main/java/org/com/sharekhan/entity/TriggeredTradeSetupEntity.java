@@ -81,6 +81,14 @@ public class TriggeredTradeSetupEntity {
 
     private String exitReason;
 
+    /** Short, machine-readable outcome code or broker rejection reason. */
+    @Column(name = "reason", length = 255)
+    private String reason;
+
+    /** Human-readable context that explains the outcome. */
+    @Column(name = "comment", length = 2000)
+    private String comment;
+
     @Column(name = "intraday")
     private Boolean intraday;  // default false
 

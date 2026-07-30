@@ -64,10 +64,10 @@ class PriceTriggerServiceTest {
     );
 
     {
-        // A dispatched entry must atomically move out of TRIGGERED before broker work.
+        // A dispatched entry must atomically move into the non-triggerable broker-submitting state.
         when(triggerRepo.claimIfStatusEquals(anyLong(),
-                eq(TriggeredTradeStatus.TRIGGERED.name()),
-                eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name()))).thenReturn(1);
+                eq(TriggeredTradeStatus.ENTRY_SUBMITTING.name()),
+                anyString())).thenReturn(1);
         when(orderExecutionDispatcher.submit(anyString(), any(Runnable.class))).thenAnswer(invocation -> {
             ((Runnable) invocation.getArgument(1)).run();
             return true;
@@ -117,6 +117,30 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void recoveryFailsAnUnknownBrokerSubmissionInsteadOfRearmingIt() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
+        TriggerTradeRequestEntity request = manualSpotTrigger(7098L, 100.0);
+        request.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
+        when(triggerRepo.findByStatus(TriggeredTradeStatus.TRIGGERED)).thenReturn(List.of());
+        when(triggerRepo.findByStatus(TriggeredTradeStatus.ENTRY_SUBMITTING)).thenReturn(List.of(request));
+        when(triggeredRepo.findByTriggerRequestId(7098L)).thenReturn(List.of());
+        when(triggerRepo.claimIfStatusEqualsWithOutcome(7098L,
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.FAILED.name(),
+                "ENTRY_SUBMISSION_STATE_UNKNOWN",
+                "Recovery found no persisted trade after an incomplete entry submission; retry is blocked because broker submission state cannot be proven."))
+                .thenReturn(1);
+
+        timedService.recoverStaleTriggeredRequests();
+
+        verify(triggerRepo).claimIfStatusEqualsWithOutcome(7098L,
+                TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.FAILED.name(),
+                "ENTRY_SUBMISSION_STATE_UNKNOWN",
+                "Recovery found no persisted trade after an incomplete entry submission; retry is blocked because broker submission state cannot be proven.");
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+    }
+
+    @Test
     void skipsBrokerExecutionWhenAnotherWorkerAlreadyClaimedTriggeredRequest() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
@@ -152,7 +176,7 @@ class PriceTriggerServiceTest {
         timedService.evaluatePriceTrigger(20000, 99.0);
 
         verify(triggerRepo, never()).claimIfStatusEquals(7001L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
         verify(tradeExecutionService, never()).executeTradeFromEntity(any());
     }
 
@@ -168,7 +192,7 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of(trigger));
         stubIntradayCandle(9, 20, 99.0, 105.0, 98.0, 101.0);
         when(triggerRepo.claimIfStatusEquals(7016L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
@@ -190,7 +214,7 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of(trigger));
         stubIntradayCandle(9, 20, 380.50, 380.60, 380.20, 380.30);
         when(triggerRepo.claimIfStatusEquals(7020L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
@@ -211,7 +235,7 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of(trigger));
         stubIntradayCandle(9, 20, 380.10, 380.50, 380.00, 380.30);
         when(triggerRepo.claimIfStatusEquals(7021L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
@@ -233,7 +257,7 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of(trigger));
         stubIntradayCandle(9, 32, 99.0, 101.0, 98.5, 100.0);
         when(triggerRepo.claimIfStatusEquals(7023L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
@@ -257,7 +281,7 @@ class PriceTriggerServiceTest {
         timedService.evaluatePriceTrigger(20000, 100.20);
 
         verify(triggerRepo, never()).claimIfStatusEquals(7022L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
         verify(tradeExecutionService, never()).executeTradeFromEntity(any());
     }
 
@@ -296,7 +320,7 @@ class PriceTriggerServiceTest {
         timedService.evaluatePriceTrigger(20000, 100.1);
 
         verify(triggerRepo, never()).claimIfStatusEquals(7011L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
         verify(tradeExecutionService, never()).executeTradeFromEntity(any());
     }
 
@@ -336,7 +360,7 @@ class PriceTriggerServiceTest {
         timedService.evaluatePriceTrigger(20000, 100.0);
 
         verify(triggerRepo, never()).claimIfStatusEquals(7005L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
         verify(tradeExecutionService, never()).executeTradeFromEntity(any());
     }
 
@@ -356,7 +380,7 @@ class PriceTriggerServiceTest {
         timedService.evaluatePriceTrigger(20000, 490.90);
 
         verify(triggerRepo, never()).claimIfStatusEquals(7017L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name());
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
         verify(tradeExecutionService, never()).executeTradeFromEntity(any());
     }
 
@@ -374,7 +398,7 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of(trigger));
         stubIntradayCandle(9, 32, 100.20, 100.30, 99.20, 99.50);
         when(triggerRepo.claimIfStatusEquals(7018L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
@@ -395,7 +419,7 @@ class PriceTriggerServiceTest {
         when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
                 .thenReturn(List.of(trigger));
         when(triggerRepo.claimIfStatusEquals(7019L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
@@ -417,7 +441,7 @@ class PriceTriggerServiceTest {
         when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
                 .thenReturn(List.of(trigger));
         when(triggerRepo.claimIfStatusEquals(7030L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
@@ -447,7 +471,7 @@ class PriceTriggerServiceTest {
                 .thenReturn(List.of());
         when(ltpCacheService.getTodayOpeningPrice(1137827)).thenReturn(1830.0);
         when(triggerRepo.claimIfStatusEquals(7031L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.TRIGGERED.name()))
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name()))
                 .thenReturn(1);
         when(tradeExecutionService.executeTradeFromEntity(trigger)).thenReturn(TriggeredTradeSetupEntity.builder().build());
 
