@@ -18,38 +18,47 @@ public class Fno925EntryQualificationService {
 
     private static final LocalTime OR_START = LocalTime.of(9, 15);
     private static final LocalTime OR_END = LocalTime.of(9, 25);
-    private static final LocalTime DEFAULT_ORB_CUTOFF = LocalTime.of(10, 45);
-    private static final LocalTime DEFAULT_RECLAIM_CUTOFF = LocalTime.of(14, 0);
+    private static final LocalTime DEFAULT_ORB_CUTOFF = LocalTime.of(11, 30);
+    private static final LocalTime DEFAULT_RECLAIM_CUTOFF = LocalTime.of(14, 30);
     private static final int ATR_PERIOD = 75;
 
     private final StrategySupport support;
 
-    @Value("${app.strategy.fno-0925-mover.orb-volume-multiplier:0.9}")
+    @Value("${app.strategy.fno-0925-mover.orb-volume-multiplier:0.75}")
     private double orbVolumeMultiplier;
 
-    @Value("${app.strategy.fno-0925-mover.base-volume-multiplier:1.15}")
+    @Value("${app.strategy.fno-0925-mover.base-volume-multiplier:1.0}")
     private double baseVolumeMultiplier;
 
     @Value("${app.strategy.fno-0925-mover.volume-lookback:5}")
     private int volumeLookback;
 
-    @Value("${app.strategy.fno-0925-mover.max-opposing-wick-to-range:0.55}")
+    @Value("${app.strategy.fno-0925-mover.max-opposing-wick-to-range:0.65}")
     private double maxOpposingWickToRange;
 
-    @Value("${app.strategy.fno-0925-mover.min-body-to-range:0.40}")
+    @Value("${app.strategy.fno-0925-mover.min-body-to-range:0.30}")
     private double minBodyToRange;
 
-    @Value("${app.strategy.fno-0925-mover.max-risk-atr-multiplier:1.5}")
+    @Value("${app.strategy.fno-0925-mover.max-risk-atr-multiplier:2.0}")
     private double maxRiskAtrMultiplier;
 
-    @Value("${app.strategy.fno-0925-mover.orb-cutoff:10:45}")
+    @Value("${app.strategy.fno-0925-mover.orb-cutoff:11:30}")
     private LocalTime orbCutoff;
 
-    @Value("${app.strategy.fno-0925-mover.vwap-reclaim-cutoff:14:00}")
+    @Value("${app.strategy.fno-0925-mover.vwap-reclaim-cutoff:14:30}")
     private LocalTime vwapReclaimCutoff;
 
     @Value("${app.strategy.fno-0925-mover.reclaim-base-candles:3}")
     private int reclaimBaseCandles;
+
+    @Value("${app.strategy.fno-0925-mover.reclaim-vwap-confirmations:1}")
+    private int reclaimVwapConfirmations;
+
+    @Value("${app.strategy.fno-0925-mover.vwap-side-tolerance:0.001}")
+    private double vwapSideTolerance;
+
+    @Value("${app.strategy.fno-0925-mover.vwap-direction-tolerance:0.0003}")
+    private double vwapDirectionTolerance;
 
     public Qualification qualify(Fno925Candidate candidate, LocalDateTime now) {
         CandleLoad load = support.loadCandlesWithHistoricalFallback(candidate.spot(), ATR_PERIOD + 1);
@@ -191,7 +200,10 @@ public class Fno925EntryQualificationService {
             return Optional.of("breakout volume is below " + volumeMultiplier + "x recent median");
         }
         Double vwap = vwap(candles, breakout);
-        if (vwap == null || ("CE".equalsIgnoreCase(optionType) ? breakout.close() <= vwap : breakout.close() >= vwap)) {
+        double sideTolerance = Math.max(0d, vwapSideTolerance);
+        if (vwap == null || ("CE".equalsIgnoreCase(optionType)
+                ? breakout.close() < vwap * (1d - sideTolerance)
+                : breakout.close() > vwap * (1d + sideTolerance))) {
             return Optional.of("breakout close is on the wrong side of VWAP");
         }
         double body = Math.abs(breakout.close() - breakout.open());
@@ -244,7 +256,7 @@ public class Fno925EntryQualificationService {
                                        List<StrategyCandle> base,
                                        StrategyCandle breakout,
                                        String optionType) {
-        int confirmationsRequired = Math.min(2, base.size());
+        int confirmationsRequired = Math.min(Math.max(1, reclaimVwapConfirmations), base.size());
         List<StrategyCandle> confirmations = base.subList(base.size() - confirmationsRequired, base.size());
         for (StrategyCandle candle : confirmations) {
             Double candleVwap = vwap(candles, candle);
@@ -256,8 +268,13 @@ public class Fno925EntryQualificationService {
         }
         Double priorVwap = vwap(candles, base.get(base.size() - 1));
         Double breakoutVwap = vwap(candles, breakout);
-        return priorVwap != null && breakoutVwap != null
-                && ("CE".equalsIgnoreCase(optionType) ? breakoutVwap >= priorVwap : breakoutVwap <= priorVwap);
+        if (priorVwap == null || breakoutVwap == null) {
+            return false;
+        }
+        double directionTolerance = Math.max(0d, vwapDirectionTolerance);
+        return "CE".equalsIgnoreCase(optionType)
+                ? breakoutVwap >= priorVwap * (1d - directionTolerance)
+                : breakoutVwap <= priorVwap * (1d + directionTolerance);
     }
 
     private double openingRangeStructuralStop(List<StrategyCandle> candles,

@@ -58,15 +58,18 @@ app:
   strategy:
     fno-0925-mover:
       # Do not compare a later breakout to the unusually high opening-auction volume.
-      orb-volume-multiplier: ${FNO_0925_MOVER_ORB_VOLUME_MULTIPLIER:0.9}
-      base-volume-multiplier: ${FNO_0925_MOVER_BASE_VOLUME_MULTIPLIER:1.15}
+      orb-volume-multiplier: ${FNO_0925_MOVER_ORB_VOLUME_MULTIPLIER:0.75}
+      base-volume-multiplier: ${FNO_0925_MOVER_BASE_VOLUME_MULTIPLIER:1.0}
       volume-lookback: ${FNO_0925_MOVER_VOLUME_LOOKBACK:5}
-      max-opposing-wick-to-range: ${FNO_0925_MOVER_MAX_OPPOSING_WICK_TO_RANGE:0.55}
-      min-body-to-range: ${FNO_0925_MOVER_MIN_BODY_TO_RANGE:0.40}
-      max-risk-atr-multiplier: ${FNO_0925_MOVER_MAX_RISK_ATR_MULTIPLIER:1.5}
-      orb-cutoff: ${FNO_0925_MOVER_ORB_CUTOFF:11:00}
-      vwap-reclaim-cutoff: ${FNO_0925_MOVER_VWAP_RECLAIM_CUTOFF:14:00}
+      max-opposing-wick-to-range: ${FNO_0925_MOVER_MAX_OPPOSING_WICK_TO_RANGE:0.65}
+      min-body-to-range: ${FNO_0925_MOVER_MIN_BODY_TO_RANGE:0.30}
+      max-risk-atr-multiplier: ${FNO_0925_MOVER_MAX_RISK_ATR_MULTIPLIER:2.0}
+      orb-cutoff: ${FNO_0925_MOVER_ORB_CUTOFF:11:30}
+      vwap-reclaim-cutoff: ${FNO_0925_MOVER_VWAP_RECLAIM_CUTOFF:14:30}
       reclaim-base-candles: ${FNO_0925_MOVER_RECLAIM_BASE_CANDLES:3}
+      reclaim-vwap-confirmations: ${FNO_0925_MOVER_RECLAIM_VWAP_CONFIRMATIONS:1}
+      vwap-side-tolerance: ${FNO_0925_MOVER_VWAP_SIDE_TOLERANCE:0.001}
+      vwap-direction-tolerance: ${FNO_0925_MOVER_VWAP_DIRECTION_TOLERANCE:0.0003}
   market-data:
     # Comma-separated ISO dates, e.g. NSE_HOLIDAYS=2026-01-26,2026-03-03
     nse-holidays: ${NSE_HOLIDAYS:}
