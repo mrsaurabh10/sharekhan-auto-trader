@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyDouble;
@@ -104,6 +105,44 @@ class Fno925EntryQualificationServiceTest {
         assertThat(result.signal().setup()).isEqualTo("MORNING_ORB");
     }
 
+    @Test
+    void ceAllowsCloseWithinConfiguredVwapSideTolerance() {
+        Fno925EntryQualificationService service = configuredService(mock(StrategySupport.class));
+        ReflectionTestUtils.setField(service, "minBodyToRange", 0.30d);
+        StrategyCandle reference = candle(LocalTime.of(9, 15), 100d, 100d, 100d, 100d);
+        StrategyCandle breakout = candle(LocalTime.of(9, 20), 99.8d, 100.1d, 99.7d, 99.95d);
+        List<StrategyCandle> candles = List.of(reference, breakout);
+
+        Optional<String> accepted = ReflectionTestUtils.invokeMethod(service, "filterFailure", candles, breakout,
+                "CE", List.of(reference), 0.75d);
+        assertThat(accepted).isEmpty();
+
+        ReflectionTestUtils.setField(service, "vwapSideTolerance", 0d);
+        Optional<String> rejected = ReflectionTestUtils.invokeMethod(service, "filterFailure", candles, breakout,
+                "CE", List.of(reference), 0.75d);
+        assertThat(rejected).contains("breakout close is on the wrong side of VWAP");
+    }
+
+    @Test
+    void reclaimRequiresOnlyLatestBaseCandleWhenConfiguredForOneConfirmation() {
+        Fno925EntryQualificationService service = configuredService(mock(StrategySupport.class));
+        StrategyCandle firstBase = candle(LocalTime.of(9, 15), 100d, 100d, 100d, 100d);
+        StrategyCandle secondBase = candle(LocalTime.of(9, 20), 100d, 101d, 99d, 99d);
+        StrategyCandle latestBase = candle(LocalTime.of(9, 25), 100d, 103d, 100d, 102.5d);
+        StrategyCandle breakout = candle(LocalTime.of(9, 30), 102.5d, 104d, 101d, 103d);
+        List<StrategyCandle> candles = List.of(firstBase, secondBase, latestBase, breakout);
+        List<StrategyCandle> base = List.of(firstBase, secondBase, latestBase);
+
+        Boolean oneConfirmation = ReflectionTestUtils.invokeMethod(service, "holdsReclaimedVwap", candles, base,
+                breakout, "CE");
+        assertThat(oneConfirmation).isTrue();
+
+        ReflectionTestUtils.setField(service, "reclaimVwapConfirmations", 2);
+        Boolean twoConfirmations = ReflectionTestUtils.invokeMethod(service, "holdsReclaimedVwap", candles, base,
+                breakout, "CE");
+        assertThat(twoConfirmations).isFalse();
+    }
+
     private Fno925EntryQualificationService configuredService(StrategySupport support) {
         Fno925EntryQualificationService service = new Fno925EntryQualificationService(support);
         ReflectionTestUtils.setField(service, "orbVolumeMultiplier", 0.9d);
@@ -112,7 +151,14 @@ class Fno925EntryQualificationServiceTest {
         ReflectionTestUtils.setField(service, "maxOpposingWickToRange", 0.55d);
         ReflectionTestUtils.setField(service, "minBodyToRange", 0.40d);
         ReflectionTestUtils.setField(service, "maxRiskAtrMultiplier", 1.5d);
+        ReflectionTestUtils.setField(service, "reclaimVwapConfirmations", 1);
+        ReflectionTestUtils.setField(service, "vwapSideTolerance", 0.001d);
+        ReflectionTestUtils.setField(service, "vwapDirectionTolerance", 0.0003d);
         return service;
+    }
+
+    private StrategyCandle candle(LocalTime time, double open, double high, double low, double close) {
+        return new StrategyCandle(LocalDate.of(2026, 7, 17), time, open, high, low, close, 100L);
     }
 
     private List<StrategyCandle> historicalCandles(LocalDate day) {
