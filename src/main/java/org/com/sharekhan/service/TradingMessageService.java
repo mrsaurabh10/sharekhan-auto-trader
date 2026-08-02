@@ -119,7 +119,10 @@ public class TradingMessageService {
                 return;
             }
             TriggerRequest base = mapToTriggerRequest(parsed);
-            if (source != null) {
+            // StockBazaari is identified from its message structure. Preserve
+            // that provider source even when Telegram supplies a display name
+            // such as "Stock Bazaari", so its per-user configuration applies.
+            if (source != null && !"StockBazaari".equalsIgnoreCase(String.valueOf(parsed.get("source")))) {
                 base.setSource(source);
             }
 
@@ -446,9 +449,13 @@ public class TradingMessageService {
                 // Attach broker credential id and app user id so backend uses the right token/customer when placing
                 req.setBrokerCredentialsId(c.getId());
                 req.setUserId(c.getAppUserId());
+                canonicalizeKnownSource(req);
 
                 if (!isSourceEnabledForUser(c.getAppUserId(), req.getSource())) {
                     notifySourceDisabled(c.getAppUserId(), req);
+                    continue;
+                }
+                if (!applyStockBazaariEquityConfiguration(req)) {
                     continue;
                 }
                 applySourceDefaultLots(req);
@@ -503,8 +510,12 @@ public class TradingMessageService {
                     TriggerRequest req = cloneRequest(base);
                     req.setBrokerCredentialsId(c.getId());
                     req.setUserId(c.getAppUserId());
+                    canonicalizeKnownSource(req);
                     if (!isSourceEnabledForUser(c.getAppUserId(), req.getSource())) {
                         notifySourceDisabled(c.getAppUserId(), req);
+                        continue;
+                    }
+                    if (!applyStockBazaariEquityConfiguration(req)) {
                         continue;
                     }
                     applySourceDefaultLots(req);
@@ -606,6 +617,72 @@ public class TradingMessageService {
             request.setQuantity(defaultLots);
             request.setLots(defaultLots);
         }
+    }
+
+    /**
+     * Equity calls are intentionally a separate opt-in from StockBazaari's
+     * option calls. The configured amount is converted to whole NSE shares at
+     * the provider's trigger price, so no equity trade can use option lots or
+     * the generic risk-sizing defaults.
+     */
+    private boolean applyStockBazaariEquityConfiguration(TriggerRequest request) {
+        if (!isStockBazaariEquity(request)) {
+            return true;
+        }
+
+        // API integrations identify cash equities as NSE/BSE, while the
+        // script-master/execution layer uses NC/BC for those same segments.
+        request.setExchange("BSE".equalsIgnoreCase(request.getExchange()) ? "BC" : "NC");
+
+        Long userId = request.getUserId();
+        boolean enabled;
+        int amount;
+        try {
+            enabled = isTruthy(userConfigService.getConfig(userId, "stockbazaari.equity_enabled", "false"));
+            amount = parsePositiveInt(userConfigService.getConfig(userId, "stockbazaari.equity_amount", null));
+        } catch (Exception e) {
+            System.err.println("Unable to read StockBazaari equity configuration for user #" + userId + ": " + e.getMessage());
+            return false;
+        }
+
+        Double entryPrice = request.getEntryPrice();
+        if (!enabled || amount <= 0 || entryPrice == null || entryPrice <= 0d) {
+            System.out.println("⏭️ Skipping StockBazaari equity trade for user #" + userId
+                    + " because equity is disabled, amount is invalid, or trigger price is missing.");
+            return false;
+        }
+
+        int shares = (int) Math.floor(amount / entryPrice);
+        if (shares <= 0) {
+            System.out.println("⏭️ Skipping StockBazaari equity trade for user #" + userId
+                    + " because configured amount " + amount + " cannot buy one share at " + entryPrice + ".");
+            return false;
+        }
+        request.setQuantity(shares);
+        request.setLots(null);
+        request.setIntraday(false);
+        request.setTslEnabled(true);
+        return true;
+    }
+
+    private boolean isStockBazaariEquity(TriggerRequest request) {
+        return request != null
+                && "StockBazaari".equalsIgnoreCase(request.getSource())
+                && !hasOptionLeg(request)
+                && ("NC".equalsIgnoreCase(request.getExchange())
+                    || "BC".equalsIgnoreCase(request.getExchange())
+                    || "NSE".equalsIgnoreCase(request.getExchange())
+                    || "BSE".equalsIgnoreCase(request.getExchange()));
+    }
+
+    private void canonicalizeKnownSource(TriggerRequest request) {
+        if (request != null && "stockbazaari".equalsIgnoreCase(request.getSource())) {
+            request.setSource("StockBazaari");
+        }
+    }
+
+    private boolean hasOptionLeg(TriggerRequest request) {
+        return request.getOptionType() != null && !request.getOptionType().isBlank();
     }
 
     private boolean hasPositiveLots(TriggerRequest request) {
@@ -714,7 +791,8 @@ public class TradingMessageService {
         request.setStopLoss(parseDouble(parsed.get("stopLoss")));
         request.setExpiry((String) parsed.get("expiry"));
         request.setExchange((String) parsed.get("exchange"));
-        request.setIntraday(true);
+        request.setIntraday(parseBoolean(parsed.get("intraday")));
+        request.setTslEnabled(parseBoolean(parsed.get("tslEnabled")));
         request.setUseSpotPrice(parseBoolean(parsed.get("useSpotPrice")));
         request.setUseSpotForEntry(parseBoolean(parsed.get("useSpotForEntry")));
         request.setUseSpotForSl(parseBoolean(parsed.get("useSpotForSl")));

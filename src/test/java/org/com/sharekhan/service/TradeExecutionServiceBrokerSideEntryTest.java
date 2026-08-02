@@ -69,6 +69,34 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void stagesAnyTslEquityTargetsByShareQuantity() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setId(1L);
+        trade.setSource("manual");
+        trade.setExchange("NC");
+        trade.setQuantity(120L);
+        trade.setTslEnabled(true);
+        trade.setTarget1(110.0);
+        trade.setTarget2(120.0);
+        trade.setTarget3(130.0);
+
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                ctx.service, "isEligibleForStagedTargetOrders", trade)).isTrue();
+        assertThat((Integer) ReflectionTestUtils.invokeMethod(ctx.service, "resolveLots", trade)).isEqualTo(120);
+    }
+
+    @Test
+    void allocatesEquityRemainderToFinalTarget() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+
+        @SuppressWarnings("unchecked")
+        List<Integer> allocation = ReflectionTestUtils.invokeMethod(ctx.service, "splitLots", 200, 3);
+
+        assertThat(allocation).containsExactly(66, 66, 68);
+    }
+
+    @Test
     void usesShoonyaLiveBookForFnoEntryBeforeMstockFallback() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         ScriptMasterEntity option = ScriptMasterEntity.builder()
@@ -326,6 +354,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
         ctx.useSimulatorBroker();
         configureFiveAttemptPolicy(ctx);
         when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        TriggerTradeRequestEntity request = triggerRequestEntity();
+        request.setEntryPrice(10.50);
         when(ctx.broker.placeOrder(any(), any(BrokerContext.class), anyDouble()))
                 .thenReturn(OrderPlacementResult.builder()
                         .success(true)
@@ -336,10 +366,22 @@ class TradeExecutionServiceBrokerSideEntryTest {
                         .executedQuantity(50L)
                         .build());
 
-        TriggeredTradeSetupEntity executed = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+        TriggeredTradeSetupEntity executed = ctx.service.executeTradeFromEntity(request);
 
         assertThat(executed.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
         verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(10.55));
+    }
+
+    @Test
+    void simulatorDoesNotFillBuyAboveRequestBelowItsEntryPrice() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker();
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+
+        TriggeredTradeSetupEntity executed = ctx.service.executeTradeFromEntity(triggerRequestEntity());
+
+        assertThat(executed).isNull();
+        verify(ctx.broker, never()).placeOrder(any(), any(BrokerContext.class), anyDouble());
     }
 
     @Test

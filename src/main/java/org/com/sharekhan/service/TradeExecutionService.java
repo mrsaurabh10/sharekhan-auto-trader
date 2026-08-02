@@ -663,7 +663,7 @@ public class TradeExecutionService {
                 .target3(request.getTarget3())
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
-                .lots(request.getQuantity()) // Store the lots
+                .lots(isNoStrikeExchange ? null : request.getQuantity()) // Equities use a share quantity, not lots
                 .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
@@ -701,6 +701,10 @@ public class TradeExecutionService {
     }
 
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {
+        if (isStockBazaariEquity(requestEntity) && !isEquityMarketOpen()) {
+            log.info("Deferring StockBazaari equity entry request {} until the market opens", requestEntity.getId());
+            return;
+        }
         if (!isBrokerSideEntryTriggerEligible(requestEntity)) {
             return;
         }
@@ -828,8 +832,34 @@ public class TradeExecutionService {
                 && TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(requestEntity.getStatus())
                 && requestEntity.getEntryPrice() != null
                 && requestEntity.getEntryPrice() > 0d
-                && hasOptionType(requestEntity.getOptionType())
+                && (hasOptionType(requestEntity.getOptionType()) || isStockBazaariEquity(requestEntity))
                 && !usesSpotForEntry(requestEntity);
+    }
+
+    /** Called by the market-open scheduler for equity signals received before 09:15 IST. */
+    public int placePendingStockBazaariEquityEntriesAtMarketOpen() {
+        int submitted = 0;
+        for (TriggerTradeRequestEntity request : triggerTradeRequestRepository
+                .findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)) {
+            if (!isStockBazaariEquity(request)) {
+                continue;
+            }
+            tryPlaceBrokerSideEntryOrder(request);
+            submitted++;
+        }
+        return submitted;
+    }
+
+    private boolean isStockBazaariEquity(TriggerTradeRequestEntity request) {
+        return request != null
+                && "StockBazaari".equalsIgnoreCase(request.getSource())
+                && !hasOptionType(request.getOptionType())
+                && ("NC".equalsIgnoreCase(request.getExchange()) || "BC".equalsIgnoreCase(request.getExchange()));
+    }
+
+    private boolean isEquityMarketOpen() {
+        LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
+        return !time.isBefore(LocalTime.of(9, 15)) && !time.isAfter(LocalTime.of(15, 30));
     }
 
     private boolean usesSpotForEntry(TriggerTradeRequestEntity requestEntity) {
@@ -3597,7 +3627,7 @@ public class TradeExecutionService {
         syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.EXECUTED);
         refreshAtrLevelsAtConfirmedEntry(trade);
         try {
-            if (createStagedOptionTargetOrders(trade)) {
+            if (createStagedTargetOrders(trade)) {
                 return;
             }
             maybePlaceTargetOrder(trade);
@@ -3813,7 +3843,11 @@ public class TradeExecutionService {
         return null;
     }
 
-    private boolean createStagedOptionTargetOrders(TriggeredTradeSetupEntity enteredTrade) {
+    /**
+     * Place one broker target order per configured target. For equity trades,
+     * the staged units are shares; for F&O they are lots.
+     */
+    private boolean createStagedTargetOrders(TriggeredTradeSetupEntity enteredTrade) {
         if (!isEligibleForStagedTargetOrders(enteredTrade)) {
             return false;
         }
@@ -3854,7 +3888,7 @@ public class TradeExecutionService {
         for (TriggeredTradeSetupEntity leg : legs) {
             maybePlaceTargetOrder(leg);
         }
-        log.info("Created {} initial option target orders for trade group {} (lots={}, initialSL={})",
+        log.info("Created {} initial staged target orders for trade group {} (units={}, initialSL={})",
                 legs.size(), groupId, resolveLots(enteredTrade), root.getStopLoss());
         return true;
     }
@@ -3862,6 +3896,7 @@ public class TradeExecutionService {
     private boolean isEligibleForStagedTargetOrders(TriggeredTradeSetupEntity trade) {
         return trade != null && trade.getId() != null
                 && Boolean.TRUE.equals(trade.getTslEnabled())
+                && (hasOptionType(trade.getOptionType()) || isCashEquity(trade))
                 && !isSpotStop(trade) && !isSpotTarget(trade)
                 && resolveLots(trade) > 1 && configuredTargets(trade).size() > 1;
     }
@@ -3884,7 +3919,28 @@ public class TradeExecutionService {
     }
 
     private int resolveLots(TriggeredTradeSetupEntity trade) {
-        return trade.getLots() != null && trade.getLots() > 0 ? trade.getLots() : 1;
+        if (trade == null) {
+            return 1;
+        }
+        // Equity requests use shares, not lots. Always prefer that quantity as
+        // the split unit, irrespective of which source submitted the trade.
+        if (isCashEquity(trade) && trade.getQuantity() != null
+                && trade.getQuantity() > 0 && trade.getQuantity() <= Integer.MAX_VALUE) {
+            return trade.getQuantity().intValue();
+        }
+        if (trade.getLots() != null && trade.getLots() > 0) {
+            return trade.getLots();
+        }
+        return 1;
+    }
+
+    private boolean isCashEquity(TriggeredTradeSetupEntity trade) {
+        return trade != null
+                && !hasOptionType(trade.getOptionType())
+                && ("NC".equalsIgnoreCase(trade.getExchange())
+                    || "BC".equalsIgnoreCase(trade.getExchange())
+                    || "NSE".equalsIgnoreCase(trade.getExchange())
+                    || "BSE".equalsIgnoreCase(trade.getExchange()));
     }
 
     private List<Integer> splitLots(int totalLots, int stages) {
@@ -4866,6 +4922,20 @@ public class TradeExecutionService {
         boolean useSpotForTarget = Boolean.TRUE.equals(requestEntity.getUseSpotForTarget()) 
                 || (requestEntity.getUseSpotForTarget() == null && Boolean.TRUE.equals(requestEntity.getUseSpotPrice()));
 
+        // The simulator fills immediately at the price passed to placeOrder.  It
+        // must therefore retain the local "buy above" gate instead of treating a
+        // direct/replayed execution call as authority to fill below the trigger.
+        // Real brokers can hold a trigger order themselves; the simulator cannot.
+        if (isSimulatorBrokerRequest(requestEntity)
+                && !chaseEntryUntilExecuted
+                && !useSpotForEntry
+                && requestEntity.getEntryPrice() != null
+                && ltp + 0.000001d < requestEntity.getEntryPrice()) {
+            log.info("Simulator entry request {} remains pending: option LTP {} is below buy-above entry {}.",
+                    requestEntity.getId(), formatPrice(ltp), formatPrice(requestEntity.getEntryPrice()));
+            return null;
+        }
+
         // build a temporary TriggeredTradeSetupEntity from the saved request so we can reuse the execute(...) method
         TriggeredTradeSetupEntity temp = new TriggeredTradeSetupEntity();
         temp.setTriggerRequestId(requestEntity.getId());
@@ -4918,6 +4988,15 @@ public class TradeExecutionService {
                     e.getMessage());
             return null;
         }
+    }
+
+    private boolean isSimulatorBrokerRequest(TriggerTradeRequestEntity requestEntity) {
+        if (requestEntity == null || requestEntity.getBrokerCredentialsId() == null) {
+            return false;
+        }
+        return brokerCredentialsRepository.findById(requestEntity.getBrokerCredentialsId())
+                .map(credentials -> Broker.SIMULATOR.getDisplayName().equalsIgnoreCase(credentials.getBrokerName()))
+                .orElse(false);
     }
 
     private Double fetchLtpViaMStockFallback(Integer scripCode, String context) {

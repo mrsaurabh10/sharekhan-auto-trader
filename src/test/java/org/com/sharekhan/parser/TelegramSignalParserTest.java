@@ -129,6 +129,27 @@ class TelegramSignalParserTest {
         assertEquals(lastTuesdayOfAugust().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")), result.get("expiry"));
     }
 
+    @Test
+    void parsesStockBazaariEquityAsDeliveryTradeWithTsl() {
+        Map<String, Object> result = parser.parse("""
+                New Trade Opportunity
+                Trade: RELIANCE
+                Trigger Price: BUY ABOVE 1450.50
+                Target: 1475/1500/1530
+                SL: 1425
+                """);
+
+        assertNotNull(result);
+        assertEquals("StockBazaari", result.get("source"));
+        assertEquals("RELIANCE", result.get("symbol"));
+        assertEquals("NC", result.get("exchange"));
+        assertNull(result.get("strike"));
+        assertNull(result.get("optionType"));
+        assertEquals(1450.50, (Double) result.get("entry"), 0.01);
+        assertEquals(false, result.get("intraday"));
+        assertEquals(true, result.get("tslEnabled"));
+    }
+
     private LocalDate lastTuesdayOfAugust() {
         LocalDate today = LocalDate.now();
         int year = today.getYear();

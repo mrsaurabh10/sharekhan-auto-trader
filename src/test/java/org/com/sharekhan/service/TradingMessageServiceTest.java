@@ -4,6 +4,8 @@ import org.com.sharekhan.dto.TriggerRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -49,10 +51,74 @@ class TradingMessageServiceTest {
         assertThat(request.getLots()).isNull();
     }
 
+    @Test
+    void sizesEnabledStockBazaariEquityFromConfiguredAmount() {
+        TradingMessageService service = new TradingMessageService();
+        UserConfigService configService = mock(UserConfigService.class);
+        ReflectionTestUtils.setField(service, "userConfigService", configService);
+        when(configService.getConfig(7L, "stockbazaari.equity_enabled", "false")).thenReturn("true");
+        when(configService.getConfig(7L, "stockbazaari.equity_amount", null)).thenReturn("25000");
+
+        TriggerRequest request = stockBazaariEquityRequest();
+
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(service,
+                "applyStockBazaariEquityConfiguration", request)).isTrue();
+        assertThat(request.getQuantity()).isEqualTo(17);
+        assertThat(request.getExchange()).isEqualTo("NC");
+        assertThat(request.getLots()).isNull();
+        assertThat(request.getIntraday()).isFalse();
+        assertThat(request.getTslEnabled()).isTrue();
+    }
+
+    @Test
+    void skipsStockBazaariEquityUntilExplicitlyEnabled() {
+        TradingMessageService service = new TradingMessageService();
+        UserConfigService configService = mock(UserConfigService.class);
+        ReflectionTestUtils.setField(service, "userConfigService", configService);
+        when(configService.getConfig(7L, "stockbazaari.equity_enabled", "false")).thenReturn("false");
+        when(configService.getConfig(7L, "stockbazaari.equity_amount", null)).thenReturn("25000");
+
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(service,
+                "applyStockBazaariEquityConfiguration", stockBazaariEquityRequest())).isFalse();
+    }
+
+    @Test
+    void mapsStockBazaariEquityAsDeliveryWithTsl() {
+        TradingMessageService service = new TradingMessageService();
+        TriggerRequest request = ReflectionTestUtils.invokeMethod(service, "mapToTriggerRequest", Map.of(
+                "symbol", "RELIANCE",
+                "exchange", "NC",
+                "entry", 1450.0,
+                "intraday", false,
+                "tslEnabled", true));
+
+        assertThat(request.getIntraday()).isFalse();
+        assertThat(request.getTslEnabled()).isTrue();
+    }
+
+    @Test
+    void canonicalizesLowercaseStockBazaariApiSource() {
+        TradingMessageService service = new TradingMessageService();
+        TriggerRequest request = stockBazaariEquityRequest();
+        request.setSource("stockbazaari");
+
+        ReflectionTestUtils.invokeMethod(service, "canonicalizeKnownSource", request);
+
+        assertThat(request.getSource()).isEqualTo("StockBazaari");
+    }
+
     private TriggerRequest stockBazaariRequest() {
         TriggerRequest request = new TriggerRequest();
         request.setUserId(7L);
         request.setSource("StockBazaari");
+        return request;
+    }
+
+    private TriggerRequest stockBazaariEquityRequest() {
+        TriggerRequest request = stockBazaariRequest();
+        request.setExchange("NSE");
+        request.setEntryPrice(1450.0);
+        request.setIntraday(true);
         return request;
     }
 }
