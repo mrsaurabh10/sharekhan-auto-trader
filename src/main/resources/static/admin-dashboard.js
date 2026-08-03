@@ -2173,7 +2173,7 @@
           '<td>' + escapeHtml(row.generatedTradeRequestId || '-') + '</td>';
         const action = document.createElement('td');
         if (String(row.status || '').toUpperCase() === 'ACTIVE') {
-          const manualFno = ['FNO_VWAP_RECLAIM_BASE_CE', 'FNO_VWAP_RECLAIM_BASE_PE'].includes(String(row.templateId || '').toUpperCase());
+          const manualFno = ['FNO_VWAP_RECLAIM_BASE_CE', 'FNO_VWAP_RECLAIM_BASE_PE', 'FNO_ATR_PREVIOUS_DAY_CE', 'FNO_ATR_PREVIOUS_DAY_PE'].includes(String(row.templateId || '').toUpperCase());
           if (manualFno) {
             const update = document.createElement('button');
             update.className = 'btn small';

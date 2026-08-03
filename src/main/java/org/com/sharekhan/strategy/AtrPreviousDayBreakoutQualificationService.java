@@ -2,6 +2,7 @@ package org.com.sharekhan.strategy;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.service.MStockHistoricalService;
 import org.com.sharekhan.service.UserConfigService;
 import org.springframework.stereotype.Component;
 
@@ -21,14 +22,14 @@ public class AtrPreviousDayBreakoutQualificationService {
     private static final double DEFAULT_ENTRY_OFFSET_ATR = 0.25d;
 
     private final StrategySupport support;
+    private final MStockHistoricalService mStockHistoricalService;
     private final UserConfigService userConfigService;
 
     public Fno925EntryQualificationService.Qualification qualify(ScriptMasterEntity spot,
                                                                    String optionType,
                                                                    Long appUserId,
                                                                    LocalDateTime now) {
-        // The strategy intentionally uses only the MStock five-minute chart; do not mix in Sharekhan fallback candles.
-        List<StrategyCandle> fiveMinute = sorted(support.loadCandles(spot, "5minute").candles());
+        List<StrategyCandle> fiveMinute = loadMStockFiveMinuteChart(spot, now);
         double atr = atr(fiveMinute);
         if (atr <= 0d) {
             return Fno925EntryQualificationService.Qualification.waiting("ATR(75) 5-minute data is unavailable");
@@ -110,6 +111,25 @@ public class AtrPreviousDayBreakoutQualificationService {
             return Double.isFinite(value) && value >= 0d ? value : DEFAULT_ENTRY_OFFSET_ATR;
         } catch (Exception ignored) {
             return DEFAULT_ENTRY_OFFSET_ATR;
+        }
+    }
+
+    /** MStock's historical endpoint supplies both today's candles and the required prior-day chart context. */
+    private List<StrategyCandle> loadMStockFiveMinuteChart(ScriptMasterEntity spot, LocalDateTime now) {
+        try {
+            LocalDateTime from = now.minusDays(15).withHour(9).withMinute(15).withSecond(0).withNano(0);
+            MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandles(
+                    spot.getScripCode(), null, null, null, null, null,
+                    "5minute", from.toLocalDate().toString(), now.toLocalDate().toString());
+            if (response == null || response.candles() == null) return List.of();
+            return sorted(response.candles().stream()
+                    .filter(c -> c != null && c.date() != null && c.time() != null)
+                    .filter(c -> c.high() > 0d && c.low() > 0d && c.close() > 0d)
+                    .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
+                    .toList());
+        } catch (Exception e) {
+            throw new IllegalStateException("MStock 5-minute chart is unavailable for "
+                    + (spot != null ? spot.getTradingSymbol() : "selected symbol") + ": " + e.getMessage(), e);
         }
     }
 }
