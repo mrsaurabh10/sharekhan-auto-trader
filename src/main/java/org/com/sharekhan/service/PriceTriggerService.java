@@ -335,7 +335,9 @@ public class PriceTriggerService {
         // Opening-gap protection belongs exclusively to the ATR opening signal.
         // Manual, Telegram and strategy-generated levels are created intraday, so
         // comparing them with the market open can falsely reject a valid entry.
-        if (!isAtrSource(trigger.getSource())) {
+        // The prior-day ATR strategy creates a pending level first. Its gap policy is applied separately,
+        // but it must not be rejected merely because a pre-creation tick was already beyond T1.
+        if (!ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())) {
             return false;
         }
 
@@ -433,8 +435,15 @@ public class PriceTriggerService {
         LtpCacheService.MinuteCandle candle = new LtpCacheService.MinuteCandle(
                 candleMinute,
                 apiCandle.open(), apiCandle.high(), apiCandle.low(), apiCandle.close());
+        if (isAtrPreviousDaySource(trigger) && trigger.getCreatedAt() != null
+                && candleMinute.isBefore(trigger.getCreatedAt().truncatedTo(ChronoUnit.MINUTES))) {
+            log.debug("Waiting for a post-request one-minute candle for ATR previous-day request {}. requestCreated={} candleMinute={}",
+                    trigger.getId(), trigger.getCreatedAt(), candleMinute);
+            return OpeningDecision.WAIT;
+        }
         boolean isPe = "PE".equalsIgnoreCase(trigger.getOptionType());
-        boolean openingRuleActive = nowIst.toLocalTime().isBefore(OPENING_RULE_CUTOFF);
+        boolean openingRuleActive = ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
+                && nowIst.toLocalTime().isBefore(OPENING_RULE_CUTOFF);
         if (openingRuleActive) {
             Double target1 = trigger.getTarget1();
             if (target1 != null && target1 > 0d) {
@@ -1404,6 +1413,10 @@ public class PriceTriggerService {
 
     private boolean isAtrSource(String source) {
         return ATR_SIGNAL_SOURCE.equalsIgnoreCase(source) || ATR_PREVIOUS_DAY_SOURCE.equalsIgnoreCase(source);
+    }
+
+    private boolean isAtrPreviousDaySource(TriggerTradeRequestEntity trigger) {
+        return trigger != null && ATR_PREVIOUS_DAY_SOURCE.equalsIgnoreCase(trigger.getSource());
     }
 
     private int resolveCurrentLots(TriggeredTradeSetupEntity trade) {
