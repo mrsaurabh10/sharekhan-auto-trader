@@ -192,6 +192,11 @@ public class StrategySupport {
         return tradeExecutionService.executeTriggeredTrade(trigger);
     }
 
+    /** Creates a pending request only; price-trigger evaluation decides when to submit its entry order. */
+    public TriggerTradeRequestEntity createPendingTradeRequest(TriggerRequest trigger) {
+        return tradeExecutionService.executeTrade(trigger);
+    }
+
     public void auditStrategy(StrategyApplyRequest request, StrategyMetadata metadata, String symbol,
                               String eventType, String outcome, String reason,
                               Fno925EntryQualificationService.Signal signal, TriggerRequest trigger) {

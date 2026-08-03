@@ -62,7 +62,8 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
                     }
                     TriggerRequest trigger = buildTrigger(request, symbol, spot, qualification.signal());
                     TriggerTradeRequestEntity existing = support.findExisting(trigger);
-                    TriggerTradeRequestEntity trade = existing != null ? existing : support.executeTriggeredTrade(trigger);
+                    // A symbol addition defines a pending setup. Do not submit an order until live market evaluation confirms entry.
+                    TriggerTradeRequestEntity trade = existing != null ? existing : support.createPendingTradeRequest(trigger);
                     triggered.add(new Triggered(symbol, trigger, trade, existing != null));
                     submittedSymbols.add(key);
                 });

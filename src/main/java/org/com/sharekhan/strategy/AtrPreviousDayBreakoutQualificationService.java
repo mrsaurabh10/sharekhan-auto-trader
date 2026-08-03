@@ -27,7 +27,8 @@ public class AtrPreviousDayBreakoutQualificationService {
                                                                    String optionType,
                                                                    Long appUserId,
                                                                    LocalDateTime now) {
-        List<StrategyCandle> fiveMinute = sorted(support.loadCandlesWithHistoricalFallback(spot, ATR_PERIOD + 1).candles());
+        // The strategy intentionally uses only the MStock five-minute chart; do not mix in Sharekhan fallback candles.
+        List<StrategyCandle> fiveMinute = sorted(support.loadCandles(spot, "5minute").candles());
         double atr = atr(fiveMinute);
         if (atr <= 0d) {
             return Fno925EntryQualificationService.Qualification.waiting("ATR(75) 5-minute data is unavailable");
