@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
@@ -20,6 +21,7 @@ public class AtrPreviousDayBreakoutQualificationService {
     static final int ATR_PERIOD = 75;
     static final String ENTRY_OFFSET_ATR_CONFIG = "fno_atr_previous_day_entry_offset_atr";
     private static final double DEFAULT_ENTRY_OFFSET_ATR = 0.25d;
+    private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
     private final StrategySupport support;
     private final MStockHistoricalService mStockHistoricalService;
@@ -34,11 +36,11 @@ public class AtrPreviousDayBreakoutQualificationService {
         if (atr <= 0d) {
             return Fno925EntryQualificationService.Qualification.waiting("ATR(75) 5-minute data is unavailable");
         }
-        LocalDate previousDay = previousTradingDay(fiveMinute, now.toLocalDate());
-        if (previousDay == null) {
+        LocalDate referenceDay = referenceDay(fiveMinute, now);
+        if (referenceDay == null) {
             return Fno925EntryQualificationService.Qualification.waiting("previous-day candles are unavailable");
         }
-        List<StrategyCandle> previousDayCandles = fiveMinute.stream().filter(c -> previousDay.equals(c.date())).toList();
+        List<StrategyCandle> previousDayCandles = fiveMinute.stream().filter(c -> referenceDay.equals(c.date())).toList();
         if (previousDayCandles.isEmpty()) {
             return Fno925EntryQualificationService.Qualification.waiting("previous-day candles are unavailable");
         }
@@ -64,8 +66,15 @@ public class AtrPreviousDayBreakoutQualificationService {
         return candles.stream().sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time)).toList();
     }
 
-    private LocalDate previousTradingDay(List<StrategyCandle> candles, LocalDate today) {
-        return candles.stream().map(StrategyCandle::date).filter(date -> date.isBefore(today)).max(Comparator.naturalOrder()).orElse(null);
+    /** After close, today's completed session is the next trading day's previous-day reference. */
+    private LocalDate referenceDay(List<StrategyCandle> candles, LocalDateTime now) {
+        LocalDate today = now.toLocalDate();
+        if (!now.toLocalTime().isBefore(MARKET_CLOSE)
+                && candles.stream().anyMatch(candle -> today.equals(candle.date()))) {
+            return today;
+        }
+        return candles.stream().map(StrategyCandle::date)
+                .filter(date -> date.isBefore(today)).max(Comparator.naturalOrder()).orElse(null);
     }
 
     private double atr(List<StrategyCandle> candles) {
