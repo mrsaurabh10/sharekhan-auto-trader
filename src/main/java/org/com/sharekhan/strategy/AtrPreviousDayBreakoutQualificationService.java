@@ -52,10 +52,10 @@ public class AtrPreviousDayBreakoutQualificationService {
         boolean ce = "CE".equalsIgnoreCase(optionType);
         double pdh = previousDayCandles.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
         double pdl = previousDayCandles.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
-        Optional<Double> swingHigh = latestSwingHigh(previousDayCandles);
-        Optional<Double> swingLow = latestSwingLow(previousDayCandles);
-        // Prefer the most recent confirmed prior-day swing; fall back to the full-day high/low.
-        // This makes "PDH or PD swing" an actionable alternative rather than always selecting PDH/PDL.
+        Optional<Double> swingHigh = highestConfirmedSwingHigh(previousDayCandles);
+        Optional<Double> swingLow = lowestConfirmedSwingLow(previousDayCandles);
+        // Use the meaningful outer prior-day swing, rather than a later, smaller consolidation pivot.
+        // PDH/PDL remain the fallback when no confirmed swing exists.
         double structuralLevel = ce
                 ? swingHigh.orElse(pdh)
                 : swingLow.orElse(pdl);
@@ -106,24 +106,24 @@ public class AtrPreviousDayBreakoutQualificationService {
         return total / ATR_PERIOD;
     }
 
-    private Optional<Double> latestSwingHigh(List<StrategyCandle> candles) {
-        Double latest = null;
+    private Optional<Double> highestConfirmedSwingHigh(List<StrategyCandle> candles) {
+        Double highest = null;
         for (int i = 1; i < candles.size() - 1; i++) {
             if (candles.get(i).high() > candles.get(i - 1).high() && candles.get(i).high() > candles.get(i + 1).high()) {
-                latest = candles.get(i).high();
+                highest = highest == null ? candles.get(i).high() : Math.max(highest, candles.get(i).high());
             }
         }
-        return Optional.ofNullable(latest);
+        return Optional.ofNullable(highest);
     }
 
-    private Optional<Double> latestSwingLow(List<StrategyCandle> candles) {
-        Double latest = null;
+    private Optional<Double> lowestConfirmedSwingLow(List<StrategyCandle> candles) {
+        Double lowest = null;
         for (int i = 1; i < candles.size() - 1; i++) {
             if (candles.get(i).low() < candles.get(i - 1).low() && candles.get(i).low() < candles.get(i + 1).low()) {
-                latest = candles.get(i).low();
+                lowest = lowest == null ? candles.get(i).low() : Math.min(lowest, candles.get(i).low());
             }
         }
-        return Optional.ofNullable(latest);
+        return Optional.ofNullable(lowest);
     }
 
     private double entryOffsetAtr(Long appUserId) {
