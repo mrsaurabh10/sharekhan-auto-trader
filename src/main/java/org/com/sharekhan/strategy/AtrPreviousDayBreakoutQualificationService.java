@@ -1,6 +1,7 @@
 package org.com.sharekhan.strategy;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.service.MStockHistoricalService;
 import org.com.sharekhan.service.UserConfigService;
@@ -16,6 +17,7 @@ import java.util.Optional;
 /** Calculates the pending ATR-source request from prior-day structure. Entry confirmation is enforced live. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class AtrPreviousDayBreakoutQualificationService {
 
     static final int ATR_PERIOD = 75;
@@ -48,13 +50,25 @@ public class AtrPreviousDayBreakoutQualificationService {
         boolean ce = "CE".equalsIgnoreCase(optionType);
         double pdh = previousDayCandles.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
         double pdl = previousDayCandles.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
+        Optional<Double> swingHigh = latestSwingHigh(previousDayCandles);
+        Optional<Double> swingLow = latestSwingLow(previousDayCandles);
         // Prefer the most recent confirmed prior-day swing; fall back to the full-day high/low.
         // This makes "PDH or PD swing" an actionable alternative rather than always selecting PDH/PDL.
         double structuralLevel = ce
-                ? latestSwingHigh(previousDayCandles).orElse(pdh)
-                : latestSwingLow(previousDayCandles).orElse(pdl);
-        double entryOffset = entryOffsetAtr(appUserId) * atr;
+                ? swingHigh.orElse(pdh)
+                : swingLow.orElse(pdl);
+        double offsetMultiplier = entryOffsetAtr(appUserId);
+        double entryOffset = offsetMultiplier * atr;
         double entry = structuralLevel + (ce ? entryOffset : -entryOffset);
+        String selectedLevelType = ce
+                ? (swingHigh.isPresent() ? "PD_SWING_HIGH" : "PDH")
+                : (swingLow.isPresent() ? "PD_SWING_LOW" : "PDL");
+        log.info("ATR_PREVIOUS_DAY_LEVELS | symbol={} | referenceDate={} | optionType={} | pdh={} | pdl={} | "
+                        + "swingHigh={} | swingLow={} | atr75_5m={} | offsetAtr={} | selectedType={} | selectedLevel={} | entry={}",
+                spot.getTradingSymbol(), referenceDay, optionType, support.roundPrice(pdh), support.roundPrice(pdl),
+                swingHigh.map(support::roundPrice).orElse(null), swingLow.map(support::roundPrice).orElse(null),
+                support.roundPrice(atr), offsetMultiplier, selectedLevelType, support.roundPrice(structuralLevel),
+                support.roundPrice(entry));
 
         double stop = ce ? entry - 2d * atr : entry + 2d * atr;
         return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
