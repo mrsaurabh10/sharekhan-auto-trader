@@ -105,6 +105,8 @@ public class TradeExecutionService {
     private static final int DEFAULT_MAX_ENTRY_ATTEMPTS = 5;
     private static final long DEFAULT_ENTRY_RETRY_DELAY_MS = 2000L;
     private static final double DEFAULT_ENTRY_MAX_SLIPPAGE_PERCENT = 2.0d;
+    private static final double ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT = 3.5d;
+    private static final double ATR_PREVIOUS_DAY_MAX_SLIPPAGE_PERCENT = 3.0d;
     private static final double DEFAULT_ENTRY_HARD_SPREAD_PERCENT = 2.5d;
     private static final int DEFAULT_ENTRY_WIDE_SPREAD_CONFIRMATIONS = 2;
     private static final int MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX = 2;
@@ -269,7 +271,7 @@ public class TradeExecutionService {
         }
 
         Double spreadPercent = snapshot.getSpreadPercent();
-        boolean shouldPlace = spreadPercent == null || spreadPercent <= entryMaxSpreadPercent;
+        boolean shouldPlace = spreadPercent == null || spreadPercent <= maxEntrySpreadPercent(trigger);
         String reason = shouldPlace ? "SPREAD_OK" : "SPREAD_THRESHOLD_EXCEEDED";
         return new EntryDiagnostics(shouldPlace, reason, spreadPercent,
                 snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getLastBookAt());
@@ -2199,7 +2201,7 @@ public class TradeExecutionService {
                 }
 
                 Double spread = entryDiagnostics.spreadPercent();
-                if (spread != null && spread > configuredEntryHardSpreadPercent()) {
+                if (spread != null && spread > configuredEntryHardSpreadPercent(trigger)) {
                     return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                             requestedQuantity, "ENTRY_SPREAD_HARD_LIMIT_EXCEEDED", lastResult);
                 }
@@ -2217,7 +2219,7 @@ public class TradeExecutionService {
                 consecutiveWideSpreads = 0;
 
                 if (entryDiagnostics.bestAsk() != null
-                        && entryDiagnostics.bestAsk() > entryPriceCeiling(ltp) + 0.000001d) {
+                        && entryDiagnostics.bestAsk() > entryPriceCeiling(trigger, ltp) + 0.000001d) {
                     return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                             requestedQuantity, "ENTRY_MAX_SLIPPAGE_EXCEEDED", lastResult);
                 }
@@ -2243,8 +2245,8 @@ public class TradeExecutionService {
                         formatPrice(entryDiagnostics.recommendedLimit()));
             }
 
-            double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp, chaseEntryUntilExecuted);
-            if (!chaseEntryUntilExecuted && isEntrySlippageLimitReached(price, ltp)) {
+            double price = resolveEntryAttemptPrice(trigger, entryDiagnostics, attempt, ltp, chaseEntryUntilExecuted);
+            if (!chaseEntryUntilExecuted && isEntrySlippageLimitReached(trigger, price, ltp)) {
                 return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                         requestedQuantity, "ENTRY_MAX_SLIPPAGE_EXCEEDED", lastResult);
             }
@@ -2359,15 +2361,29 @@ public class TradeExecutionService {
         return entryRetryDelayMillis > 0L ? entryRetryDelayMillis : DEFAULT_ENTRY_RETRY_DELAY_MS;
     }
 
-    private double configuredEntryMaxSlippagePercent() {
+    private double configuredEntryMaxSlippagePercent(TriggeredTradeSetupEntity trigger) {
+        if (isAtrPreviousDayStrategy(trigger)) {
+            return ATR_PREVIOUS_DAY_MAX_SLIPPAGE_PERCENT;
+        }
         return entryMaxSlippagePercent > 0d ? entryMaxSlippagePercent : DEFAULT_ENTRY_MAX_SLIPPAGE_PERCENT;
     }
 
-    private double configuredEntryHardSpreadPercent() {
+    private double configuredEntryHardSpreadPercent(TriggeredTradeSetupEntity trigger) {
+        if (isAtrPreviousDayStrategy(trigger)) {
+            return ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT;
+        }
         double hardLimit = entryHardSpreadPercent > 0d
                 ? entryHardSpreadPercent
                 : DEFAULT_ENTRY_HARD_SPREAD_PERCENT;
         return Math.max(hardLimit, entryMaxSpreadPercent);
+    }
+
+    private double maxEntrySpreadPercent(TriggeredTradeSetupEntity trigger) {
+        return isAtrPreviousDayStrategy(trigger) ? ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT : entryMaxSpreadPercent;
+    }
+
+    private boolean isAtrPreviousDayStrategy(TriggeredTradeSetupEntity trigger) {
+        return trigger != null && "atr-pdh-pdl-strategy".equalsIgnoreCase(trigger.getSource());
     }
 
     private int configuredWideSpreadConfirmations() {
@@ -2424,16 +2440,16 @@ public class TradeExecutionService {
                 || (trade.getUseSpotForEntry() == null && Boolean.TRUE.equals(trade.getUseSpotPrice()));
     }
 
-    private boolean isEntrySlippageLimitReached(double attemptedPrice, double initialOptionPrice) {
+    private boolean isEntrySlippageLimitReached(TriggeredTradeSetupEntity trigger, double attemptedPrice, double initialOptionPrice) {
         if (!Double.isFinite(attemptedPrice) || attemptedPrice <= 0d || initialOptionPrice <= 0d) {
             return true;
         }
-        double ceiling = entryPriceCeiling(initialOptionPrice);
+        double ceiling = entryPriceCeiling(trigger, initialOptionPrice);
         return attemptedPrice > ceiling + 0.000001d;
     }
 
-    private double entryPriceCeiling(double initialOptionPrice) {
-        double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent() / 100d);
+    private double entryPriceCeiling(TriggeredTradeSetupEntity trigger, double initialOptionPrice) {
+        double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent(trigger) / 100d);
         return Math.floor((rawCeiling + 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
     }
 
@@ -2831,7 +2847,7 @@ public class TradeExecutionService {
         }
 
         int attemptIndex = Math.min(state.modifyAttempts + 1, MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX);
-        return resolveEntryAttemptPrice(diagnostics, attemptIndex, fallbackLtp, true);
+        return resolveEntryAttemptPrice(trade, diagnostics, attemptIndex, fallbackLtp, true);
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {
@@ -3078,7 +3094,8 @@ public class TradeExecutionService {
         return null;
     }
 
-    private double resolveEntryAttemptPrice(EntryDiagnostics diagnostics,
+    private double resolveEntryAttemptPrice(TriggeredTradeSetupEntity trigger,
+                                            EntryDiagnostics diagnostics,
                                             int attemptIndex,
                                             double fallbackLtp,
                                             boolean manualChase) {
@@ -3102,7 +3119,7 @@ public class TradeExecutionService {
         }
 
         if (!manualChase && fallbackLtp > 0d) {
-            rawPrice = Math.min(rawPrice, entryPriceCeiling(fallbackLtp));
+            rawPrice = Math.min(rawPrice, entryPriceCeiling(trigger, fallbackLtp));
         }
 
         return normalisePriceToTick(diagnostics, rawPrice);
@@ -4019,6 +4036,7 @@ public class TradeExecutionService {
 
     private boolean isStagedSignalSource(String source) {
         return "atr-signal".equalsIgnoreCase(source)
+                || "atr-pdh-pdl-strategy".equalsIgnoreCase(source)
                 || "StockBazaari".equalsIgnoreCase(source);
     }
 

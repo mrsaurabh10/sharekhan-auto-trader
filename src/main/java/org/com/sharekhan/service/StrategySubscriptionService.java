@@ -7,6 +7,8 @@ import org.com.sharekhan.dto.StrategyApplyResponse;
 import org.com.sharekhan.entity.StrategySubscriptionEntity;
 import org.com.sharekhan.repository.StrategySubscriptionRepository;
 import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
+import org.com.sharekhan.strategy.AtrPreviousDayFnoCeStrategy;
+import org.com.sharekhan.strategy.AtrPreviousDayFnoPeStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimCeStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimPeStrategy;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -50,8 +52,9 @@ public class StrategySubscriptionService {
                 if (!ACTIVE.equalsIgnoreCase(found.getStatus())) {
                     found.setStatus(ACTIVE);
                     found.setLastMessage("Strategy is active and will run daily until cancelled.");
-                    return repository.save(found);
+                    found = repository.save(found);
                 }
+                evaluateImmediatelyIfEligible(found);
                 return found;
             }
         }
@@ -67,7 +70,9 @@ public class StrategySubscriptionService {
                 .status(ACTIVE)
                 .lastMessage("Strategy started and waiting for confirmation.")
                 .build();
-        return repository.save(entity);
+        StrategySubscriptionEntity saved = repository.save(entity);
+        evaluateImmediatelyIfEligible(saved);
+        return saved;
     }
 
     public List<StrategySubscriptionEntity> list(Long appUserId, boolean admin) {
@@ -115,7 +120,9 @@ public class StrategySubscriptionService {
         }
         entity.setSymbol(normalized);
         entity.setLastMessage("Configured instruments updated: " + normalized + ".");
-        return repository.save(entity);
+        StrategySubscriptionEntity saved = repository.save(entity);
+        evaluateImmediatelyIfEligible(saved);
+        return saved;
     }
 
     @Scheduled(fixedDelayString = "${app.strategy.scheduler-delay-ms:60000}")
@@ -226,7 +233,22 @@ public class StrategySubscriptionService {
 
     private boolean isManualFnoTemplate(String templateId) {
         return ManualFnoVwapReclaimCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
-                || ManualFnoVwapReclaimPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+                || ManualFnoVwapReclaimPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
+                || AtrPreviousDayFnoCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
+                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+    }
+
+    /** New ATR subscriptions should create their pending request immediately instead of waiting for the next poll. */
+    private void evaluateImmediatelyIfEligible(StrategySubscriptionEntity subscription) {
+        if (!isAtrPreviousDayTemplate(subscription != null ? subscription.getTemplateId() : null)) {
+            return;
+        }
+        evaluate(subscription);
+    }
+
+    private boolean isAtrPreviousDayTemplate(String templateId) {
+        return AtrPreviousDayFnoCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
+                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 
     private String normalizeSymbolList(String symbols) {

@@ -126,11 +126,15 @@ public class StockAtrTradeService {
 
     private boolean isAtrSignalSpotTrade(TriggeredTradeSetupEntity trade) {
         return trade != null
-                && "atr-signal".equalsIgnoreCase(trade.getSource())
+                && isAtrSource(trade.getSource())
                 && trade.getSpotScripCode() != null
                 && ("CE".equalsIgnoreCase(trade.getOptionType()) || "PE".equalsIgnoreCase(trade.getOptionType()))
                 && Boolean.TRUE.equals(trade.getUseSpotForSl())
                 && Boolean.TRUE.equals(trade.getUseSpotForTarget());
+    }
+
+    private boolean isAtrSource(String source) {
+        return "atr-signal".equalsIgnoreCase(source) || "atr-pdh-pdl-strategy".equalsIgnoreCase(source);
     }
 
     public StockAtrTradeResponse triggerForAllUsers(StockAtrTradeRequest request) {

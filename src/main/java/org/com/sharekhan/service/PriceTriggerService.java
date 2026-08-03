@@ -46,6 +46,8 @@ public class PriceTriggerService {
     private static final LocalTime EQUITY_MARKET_CLOSE = LocalTime.of(15, 30);
     private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
+    private static final String ATR_PREVIOUS_DAY_SOURCE = "atr-pdh-pdl-strategy";
+    private static final double ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT = 3000d;
     private static final String GAP_FILL_EXIT_REASON = "GAP_FILL_STOP";
     private static final int CLAIM_NONE = 0;
     private static final int CLAIM_EXIT_TRIGGERED = 1;
@@ -333,11 +335,11 @@ public class PriceTriggerService {
         // Opening-gap protection belongs exclusively to the ATR opening signal.
         // Manual, Telegram and strategy-generated levels are created intraday, so
         // comparing them with the market open can falsely reject a valid entry.
-        if (!ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())) {
+        if (!isAtrSource(trigger.getSource())) {
             return false;
         }
 
-        boolean atrSpotEntry = ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
+        boolean atrSpotEntry = isAtrSource(trigger.getSource())
                 && (Boolean.TRUE.equals(trigger.getUseSpotForEntry())
                     || (trigger.getUseSpotForEntry() == null && Boolean.TRUE.equals(trigger.getUseSpotPrice())));
 
@@ -400,7 +402,7 @@ public class PriceTriggerService {
     private OpeningDecision evaluateAtrSpotEntryRule(TriggerTradeRequestEntity trigger,
                                                      LocalDateTime nowIst,
                                                      double currentSpotPrice) {
-        if (trigger == null || !ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())) {
+        if (trigger == null || !isAtrSource(trigger.getSource())) {
             return OpeningDecision.NORMAL;
         }
         Integer spotScripCode = trigger.getSpotScripCode();
@@ -481,7 +483,7 @@ public class PriceTriggerService {
     }
 
     private void initializeGapPolicy(TriggerTradeRequestEntity trigger) {
-        if (trigger == null || !ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())
+        if (trigger == null || !isAtrSource(trigger.getSource())
                 || Boolean.TRUE.equals(trigger.getGapPolicyInitialized())
                 || trigger.getSpotScripCode() == null || trigger.getEntryPrice() == null
                 || trigger.getTarget1() == null || trigger.getStopLoss() == null) {
@@ -789,6 +791,13 @@ public class PriceTriggerService {
 
                 Double slVal = persisted.getStopLoss();
                 boolean hasValidSl = (slVal != null && slVal > 0d);
+
+                if (isAtrPreviousDayMaxLossHit(persisted, tradedLtp)) {
+                    return triggeredRepo.claimIfStatusEquals(tradeId,
+                            TriggeredTradeStatus.EXECUTED.name(),
+                            TriggeredTradeStatus.EXIT_TRIGGERED.name(),
+                            "PER_LOT_MAX_LOSS_HIT");
+                }
 
                 if (isGapFillStopHit(persisted)) {
                     if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp,
@@ -1367,6 +1376,34 @@ public class PriceTriggerService {
 
     private boolean hasOptionType(String optionType) {
         return optionType != null && !optionType.trim().isEmpty();
+    }
+
+    /** Hard loss cap for the prior-day ATR strategy, evaluated from actual option premium and actual lot size. */
+    private boolean isAtrPreviousDayMaxLossHit(TriggeredTradeSetupEntity trade, double optionLtp) {
+        if (trade == null || !ATR_PREVIOUS_DAY_SOURCE.equalsIgnoreCase(trade.getSource())
+                || !Double.isFinite(optionLtp) || optionLtp <= 0d) {
+            return false;
+        }
+        Double entry = trade.getActualEntryPrice();
+        if (entry == null || !Double.isFinite(entry) || entry <= optionLtp) {
+            return false;
+        }
+        int lots = resolveCurrentLots(trade);
+        Long quantity = trade.getQuantity();
+        if (lots <= 0 || quantity == null || quantity <= 0L) {
+            return false;
+        }
+        double lossPerLot = (entry - optionLtp) * ((double) quantity / lots);
+        if (lossPerLot < ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT) {
+            return false;
+        }
+        log.warn("ATR previous-day max loss reached for trade {}: lossPerLot={} cap={} entry={} optionLtp={} lots={} quantity={}",
+                trade.getId(), lossPerLot, ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT, entry, optionLtp, lots, quantity);
+        return true;
+    }
+
+    private boolean isAtrSource(String source) {
+        return ATR_SIGNAL_SOURCE.equalsIgnoreCase(source) || ATR_PREVIOUS_DAY_SOURCE.equalsIgnoreCase(source);
     }
 
     private int resolveCurrentLots(TriggeredTradeSetupEntity trade) {
