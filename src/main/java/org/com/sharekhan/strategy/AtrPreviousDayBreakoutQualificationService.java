@@ -12,7 +12,9 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 
 /** Calculates the pending ATR-source request from prior-day structure. Entry confirmation is enforced live. */
 @Component
@@ -137,19 +139,31 @@ public class AtrPreviousDayBreakoutQualificationService {
         }
     }
 
-    /** MStock's historical endpoint supplies both today's candles and the required prior-day chart context. */
+    /**
+     * The MStock intraday chart is authoritative for today's five-minute candles and pivots.
+     * MStock historical data only supplies earlier candles needed for ATR's previous-close context.
+     */
     private List<StrategyCandle> loadMStockFiveMinuteChart(ScriptMasterEntity spot, LocalDateTime now) {
         try {
+            List<StrategyCandle> intraday = sorted(support.loadCandles(spot, "5minute").candles());
+            if (intraday.isEmpty()) {
+                throw new IllegalStateException("MStock intraday chart returned no five-minute candles");
+            }
             LocalDateTime from = now.minusDays(15).withHour(9).withMinute(15).withSecond(0).withNano(0);
             MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandles(
                     spot.getScripCode(), null, null, null, null, null,
                     "5minute", from.toLocalDate().toString(), now.toLocalDate().toString());
-            if (response == null || response.candles() == null) return List.of();
-            return sorted(response.candles().stream()
-                    .filter(c -> c != null && c.date() != null && c.time() != null)
-                    .filter(c -> c.high() > 0d && c.low() > 0d && c.close() > 0d)
-                    .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
-                    .toList());
+            Map<String, StrategyCandle> merged = new TreeMap<>();
+            if (response != null && response.candles() != null) {
+                response.candles().stream()
+                        .filter(c -> c != null && c.date() != null && c.time() != null)
+                        .filter(c -> c.high() > 0d && c.low() > 0d && c.close() > 0d)
+                        .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
+                        .forEach(candle -> merged.put(candle.date() + "T" + candle.time(), candle));
+            }
+            // Put current-day intraday candles last so their highs/lows determine PDH and swing structure.
+            intraday.forEach(candle -> merged.put(candle.date() + "T" + candle.time(), candle));
+            return sorted(List.copyOf(merged.values()));
         } catch (Exception e) {
             throw new IllegalStateException("MStock 5-minute chart is unavailable for "
                     + (spot != null ? spot.getTradingSymbol() : "selected symbol") + ": " + e.getMessage(), e);
