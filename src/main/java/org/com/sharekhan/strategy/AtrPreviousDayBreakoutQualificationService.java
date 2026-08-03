@@ -25,6 +25,10 @@ public class AtrPreviousDayBreakoutQualificationService {
     static final int ATR_PERIOD = 75;
     static final String ENTRY_OFFSET_ATR_CONFIG = "fno_atr_previous_day_entry_offset_atr";
     private static final double DEFAULT_ENTRY_OFFSET_ATR = 0.25d;
+    /** Avoid minor pivots and untradeable, distant prior-day levels. */
+    private static final double MIN_SWING_REVERSAL_ATR = 0.75d;
+    private static final double MIN_ENTRY_DISTANCE_ATR = 1d;
+    private static final double MAX_ENTRY_DISTANCE_ATR = 3d;
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
     private final StrategySupport support;
@@ -52,30 +56,36 @@ public class AtrPreviousDayBreakoutQualificationService {
         boolean ce = "CE".equalsIgnoreCase(optionType);
         double pdh = previousDayCandles.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
         double pdl = previousDayCandles.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
-        Optional<Double> swingHigh = highestConfirmedSwingHigh(previousDayCandles);
-        Optional<Double> swingLow = lowestConfirmedSwingLow(previousDayCandles);
-        // Use the meaningful outer prior-day swing, rather than a later, smaller consolidation pivot.
-        // PDH/PDL remain the fallback when no confirmed swing exists.
-        double structuralLevel = ce
-                ? swingHigh.orElse(pdh)
-                : swingLow.orElse(pdl);
+        double referenceClose = previousDayCandles.get(previousDayCandles.size() - 1).close();
         double offsetMultiplier = entryOffsetAtr(appUserId);
         double entryOffset = offsetMultiplier * atr;
-        double entry = structuralLevel + (ce ? entryOffset : -entryOffset);
-        String selectedLevelType = ce
-                ? (swingHigh.isPresent() ? "PD_SWING_HIGH" : "PDH")
-                : (swingLow.isPresent() ? "PD_SWING_LOW" : "PDL");
+        List<SwingPoint> swingHighs = meaningfulSwingHighs(previousDayCandles, atr);
+        List<SwingPoint> swingLows = meaningfulSwingLows(previousDayCandles, atr);
+        Optional<SwingPoint> selectedSwing = selectTradableSwing(swingHighs, referenceClose, entryOffset, atr, ce);
+        String selectedLevelType = ce ? "PD_MEANINGFUL_SWING_HIGH" : "PD_MEANINGFUL_SWING_LOW";
         log.info("ATR_PREVIOUS_DAY_LEVELS | symbol={} | referenceDate={} | optionType={} | pdh={} | pdl={} | "
-                        + "swingHigh={} | swingLow={} | atr75_5m={} | offsetAtr={} | selectedType={} | selectedLevel={} | entry={}",
+                        + "referenceClose={} | swingHighCandidates={} | swingLowCandidates={} | atr75_5m={} | "
+                        + "offsetAtr={} | minReversalAtr={} | entryDistanceAtrRange={}-{} | selectedType={} | selectedLevel={} | entry={}",
                 spot.getTradingSymbol(), referenceDay, optionType, support.roundPrice(pdh), support.roundPrice(pdl),
-                swingHigh.map(support::roundPrice).orElse(null), swingLow.map(support::roundPrice).orElse(null),
-                support.roundPrice(atr), offsetMultiplier, selectedLevelType, support.roundPrice(structuralLevel),
-                support.roundPrice(entry));
+                support.roundPrice(referenceClose), swingHighs, swingLows, support.roundPrice(atr), offsetMultiplier,
+                MIN_SWING_REVERSAL_ATR, MIN_ENTRY_DISTANCE_ATR, MAX_ENTRY_DISTANCE_ATR, selectedLevelType,
+                selectedSwing.map(SwingPoint::price).map(support::roundPrice).orElse(null),
+                selectedSwing.map(swing -> support.roundPrice(entryFor(swing.price(), entryOffset, ce))).orElse(null));
+
+        if (selectedSwing.isEmpty()) {
+            return Fno925EntryQualificationService.Qualification.waiting(
+                    "no meaningful prior-day " + (ce ? "swing high" : "swing low")
+                            + " has an entry between " + MIN_ENTRY_DISTANCE_ATR + " and "
+                            + MAX_ENTRY_DISTANCE_ATR + " ATR from the prior-day close");
+        }
+
+        double structuralLevel = selectedSwing.get().price();
+        double entry = entryFor(structuralLevel, entryOffset, ce);
 
         double stop = ce ? entry - 2d * atr : entry + 2d * atr;
         return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
                 support.roundPrice(entry), support.roundPrice(stop), pdh, pdl, null,
-                ce ? "PENDING_PDH_SWING_HIGH_ATR_BREAKOUT" : "PENDING_PDL_SWING_LOW_ATR_BREAKDOWN"));
+                ce ? "PENDING_MEANINGFUL_SWING_HIGH_ATR_BREAKOUT" : "PENDING_MEANINGFUL_SWING_LOW_ATR_BREAKDOWN"));
     }
 
     private List<StrategyCandle> sorted(List<StrategyCandle> candles) {
@@ -106,24 +116,47 @@ public class AtrPreviousDayBreakoutQualificationService {
         return total / ATR_PERIOD;
     }
 
-    private Optional<Double> highestConfirmedSwingHigh(List<StrategyCandle> candles) {
-        Double highest = null;
+    private List<SwingPoint> meaningfulSwingHighs(List<StrategyCandle> candles, double atr) {
+        java.util.ArrayList<SwingPoint> swings = new java.util.ArrayList<>();
         for (int i = 1; i < candles.size() - 1; i++) {
             if (candles.get(i).high() > candles.get(i - 1).high() && candles.get(i).high() > candles.get(i + 1).high()) {
-                highest = highest == null ? candles.get(i).high() : Math.max(highest, candles.get(i).high());
+                double pullback = candles.get(i).high() - candles.subList(i + 1, candles.size()).stream()
+                        .mapToDouble(StrategyCandle::low).min().orElse(candles.get(i).low());
+                if (pullback >= MIN_SWING_REVERSAL_ATR * atr) {
+                    swings.add(new SwingPoint(candles.get(i).time(), support.roundPrice(candles.get(i).high())));
+                }
             }
         }
-        return Optional.ofNullable(highest);
+        return List.copyOf(swings);
     }
 
-    private Optional<Double> lowestConfirmedSwingLow(List<StrategyCandle> candles) {
-        Double lowest = null;
+    private List<SwingPoint> meaningfulSwingLows(List<StrategyCandle> candles, double atr) {
+        java.util.ArrayList<SwingPoint> swings = new java.util.ArrayList<>();
         for (int i = 1; i < candles.size() - 1; i++) {
             if (candles.get(i).low() < candles.get(i - 1).low() && candles.get(i).low() < candles.get(i + 1).low()) {
-                lowest = lowest == null ? candles.get(i).low() : Math.min(lowest, candles.get(i).low());
+                double bounce = candles.subList(i + 1, candles.size()).stream()
+                        .mapToDouble(StrategyCandle::high).max().orElse(candles.get(i).high()) - candles.get(i).low();
+                if (bounce >= MIN_SWING_REVERSAL_ATR * atr) {
+                    swings.add(new SwingPoint(candles.get(i).time(), support.roundPrice(candles.get(i).low())));
+                }
             }
         }
-        return Optional.ofNullable(lowest);
+        return List.copyOf(swings);
+    }
+
+    private Optional<SwingPoint> selectTradableSwing(List<SwingPoint> candidates, double referenceClose,
+                                                       double entryOffset, double atr, boolean ce) {
+        return candidates.stream()
+                .filter(swing -> {
+                    double entry = entryFor(swing.price(), entryOffset, ce);
+                    double distance = ce ? entry - referenceClose : referenceClose - entry;
+                    return distance >= MIN_ENTRY_DISTANCE_ATR * atr && distance <= MAX_ENTRY_DISTANCE_ATR * atr;
+                })
+                .min(Comparator.comparingDouble(swing -> Math.abs(entryFor(swing.price(), entryOffset, ce) - referenceClose)));
+    }
+
+    private double entryFor(double level, double entryOffset, boolean ce) {
+        return level + (ce ? entryOffset : -entryOffset);
     }
 
     private double entryOffsetAtr(Long appUserId) {
@@ -169,4 +202,6 @@ public class AtrPreviousDayBreakoutQualificationService {
                     + (spot != null ? spot.getTradingSymbol() : "selected symbol") + ": " + e.getMessage(), e);
         }
     }
+
+    private record SwingPoint(java.time.LocalTime time, double price) { }
 }
