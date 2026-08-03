@@ -100,6 +100,25 @@ class WhatsappSignalParserTest {
     }
 
     @Test
+    public void parsesStockBazaariWhatsappEquityAsDeliveryWithTsl() {
+        Map<String, Object> result = parser.parse("""
+                *Hi, Your Subscribed Trading Signal Is Ready:*
+                INSTRUMENT: RELIANCE-EQ
+                ENTRY: ABOVE 1450.50
+                STOP LOSS: 1425
+                TARGET: 1475/1500/1530
+                """);
+
+        assertNotNull(result);
+        assertEquals("StockBazaari", result.get("source"));
+        assertEquals("RELIANCE", result.get("symbol"));
+        assertEquals("NC", result.get("exchange"));
+        assertNull(result.get("optionType"));
+        assertEquals(false, result.get("intraday"));
+        assertEquals(true, result.get("tslEnabled"));
+    }
+
+    @Test
     public void testInvalidInputReturnsNull() {
         String text = "Random invalid text without required fields";
         Map<String, Object> result = parser.parse(text);

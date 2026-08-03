@@ -80,4 +80,18 @@ public class AfterHoursTargetOrderScheduler {
         int rearmed = tradeExecutionService.rearmNonIntradayOptionPriceTargetsAtMarketOpen();
         log.info("Market-open F&O option target rearm complete. Re-armed={}", rearmed);
     }
+
+    /**
+     * Signals received before the cash session are persisted immediately but
+     * their broker-side entry trigger is submitted only once NSE is open.
+     */
+    @Scheduled(cron = "0 15 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void submitPendingStockBazaariEquityEntriesAtMarketOpen() {
+        ZoneId zone = ZoneId.of("Asia/Kolkata");
+        if (!nseMarketCalendar.isTradingDay(LocalDate.now(zone))) {
+            return;
+        }
+        int submitted = tradeExecutionService.placePendingStockBazaariEquityEntriesAtMarketOpen();
+        log.info("Market-open StockBazaari equity entry submission complete. Candidates={}", submitted);
+    }
 }

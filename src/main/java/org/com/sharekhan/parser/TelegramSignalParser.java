@@ -35,6 +35,12 @@ public class TelegramSignalParser implements TradingSignalParser {
     );
     private static final Pattern STOCK_BAZAARI_STOP_LOSS_PATTERN = Pattern.compile(
             "\\bSL\\s*:\\s*([\\d.]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern STOCK_BAZAARI_EQUITY_TRADE_PATTERN = Pattern.compile(
+            "\\bTRADE\\s*:\\s*([A-Z0-9_&\\-]+)\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern STOCK_BAZAARI_EQUITY_TRIGGER_PATTERN = Pattern.compile(
+            "\\bTRIGGER\\s+PRICE\\s*:\\s*BUY\\s*"
+                    + "(?:ABOVE|ABIVE|ABV|ABVE)\\s*([\\d.]+)",
+            Pattern.CASE_INSENSITIVE);
 
     @Override
     public Map<String, Object> parse(String text) {
@@ -55,6 +61,11 @@ public class TelegramSignalParser implements TradingSignalParser {
         Map<String, Object> stockBazaariResult = parseStockBazaariSignal(normalizedForQuick);
         if (stockBazaariResult != null) {
             return stockBazaariResult;
+        }
+
+        Map<String, Object> stockBazaariEquityResult = parseStockBazaariEquitySignal(normalizedForQuick);
+        if (stockBazaariEquityResult != null) {
+            return stockBazaariEquityResult;
         }
 
         if (!normalizedForQuick.isEmpty() && !containsBreakoutKeyword(normalizedForQuick)) {
@@ -221,6 +232,39 @@ public class TelegramSignalParser implements TradingSignalParser {
             result.put("quantity", quantity);
         }
 
+        return result;
+    }
+
+    /**
+     * Stock Bazaari equity calls use the same Trigger/Target/SL layout as its
+     * option calls, but the Trade line contains only the cash-market symbol.
+     * They are delivery trades on NSE (NC), never intraday option trades.
+     */
+    private Map<String, Object> parseStockBazaariEquitySignal(String normalizedText) {
+        Matcher tradeMatcher = STOCK_BAZAARI_EQUITY_TRADE_PATTERN.matcher(normalizedText);
+        Matcher triggerMatcher = STOCK_BAZAARI_EQUITY_TRIGGER_PATTERN.matcher(normalizedText);
+        if (!tradeMatcher.find() || !triggerMatcher.find()) {
+            return null;
+        }
+
+        Matcher targetMatcher = STOCK_BAZAARI_TARGET_PATTERN.matcher(normalizedText);
+        Matcher stopLossMatcher = STOCK_BAZAARI_STOP_LOSS_PATTERN.matcher(normalizedText);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("source", "StockBazaari");
+        result.put("action", "BUY");
+        result.put("symbol", tradeMatcher.group(1).toUpperCase(Locale.ROOT));
+        result.put("entry", tryParseDouble(triggerMatcher.group(1)));
+        result.put("exchange", "NC");
+        result.put("intraday", false);
+        result.put("tslEnabled", true);
+        if (targetMatcher.find()) {
+            result.put("target1", targetMatcher.group(1));
+            result.put("target2", targetMatcher.group(2));
+            result.put("target3", targetMatcher.group(3));
+        }
+        if (stopLossMatcher.find()) {
+            result.put("stopLoss", tryParseDouble(stopLossMatcher.group(1)));
+        }
         return result;
     }
 

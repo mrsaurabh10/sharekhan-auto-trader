@@ -38,8 +38,9 @@ public class WhatsappSignalParser implements TradingSignalParser {
 
             // Symbol extraction
             String instrument;
-            if (instrumentFull.contains("-EQ")) {
-                instrument = instrumentFull.substring(0, instrumentFull.indexOf("-EQ")).trim();
+            boolean isEquity = instrumentFull.toUpperCase(Locale.ROOT).contains("-EQ");
+            if (isEquity) {
+                instrument = instrumentFull.substring(0, instrumentFull.toUpperCase(Locale.ROOT).indexOf("-EQ")).trim();
             } else {
                 String[] parts = instrumentFull.split(" ");
                 instrument = parts.length > 0 ? parts[0].trim() : "";
@@ -90,7 +91,7 @@ public class WhatsappSignalParser implements TradingSignalParser {
 
             Map<String, Object> result = new HashMap<>();
             result.put("symbol", instrument);
-            result.put("exchange", null);
+            result.put("exchange", isEquity ? "NC" : null);
             result.put("entry", entryPrice);
             result.put("stopLoss", stopLoss);
             result.put("target1", target1);
@@ -101,7 +102,14 @@ public class WhatsappSignalParser implements TradingSignalParser {
             result.put("strike", strikePrice);
             result.put("optionType", optionType);
             result.put("expiry", expiryFormatted);
-            result.put("intraday", true);
+            // The subscribed WhatsApp format identifies cash equities with
+            // "-EQ". Treat StockBazaari equity calls exactly like the Telegram
+            // form: delivery only, with TSL, and eligible for amount sizing.
+            result.put("intraday", !isEquity);
+            if (isEquity) {
+                result.put("source", "StockBazaari");
+                result.put("tslEnabled", true);
+            }
 
             return result;
 

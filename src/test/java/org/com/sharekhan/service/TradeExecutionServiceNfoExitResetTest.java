@@ -1,5 +1,6 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.junit.jupiter.api.Test;
@@ -38,6 +39,29 @@ class TradeExecutionServiceNfoExitResetTest {
 
         assertThat(service.isClosedNfoOptionExitOrder(equity, afterClose)).isFalse();
         assertThat(service.isClosedNfoOptionExitOrder(intraday, afterClose)).isFalse();
+    }
+
+    @Test
+    void normalizesApiCashEquityExchangeBeforeScriptMasterLookup() {
+        TriggerRequest request = new TriggerRequest();
+        request.setInstrument("SATIN");
+        request.setExchange("NSE");
+
+        TradeExecutionService.normalizeCashEquityExchange(request);
+
+        assertThat(request.getExchange()).isEqualTo("NC");
+        assertThat(request.getInstrument()).isEqualTo("SATIN");
+    }
+
+    @Test
+    void preservesOptionExchangeForOptionRequests() {
+        TriggerRequest request = new TriggerRequest();
+        request.setExchange("NSE");
+        request.setOptionType("CE");
+
+        TradeExecutionService.normalizeCashEquityExchange(request);
+
+        assertThat(request.getExchange()).isEqualTo("NSE");
     }
 
     private TriggeredTradeSetupEntity nfoOptionTargetOrder() {

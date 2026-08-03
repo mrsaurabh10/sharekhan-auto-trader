@@ -77,11 +77,17 @@ public class StrategySupport {
     }
 
     public CandleLoad loadCandles(ScriptMasterEntity spotScript) {
+        return loadCandles(spotScript, "5minute");
+    }
+
+    /** Loads MStock intraday candles at the requested interval. */
+    public CandleLoad loadCandles(ScriptMasterEntity spotScript, String interval) {
+        String effectiveInterval = StringUtils.hasText(interval) ? interval.trim() : "5minute";
         try {
             String symbol = spotScript != null ? spotScript.getTradingSymbol() : null;
             HardcodedMStockIndex hardcodedIndex = hardcodedMStockIndex(spotScript);
             if (hardcodedIndex != null) {
-                return loadHardcodedIndexCandles(hardcodedIndex, symbol);
+                return loadHardcodedIndexCandles(hardcodedIndex, symbol, effectiveInterval);
             }
 
             Optional<MStockPollInstrument> pollInstrumentOpt = resolveMStockPollInstrument(spotScript);
@@ -116,14 +122,14 @@ public class StrategySupport {
                 printDiagnostic(message);
             }
             log.info("Loading MStock intraday candles for symbol={}, key={}, exchange={}, symbolToken={}, interval={}",
-                    symbol, key, exchange, symbolToken, "5minute");
+                    symbol, key, exchange, symbolToken, effectiveInterval);
             printDiagnostic("Loading candles symbol=" + symbol
                     + ", key=" + key
                     + ", exchange=" + exchange
                     + ", symbolToken=" + symbolToken
-                    + ", interval=5minute");
+                    + ", interval=" + effectiveInterval);
             List<StrategyCandle> candles = mStockIntradayCandleService
-                    .getIntradayCandles(exchange, symbolToken, "5minute")
+                    .getIntradayCandles(exchange, symbolToken, effectiveInterval)
                     .stream()
                     .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
                     .toList();
@@ -142,7 +148,7 @@ public class StrategySupport {
             String reason = "MStock intraday API returned zero valid candles for key=" + key
                     + ", exchange=" + exchange
                     + ", symbolToken=" + symbolToken
-                    + ", interval=5minute";
+                    + ", interval=" + effectiveInterval;
             log.warn(reason);
             printDiagnostic(reason);
             return new CandleLoad(List.of(), false, reason);
@@ -472,16 +478,16 @@ public class StrategySupport {
                 .toString();
     }
 
-    private CandleLoad loadHardcodedIndexCandles(HardcodedMStockIndex index, String symbol) {
+    private CandleLoad loadHardcodedIndexCandles(HardcodedMStockIndex index, String symbol, String interval) {
         String key = index.exchange() + ":" + index.script();
         printDiagnostic("Loading hardcoded index candles symbol=" + symbol
                 + ", key=" + key
                 + ", exchange=" + index.exchange()
                 + ", symbolToken=" + index.exchangeToken()
                 + ", name=" + index.name()
-                + ", interval=5minute");
+                + ", interval=" + interval);
         List<StrategyCandle> candles = mStockIntradayCandleService
-                .getIntradayCandles(index.exchange(), index.exchangeToken(), "5minute")
+                .getIntradayCandles(index.exchange(), index.exchangeToken(), interval)
                 .stream()
                 .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), c.volume()))
                 .toList();
@@ -498,7 +504,7 @@ public class StrategySupport {
         String reason = "MStock intraday API returned zero valid candles for hardcoded index key=" + key
                 + ", exchange=" + index.exchange()
                 + ", symbolToken=" + index.exchangeToken()
-                + ", interval=5minute";
+                + ", interval=" + interval;
         log.warn(reason);
         printDiagnostic(reason);
         return new CandleLoad(List.of(), false, reason);

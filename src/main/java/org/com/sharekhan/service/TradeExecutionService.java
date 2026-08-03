@@ -105,6 +105,8 @@ public class TradeExecutionService {
     private static final int DEFAULT_MAX_ENTRY_ATTEMPTS = 5;
     private static final long DEFAULT_ENTRY_RETRY_DELAY_MS = 2000L;
     private static final double DEFAULT_ENTRY_MAX_SLIPPAGE_PERCENT = 2.0d;
+    private static final double ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT = 3.5d;
+    private static final double ATR_PREVIOUS_DAY_MAX_SLIPPAGE_PERCENT = 3.0d;
     private static final double DEFAULT_ENTRY_HARD_SPREAD_PERCENT = 2.5d;
     private static final int DEFAULT_ENTRY_WIDE_SPREAD_CONFIRMATIONS = 2;
     private static final int MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX = 2;
@@ -269,7 +271,7 @@ public class TradeExecutionService {
         }
 
         Double spreadPercent = snapshot.getSpreadPercent();
-        boolean shouldPlace = spreadPercent == null || spreadPercent <= entryMaxSpreadPercent;
+        boolean shouldPlace = spreadPercent == null || spreadPercent <= maxEntrySpreadPercent(trigger);
         String reason = shouldPlace ? "SPREAD_OK" : "SPREAD_THRESHOLD_EXCEEDED";
         return new EntryDiagnostics(shouldPlace, reason, spreadPercent,
                 snapshot.getMidPrice(), snapshot.getBestBid(), snapshot.getBestAsk(), snapshot.getLastBookAt());
@@ -506,8 +508,9 @@ public class TradeExecutionService {
                                                    boolean attemptBrokerSideEntryOrder) {
 
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
@@ -663,7 +666,7 @@ public class TradeExecutionService {
                 .target3(request.getTarget3())
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
-                .lots(request.getQuantity()) // Store the lots
+                .lots(isNoStrikeExchange ? null : request.getQuantity()) // Equities use a share quantity, not lots
                 .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
@@ -701,6 +704,10 @@ public class TradeExecutionService {
     }
 
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {
+        if (isStockBazaariEquity(requestEntity) && !isEquityMarketOpen()) {
+            log.info("Deferring StockBazaari equity entry request {} until the market opens", requestEntity.getId());
+            return;
+        }
         if (!isBrokerSideEntryTriggerEligible(requestEntity)) {
             return;
         }
@@ -828,8 +835,34 @@ public class TradeExecutionService {
                 && TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(requestEntity.getStatus())
                 && requestEntity.getEntryPrice() != null
                 && requestEntity.getEntryPrice() > 0d
-                && hasOptionType(requestEntity.getOptionType())
+                && (hasOptionType(requestEntity.getOptionType()) || isStockBazaariEquity(requestEntity))
                 && !usesSpotForEntry(requestEntity);
+    }
+
+    /** Called by the market-open scheduler for equity signals received before 09:15 IST. */
+    public int placePendingStockBazaariEquityEntriesAtMarketOpen() {
+        int submitted = 0;
+        for (TriggerTradeRequestEntity request : triggerTradeRequestRepository
+                .findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)) {
+            if (!isStockBazaariEquity(request)) {
+                continue;
+            }
+            tryPlaceBrokerSideEntryOrder(request);
+            submitted++;
+        }
+        return submitted;
+    }
+
+    private boolean isStockBazaariEquity(TriggerTradeRequestEntity request) {
+        return request != null
+                && "StockBazaari".equalsIgnoreCase(request.getSource())
+                && !hasOptionType(request.getOptionType())
+                && ("NC".equalsIgnoreCase(request.getExchange()) || "BC".equalsIgnoreCase(request.getExchange()));
+    }
+
+    private boolean isEquityMarketOpen() {
+        LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
+        return !time.isBefore(LocalTime.of(9, 15)) && !time.isAfter(LocalTime.of(15, 30));
     }
 
     private boolean usesSpotForEntry(TriggerTradeRequestEntity requestEntity) {
@@ -1066,6 +1099,27 @@ public class TradeExecutionService {
         return MCX_SYMBOLS.contains(normalizedInstrument);
     }
 
+    /**
+     * External signal APIs commonly label cash equities as NSE/BSE, while the
+     * Sharekhan script master stores those segments as NC/BC.  Normalise at
+     * the execution boundary as well as at the message-ingestion boundary so
+     * direct API calls cannot be sent down the F&O lookup path.
+     */
+    static void normalizeCashEquityExchange(TriggerRequest request) {
+        if (request == null || request.getOptionType() != null && !request.getOptionType().isBlank()) {
+            return;
+        }
+        if ("NSE".equalsIgnoreCase(request.getExchange())) {
+            request.setExchange("NC");
+        } else if ("BSE".equalsIgnoreCase(request.getExchange())) {
+            request.setExchange("BC");
+        }
+    }
+
+    private static boolean isCashEquityExchange(String exchange) {
+        return "NC".equalsIgnoreCase(exchange) || "BC".equalsIgnoreCase(exchange);
+    }
+
     public TriggeredTradeSetupEntity executeQuickTrade(TriggerRequest request) {
         if (request == null) {
             throw new InvalidTradeRequestException("Quick trade request cannot be null");
@@ -1075,8 +1129,9 @@ public class TradeExecutionService {
             throw new InvalidTradeRequestException("Quick trades currently support BUY instructions only");
         }
 
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
@@ -1212,8 +1267,9 @@ public class TradeExecutionService {
             throw new InvalidTradeRequestException("Trade request cannot be null");
         }
 
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
         if (!isNoStrikeExchange) {
@@ -1370,8 +1426,9 @@ public class TradeExecutionService {
         LocalDateTime now = LocalDateTime.now(zoneId);
         LocalTime cutoff = optionExpiryCutoff(request);
 
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
         if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
             List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(
@@ -2169,7 +2226,7 @@ public class TradeExecutionService {
                 }
 
                 Double spread = entryDiagnostics.spreadPercent();
-                if (spread != null && spread > configuredEntryHardSpreadPercent()) {
+                if (spread != null && spread > configuredEntryHardSpreadPercent(trigger)) {
                     return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                             requestedQuantity, "ENTRY_SPREAD_HARD_LIMIT_EXCEEDED", lastResult);
                 }
@@ -2187,7 +2244,7 @@ public class TradeExecutionService {
                 consecutiveWideSpreads = 0;
 
                 if (entryDiagnostics.bestAsk() != null
-                        && entryDiagnostics.bestAsk() > entryPriceCeiling(ltp) + 0.000001d) {
+                        && entryDiagnostics.bestAsk() > entryPriceCeiling(trigger, ltp) + 0.000001d) {
                     return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                             requestedQuantity, "ENTRY_MAX_SLIPPAGE_EXCEEDED", lastResult);
                 }
@@ -2213,8 +2270,8 @@ public class TradeExecutionService {
                         formatPrice(entryDiagnostics.recommendedLimit()));
             }
 
-            double price = resolveEntryAttemptPrice(entryDiagnostics, attempt, ltp, chaseEntryUntilExecuted);
-            if (!chaseEntryUntilExecuted && isEntrySlippageLimitReached(price, ltp)) {
+            double price = resolveEntryAttemptPrice(trigger, entryDiagnostics, attempt, ltp, chaseEntryUntilExecuted);
+            if (!chaseEntryUntilExecuted && isEntrySlippageLimitReached(trigger, price, ltp)) {
                 return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                         requestedQuantity, "ENTRY_MAX_SLIPPAGE_EXCEEDED", lastResult);
             }
@@ -2329,15 +2386,29 @@ public class TradeExecutionService {
         return entryRetryDelayMillis > 0L ? entryRetryDelayMillis : DEFAULT_ENTRY_RETRY_DELAY_MS;
     }
 
-    private double configuredEntryMaxSlippagePercent() {
+    private double configuredEntryMaxSlippagePercent(TriggeredTradeSetupEntity trigger) {
+        if (isAtrPreviousDayStrategy(trigger)) {
+            return ATR_PREVIOUS_DAY_MAX_SLIPPAGE_PERCENT;
+        }
         return entryMaxSlippagePercent > 0d ? entryMaxSlippagePercent : DEFAULT_ENTRY_MAX_SLIPPAGE_PERCENT;
     }
 
-    private double configuredEntryHardSpreadPercent() {
+    private double configuredEntryHardSpreadPercent(TriggeredTradeSetupEntity trigger) {
+        if (isAtrPreviousDayStrategy(trigger)) {
+            return ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT;
+        }
         double hardLimit = entryHardSpreadPercent > 0d
                 ? entryHardSpreadPercent
                 : DEFAULT_ENTRY_HARD_SPREAD_PERCENT;
         return Math.max(hardLimit, entryMaxSpreadPercent);
+    }
+
+    private double maxEntrySpreadPercent(TriggeredTradeSetupEntity trigger) {
+        return isAtrPreviousDayStrategy(trigger) ? ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT : entryMaxSpreadPercent;
+    }
+
+    private boolean isAtrPreviousDayStrategy(TriggeredTradeSetupEntity trigger) {
+        return trigger != null && "atr-pdh-pdl-strategy".equalsIgnoreCase(trigger.getSource());
     }
 
     private int configuredWideSpreadConfirmations() {
@@ -2394,16 +2465,16 @@ public class TradeExecutionService {
                 || (trade.getUseSpotForEntry() == null && Boolean.TRUE.equals(trade.getUseSpotPrice()));
     }
 
-    private boolean isEntrySlippageLimitReached(double attemptedPrice, double initialOptionPrice) {
+    private boolean isEntrySlippageLimitReached(TriggeredTradeSetupEntity trigger, double attemptedPrice, double initialOptionPrice) {
         if (!Double.isFinite(attemptedPrice) || attemptedPrice <= 0d || initialOptionPrice <= 0d) {
             return true;
         }
-        double ceiling = entryPriceCeiling(initialOptionPrice);
+        double ceiling = entryPriceCeiling(trigger, initialOptionPrice);
         return attemptedPrice > ceiling + 0.000001d;
     }
 
-    private double entryPriceCeiling(double initialOptionPrice) {
-        double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent() / 100d);
+    private double entryPriceCeiling(TriggeredTradeSetupEntity trigger, double initialOptionPrice) {
+        double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent(trigger) / 100d);
         return Math.floor((rawCeiling + 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
     }
 
@@ -2801,7 +2872,7 @@ public class TradeExecutionService {
         }
 
         int attemptIndex = Math.min(state.modifyAttempts + 1, MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX);
-        return resolveEntryAttemptPrice(diagnostics, attemptIndex, fallbackLtp, true);
+        return resolveEntryAttemptPrice(trade, diagnostics, attemptIndex, fallbackLtp, true);
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {
@@ -3048,7 +3119,8 @@ public class TradeExecutionService {
         return null;
     }
 
-    private double resolveEntryAttemptPrice(EntryDiagnostics diagnostics,
+    private double resolveEntryAttemptPrice(TriggeredTradeSetupEntity trigger,
+                                            EntryDiagnostics diagnostics,
                                             int attemptIndex,
                                             double fallbackLtp,
                                             boolean manualChase) {
@@ -3072,7 +3144,7 @@ public class TradeExecutionService {
         }
 
         if (!manualChase && fallbackLtp > 0d) {
-            rawPrice = Math.min(rawPrice, entryPriceCeiling(fallbackLtp));
+            rawPrice = Math.min(rawPrice, entryPriceCeiling(trigger, fallbackLtp));
         }
 
         return normalisePriceToTick(diagnostics, rawPrice);
@@ -3597,7 +3669,7 @@ public class TradeExecutionService {
         syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.EXECUTED);
         refreshAtrLevelsAtConfirmedEntry(trade);
         try {
-            if (createStagedOptionTargetOrders(trade)) {
+            if (createStagedTargetOrders(trade)) {
                 return;
             }
             maybePlaceTargetOrder(trade);
@@ -3813,7 +3885,11 @@ public class TradeExecutionService {
         return null;
     }
 
-    private boolean createStagedOptionTargetOrders(TriggeredTradeSetupEntity enteredTrade) {
+    /**
+     * Place one broker target order per configured target. For equity trades,
+     * the staged units are shares; for F&O they are lots.
+     */
+    private boolean createStagedTargetOrders(TriggeredTradeSetupEntity enteredTrade) {
         if (!isEligibleForStagedTargetOrders(enteredTrade)) {
             return false;
         }
@@ -3854,7 +3930,7 @@ public class TradeExecutionService {
         for (TriggeredTradeSetupEntity leg : legs) {
             maybePlaceTargetOrder(leg);
         }
-        log.info("Created {} initial option target orders for trade group {} (lots={}, initialSL={})",
+        log.info("Created {} initial staged target orders for trade group {} (units={}, initialSL={})",
                 legs.size(), groupId, resolveLots(enteredTrade), root.getStopLoss());
         return true;
     }
@@ -3862,6 +3938,7 @@ public class TradeExecutionService {
     private boolean isEligibleForStagedTargetOrders(TriggeredTradeSetupEntity trade) {
         return trade != null && trade.getId() != null
                 && Boolean.TRUE.equals(trade.getTslEnabled())
+                && (hasOptionType(trade.getOptionType()) || isCashEquity(trade))
                 && !isSpotStop(trade) && !isSpotTarget(trade)
                 && resolveLots(trade) > 1 && configuredTargets(trade).size() > 1;
     }
@@ -3884,7 +3961,28 @@ public class TradeExecutionService {
     }
 
     private int resolveLots(TriggeredTradeSetupEntity trade) {
-        return trade.getLots() != null && trade.getLots() > 0 ? trade.getLots() : 1;
+        if (trade == null) {
+            return 1;
+        }
+        // Equity requests use shares, not lots. Always prefer that quantity as
+        // the split unit, irrespective of which source submitted the trade.
+        if (isCashEquity(trade) && trade.getQuantity() != null
+                && trade.getQuantity() > 0 && trade.getQuantity() <= Integer.MAX_VALUE) {
+            return trade.getQuantity().intValue();
+        }
+        if (trade.getLots() != null && trade.getLots() > 0) {
+            return trade.getLots();
+        }
+        return 1;
+    }
+
+    private boolean isCashEquity(TriggeredTradeSetupEntity trade) {
+        return trade != null
+                && !hasOptionType(trade.getOptionType())
+                && ("NC".equalsIgnoreCase(trade.getExchange())
+                    || "BC".equalsIgnoreCase(trade.getExchange())
+                    || "NSE".equalsIgnoreCase(trade.getExchange())
+                    || "BSE".equalsIgnoreCase(trade.getExchange()));
     }
 
     private List<Integer> splitLots(int totalLots, int stages) {
@@ -3963,6 +4061,7 @@ public class TradeExecutionService {
 
     private boolean isStagedSignalSource(String source) {
         return "atr-signal".equalsIgnoreCase(source)
+                || "atr-pdh-pdl-strategy".equalsIgnoreCase(source)
                 || "StockBazaari".equalsIgnoreCase(source);
     }
 
@@ -4866,6 +4965,20 @@ public class TradeExecutionService {
         boolean useSpotForTarget = Boolean.TRUE.equals(requestEntity.getUseSpotForTarget()) 
                 || (requestEntity.getUseSpotForTarget() == null && Boolean.TRUE.equals(requestEntity.getUseSpotPrice()));
 
+        // The simulator fills immediately at the price passed to placeOrder.  It
+        // must therefore retain the local "buy above" gate instead of treating a
+        // direct/replayed execution call as authority to fill below the trigger.
+        // Real brokers can hold a trigger order themselves; the simulator cannot.
+        if (isSimulatorBrokerRequest(requestEntity)
+                && !chaseEntryUntilExecuted
+                && !useSpotForEntry
+                && requestEntity.getEntryPrice() != null
+                && ltp + 0.000001d < requestEntity.getEntryPrice()) {
+            log.info("Simulator entry request {} remains pending: option LTP {} is below buy-above entry {}.",
+                    requestEntity.getId(), formatPrice(ltp), formatPrice(requestEntity.getEntryPrice()));
+            return null;
+        }
+
         // build a temporary TriggeredTradeSetupEntity from the saved request so we can reuse the execute(...) method
         TriggeredTradeSetupEntity temp = new TriggeredTradeSetupEntity();
         temp.setTriggerRequestId(requestEntity.getId());
@@ -4918,6 +5031,15 @@ public class TradeExecutionService {
                     e.getMessage());
             return null;
         }
+    }
+
+    private boolean isSimulatorBrokerRequest(TriggerTradeRequestEntity requestEntity) {
+        if (requestEntity == null || requestEntity.getBrokerCredentialsId() == null) {
+            return false;
+        }
+        return brokerCredentialsRepository.findById(requestEntity.getBrokerCredentialsId())
+                .map(credentials -> Broker.SIMULATOR.getDisplayName().equalsIgnoreCase(credentials.getBrokerName()))
+                .orElse(false);
     }
 
     private Double fetchLtpViaMStockFallback(Integer scripCode, String context) {
