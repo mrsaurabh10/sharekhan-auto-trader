@@ -508,8 +508,9 @@ public class TradeExecutionService {
                                                    boolean attemptBrokerSideEntryOrder) {
 
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
@@ -1098,6 +1099,27 @@ public class TradeExecutionService {
         return MCX_SYMBOLS.contains(normalizedInstrument);
     }
 
+    /**
+     * External signal APIs commonly label cash equities as NSE/BSE, while the
+     * Sharekhan script master stores those segments as NC/BC.  Normalise at
+     * the execution boundary as well as at the message-ingestion boundary so
+     * direct API calls cannot be sent down the F&O lookup path.
+     */
+    static void normalizeCashEquityExchange(TriggerRequest request) {
+        if (request == null || request.getOptionType() != null && !request.getOptionType().isBlank()) {
+            return;
+        }
+        if ("NSE".equalsIgnoreCase(request.getExchange())) {
+            request.setExchange("NC");
+        } else if ("BSE".equalsIgnoreCase(request.getExchange())) {
+            request.setExchange("BC");
+        }
+    }
+
+    private static boolean isCashEquityExchange(String exchange) {
+        return "NC".equalsIgnoreCase(exchange) || "BC".equalsIgnoreCase(exchange);
+    }
+
     public TriggeredTradeSetupEntity executeQuickTrade(TriggerRequest request) {
         if (request == null) {
             throw new InvalidTradeRequestException("Quick trade request cannot be null");
@@ -1107,8 +1129,9 @@ public class TradeExecutionService {
             throw new InvalidTradeRequestException("Quick trades currently support BUY instructions only");
         }
 
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
@@ -1244,8 +1267,9 @@ public class TradeExecutionService {
             throw new InvalidTradeRequestException("Trade request cannot be null");
         }
 
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
         if (!isNoStrikeExchange) {
@@ -1402,8 +1426,9 @@ public class TradeExecutionService {
         LocalDateTime now = LocalDateTime.now(zoneId);
         LocalTime cutoff = optionExpiryCutoff(request);
 
+        normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
-        final boolean isNoStrikeExchange = exch != null && (exch.equals("NC") || exch.equals("BC"));
+        final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
         if (!isNoStrikeExchange && request.getExpiry() == null && request.getStrikePrice() != null && Double.compare(request.getStrikePrice(), 0.0) != 0) {
             List<String> allExpiryStrings = scriptMasterRepository.findAllExpiriesByTradingSymbolAndStrikePriceAndOptionType(

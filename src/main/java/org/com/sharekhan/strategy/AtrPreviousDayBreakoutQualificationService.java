@@ -2,6 +2,7 @@ package org.com.sharekhan.strategy;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.service.UserConfigService;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
@@ -16,11 +17,15 @@ import java.util.Optional;
 public class AtrPreviousDayBreakoutQualificationService {
 
     static final int ATR_PERIOD = 75;
+    static final String ENTRY_OFFSET_ATR_CONFIG = "fno_atr_previous_day_entry_offset_atr";
+    private static final double DEFAULT_ENTRY_OFFSET_ATR = 0.25d;
 
     private final StrategySupport support;
+    private final UserConfigService userConfigService;
 
     public Fno925EntryQualificationService.Qualification qualify(ScriptMasterEntity spot,
                                                                    String optionType,
+                                                                   Long appUserId,
                                                                    LocalDateTime now) {
         List<StrategyCandle> fiveMinute = sorted(support.loadCandlesWithHistoricalFallback(spot, ATR_PERIOD + 1).candles());
         double atr = atr(fiveMinute);
@@ -44,7 +49,8 @@ public class AtrPreviousDayBreakoutQualificationService {
         double structuralLevel = ce
                 ? latestSwingHigh(previousDayCandles).orElse(pdh)
                 : latestSwingLow(previousDayCandles).orElse(pdl);
-        double entry = structuralLevel + (ce ? 0.25d * atr : -0.25d * atr);
+        double entryOffset = entryOffsetAtr(appUserId) * atr;
+        double entry = structuralLevel + (ce ? entryOffset : -entryOffset);
 
         double stop = ce ? entry - 2d * atr : entry + 2d * atr;
         return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
@@ -91,5 +97,18 @@ public class AtrPreviousDayBreakoutQualificationService {
             }
         }
         return Optional.ofNullable(latest);
+    }
+
+    private double entryOffsetAtr(Long appUserId) {
+        try {
+            String configured = userConfigService.getConfig(appUserId, ENTRY_OFFSET_ATR_CONFIG, null);
+            if (configured == null || configured.isBlank()) {
+                return DEFAULT_ENTRY_OFFSET_ATR;
+            }
+            double value = Double.parseDouble(configured.trim());
+            return Double.isFinite(value) && value >= 0d ? value : DEFAULT_ENTRY_OFFSET_ATR;
+        } catch (Exception ignored) {
+            return DEFAULT_ENTRY_OFFSET_ATR;
+        }
     }
 }

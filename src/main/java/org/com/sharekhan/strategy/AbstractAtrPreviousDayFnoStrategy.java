@@ -54,7 +54,8 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
                 ScriptMasterEntity spot = support.resolveSpotScript(symbol);
                 support.mstockAvailabilityFailure(spot).ifPresentOrElse(failure -> waiting.add(symbol + ": " + failure), () -> {
                     support.warmUpPreferredFnoFeeds(request, metadata, symbol, spot);
-                    Fno925EntryQualificationService.Qualification qualification = qualificationService.qualify(spot, metadata.optionType(), now);
+                    Fno925EntryQualificationService.Qualification qualification = qualificationService
+                            .qualify(spot, metadata.optionType(), request.getUserId(), now);
                     if (!qualification.qualified()) {
                         waiting.add(symbol + ": " + qualification.reason());
                         return;
