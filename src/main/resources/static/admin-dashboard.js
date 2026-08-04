@@ -133,6 +133,8 @@
 
   let requestChart = null;
   let requestChartResizeObserver = null;
+  let requestChartLtpTimer = null;
+  let requestChartLiveState = null;
 
   function requestValue(row, primary, fallback) {
     return row && row[primary] != null ? row[primary] : (fallback ? row[fallback] : null);
@@ -152,8 +154,12 @@
     const date = candle && candle.date;
     const time = candle && candle.time;
     if (!date) return null;
-    const parsed = Date.parse(String(date) + 'T' + (time || '00:00') + '+05:30');
-    return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+    const match = String(date).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const clock = String(time || '00:00').match(/^(\d{2}):(\d{2})(?::(\d{2}))?/);
+    if (!match || !clock) return null;
+    // Lightweight Charts renders intraday timestamps as UTC.  Use the IST wall
+    // clock as UTC so a 09:15 NSE candle remains displayed as 09:15.
+    return Math.floor(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(clock[1]), Number(clock[2]), Number(clock[3] || 0)) / 1000);
   }
 
   function finiteCandlePrice(value) {
@@ -168,6 +174,8 @@
     const modal = document.getElementById('tradeChartModal');
     if (modal) modal.classList.remove('open');
     if (requestChartResizeObserver) { requestChartResizeObserver.disconnect(); requestChartResizeObserver = null; }
+    if (requestChartLtpTimer) { clearInterval(requestChartLtpTimer); requestChartLtpTimer = null; }
+    requestChartLiveState = null;
     if (requestChart) { requestChart.remove(); requestChart = null; }
     const canvas = document.getElementById('tradeChartCanvas');
     if (canvas) canvas.innerHTML = '';
@@ -178,6 +186,51 @@
     if (!Number.isFinite(price)) return;
     series.createPriceLine({ price: price, color: color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: label });
     levels.push('<span style="color:' + color + '">' + escapeHtml(label) + ': ' + escapeHtml(price) + (source ? ' (' + escapeHtml(source) + ')' : '') + '</span>');
+  }
+
+  function usableChartCandles(response) {
+    return (response && response.candles ? response.candles : []).map(function (candle) {
+      const time = candleTime(candle);
+      const open = finiteCandlePrice(candle.open);
+      const high = finiteCandlePrice(candle.high);
+      const low = finiteCandlePrice(candle.low);
+      const close = finiteCandlePrice(candle.close);
+      // Some Sharekhan responses contain placeholder all-zero rows. They are not
+      // market candles and would collapse the scale away from the live price.
+      const allZero = open === 0 && high === 0 && low === 0 && close === 0;
+      const invalidRange = high == null || low == null || open == null || close == null || high < Math.max(open, close, low) || low > Math.min(open, close, high);
+      return time == null || allZero || invalidRange ? null : { time: time, open: open, high: high, low: low, close: close };
+    }).filter(Boolean);
+  }
+
+  async function loadRequestChartCandles(scripCode, range) {
+    const mstockQuery = new URLSearchParams({ scripCode: String(scripCode), interval: '5minute', from: range.from, to: range.to });
+    try {
+      const mstock = await fetchJson('/api/mstock/historical/candles?' + mstockQuery.toString());
+      const candles = usableChartCandles(mstock);
+      if (candles.length) return { response: mstock, candles: candles, source: 'MStock' };
+    } catch (error) {
+      console.debug('MStock candles unavailable; trying Sharekhan history.', error);
+    }
+    const sharekhanQuery = new URLSearchParams({ scripCode: String(scripCode), interval: '5minute', from: range.from, to: range.to });
+    const sharekhan = await fetchJson('/api/sharekhan/historical/candles?' + sharekhanQuery.toString());
+    return { response: sharekhan, candles: usableChartCandles(sharekhan), source: 'Sharekhan' };
+  }
+
+  async function loadRequestChartLtp(scripCode, forceRefresh) {
+    const cached = resolveCachedLtpValue(null, scripCode);
+    if (!forceRefresh && cached != null && Number.isFinite(cached)) return cached;
+    try {
+      const response = await fetchJson('/api/mstock/ltp/by-script?scripCode=' + encodeURIComponent(scripCode));
+      const ltp = finiteCandlePrice(response && response.last_price);
+      if (ltp != null) {
+        ltpCache[String(scripCode)] = { last_price: ltp };
+        return ltp;
+      }
+    } catch (error) {
+      console.debug('Chart LTP lookup unavailable.', error);
+    }
+    return null;
   }
 
   async function openRequestChart(row) {
@@ -201,22 +254,21 @@
     if (!window.LightweightCharts) { status.textContent = 'TradingView Lightweight Charts could not be loaded. Check network access and retry.'; return; }
     try {
       const range = requestChartDateRange(row);
-      const query = new URLSearchParams({ scripCode: String(scripCode), interval: '5minute', from: range.from, to: range.to });
-      const response = await fetchJson('/api/sharekhan/historical/candles?' + query.toString());
-      const data = (response && response.candles ? response.candles : []).map(function (candle) {
-        const time = candleTime(candle);
-        const open = finiteCandlePrice(candle.open);
-        const high = finiteCandlePrice(candle.high);
-        const low = finiteCandlePrice(candle.low);
-        const close = finiteCandlePrice(candle.close);
-        return time == null || [open, high, low, close].some(function (price) { return price == null; }) ? null : { time: time, open: open, high: high, low: low, close: close };
-      }).filter(Boolean);
+      const loaded = await loadRequestChartCandles(scripCode, range);
+      const response = loaded.response;
+      const data = loaded.candles;
       if (!data.length) { status.textContent = 'Historical data was returned without usable OHLC prices for this request.'; return; }
       canvas.innerHTML = '';
-      requestChart = window.LightweightCharts.createChart(canvas, { width: canvas.clientWidth || 900, height: 460, layout: { background: { color: '#ffffff' }, textColor: '#222' }, grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } }, timeScale: { timeVisible: true, secondsVisible: false } });
-      const series = requestChart.addSeries(window.LightweightCharts.CandlestickSeries, { upColor: '#16a34a', downColor: '#dc2626', borderVisible: false, wickUpColor: '#16a34a', wickDownColor: '#dc2626' });
+      requestChart = window.LightweightCharts.createChart(canvas, { autoSize: true, width: canvas.clientWidth || 900, height: 460, layout: { background: { color: '#ffffff' }, textColor: '#222' }, grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } }, rightPriceScale: { autoScale: true, alignLabels: true, scaleMargins: { top: 0.12, bottom: 0.12 } }, leftPriceScale: { visible: false }, timeScale: { timeVisible: true, secondsVisible: false } });
+      const series = requestChart.addSeries(window.LightweightCharts.CandlestickSeries, { upColor: '#16a34a', downColor: '#dc2626', borderVisible: false, wickUpColor: '#16a34a', wickDownColor: '#dc2626', lastValueVisible: false, priceLineVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } });
       series.setData(data);
       const labels = [];
+      const liveLtp = await loadRequestChartLtp(scripCode);
+      let ltpLine = null;
+      if (liveLtp != null) {
+        ltpLine = series.createPriceLine({ price: liveLtp, color: '#7c3aed', lineWidth: 2, lineStyle: window.LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'LTP' });
+        labels.push('<span style="color:#7c3aed">LTP: ' + escapeHtml(liveLtp) + (allLevelsUseSpot ? ' (Spot)' : ' (Option)') + '</span>');
+      }
       addRequestPriceLine(series, labels, 'Entry', requestValue(row, 'entryPrice', 'entry'), '#2563eb', row.useSpotForEntry ? 'Spot' : 'Option');
       addRequestPriceLine(series, labels, 'SL', requestValue(row, 'stopLoss', 'stop_loss'), '#dc2626', row.useSpotForSl ? 'Spot' : 'Option');
       addRequestPriceLine(series, labels, 'T1', requestValue(row, 'target1', 't1'), '#16a34a', row.useSpotForTarget ? 'Spot' : 'Option');
@@ -224,9 +276,16 @@
       addRequestPriceLine(series, labels, 'T3', requestValue(row, 'target3', 't3'), '#166534', row.useSpotForTarget ? 'Spot' : 'Option');
       levels.innerHTML = labels.join('');
       requestChart.timeScale().fitContent();
-      requestChartResizeObserver = new ResizeObserver(function (entries) { if (requestChart && entries[0]) requestChart.applyOptions({ width: Math.floor(entries[0].contentRect.width) }); });
-      requestChartResizeObserver.observe(canvas);
-      status.textContent = data.length + ' candles · ' + (response.tradingSymbol || symbol);
+      requestChartLiveState = { chart: requestChart, series: series, ltpLine: ltpLine, scripCode: scripCode, allLevelsUseSpot: allLevelsUseSpot };
+      requestChartLtpTimer = setInterval(async function () {
+        const state = requestChartLiveState;
+        if (!state || state.chart !== requestChart) return;
+        const nextLtp = await loadRequestChartLtp(state.scripCode, true);
+        if (nextLtp == null || !requestChartLiveState || requestChartLiveState !== state) return;
+        if (state.ltpLine) state.ltpLine.applyOptions({ price: nextLtp });
+        else state.ltpLine = state.series.createPriceLine({ price: nextLtp, color: '#7c3aed', lineWidth: 2, lineStyle: window.LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'LTP' });
+      }, 5000);
+      status.textContent = data.length + ' candles · ' + (response.tradingSymbol || symbol) + ' · ' + loaded.source;
     } catch (error) {
       status.textContent = 'Could not load the chart: ' + (error && error.message ? error.message : error);
     }
