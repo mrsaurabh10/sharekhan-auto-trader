@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TradingMessageServiceTest {
@@ -105,6 +106,20 @@ class TradingMessageServiceTest {
         ReflectionTestUtils.invokeMethod(service, "canonicalizeKnownSource", request);
 
         assertThat(request.getSource()).isEqualTo("StockBazaari");
+    }
+
+    @Test
+    void resolvesSourceConfigurationUsingNormalizedKey() {
+        TradingMessageService service = new TradingMessageService();
+        UserConfigService configService = mock(UserConfigService.class);
+        ReflectionTestUtils.setField(service, "userConfigService", configService);
+        when(configService.getConfig(7L, "stockbazaari", "false")).thenReturn("true");
+
+        boolean enabled = ReflectionTestUtils.invokeMethod(service,
+                "isSourceEnabledForUser", 7L, "StockBazaari");
+
+        assertThat(enabled).isTrue();
+        verify(configService).getConfig(7L, "stockbazaari", "false");
     }
 
     private TriggerRequest stockBazaariRequest() {
