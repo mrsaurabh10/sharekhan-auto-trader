@@ -131,6 +131,92 @@
 
   function escapeHtml(v) { return (v == null) ? '' : String(v).replace(/[&<>'"`]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;","`":"&#96;"})[c]); }
 
+  let requestChart = null;
+  let requestChartResizeObserver = null;
+
+  function requestValue(row, primary, fallback) {
+    return row && row[primary] != null ? row[primary] : (fallback ? row[fallback] : null);
+  }
+
+  function requestChartDateRange(row) {
+    const source = requestValue(row, 'createdAt') || requestValue(row, 'entryAt');
+    const day = source ? new Date(source) : new Date();
+    if (Number.isNaN(day.getTime())) return {};
+    const format = function (value) { return value.toISOString().slice(0, 10); };
+    const from = new Date(day); from.setDate(from.getDate() - 1);
+    const to = new Date(day); to.setDate(to.getDate() + 1);
+    return { from: format(from), to: format(to) };
+  }
+
+  function candleTime(candle) {
+    const date = candle && candle.date;
+    const time = candle && candle.time;
+    if (!date) return null;
+    const parsed = Date.parse(String(date) + 'T' + (time || '00:00') + '+05:30');
+    return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
+  }
+
+  function closeRequestChart() {
+    const modal = document.getElementById('tradeChartModal');
+    if (modal) modal.classList.remove('open');
+    if (requestChartResizeObserver) { requestChartResizeObserver.disconnect(); requestChartResizeObserver = null; }
+    if (requestChart) { requestChart.remove(); requestChart = null; }
+    const canvas = document.getElementById('tradeChartCanvas');
+    if (canvas) canvas.innerHTML = '';
+  }
+
+  function addRequestPriceLine(series, levels, label, value, color, source) {
+    const price = Number(value);
+    if (!Number.isFinite(price)) return;
+    series.createPriceLine({ price: price, color: color, lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: label });
+    levels.push('<span style="color:' + color + '">' + escapeHtml(label) + ': ' + escapeHtml(price) + (source ? ' (' + escapeHtml(source) + ')' : '') + '</span>');
+  }
+
+  async function openRequestChart(row) {
+    const modal = document.getElementById('tradeChartModal');
+    const title = document.getElementById('tradeChartTitle');
+    const meta = document.getElementById('tradeChartMeta');
+    const status = document.getElementById('tradeChartStatus');
+    const canvas = document.getElementById('tradeChartCanvas');
+    const levels = document.getElementById('tradeChartLevels');
+    if (!modal || !title || !meta || !status || !canvas || !levels) return;
+    closeRequestChart(); modal.classList.add('open');
+    const symbol = requestValue(row, 'instrument') || requestValue(row, 'symbol') || requestValue(row, 'tradingSymbol') || 'Unknown symbol';
+    const scripCode = requestValue(row, 'scripCode', 'scrip_code');
+    title.textContent = symbol + ' — Trading Request Chart';
+    meta.textContent = '5-minute candles · ' + (requestValue(row, 'exchange') || 'exchange unavailable') + (scripCode ? ' · Scrip ' + scripCode : '');
+    levels.innerHTML = '';
+    if (!scripCode) { status.textContent = 'This request has no scrip code, so historical candles cannot be resolved.'; return; }
+    if (!window.LightweightCharts) { status.textContent = 'TradingView Lightweight Charts could not be loaded. Check network access and retry.'; return; }
+    try {
+      const range = requestChartDateRange(row);
+      const query = new URLSearchParams({ scripCode: String(scripCode), interval: '5minute', from: range.from, to: range.to });
+      const response = await fetchJson('/api/sharekhan/historical/candles?' + query.toString());
+      const data = (response && response.candles ? response.candles : []).map(function (candle) {
+        const time = candleTime(candle);
+        return time == null ? null : { time: time, open: Number(candle.open), high: Number(candle.high), low: Number(candle.low), close: Number(candle.close) };
+      }).filter(function (candle) { return candle && [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite); });
+      if (!data.length) { status.textContent = 'No historical candles are available for the selected request date.'; return; }
+      canvas.innerHTML = '';
+      requestChart = window.LightweightCharts.createChart(canvas, { width: canvas.clientWidth || 900, height: 460, layout: { background: { color: '#ffffff' }, textColor: '#222' }, grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } }, timeScale: { timeVisible: true, secondsVisible: false } });
+      const series = requestChart.addSeries(window.LightweightCharts.CandlestickSeries, { upColor: '#16a34a', downColor: '#dc2626', borderVisible: false, wickUpColor: '#16a34a', wickDownColor: '#dc2626' });
+      series.setData(data);
+      const labels = [];
+      addRequestPriceLine(series, labels, 'Entry', requestValue(row, 'entryPrice', 'entry'), '#2563eb', row.useSpotForEntry ? 'Spot' : 'Option');
+      addRequestPriceLine(series, labels, 'SL', requestValue(row, 'stopLoss', 'stop_loss'), '#dc2626', row.useSpotForSl ? 'Spot' : 'Option');
+      addRequestPriceLine(series, labels, 'T1', requestValue(row, 'target1', 't1'), '#16a34a', row.useSpotForTarget ? 'Spot' : 'Option');
+      addRequestPriceLine(series, labels, 'T2', requestValue(row, 'target2', 't2'), '#15803d', row.useSpotForTarget ? 'Spot' : 'Option');
+      addRequestPriceLine(series, labels, 'T3', requestValue(row, 'target3', 't3'), '#166534', row.useSpotForTarget ? 'Spot' : 'Option');
+      levels.innerHTML = labels.join('');
+      requestChart.timeScale().fitContent();
+      requestChartResizeObserver = new ResizeObserver(function (entries) { if (requestChart && entries[0]) requestChart.applyOptions({ width: Math.floor(entries[0].contentRect.width) }); });
+      requestChartResizeObserver.observe(canvas);
+      status.textContent = data.length + ' candles · ' + (response.tradingSymbol || symbol);
+    } catch (error) {
+      status.textContent = 'Could not load the chart: ' + (error && error.message ? error.message : error);
+    }
+  }
+
   function tradeScopeMeta(row) {
     const brokerName = row && row.brokerName ? String(row.brokerName) : '';
     const rawScope = row && row.tradeScope ? String(row.tradeScope).toUpperCase() : '';
@@ -1105,7 +1191,7 @@
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
                        tradeScopeCellHtml(r) +
-                       '<td>' + escapeHtml(String(symbol)) + '</td>' +
+                       '<td><button type="button" class="symbol-chart-link" title="Open request chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(optType || '-')) + '</td>' +
@@ -1115,6 +1201,9 @@
                        '<td>' + escapeHtml(String(qty)) + '</td>' +
                        '<td>' + escapeHtml(String(status)) + '</td>';
         tr.appendChild(actionCell);
+
+        const chartBtn = tr.querySelector('.symbol-chart-link');
+        if (chartBtn) chartBtn.addEventListener('click', function () { openRequestChart(r); });
 
         // LTP Cells
         const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
@@ -2264,6 +2353,11 @@
   }
 
   document.addEventListener('DOMContentLoaded', async function(){
+    const tradeChartClose = document.getElementById('tradeChartCloseBtn');
+    if (tradeChartClose) tradeChartClose.addEventListener('click', closeRequestChart);
+    const tradeChartModal = document.getElementById('tradeChartModal');
+    if (tradeChartModal) tradeChartModal.addEventListener('click', function (event) { if (event.target === tradeChartModal) closeRequestChart(); });
+    document.addEventListener('keydown', function (event) { if (event.key === 'Escape') closeRequestChart(); });
     await ensureCsrf();
     await loadCurrentSession();
     applySessionMode();
