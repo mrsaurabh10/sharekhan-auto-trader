@@ -5,10 +5,11 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.service.ScriptMasterService;
 import org.com.sharekhan.service.SharekhanHistoricalService;
-import org.com.sharekhan.service.CurrentUserService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -34,7 +35,6 @@ public class SharekhanHistoricalController {
     private final SharekhanHistoricalService historicalService;
     private final ScriptMasterRepository scriptMasterRepository;
     private final ScriptMasterService scriptMasterService;
-    private final CurrentUserService currentUserService;
 
     @Value("${app.admin.token:}")
     private String adminToken;
@@ -130,13 +130,20 @@ public class SharekhanHistoricalController {
         // The dashboard already has a role-protected authenticated session.  Let that
         // session access historical prices without exposing the configured admin token
         // to JavaScript.  The token remains supported for non-session API consumers.
-        if (currentUserService.isAdmin()) {
+        if (isAdminSession()) {
             return true;
         }
         if (!StringUtils.hasText(adminToken)) {
             return true;
         }
         return adminToken.equals(headerToken);
+    }
+
+    private boolean isAdminSession() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.isAuthenticated()
+                && authentication.getAuthorities().stream()
+                .anyMatch(authority -> "ROLE_ADMIN".equals(authority.getAuthority()));
     }
 
     private boolean hasPartialOptionLookup(Double strikePrice, String optionType, String expiry) {
