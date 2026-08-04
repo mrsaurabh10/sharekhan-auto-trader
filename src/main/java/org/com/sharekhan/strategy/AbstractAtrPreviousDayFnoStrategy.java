@@ -76,8 +76,12 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
         }
         Triggered first = triggered.get(0);
         long created = triggered.stream().filter(item -> !item.duplicate()).count();
+        String message = "Created " + created + " ATR prior-day strategy request(s).";
+        if (!waiting.isEmpty()) {
+            message += " Not created: " + String.join("; ", waiting);
+        }
         return StrategyApplyResponse.builder().status(created > 0 ? "triggered" : "duplicate")
-                .message("Created " + created + " ATR prior-day strategy request(s).")
+                .message(message)
                 .templateId(metadata.id()).symbol(first.symbol()).direction(metadata.optionType())
                 .breakoutClose(support.roundPrice(first.trigger().getEntryPrice()))
                 .triggerRequest(first.trigger()).tradeRequest(first.trade()).build();
