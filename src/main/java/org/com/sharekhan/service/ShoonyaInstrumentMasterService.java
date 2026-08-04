@@ -8,7 +8,6 @@ import org.com.sharekhan.repository.ShoonyaInstrumentRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.io.*;
@@ -29,6 +28,7 @@ import java.util.zip.ZipInputStream;
 public class ShoonyaInstrumentMasterService {
     private static final String MASTER_URL = "https://api.shoonya.com/%s_symbols.txt.zip";
     private final ShoonyaInstrumentRepository repository;
+    private final ShoonyaInstrumentMasterWriter writer;
 
     @Value("${app.shoonya.symbol-master.enabled:true}")
     private boolean scheduledRefreshEnabled;
@@ -59,7 +59,7 @@ public class ShoonyaInstrumentMasterService {
             try (InputStream input = connection.getInputStream()) {
                 List<ShoonyaInstrumentEntity> instruments = parse(normalizedExchange, input);
                 if (instruments.isEmpty()) throw new IllegalStateException("Shoonya " + normalizedExchange + " symbol master contained no valid rows");
-                replace(normalizedExchange, instruments);
+                writer.replace(normalizedExchange, instruments);
                 return instruments.size();
             }
         } catch (IOException e) {
@@ -134,12 +134,6 @@ public class ShoonyaInstrumentMasterService {
         return value.trim().toUpperCase(Locale.ROOT);
     }
 
-    @Transactional
-    protected void replace(String exchange, List<ShoonyaInstrumentEntity> instruments) {
-        repository.deleteByExchangeIgnoreCase(exchange);
-        repository.saveAll(instruments);
-    }
-
     static List<ShoonyaInstrumentEntity> parse(String exchange, InputStream zip) throws IOException {
         try (ZipInputStream entries = new ZipInputStream(zip, StandardCharsets.UTF_8)) {
             if (entries.getNextEntry() == null) throw new IOException("Zip file has no symbol master entry");
@@ -149,6 +143,7 @@ public class ShoonyaInstrumentMasterService {
                 Map<String, Integer> columns = columns(header);
                 require(columns, "token", "tradingsymbol");
                 List<ShoonyaInstrumentEntity> result = new ArrayList<>();
+                Set<String> instrumentKeys = new HashSet<>();
                 String line;
                 LocalDateTime fetchedAt = LocalDateTime.now();
                 while ((line = reader.readLine()) != null) {
@@ -156,8 +151,16 @@ public class ShoonyaInstrumentMasterService {
                     String token = value(row, columns, "token");
                     String tradingSymbol = value(row, columns, "tradingsymbol");
                     if (!StringUtils.hasText(token) || !StringUtils.hasText(tradingSymbol)) continue;
+                    String instrumentKey = exchange + ":" + tradingSymbol.toUpperCase(Locale.ROOT);
+                    // The BSE daily master occasionally contains duplicate trading symbols.
+                    // Keep the first row: it is the same key used by local resolution and avoids
+                    // aborting the entire exchange refresh on the unique database constraint.
+                    if (!instrumentKeys.add(instrumentKey)) {
+                        log.warn("Ignoring duplicate Shoonya {} instrument key {}", exchange, instrumentKey);
+                        continue;
+                    }
                     result.add(ShoonyaInstrumentEntity.builder()
-                            .instrumentKey(exchange + ":" + tradingSymbol.toUpperCase(Locale.ROOT))
+                            .instrumentKey(instrumentKey)
                             .exchange(exchange).token(token).tradingSymbol(tradingSymbol)
                             .symbol(value(row, columns, "symbol")).expiry(value(row, columns, "expiry"))
                             .instrument(value(row, columns, "instrument")).optionType(value(row, columns, "optiontype"))

@@ -564,7 +564,9 @@ public class TradingMessageService {
             return false;
         }
         try {
-            return isTruthy(userConfigService.getConfig(appUserId, source.trim(), "false"));
+            String configKey = normalizeSource(source);
+            return configKey != null
+                    && isTruthy(userConfigService.getConfig(appUserId, configKey, "false"));
         } catch (Exception e) {
             System.err.println("Unable to read source configuration for user #" + appUserId
                     + ", source=" + source + ": " + e.getMessage());

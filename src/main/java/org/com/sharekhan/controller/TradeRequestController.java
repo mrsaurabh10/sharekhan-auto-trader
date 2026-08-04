@@ -5,6 +5,7 @@ import org.com.sharekhan.dto.UpdateTargetsRequest;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.service.CurrentUserService;
+import org.com.sharekhan.service.AtrPreviousDayTradeLevelService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -23,6 +24,7 @@ public class TradeRequestController {
     private final TriggerTradeRequestRepository tradeRequestRepository;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
     private final CurrentUserService currentUserService;
+    private final AtrPreviousDayTradeLevelService atrPreviousDayTradeLevelService;
 
     @PostMapping("/cancel-request/{id}")
     public ResponseEntity<String> cancelRequest(@PathVariable Long id, @RequestParam(name = "userId", required = false) Long userId) {
@@ -43,23 +45,38 @@ public class TradeRequestController {
         return tradeRequestRepository.findById(id)
                 .map(request -> {
                     boolean changed = false;
-                    if (update.getEntryPrice() != null) {
+                    boolean recalculatedAtrLevels = false;
+                    if (update.getEntryPrice() != null && atrPreviousDayTradeLevelService.appliesTo(request)) {
+                        var levels = atrPreviousDayTradeLevelService.recalculate(request, update.getEntryPrice());
+                        if (levels.isEmpty()) {
+                            return ResponseEntity.badRequest().body("Cannot recalculate ATR levels: the existing request has no valid ATR risk distance");
+                        }
+                        request.setEntryPrice(update.getEntryPrice());
+                        request.setStopLoss(levels.get().stopLoss());
+                        request.setTarget1(levels.get().target1());
+                        request.setTarget2(levels.get().target2());
+                        request.setTarget3(levels.get().target3());
+                        recalculatedAtrLevels = true;
+                        changed = true;
+                    } else if (update.getEntryPrice() != null) {
                         request.setEntryPrice(update.getEntryPrice());
                         changed = true;
                     }
-                    if (update.getStopLoss() != null) {
+                    // For an ATR prior-day request, an entry edit always owns SL/T1/T2/T3.
+                    // This is intentional even when the UI posts its existing target values.
+                    if (!recalculatedAtrLevels && update.getStopLoss() != null) {
                         request.setStopLoss(update.getStopLoss());
                         changed = true;
                     }
-                    if (update.getTarget1() != null) {
+                    if (!recalculatedAtrLevels && update.getTarget1() != null) {
                         request.setTarget1(update.getTarget1());
                         changed = true;
                     }
-                    if (update.getTarget2() != null) {
+                    if (!recalculatedAtrLevels && update.getTarget2() != null) {
                         request.setTarget2(update.getTarget2());
                         changed = true;
                     }
-                    if (update.getTarget3() != null) {
+                    if (!recalculatedAtrLevels && update.getTarget3() != null) {
                         request.setTarget3(update.getTarget3());
                         changed = true;
                     }

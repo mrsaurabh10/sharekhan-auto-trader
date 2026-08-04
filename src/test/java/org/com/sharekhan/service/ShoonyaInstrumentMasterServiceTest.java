@@ -26,6 +26,20 @@ class ShoonyaInstrumentMasterServiceTest {
         assertThat(instrument.getStrikePrice()).isEqualTo(25000d);
     }
 
+    @Test
+    void ignoresDuplicateTradingSymbolsToKeepTheMasterReplaceable() throws Exception {
+        String master = "Exchange,Token,LotSize,TickSize,Symbol,TradingSymbol,Expiry,Instrument,OptionType,StrikePrice\n"
+                + "BSE,12,1,0.01,TEST,12:,,EQ,,0\n"
+                + "BSE,13,1,0.01,TEST,12:,,EQ,,0\n";
+
+        List<?> instruments = ShoonyaInstrumentMasterService.parse("BSE", zip(master));
+
+        assertThat(instruments).hasSize(1);
+        var instrument = (org.com.sharekhan.entity.ShoonyaInstrumentEntity) instruments.get(0);
+        assertThat(instrument.getInstrumentKey()).isEqualTo("BSE:12:");
+        assertThat(instrument.getToken()).isEqualTo("12");
+    }
+
     private ByteArrayInputStream zip(String content) throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream output = new ZipOutputStream(bytes)) {
