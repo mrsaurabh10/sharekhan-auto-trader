@@ -156,6 +156,14 @@
     return Number.isNaN(parsed) ? null : Math.floor(parsed / 1000);
   }
 
+  function finiteCandlePrice(value) {
+    // Number(null) is zero.  Historical providers use null for a missing OHLC
+    // value, and accepting it would render a misleading chart centred on zero.
+    if (value == null || value === '') return null;
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
   function closeRequestChart() {
     const modal = document.getElementById('tradeChartModal');
     if (modal) modal.classList.remove('open');
@@ -182,9 +190,12 @@
     if (!modal || !title || !meta || !status || !canvas || !levels) return;
     closeRequestChart(); modal.classList.add('open');
     const symbol = requestValue(row, 'instrument') || requestValue(row, 'symbol') || requestValue(row, 'tradingSymbol') || 'Unknown symbol';
-    const scripCode = requestValue(row, 'scripCode', 'scrip_code');
+    const requestScripCode = requestValue(row, 'scripCode', 'scrip_code');
+    const spotScripCode = requestValue(row, 'spotScripCode', 'spot_scrip_code');
+    const allLevelsUseSpot = !!row.useSpotForEntry && !!row.useSpotForSl && !!row.useSpotForTarget;
+    const scripCode = allLevelsUseSpot && spotScripCode ? spotScripCode : requestScripCode;
     title.textContent = symbol + ' — Trading Request Chart';
-    meta.textContent = '5-minute candles · ' + (requestValue(row, 'exchange') || 'exchange unavailable') + (scripCode ? ' · Scrip ' + scripCode : '');
+    meta.textContent = '5-minute candles · ' + (allLevelsUseSpot ? 'Spot · ' : '') + (requestValue(row, 'exchange') || 'exchange unavailable') + (scripCode ? ' · Scrip ' + scripCode : '');
     levels.innerHTML = '';
     if (!scripCode) { status.textContent = 'This request has no scrip code, so historical candles cannot be resolved.'; return; }
     if (!window.LightweightCharts) { status.textContent = 'TradingView Lightweight Charts could not be loaded. Check network access and retry.'; return; }
@@ -194,9 +205,13 @@
       const response = await fetchJson('/api/sharekhan/historical/candles?' + query.toString());
       const data = (response && response.candles ? response.candles : []).map(function (candle) {
         const time = candleTime(candle);
-        return time == null ? null : { time: time, open: Number(candle.open), high: Number(candle.high), low: Number(candle.low), close: Number(candle.close) };
-      }).filter(function (candle) { return candle && [candle.open, candle.high, candle.low, candle.close].every(Number.isFinite); });
-      if (!data.length) { status.textContent = 'No historical candles are available for the selected request date.'; return; }
+        const open = finiteCandlePrice(candle.open);
+        const high = finiteCandlePrice(candle.high);
+        const low = finiteCandlePrice(candle.low);
+        const close = finiteCandlePrice(candle.close);
+        return time == null || [open, high, low, close].some(function (price) { return price == null; }) ? null : { time: time, open: open, high: high, low: low, close: close };
+      }).filter(Boolean);
+      if (!data.length) { status.textContent = 'Historical data was returned without usable OHLC prices for this request.'; return; }
       canvas.innerHTML = '';
       requestChart = window.LightweightCharts.createChart(canvas, { width: canvas.clientWidth || 900, height: 460, layout: { background: { color: '#ffffff' }, textColor: '#222' }, grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } }, timeScale: { timeVisible: true, secondsVisible: false } });
       const series = requestChart.addSeries(window.LightweightCharts.CandlestickSeries, { upColor: '#16a34a', downColor: '#dc2626', borderVisible: false, wickUpColor: '#16a34a', wickDownColor: '#dc2626' });
