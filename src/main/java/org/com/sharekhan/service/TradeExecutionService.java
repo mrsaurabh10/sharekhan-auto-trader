@@ -3540,6 +3540,11 @@ public class TradeExecutionService {
                 || exitedTrade.getTriggerRequestId() == null) {
             return;
         }
+        if ("atr-pdh-pdl-strategy".equalsIgnoreCase(exitedTrade.getSource())) {
+            log.info("ATR prior-day request {} will not be rearmed after exit; one entry per symbol is enforced",
+                    exitedTrade.getTriggerRequestId());
+            return;
+        }
         int completedReentries = exitedTrade.getGapReentryCount() != null
                 ? exitedTrade.getGapReentryCount()
                 : 0;

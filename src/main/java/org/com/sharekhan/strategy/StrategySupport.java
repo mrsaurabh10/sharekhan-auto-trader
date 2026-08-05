@@ -13,6 +13,7 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.MStockInstrumentRepository;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
+import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.MStockInstrumentResolver;
 import org.com.sharekhan.service.MStockIntradayCandleService;
 import org.com.sharekhan.service.SharekhanHistoricalService;
@@ -62,6 +63,8 @@ public class StrategySupport {
     private final SharekhanHistoricalService sharekhanHistoricalService;
     private final TradeExecutionService tradeExecutionService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
+    @Autowired
+    private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
     @Autowired(required = false)
     private TradeAuditService tradeAuditService;
     private final ConcurrentHashMap<FnoWarmupKey, FnoOptionContract> warmedFnoOptions = new ConcurrentHashMap<>();
@@ -360,6 +363,24 @@ public class StrategySupport {
                         trigger.getUserId(),
                         TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
         return matches == null || matches.isEmpty() ? null : matches.get(0);
+    }
+
+    /** A prior-day ATR symbol may enter only once in an IST trading day, even after its request has exited. */
+    public boolean hasAtrPreviousDayEntryOn(LocalDate day, Long appUserId, String symbol) {
+        return hasEntryForSymbolOn(AbstractAtrPreviousDayFnoStrategy.SOURCE, day, appUserId, symbol);
+    }
+
+    /** Returns whether this strategy source has already entered the underlying for this user on the IST day. */
+    public boolean hasEntryForSymbolOn(String source, LocalDate day, Long appUserId, String symbol) {
+        if (day == null || appUserId == null || !StringUtils.hasText(symbol) || triggeredTradeSetupRepository == null) {
+            return false;
+        }
+        if (!StringUtils.hasText(source)) {
+            return false;
+        }
+        LocalDateTime start = day.atStartOfDay();
+        return triggeredTradeSetupRepository.countTriggeredForSymbolOnDay(
+                source.trim(), symbol.trim(), appUserId, start, start.plusDays(1)) > 0;
     }
 
     public ScriptMasterEntity resolveSpotScript(String symbol) {
