@@ -245,6 +245,7 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
               AND status = 'TRIGGERED'
               AND gap_protection_enabled = true
               AND (gap_reentry_count IS NULL OR gap_reentry_count = 0)
+              AND (source IS NULL OR LOWER(source) <> 'atr-pdh-pdl-strategy')
             """, nativeQuery = true)
     int rearmGapFillOnce(@Param("id") Long id);
 }

@@ -39,6 +39,21 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findByTriggerRequestId(Long triggerRequestId);
 
+    @Query("""
+            SELECT count(t)
+            FROM TriggeredTradeSetupEntity t
+            WHERE lower(t.source) = lower(:source)
+              AND lower(t.symbol) = lower(:symbol)
+              AND t.appUserId = :appUserId
+              AND t.triggeredAt >= :dayStart
+              AND t.triggeredAt < :nextDayStart
+            """)
+    long countTriggeredForSymbolOnDay(@Param("source") String source,
+                                      @Param("symbol") String symbol,
+                                      @Param("appUserId") Long appUserId,
+                                      @Param("dayStart") LocalDateTime dayStart,
+                                      @Param("nextDayStart") LocalDateTime nextDayStart);
+
     List<TriggeredTradeSetupEntity> findByTargetOrderGroupIdAndStatusIn(
             Long targetOrderGroupId, List<TriggeredTradeStatus> statuses);
 
