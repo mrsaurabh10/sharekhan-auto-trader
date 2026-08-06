@@ -17,6 +17,10 @@ class ShoonyaInstrumentMasterWriter {
     @Transactional
     public void replace(String exchange, List<ShoonyaInstrumentEntity> instruments) {
         repository.deleteByExchangeIgnoreCase(exchange);
+        // Hibernate may otherwise defer the DELETE until after inserts are queued. Because
+        // instrumentKey is globally unique, a refreshed row can conflict with the old row
+        // even though both belong to the exchange being replaced.
+        repository.flush();
         repository.saveAll(instruments);
     }
 }

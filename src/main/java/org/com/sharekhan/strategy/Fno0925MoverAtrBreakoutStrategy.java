@@ -86,9 +86,16 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         List<String> waiting = new ArrayList<>();
         int evaluated = 0;
         int qualified = 0;
+        String strategySource = sourceFor(request);
         for (Fno925Candidate selection : selections) {
             if (submitted.contains(selection.symbol())) {
                 logQualification(selection, "ALREADY_SUBMITTED", null, null);
+                continue;
+            }
+            if (support.hasEntryForSymbolOn(strategySource, now.toLocalDate(), request.getUserId(), selection.symbol())) {
+                waiting.add(selection.symbol() + ": an F&O mover entry has already been triggered for this symbol today");
+                submitted.add(selection.symbol());
+                logQualification(selection, "DAILY_ENTRY_LIMIT_REACHED", null, null);
                 continue;
             }
             evaluated++;

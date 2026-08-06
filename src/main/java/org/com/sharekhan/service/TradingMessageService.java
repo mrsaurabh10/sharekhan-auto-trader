@@ -17,6 +17,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.lang.reflect.Method;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -64,6 +67,11 @@ public class TradingMessageService {
     // key: uniqueId (e.g., "telegram:<chatId>:<messageId>") -> timestamp millis when processed
     private final ConcurrentMap<String, Long> processedMessageIds = new ConcurrentHashMap<>();
     private static final long DEDUPE_TTL_MS = 5 * 60 * 1000L; // keep dedupe keys for 5 minutes
+    private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+
+    // Covers concurrent webhook deliveries on this application instance. The database check below
+    // remains the durable guard across restarts and deployments.
+    private final Set<String> acceptedStockBazaariSignals = ConcurrentHashMap.newKeySet();
 
     // Scheduled cleanup to prune old entries
     @Scheduled(fixedDelay = 60_000)
@@ -124,6 +132,12 @@ public class TradingMessageService {
             // such as "Stock Bazaari", so its per-user configuration applies.
             if (source != null && !"StockBazaari".equalsIgnoreCase(String.valueOf(parsed.get("source")))) {
                 base.setSource(source);
+            }
+
+            if (isSameDayStockBazaariDuplicate(base)) {
+                System.out.println("⏭️ Skipping duplicate StockBazaari signal for all users: "
+                        + base.getInstrument() + " " + base.getOptionType());
+                return;
             }
 
             // Place order for eligible broker credentials: create a separate request per broker credentials row
@@ -377,6 +391,34 @@ public class TradingMessageService {
                 .filter(t -> sameBrokerCredential(t.getBrokerCredentialsId(), brokerCredentialsId))
                 .anyMatch(t -> matchesContract(requestedStrike, requestedOptionType,
                         t.getStrikePrice(), t.getOptionType()));
+    }
+
+    /**
+     * StockBazaari repeats must never fan out to any user on the same IST trading day.
+     * The provider-level signal identity intentionally excludes strike and expiry: a refreshed
+     * contract for the same underlying and direction is still a repeat of the original call.
+     */
+    private boolean isSameDayStockBazaariDuplicate(TriggerRequest request) {
+        if (request == null || !"StockBazaari".equalsIgnoreCase(request.getSource())
+                || !hasText(request.getInstrument()) || !hasText(request.getOptionType())) {
+            return false;
+        }
+
+        LocalDate day = LocalDate.now(MARKET_ZONE);
+        String symbol = request.getInstrument().trim().toUpperCase(Locale.ROOT);
+        String optionType = normalizeOption(request.getOptionType());
+        String key = day + "|stockbazaari|" + symbol + "|" + optionType;
+        LocalDateTime start = day.atStartOfDay();
+
+        if (triggerTradeRequestRepository.countBySourceSymbolAndOptionTypeCreatedBetween(
+                "StockBazaari", symbol, optionType, start, start.plusDays(1)) > 0) {
+            return true;
+        }
+        return !acceptedStockBazaariSignals.add(key);
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     /**

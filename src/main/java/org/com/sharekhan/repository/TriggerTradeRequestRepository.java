@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
 @Repository
 public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTradeRequestEntity, Long> {
@@ -19,6 +20,9 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     List<TriggerTradeRequestEntity> findByStatus(TriggeredTradeStatus status);
 
     List<TriggerTradeRequestEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
+
+    long countByExchangeAndScripCodeAndStatusIn(String exchange, Integer scripCode,
+                                                List<TriggeredTradeStatus> statuses);
     
     List<TriggerTradeRequestEntity> findBySpotScripCodeAndStatus(Integer spotScripCode, TriggeredTradeStatus status);
 
@@ -196,6 +200,21 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     List<Long> findDistinctAppUserIds();
 
     List<TriggerTradeRequestEntity> findBySymbolAndAppUserIdAndStatus(String symbol, Long appUserId, TriggeredTradeStatus status);
+
+    @Query("""
+            SELECT count(r)
+            FROM TriggerTradeRequestEntity r
+            WHERE lower(r.source) = lower(:source)
+              AND lower(r.symbol) = lower(:symbol)
+              AND lower(coalesce(r.optionType, '')) = lower(:optionType)
+              AND r.createdAt >= :dayStart
+              AND r.createdAt < :nextDayStart
+            """)
+    long countBySourceSymbolAndOptionTypeCreatedBetween(@Param("source") String source,
+                                                         @Param("symbol") String symbol,
+                                                         @Param("optionType") String optionType,
+                                                         @Param("dayStart") LocalDateTime dayStart,
+                                                         @Param("nextDayStart") LocalDateTime nextDayStart);
 
     List<TriggerTradeRequestEntity> findBySymbolAndAppUserIdAndStatusIn(String symbol, Long appUserId, List<TriggeredTradeStatus> statuses);
 

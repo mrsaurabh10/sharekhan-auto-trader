@@ -31,8 +31,6 @@ public class AtrPreviousDayBreakoutQualificationService {
     // already at or beyond the prior close.
     private static final double MIN_ENTRY_DISTANCE_ATR = 0.35d;
     private static final double MAX_ENTRY_DISTANCE_ATR = 3d;
-    private static final double AUCTION_OUTLIER_ATR = 2d;
-    private static final LocalTime CLOSING_AUCTION_CANDLE_TIME = LocalTime.of(15, 25);
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
     private final StrategySupport support;
@@ -60,14 +58,15 @@ public class AtrPreviousDayBreakoutQualificationService {
         boolean ce = "CE".equalsIgnoreCase(optionType);
         double pdh = previousDayCandles.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
         double pdl = previousDayCandles.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
-        ReferenceClose referenceClose = referenceClose(previousDayCandles, atr);
+        // The completed final MStock candle is authoritative, including a volatile closing auction.
+        double referenceClose = previousDayCandles.get(previousDayCandles.size() - 1).close();
         double offsetMultiplier = entryOffsetAtr(appUserId);
         double entryOffset = offsetMultiplier * atr;
         List<SwingPoint> swingHighs = withReferenceLevel(meaningfulSwingHighs(previousDayCandles, atr), pdh);
         List<SwingPoint> swingLows = withReferenceLevel(meaningfulSwingLows(previousDayCandles, atr), pdl);
         Optional<SwingPoint> selectedSwing = selectTradableSwing(
-                ce ? swingHighs : swingLows, referenceClose.price(), entryOffset, atr, ce);
-        List<String> swingAssessments = assessSwingEntries(ce ? swingHighs : swingLows, referenceClose.price(), entryOffset, atr, ce);
+                ce ? swingHighs : swingLows, referenceClose, entryOffset, atr, ce);
+        List<String> swingAssessments = assessSwingEntries(ce ? swingHighs : swingLows, referenceClose, entryOffset, atr, ce);
         String selectedLevelType = selectedSwing.map(swing -> swing.referenceLevel()
                 ? (ce ? "PDH" : "PDL")
                 : (ce ? "PD_MEANINGFUL_SWING_HIGH" : "PD_MEANINGFUL_SWING_LOW"))
@@ -77,7 +76,7 @@ public class AtrPreviousDayBreakoutQualificationService {
                         + "offsetAtr={} | minReversalAtr={} | entryDistanceAtrRange={}-{} | swingEntryAssessments={} | "
                         + "selectedType={} | selectedLevel={} | entry={}",
                 spot.getTradingSymbol(), referenceDay, optionType, support.roundPrice(pdh), support.roundPrice(pdl),
-                support.roundPrice(referenceClose.price()), referenceClose.source(), swingHighs, swingLows, support.roundPrice(atr), offsetMultiplier,
+                support.roundPrice(referenceClose), "FINAL_MSTOCK_CLOSE", swingHighs, swingLows, support.roundPrice(atr), offsetMultiplier,
                 MIN_SWING_REVERSAL_ATR, MIN_ENTRY_DISTANCE_ATR, MAX_ENTRY_DISTANCE_ATR, swingAssessments, selectedLevelType,
                 selectedSwing.map(SwingPoint::price).map(support::roundPrice).orElse(null),
                 selectedSwing.map(swing -> support.roundPrice(entryFor(swing.price(), entryOffset, ce))).orElse(null));
@@ -126,25 +125,6 @@ public class AtrPreviousDayBreakoutQualificationService {
         return total / ATR_PERIOD;
     }
 
-    /**
-     * MStock can represent the NSE closing auction as the final 15:25 candle.  A large
-     * auction-only jump is not usable for judging how far a next-day breakout entry is
-     * from the regular-session structure, so retain the 15:20 close in that case.
-     */
-    private ReferenceClose referenceClose(List<StrategyCandle> candles, double atr) {
-        StrategyCandle last = candles.get(candles.size() - 1);
-        if (candles.size() < 2 || !CLOSING_AUCTION_CANDLE_TIME.equals(last.time())) {
-            return new ReferenceClose(last.close(), "SESSION_CLOSE");
-        }
-        StrategyCandle prior = candles.get(candles.size() - 2);
-        double auctionRange = last.high() - last.low();
-        double auctionMove = Math.abs(last.close() - prior.close());
-        if (auctionRange >= AUCTION_OUTLIER_ATR * atr && auctionMove >= AUCTION_OUTLIER_ATR * atr) {
-            return new ReferenceClose(prior.close(), "PRE_AUCTION_15_20_CLOSE");
-        }
-        return new ReferenceClose(last.close(), "SESSION_CLOSE");
-    }
-
     private List<SwingPoint> meaningfulSwingHighs(List<StrategyCandle> candles, double atr) {
         java.util.ArrayList<SwingPoint> swings = new java.util.ArrayList<>();
         for (int i = 1; i < candles.size() - 1; i++) {
@@ -179,7 +159,8 @@ public class AtrPreviousDayBreakoutQualificationService {
                 .filter(swing -> {
                     double entry = entryFor(swing.price(), entryOffset, ce);
                     double distance = ce ? entry - referenceClose : referenceClose - entry;
-                    return distance >= MIN_ENTRY_DISTANCE_ATR * atr && distance <= MAX_ENTRY_DISTANCE_ATR * atr;
+                    return (ce ? entry > referenceClose : entry < referenceClose)
+                            && distance >= MIN_ENTRY_DISTANCE_ATR * atr && distance <= MAX_ENTRY_DISTANCE_ATR * atr;
                 })
                 .min(Comparator.comparingDouble(swing -> Math.abs(entryFor(swing.price(), entryOffset, ce) - referenceClose)));
     }
@@ -254,5 +235,4 @@ public class AtrPreviousDayBreakoutQualificationService {
     }
 
     private record SwingPoint(java.time.LocalTime time, double price, boolean referenceLevel) { }
-    private record ReferenceClose(double price, String source) { }
 }

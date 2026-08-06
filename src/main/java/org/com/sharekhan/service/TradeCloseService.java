@@ -223,7 +223,7 @@ public class TradeCloseService {
         if (exchange == null || exchange.isBlank() || scripCode == null) {
             return;
         }
-        webSocketSubscriptionHelper.unsubscribeFromScrip(exchange + scripCode);
+        tradeExecutionService.releaseOptionFeedIfUnused(exchange, scripCode);
     }
 
     private String normalizeInstrument(String instrument) {

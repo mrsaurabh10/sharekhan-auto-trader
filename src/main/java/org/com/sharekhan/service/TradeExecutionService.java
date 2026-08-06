@@ -73,6 +73,18 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class TradeExecutionService {
 
     private static final Duration ORDER_LOCK_TIMEOUT = Duration.ofSeconds(8);
+    private static final List<TriggeredTradeStatus> OPTION_FEED_ACTIVE_TRADE_STATUSES = List.of(
+            TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION,
+            TriggeredTradeStatus.ENTRY_SUBMITTING,
+            TriggeredTradeStatus.EXECUTED,
+            TriggeredTradeStatus.TARGET_ORDER_PLACED,
+            TriggeredTradeStatus.EXIT_TRIGGERED,
+            TriggeredTradeStatus.EXIT_ORDER_PLACED,
+            TriggeredTradeStatus.EXIT_FAILED);
+    private static final List<TriggeredTradeStatus> OPTION_FEED_ACTIVE_REQUEST_STATUSES = List.of(
+            TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION,
+            TriggeredTradeStatus.ENTRY_SUBMITTING,
+            TriggeredTradeStatus.TRIGGERED);
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final Map<String, String> INDEX_FUTURE_EXCHANGES = Map.of(
             "NIFTY", "NF",
@@ -1815,7 +1827,7 @@ public class TradeExecutionService {
                 }
                 try {
                     triggeredTradeRepo.save(rejected);
-                    webSocketSubscriptionService.unsubscribeFromScrip(trigger.getExchange() + trigger.getScripCode());
+                    releaseOptionFeedIfUnused(trigger.getExchange(), trigger.getScripCode());
                 } catch (Exception e) {
                     log.warn("Failed to persist rejected triggered trade after placeOrder failures: {}", e.getMessage());
                 }
@@ -1981,7 +1993,7 @@ public class TradeExecutionService {
         stopEntryOrderChase(trade.getId());
         triggeredTradeRepo.save(trade);
         syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.REJECTED);
-        webSocketSubscriptionService.unsubscribeFromScrip(trade.getExchange() + trade.getScripCode());
+        releaseOptionFeedIfUnused(trade.getExchange(), trade.getScripCode());
 
         log.warn("❌ Order rejected for orderId {}", orderId);
 
@@ -2134,7 +2146,7 @@ public class TradeExecutionService {
             try {
                 persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                 triggeredTradeRepo.save(persisted);
-                webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode());
+                releaseOptionFeedIfUnused(persisted.getExchange(), persisted.getScripCode());
             } catch (Exception e) {
                 log.warn("Failed to persist EXIT_FAILED state after exit placeOrder failures: {}", e.getMessage());
             }
@@ -3495,7 +3507,7 @@ public class TradeExecutionService {
                         log.debug("Failed to evict/clear JPA cache after markExited for {}: {}", persisted.getId(), ignore.getMessage());
                     }
                     try {
-                        webSocketSubscriptionService.unsubscribeFromScrip(persisted.getExchange() + persisted.getScripCode());
+                        releaseOptionFeedIfUnused(persisted.getExchange(), persisted.getScripCode());
                     } catch (Exception ignored) {
                         log.debug("Failed to unsubscribe from scrip after immediate exit for {}: {}", persisted.getId(), ignored.getMessage());
                     }
@@ -3556,6 +3568,28 @@ public class TradeExecutionService {
             log.info("Rearmed immediately-exited gap-fill request {} for one retrigger",
                     exitedTrade.getTriggerRequestId());
         }
+    }
+
+    /**
+     * Option feeds are shared by every user and every staged target leg.  Release a
+     * feed only after persistence confirms that neither a live trade nor a pending
+     * entry request still needs that exact exchange/scrip combination.
+     */
+    public void releaseOptionFeedIfUnused(String exchange, Integer scripCode) {
+        if (exchange == null || exchange.isBlank() || scripCode == null) {
+            return;
+        }
+        String normalizedExchange = exchange.trim();
+        long activeTrades = triggeredTradeRepo.countByExchangeAndScripCodeAndStatusIn(
+                normalizedExchange, scripCode, OPTION_FEED_ACTIVE_TRADE_STATUSES);
+        long pendingRequests = triggerTradeRequestRepo.countByExchangeAndScripCodeAndStatusIn(
+                normalizedExchange, scripCode, OPTION_FEED_ACTIVE_REQUEST_STATUSES);
+        if (activeTrades > 0 || pendingRequests > 0) {
+            log.info("Keeping option feed {}{}: activeTrades={} pendingRequests={}",
+                    normalizedExchange, scripCode, activeTrades, pendingRequests);
+            return;
+        }
+        webSocketSubscriptionService.unsubscribeFromScrip(normalizedExchange + scripCode);
     }
 
     public boolean hasUsableTradedEntryPrice(TriggerTradeRequestEntity request, double tradedLtp) {
