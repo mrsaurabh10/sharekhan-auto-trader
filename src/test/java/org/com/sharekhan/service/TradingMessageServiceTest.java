@@ -1,9 +1,11 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TriggerRequest;
+import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDateTime;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -109,6 +111,36 @@ class TradingMessageServiceTest {
     }
 
     @Test
+    void blocksSameDayStockBazaariSignalForAllUsersBeforeFanOut() {
+        TradingMessageService service = new TradingMessageService();
+        TriggerTradeRequestRepository requests = mock(TriggerTradeRequestRepository.class);
+        ReflectionTestUtils.setField(service, "triggerTradeRequestRepository", requests);
+        when(requests.countBySourceSymbolAndOptionTypeCreatedBetween(
+                org.mockito.ArgumentMatchers.eq("StockBazaari"),
+                org.mockito.ArgumentMatchers.eq("PNBHOUSING"),
+                org.mockito.ArgumentMatchers.eq("CE"),
+                org.mockito.ArgumentMatchers.any(LocalDateTime.class),
+                org.mockito.ArgumentMatchers.any(LocalDateTime.class))).thenReturn(1L);
+
+        Boolean duplicate = ReflectionTestUtils.invokeMethod(service,
+                "isSameDayStockBazaariDuplicate", stockBazaariOptionRequest());
+
+        assertThat(duplicate).isTrue();
+    }
+
+    @Test
+    void reservesNewSameDayStockBazaariSignalSoConcurrentDeliveryCannotFanOutTwice() {
+        TradingMessageService service = new TradingMessageService();
+        TriggerTradeRequestRepository requests = mock(TriggerTradeRequestRepository.class);
+        ReflectionTestUtils.setField(service, "triggerTradeRequestRepository", requests);
+
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(service,
+                "isSameDayStockBazaariDuplicate", stockBazaariOptionRequest())).isFalse();
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(service,
+                "isSameDayStockBazaariDuplicate", stockBazaariOptionRequest())).isTrue();
+    }
+
+    @Test
     void resolvesSourceConfigurationUsingNormalizedKey() {
         TradingMessageService service = new TradingMessageService();
         UserConfigService configService = mock(UserConfigService.class);
@@ -134,6 +166,15 @@ class TradingMessageServiceTest {
         request.setExchange("NSE");
         request.setEntryPrice(1450.0);
         request.setIntraday(true);
+        return request;
+    }
+
+    private TriggerRequest stockBazaariOptionRequest() {
+        TriggerRequest request = stockBazaariRequest();
+        request.setInstrument("PNBHOUSING");
+        request.setOptionType("CE");
+        request.setStrikePrice(1140d);
+        request.setExpiry("25/08/2026");
         return request;
     }
 }

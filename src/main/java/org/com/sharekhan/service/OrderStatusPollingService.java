@@ -278,7 +278,6 @@ public class OrderStatusPollingService {
                     if (wasExitOrder) {
                         tradeExecutionService.stopExitOrderChase(currentTrade.getId());
                         currentTrade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
-                        webSocketSubscriptionHelper.unsubscribeFromScrip(currentTrade.getExchange() + currentTrade.getScripCode());
                     } else if (TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(currentTrade.getStatus())) {
                         tradeExecutionService.stopEntryOrderChase(currentTrade.getId());
                         currentTrade.setStatus(TriggeredTradeStatus.EXECUTED);
@@ -372,6 +371,9 @@ public class OrderStatusPollingService {
                         future.cancel(true);
                         log.info("🛑 Polling stopped for trade {} (orderId={})", tradeKeyLocal, orderIdToMonitor);
                     }
+                    if (wasExitOrder) {
+                        tradeExecutionService.releaseOptionFeedIfUnused(currentTrade.getExchange(), currentTrade.getScripCode());
+                    }
                     return;
                 } else if (TradeStatus.REJECTED.equals(tradeStatus)) {
                     tradeExecutionService.stopExitOrderChase(currentTrade.getId());
@@ -423,8 +425,7 @@ public class OrderStatusPollingService {
                         future.cancel(true);
                         log.info("🛑 Polling stopped for trade {} (orderId={})", tradeKeyLocal2, orderIdToMonitor);
                     }
-                    String feedKey = trade.getExchange() + trade.getScripCode();
-                    webSocketSubscriptionHelper.unsubscribeFromScrip(feedKey);
+                    tradeExecutionService.releaseOptionFeedIfUnused(currentTrade.getExchange(), currentTrade.getScripCode());
                     return;
                 } else if (TradeStatus.PENDING.equals(tradeStatus)) {
                     log.debug("Order {} pending on exchange; auto modification disabled", orderIdToMonitor);
@@ -466,6 +467,11 @@ public class OrderStatusPollingService {
     void rearmGapFillRequest(TriggeredTradeSetupEntity exitedTrade) {
         if (exitedTrade == null || !"GAP_FILL_STOP".equals(exitedTrade.getExitReason())
                 || exitedTrade.getTriggerRequestId() == null) {
+            return;
+        }
+        if ("atr-pdh-pdl-strategy".equalsIgnoreCase(exitedTrade.getSource())) {
+            log.info("ATR prior-day request {} will not be rearmed after exit; one entry per symbol is enforced",
+                    exitedTrade.getTriggerRequestId());
             return;
         }
         int completedReentries = exitedTrade.getGapReentryCount() != null

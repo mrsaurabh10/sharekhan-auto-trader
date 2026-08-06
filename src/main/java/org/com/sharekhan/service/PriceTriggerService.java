@@ -238,6 +238,20 @@ public class PriceTriggerService {
         }
         Long requestId = request.getId();
 
+        // CE and PE requests can both be pending at the open.  Once either side has
+        // actually entered, the other side must not become a same-day re-entry.
+        if (isAtrPreviousDaySource(request) && request.getAppUserId() != null
+                && triggeredRepo.countTriggeredForSymbolOnDay(ATR_PREVIOUS_DAY_SOURCE, request.getSymbol(),
+                request.getAppUserId(), nowIst().toLocalDate().atStartOfDay(),
+                nowIst().toLocalDate().plusDays(1).atStartOfDay()) > 0) {
+            triggerRepo.claimIfStatusEqualsWithOutcome(requestId,
+                    TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.CANCELLED.name(),
+                    "DAILY_ENTRY_LIMIT_REACHED", "An ATR prior-day entry for this symbol has already executed today.");
+            log.info("ATR prior-day request {} for {} cancelled: one entry per symbol per day",
+                    requestId, request.getSymbol());
+            return;
+        }
+
         // ENTRY_SUBMITTING was atomically persisted before this work was queued.
         // It is deliberately not a triggerable state: a restart or slow broker
         // response must never submit the same request a second time.

@@ -51,6 +51,11 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
             RunKey key = new RunKey(now.toLocalDate(), request.getUserId(), request.getBrokerCredentialsId(), symbol);
             if (submittedSymbols.contains(key)) continue;
             try {
+                if (support.hasAtrPreviousDayEntryOn(now.toLocalDate(), request.getUserId(), symbol)) {
+                    waiting.add(symbol + ": an ATR prior-day entry has already been triggered for this symbol today");
+                    submittedSymbols.add(key);
+                    continue;
+                }
                 ScriptMasterEntity spot = support.resolveSpotScript(symbol);
                 support.mstockAvailabilityFailure(spot).ifPresentOrElse(failure -> waiting.add(symbol + ": " + failure), () -> {
                     support.warmUpPreferredFnoFeeds(request, metadata, symbol, spot);
