@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.cache.LtpCacheService;
+import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
@@ -14,6 +15,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.SimpleTransactionStatus;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.Optional;
@@ -41,6 +43,7 @@ class PriceTriggerServiceTest {
     private final TriggerTradeRequestRepository triggerRepo = mock(TriggerTradeRequestRepository.class);
     private final TriggeredTradeSetupRepository triggeredRepo = mock(TriggeredTradeSetupRepository.class);
     private final TradeExecutionService tradeExecutionService = mock(TradeExecutionService.class);
+    private final ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
     private final LtpCacheService ltpCacheService = mock(LtpCacheService.class);
     private final SharekhanHistoricalService historicalService = mock(SharekhanHistoricalService.class);
     private final MStockIntradayCandleService intradayCandleService = mock(MStockIntradayCandleService.class);
@@ -51,7 +54,7 @@ class PriceTriggerServiceTest {
             triggeredRepo,
             tradeExecutionService,
             new NoopTransactionManager(),
-            mock(ScriptMasterRepository.class),
+            scriptMasterRepository,
             mock(WebSocketSubscriptionService.class),
             ltpCacheService,
             mock(MStockLtpService.class),
@@ -725,6 +728,34 @@ class PriceTriggerServiceTest {
         verify(tradeExecutionService, never()).hasUsableTradedExitPrice(trade, 23357.0);
         verify(tradeExecutionService, never()).modifyExitOrderForTarget(any(), eq(23357.0));
         verify(tradeExecutionService, never()).squareOff(any(), eq(23357.0), anyString());
+    }
+
+    @Test
+    void rejectsCachedOptionStopLossTickWhenFreshShoonyaQuoteIsAboveStop() {
+        TriggeredTradeSetupEntity trade = optionTrade(5212L, 999999, 20000);
+        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+        trade.setStopLoss(33.8);
+
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(999999)
+                .exchange("NF")
+                .optionType("CE")
+                .tradingSymbol("AUBANK25AUG26C1060")
+                .build();
+        ShoonyaQuoteService shoonyaQuoteService = mock(ShoonyaQuoteService.class);
+        ReflectionTestUtils.setField(service, "shoonyaQuoteService", shoonyaQuoteService);
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(999999), anyList())).thenReturn(List.of(trade));
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(999999), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findById(5212L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(999999)).thenReturn(option);
+        when(shoonyaQuoteService.getOptionQuote(option)).thenReturn(Optional.of(
+                new ShoonyaQuoteService.LiveQuote("AUBANK25AUG26C1060", "72720", 40.95, 40.45, 40.90)));
+
+        service.monitorOpenTrades(999999, 32.8);
+
+        verify(triggeredRepo, never()).claimIfStatusEquals(eq(5212L), anyString(), anyString(), anyString());
+        verify(ltpCacheService).updateLtp(999999, 40.95);
     }
 
     @Test

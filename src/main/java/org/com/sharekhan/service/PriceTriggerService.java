@@ -773,6 +773,11 @@ public class PriceTriggerService {
 
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
         try {
+            OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(tradeId, tradedLtp);
+            if (confirmedStopPrice.isEmpty()) {
+                return;
+            }
+            final double confirmedTradedLtp = confirmedStopPrice.getAsDouble();
             final TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
 
             // Execute quick transaction: read the current trade and attempt atomic claim if condition met
@@ -802,8 +807,8 @@ public class PriceTriggerService {
                 // evaluation during the trade's first partial minute.
                 Double slRefPrice = usesSpotSl
                         ? resolveSpotStopClose(persisted)
-                        : Double.valueOf(tradedLtp);
-                Double targetRefPrice = usesSpotTarget ? spotLtp : tradedLtp;
+                        : Double.valueOf(confirmedTradedLtp);
+                Double targetRefPrice = usesSpotTarget ? spotLtp : confirmedTradedLtp;
 
                 if (usesSpotSl && slRefPrice == null) {
                     log.debug("Spot SL requested for trade {} but spot LTP unavailable; skipping SL evaluation", tradeId);
@@ -815,7 +820,7 @@ public class PriceTriggerService {
                 Double slVal = persisted.getStopLoss();
                 boolean hasValidSl = (slVal != null && slVal > 0d);
 
-                if (isAtrPreviousDayMaxLossHit(persisted, tradedLtp)) {
+                if (isAtrPreviousDayMaxLossHit(persisted, confirmedTradedLtp)) {
                     return triggeredRepo.claimIfStatusEquals(tradeId,
                             TriggeredTradeStatus.EXECUTED.name(),
                             TriggeredTradeStatus.EXIT_TRIGGERED.name(),
@@ -823,7 +828,7 @@ public class PriceTriggerService {
                 }
 
                 if (isGapFillStopHit(persisted)) {
-                    if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp,
+                    if (!hasSafeTradedExitPrice(persisted, confirmedTradedLtp, spotLtp,
                             persisted.getGapStopLoss(), "Gap fill stop")) {
                         return CLAIM_NONE;
                     }
@@ -858,7 +863,7 @@ public class PriceTriggerService {
                 }
 
                 if (slHit) {
-                    if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, slRefPrice, "SL")) {
+                    if (!hasSafeTradedExitPrice(persisted, confirmedTradedLtp, spotLtp, slRefPrice, "SL")) {
                         return CLAIM_NONE;
                     }
                     int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT");
@@ -874,10 +879,10 @@ public class PriceTriggerService {
                     if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
                         int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
                         if (lotsToBook > 0) {
-                            if (!canExitSpotTargetAtCurrentOptionPrice(persisted, tradedLtp)) {
+                            if (!canExitSpotTargetAtCurrentOptionPrice(persisted, confirmedTradedLtp)) {
                                 return CLAIM_NONE;
                             }
-                            if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
+                            if (!hasSafeTradedExitPrice(persisted, confirmedTradedLtp, spotLtp, targetRefPrice, "Target")) {
                                 return CLAIM_NONE;
                             }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
@@ -905,10 +910,10 @@ public class PriceTriggerService {
                         }
                         
                         if (targetHit) {
-                            if (!canExitSpotTargetAtCurrentOptionPrice(persisted, tradedLtp)) {
+                            if (!canExitSpotTargetAtCurrentOptionPrice(persisted, confirmedTradedLtp)) {
                                 return CLAIM_NONE;
                             }
-                            if (!hasSafeTradedExitPrice(persisted, tradedLtp, spotLtp, targetRefPrice, "Target")) {
+                            if (!hasSafeTradedExitPrice(persisted, confirmedTradedLtp, spotLtp, targetRefPrice, "Target")) {
                                 return CLAIM_NONE;
                             }
                             int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
@@ -926,8 +931,8 @@ public class PriceTriggerService {
             if (claimed != null && claimed == CLAIM_RECOVER_UNPLACED_EXIT) {
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId)
                         .orElseThrow(() -> new RuntimeException("Trade not found during exit recovery: " + tradeId));
-                recoverUnplacedExitOrder(reloaded, tradedLtp, spotLtp);
-                persistPnlIfMissing(reloaded, tradedLtp);
+                recoverUnplacedExitOrder(reloaded, confirmedTradedLtp, spotLtp);
+                persistPnlIfMissing(reloaded, confirmedTradedLtp);
             } else if (claimed != null && claimed == CLAIM_EXIT_TRIGGERED) {
                 // Claim succeeded — now re-load the entity (outside the short transaction) and proceed to squareOff
                 TriggeredTradeSetupEntity reloaded = triggeredRepo.findById(tradeId).orElseThrow(() -> new RuntimeException("Trade not found after claim: " + tradeId));
@@ -935,11 +940,11 @@ public class PriceTriggerService {
                 // Re-determine effective prices for logging/logic
                 Double slRefPrice = usesSpotForSl(reloaded)
                         ? resolveSpotStopClose(reloaded)
-                        : Double.valueOf(tradedLtp);
-                Double targetRefPrice = usesSpotForTarget(reloaded) ? spotLtp : tradedLtp;
+                        : Double.valueOf(confirmedTradedLtp);
+                Double targetRefPrice = usesSpotForTarget(reloaded) ? spotLtp : confirmedTradedLtp;
 
                 String exitReason = reloaded.getExitReason();
-                TradeEventLogger.logExitTriggered(reloaded, exitReason, slRefPrice, targetRefPrice, tradedLtp, spotLtp);
+                TradeEventLogger.logExitTriggered(reloaded, exitReason, slRefPrice, targetRefPrice, confirmedTradedLtp, spotLtp);
                 boolean exitOrderAlreadyPresent = reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank();
                 if ("STOP_LOSS_HIT".equals(exitReason) || GAP_FILL_EXIT_REASON.equals(exitReason)) {
                     Double stopPriceOption = GAP_FILL_EXIT_REASON.equals(exitReason)
@@ -951,8 +956,8 @@ public class PriceTriggerService {
                     if (exitOrderAlreadyPresent) {
                         // Prefer the latest traded LTP so the broker order executes immediately; fall back to a configured SL.
                         Double modifyPrice = null;
-                        if (Double.isFinite(tradedLtp) && tradedLtp > 0d) {
-                            modifyPrice = tradedLtp;
+                        if (Double.isFinite(confirmedTradedLtp) && confirmedTradedLtp > 0d) {
+                            modifyPrice = confirmedTradedLtp;
                         } else if (stopPriceOption != null && stopPriceOption > 0d) {
                             modifyPrice = stopPriceOption;
                         }
@@ -962,20 +967,20 @@ public class PriceTriggerService {
                     }
 
                     Double triggerPriceForLog = stopPriceOption != null ? stopPriceOption : slRefPrice;
-                    TradeEventLogger.logStopLossTriggered(reloaded, triggerPriceForLog, tradedLtp, spotLtp);
+                    TradeEventLogger.logStopLossTriggered(reloaded, triggerPriceForLog, confirmedTradedLtp, spotLtp);
 
                     if (modified) {
                         log.warn("📉 SL hit for trade {} - modified existing exit order {} to price {}", tradeId, reloaded.getExitOrderId(), stopPriceOption);
                     } else {
-                        log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, tradedLtp);
-                        dispatchSquareOff(reloaded, tradedLtp, exitReason);
+                        log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, confirmedTradedLtp);
+                        dispatchSquareOff(reloaded, confirmedTradedLtp, exitReason);
                     }
                 } else {
                     // TARGET_HIT
                     if (exitOrderAlreadyPresent) {
                         log.info("🎯 Target hit for trade {} - existing exit order {} already placed. Modifying toward traded LTP {}.",
-                                tradeId, reloaded.getExitOrderId(), tradedLtp);
-                        boolean modified = tradeExecutionService.modifyExitOrderForTarget(reloaded, tradedLtp);
+                                tradeId, reloaded.getExitOrderId(), confirmedTradedLtp);
+                        boolean modified = tradeExecutionService.modifyExitOrderForTarget(reloaded, confirmedTradedLtp);
                         if (!modified) {
                             try {
                                 reloaded.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
@@ -988,24 +993,88 @@ public class PriceTriggerService {
                         int lots = resolveCurrentLots(reloaded);
                         // If lot count cannot be derived, fall back to single-lot target exit behavior.
                         if (lots <= 1) {
-                            log.info("🎯 Target hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff (Single/Unknown Lot)", tradeId, targetRefPrice, tradedLtp);
-                            dispatchSquareOff(reloaded, tradedLtp, "TARGET_HIT");
+                            log.info("🎯 Target hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff (Single/Unknown Lot)", tradeId, targetRefPrice, confirmedTradedLtp);
+                            dispatchSquareOff(reloaded, confirmedTradedLtp, "TARGET_HIT");
                         } else {
-                            handlePartialBooking(reloaded, targetRefPrice, tradedLtp, lots);
+                            handlePartialBooking(reloaded, targetRefPrice, confirmedTradedLtp, lots);
                         }
                     } else {
-                        log.info("🎯 Target hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff (TSL Disabled)", tradeId, targetRefPrice, tradedLtp);
-                        dispatchSquareOff(reloaded, tradedLtp, "TARGET_HIT");
+                        log.info("🎯 Target hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff (TSL Disabled)", tradeId, targetRefPrice, confirmedTradedLtp);
+                        dispatchSquareOff(reloaded, confirmedTradedLtp, "TARGET_HIT");
                     }
                 }
 
                 // ensure pnl persisted if needed
-                persistPnlIfMissing(reloaded, tradedLtp);
+                persistPnlIfMissing(reloaded, confirmedTradedLtp);
             } else {
                 log.debug("No claim performed for trade {} (claimed={})", tradeId, claimed);
             }
         } catch (Exception e) {
             log.error("❌ Error in handleTradeWithLock for trade {}: {}", tradeId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * A websocket/cache tick is useful for speed, but it must not by itself close an
+     * option-premium trade.  AUBANK 1060CE demonstrated why: a cached 32.80 tick
+     * triggered an SL while the fresh Shoonya quote for the same contract was 40.95.
+     *
+     * This check applies only when the cached price is already below the configured
+     * option-premium SL.  Normal target monitoring remains non-blocking, while an
+     * actual SL exit is decided using the fresh Shoonya price.
+     */
+    private OptionalDouble reconfirmOptionPremiumStopWithShoonya(Long tradeId, double cachedLtp) {
+        TriggeredTradeSetupEntity trade = triggeredRepo.findById(tradeId).orElse(null);
+        if (trade == null
+                || usesSpotForSl(trade)
+                || !hasOptionType(trade.getOptionType())
+                || trade.getStopLoss() == null
+                || trade.getStopLoss() <= 0d
+                || cachedLtp > trade.getStopLoss()) {
+            return OptionalDouble.of(cachedLtp);
+        }
+
+        ScriptMasterEntity script = scriptMasterRepository.findByScripCode(trade.getScripCode());
+        // A missing/non-F&O master record cannot be verified through the option API.
+        // Preserve the existing path for that unsupported legacy case.
+        if (!isFnoOption(script)) {
+            return OptionalDouble.of(cachedLtp);
+        }
+        if (shoonyaQuoteService == null) {
+            log.error("Skipping option SL exit for trade {} because Shoonya confirmation is unavailable. cachedLtp={} stopLoss={}",
+                    tradeId, cachedLtp, trade.getStopLoss());
+            return OptionalDouble.empty();
+        }
+
+        try {
+            Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
+            if (quoteOpt.isEmpty()) {
+                log.warn("Skipping option SL exit for trade {} because Shoonya returned no fresh quote. cachedLtp={} stopLoss={}",
+                        tradeId, cachedLtp, trade.getStopLoss());
+                return OptionalDouble.empty();
+            }
+
+            ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            Double freshLtp = quote.referencePrice();
+            if (freshLtp == null || !Double.isFinite(freshLtp) || freshLtp <= 0d) {
+                log.warn("Skipping option SL exit for trade {} because Shoonya returned an invalid quote. cachedLtp={} stopLoss={}",
+                        tradeId, cachedLtp, trade.getStopLoss());
+                return OptionalDouble.empty();
+            }
+
+            ltpCacheService.updateLtp(trade.getScripCode(), freshLtp);
+            if (freshLtp > trade.getStopLoss()) {
+                log.warn("Rejected cached option SL tick for trade {}: cachedLtp={} stopLoss={} but fresh Shoonya quote is ltp={} bid={} ask={}",
+                        tradeId, cachedLtp, trade.getStopLoss(), freshLtp, quote.bestBid(), quote.bestAsk());
+                return OptionalDouble.empty();
+            }
+
+            log.info("Confirmed option SL for trade {} with fresh Shoonya quote: cachedLtp={} confirmedLtp={} bid={} ask={} stopLoss={}",
+                    tradeId, cachedLtp, freshLtp, quote.bestBid(), quote.bestAsk(), trade.getStopLoss());
+            return OptionalDouble.of(freshLtp);
+        } catch (Exception e) {
+            log.warn("Skipping option SL exit for trade {} because Shoonya confirmation failed: {}", tradeId, e.getMessage());
+            return OptionalDouble.empty();
         }
     }
 
