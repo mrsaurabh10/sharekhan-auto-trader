@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
@@ -15,16 +16,37 @@ public class AtrPreviousDayTradeLevelService {
         return request != null && SOURCE.equalsIgnoreCase(request.getSource());
     }
 
+    public boolean appliesTo(TriggeredTradeSetupEntity trade) {
+        return trade != null && SOURCE.equalsIgnoreCase(trade.getSource());
+    }
+
     /**
      * Preserves the originally calculated ATR from the request, then rebuilds the
      * 2-ATR stop and 2/3/4-ATR targets around a user-selected spot entry.
      */
     public Optional<Levels> recalculate(TriggerTradeRequestEntity request, double updatedEntry) {
         if (!appliesTo(request) || !valid(updatedEntry)) return Optional.empty();
-        Double atr = originalAtr(request);
+        return recalculate(request.getOptionType(), request.getEntryPrice(), request.getStopLoss(),
+                request.getTarget1(), request.getTarget2(), request.getTarget3(), updatedEntry);
+    }
+
+    /**
+     * Executed setups retain the same spot-risk geometry as their originating
+     * request. Editing the configured spot entry must therefore move all four
+     * ATR levels together; actualEntryPrice remains the option fill price.
+     */
+    public Optional<Levels> recalculate(TriggeredTradeSetupEntity trade, double updatedEntry) {
+        if (!appliesTo(trade) || !valid(updatedEntry)) return Optional.empty();
+        return recalculate(trade.getOptionType(), trade.getEntryPrice(), trade.getStopLoss(),
+                trade.getTarget1(), trade.getTarget2(), trade.getTarget3(), updatedEntry);
+    }
+
+    private Optional<Levels> recalculate(String optionType, Double originalEntry, Double stopLoss,
+                                         Double target1, Double target2, Double target3, double updatedEntry) {
+        Double atr = originalAtr(originalEntry, stopLoss, target1, target2, target3);
         if (atr == null || !valid(atr)) return Optional.empty();
 
-        boolean ce = "CE".equalsIgnoreCase(request.getOptionType());
+        boolean ce = "CE".equalsIgnoreCase(optionType);
         double direction = ce ? 1d : -1d;
         return Optional.of(new Levels(
                 round(updatedEntry - direction * 2d * atr),
@@ -33,15 +55,15 @@ public class AtrPreviousDayTradeLevelService {
                 round(updatedEntry + direction * 4d * atr)));
     }
 
-    private Double originalAtr(TriggerTradeRequestEntity request) {
-        if (!valid(request.getEntryPrice())) return null;
-        Double fromStop = divideDistance(request.getEntryPrice(), request.getStopLoss(), 2d);
+    private Double originalAtr(Double entry, Double stopLoss, Double target1, Double target2, Double target3) {
+        if (!valid(entry)) return null;
+        Double fromStop = divideDistance(entry, stopLoss, 2d);
         if (fromStop != null) return fromStop;
-        Double fromT1 = divideDistance(request.getEntryPrice(), request.getTarget1(), 2d);
+        Double fromT1 = divideDistance(entry, target1, 2d);
         if (fromT1 != null) return fromT1;
-        Double fromT2 = divideDistance(request.getEntryPrice(), request.getTarget2(), 3d);
+        Double fromT2 = divideDistance(entry, target2, 3d);
         if (fromT2 != null) return fromT2;
-        return divideDistance(request.getEntryPrice(), request.getTarget3(), 4d);
+        return divideDistance(entry, target3, 4d);
     }
 
     private Double divideDistance(Double entry, Double level, double multiple) {

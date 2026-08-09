@@ -41,6 +41,10 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
     private static final int TOP_COUNT = 5;
     private static final int DEFAULT_LOTS = 3;
+    private static final double STOP_ATR_MULTIPLIER = 1.5d;
+    private static final double TARGET1_ATR_MULTIPLIER = 2d;
+    private static final double TARGET2_ATR_MULTIPLIER = 3d;
+    private static final double TARGET3_ATR_MULTIPLIER = 4d;
 
     private final StrategySupport support;
     private final ScriptMasterRepository scriptMasterRepository;
@@ -185,8 +189,12 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                                         Fno925EntryQualificationService.Signal signal) {
         boolean ce = "CE".equals(selection.optionType());
         double entry = signal.entryPrice();
-        double stop = signal.stopLoss();
-        double risk = Math.abs(entry - stop);
+        double atrStop = ce
+                ? entry - (STOP_ATR_MULTIPLIER * signal.atr())
+                : entry + (STOP_ATR_MULTIPLIER * signal.atr());
+        // A structural swing invalidates the thesis. Keep the farther of it and the
+        // 1.5 ATR stop so normal five-minute noise cannot force a premature exit.
+        double stop = ce ? Math.min(signal.stopLoss(), atrStop) : Math.max(signal.stopLoss(), atrStop);
         String expiry = support.preferredFnoExpiry(selection.symbol(), selection.optionType());
         StrategySupport.FnoOptionContract optionContract = support.resolveFnoEntryContract(
                 request, metadataFor(selection.optionType()), selection.symbol(), expiry,
@@ -194,10 +202,13 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(selection.symbol());
         trigger.setEntryPrice(entry);
-        trigger.setStopLoss(stop);
-        trigger.setTarget1(support.roundPrice(ce ? entry + risk : entry - risk));
-        trigger.setTarget2(support.roundPrice(ce ? entry + (2d * risk) : entry - (2d * risk)));
-        trigger.setTarget3(support.roundPrice(ce ? entry + (3d * risk) : entry - (3d * risk)));
+        trigger.setStopLoss(support.roundPrice(stop));
+        trigger.setTarget1(support.roundPrice(ce ? entry + (TARGET1_ATR_MULTIPLIER * signal.atr())
+                : entry - (TARGET1_ATR_MULTIPLIER * signal.atr())));
+        trigger.setTarget2(support.roundPrice(ce ? entry + (TARGET2_ATR_MULTIPLIER * signal.atr())
+                : entry - (TARGET2_ATR_MULTIPLIER * signal.atr())));
+        trigger.setTarget3(support.roundPrice(ce ? entry + (TARGET3_ATR_MULTIPLIER * signal.atr())
+                : entry - (TARGET3_ATR_MULTIPLIER * signal.atr())));
         trigger.setOptionType(selection.optionType());
         trigger.setExpiry(optionContract.expiry());
         trigger.setStrikePrice(optionContract.strike());

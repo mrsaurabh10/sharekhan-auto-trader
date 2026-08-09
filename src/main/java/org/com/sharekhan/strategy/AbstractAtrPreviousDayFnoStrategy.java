@@ -49,11 +49,17 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
         List<String> waiting = new ArrayList<>();
         for (String symbol : symbols) {
             RunKey key = new RunKey(now.toLocalDate(), request.getUserId(), request.getBrokerCredentialsId(), symbol);
-            if (submittedSymbols.contains(key)) continue;
+            // Claim the key before qualification so two concurrent Apply calls cannot create
+            // the same directional setup before either has persisted its request.
+            if (!submittedSymbols.add(key)) {
+                waiting.add(symbol + ": an ATR prior-day setup is already being created or monitored today");
+                continue;
+            }
+            boolean retainRunKey = false;
             try {
                 if (support.hasAtrPreviousDayEntryOn(now.toLocalDate(), request.getUserId(), symbol)) {
                     waiting.add(symbol + ": an ATR prior-day entry has already been triggered for this symbol today");
-                    submittedSymbols.add(key);
+                    retainRunKey = true;
                     continue;
                 }
                 ScriptMasterEntity spot = support.resolveSpotScript(symbol);
@@ -66,14 +72,18 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
                         return;
                     }
                     TriggerRequest trigger = buildTrigger(request, symbol, spot, qualification.signal());
-                    TriggerTradeRequestEntity existing = support.findExisting(trigger);
+                    TriggerTradeRequestEntity existing = support.findActiveAtrPreviousDaySetup(trigger);
                     // A symbol addition defines a pending setup. Do not submit an order until live market evaluation confirms entry.
                     TriggerTradeRequestEntity trade = existing != null ? existing : support.createPendingTradeRequest(trigger);
                     triggered.add(new Triggered(symbol, trigger, trade, existing != null));
-                    submittedSymbols.add(key);
                 });
+                retainRunKey = !triggered.isEmpty() && triggered.get(triggered.size() - 1).symbol().equals(symbol);
             } catch (Exception e) {
                 waiting.add(symbol + ": " + e.getMessage());
+            } finally {
+                if (!retainRunKey) {
+                    submittedSymbols.remove(key);
+                }
             }
         }
         if (triggered.isEmpty()) {
@@ -96,13 +106,20 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
                                         Fno925EntryQualificationService.Signal signal) {
         boolean ce = "CE".equalsIgnoreCase(metadata.optionType());
         double entry = signal.entryPrice();
-        double atr = Math.abs(entry - signal.stopLoss()) / 2d;
+        // Keep the stop and all targets tied to the same ATR calculation.  Do not
+        // infer ATR from a separately carried stop level: a malformed/stale stop
+        // must not turn an otherwise valid CE setup into an inverted stop.
+        double atr = signal.atr();
+        if (!Double.isFinite(atr) || atr <= 0d) {
+            throw new IllegalArgumentException("ATR(75) is unavailable for " + symbol);
+        }
+        double stopLoss = support.roundPrice(ce ? entry - 2d * atr : entry + 2d * atr);
         String expiry = support.preferredFnoExpiry(symbol, metadata.optionType());
         StrategySupport.FnoOptionContract contract = support.resolveFnoEntryContract(request, metadata, symbol, expiry,
                 support.nearestStrike(symbol, metadata.optionType(), expiry, entry));
         int lots = request.getLots() != null && request.getLots() > 0 ? request.getLots() : DEFAULT_LOTS;
         TriggerRequest trigger = new TriggerRequest();
-        trigger.setInstrument(symbol); trigger.setEntryPrice(entry); trigger.setStopLoss(signal.stopLoss());
+        trigger.setInstrument(symbol); trigger.setEntryPrice(entry); trigger.setStopLoss(stopLoss);
         trigger.setTarget1(support.roundPrice(ce ? entry + 2d * atr : entry - 2d * atr));
         trigger.setTarget2(support.roundPrice(ce ? entry + 3d * atr : entry - 3d * atr));
         trigger.setTarget3(support.roundPrice(ce ? entry + 4d * atr : entry - 4d * atr));

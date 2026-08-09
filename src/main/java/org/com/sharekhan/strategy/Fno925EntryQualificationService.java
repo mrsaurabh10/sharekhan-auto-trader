@@ -60,6 +60,18 @@ public class Fno925EntryQualificationService {
     @Value("${app.strategy.fno-0925-mover.vwap-direction-tolerance:0.0003}")
     private double vwapDirectionTolerance;
 
+    @Value("${app.strategy.fno-0925-mover.vwap-retest-max-distance-atr:0.35}")
+    private double vwapRetestMaxDistanceAtr = 0.35d;
+
+    @Value("${app.strategy.fno-0925-mover.vwap-max-extension-atr:1.5}")
+    private double vwapMaxExtensionAtr = 1.5d;
+
+    @Value("${app.strategy.fno-0925-mover.base-break-min-atr:0.20}")
+    private double baseBreakMinAtr = 0.20d;
+
+    @Value("${app.strategy.fno-0925-mover.session-extreme-buffer-atr:0.50}")
+    private double sessionExtremeBufferAtr = 0.50d;
+
     public Qualification qualify(Fno925Candidate candidate, LocalDateTime now) {
         CandleLoad load = support.loadCandlesWithHistoricalFallback(candidate.spot(), ATR_PERIOD + 1);
         List<StrategyCandle> allCandles = load.candles().stream()
@@ -140,8 +152,15 @@ public class Fno925EntryQualificationService {
             return Qualification.waiting("insufficient candles for VWAP reclaim base");
         }
         List<StrategyCandle> base = beforeBreakout.subList(beforeBreakout.size() - baseSize, beforeBreakout.size());
+        double atr = atr(allCandles);
+        if (atr <= 0d) {
+            return Qualification.waiting("ATR(75) is unavailable");
+        }
         if (!holdsReclaimedVwap(todayCandles, base, breakout, candidate.optionType())) {
             return Qualification.waiting("VWAP reclaim is not confirmed");
+        }
+        if (!hasRecentVwapRetest(todayCandles, base, candidate.optionType(), atr)) {
+            return Qualification.waiting("VWAP pullback/retest is not recent");
         }
         double baseBreak = "CE".equalsIgnoreCase(candidate.optionType())
                 ? base.stream().mapToDouble(StrategyCandle::high).max().orElseThrow()
@@ -149,12 +168,83 @@ public class Fno925EntryQualificationService {
         if ("CE".equalsIgnoreCase(candidate.optionType()) ? breakout.close() <= baseBreak : breakout.close() >= baseBreak) {
             return Qualification.waiting("no VWAP-reclaim base breakout");
         }
+        if (!hasDecisiveBaseBreak(breakout, baseBreak, candidate.optionType(), atr)) {
+            return Qualification.waiting("VWAP-reclaim base breakout is too shallow");
+        }
+        if (isTooExtendedFromVwap(todayCandles, breakout, candidate.optionType(), atr)) {
+            return Qualification.waiting("breakout is too extended from VWAP");
+        }
+        if (isNearPriorSessionExtreme(beforeBreakout, breakout, candidate.optionType(), atr)) {
+            return Qualification.waiting("breakout is too close to prior session support/resistance");
+        }
         Optional<String> failure = filterFailure(todayCandles, breakout, candidate.optionType(), base, baseVolumeMultiplier);
         if (failure.isPresent()) {
             return Qualification.waiting(failure.get());
         }
         double stop = reclaimBaseStructuralStop(todayCandles, base, breakout, candidate.optionType());
         return validateSignal(candidate.optionType(), allCandles, breakout, stop, rangeHigh, rangeLow, "VWAP_RECLAIM_BASE_BREAKOUT");
+    }
+
+    private boolean hasRecentVwapRetest(List<StrategyCandle> candles,
+                                        List<StrategyCandle> base,
+                                        String optionType,
+                                        double atr) {
+        double maxDistance = Math.max(0d, vwapRetestMaxDistanceAtr) * atr;
+        for (StrategyCandle candle : base) {
+            Double candleVwap = vwap(candles, candle);
+            if (candleVwap == null) {
+                continue;
+            }
+            boolean retested = "CE".equalsIgnoreCase(optionType)
+                    ? candle.low() <= candleVwap + maxDistance
+                    : candle.high() >= candleVwap - maxDistance;
+            if (retested) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasDecisiveBaseBreak(StrategyCandle breakout,
+                                         double baseBreak,
+                                         String optionType,
+                                         double atr) {
+        double minimumBreak = Math.max(0d, baseBreakMinAtr) * atr;
+        double extension = "CE".equalsIgnoreCase(optionType)
+                ? breakout.close() - baseBreak
+                : baseBreak - breakout.close();
+        return extension >= minimumBreak;
+    }
+
+    private boolean isTooExtendedFromVwap(List<StrategyCandle> candles,
+                                          StrategyCandle breakout,
+                                          String optionType,
+                                          double atr) {
+        Double breakoutVwap = vwap(candles, breakout);
+        if (breakoutVwap == null) {
+            return true;
+        }
+        double maximumExtension = Math.max(0d, vwapMaxExtensionAtr) * atr;
+        double extension = "CE".equalsIgnoreCase(optionType)
+                ? breakout.close() - breakoutVwap
+                : breakoutVwap - breakout.close();
+        return extension > maximumExtension;
+    }
+
+    private boolean isNearPriorSessionExtreme(List<StrategyCandle> beforeBreakout,
+                                              StrategyCandle breakout,
+                                              String optionType,
+                                              double atr) {
+        if (beforeBreakout.isEmpty()) {
+            return false;
+        }
+        double buffer = Math.max(0d, sessionExtremeBufferAtr) * atr;
+        if ("CE".equalsIgnoreCase(optionType)) {
+            double priorHigh = beforeBreakout.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
+            return priorHigh - breakout.close() <= buffer;
+        }
+        double priorLow = beforeBreakout.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
+        return breakout.close() - priorLow <= buffer;
     }
 
     private Qualification validateSignal(String optionType,
@@ -177,7 +267,8 @@ public class Fno925EntryQualificationService {
             return Qualification.waiting("structural risk " + support.roundPrice(risk) + " exceeds "
                     + maxRiskAtrMultiplier + "x ATR(75)");
         }
-        return Qualification.qualified(new Signal(entry, support.roundPrice(structuralStop), rangeHigh, rangeLow, breakout, setup));
+        return Qualification.qualified(new Signal(entry, support.roundPrice(structuralStop), support.roundPrice(atr),
+                rangeHigh, rangeLow, breakout, setup));
     }
 
     private boolean breaksRange(String optionType, StrategyCandle candle, double rangeHigh, double rangeLow) {
@@ -350,6 +441,7 @@ public class Fno925EntryQualificationService {
 
     public record Signal(double entryPrice,
                          double stopLoss,
+                         double atr,
                          double openingRangeHigh,
                          double openingRangeLow,
                          StrategyCandle breakoutCandle,

@@ -93,7 +93,7 @@ public class AtrPreviousDayBreakoutQualificationService {
 
         double stop = ce ? entry - 2d * atr : entry + 2d * atr;
         return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
-                support.roundPrice(entry), support.roundPrice(stop), pdh, pdl, null,
+                support.roundPrice(entry), support.roundPrice(stop), support.roundPrice(atr), pdh, pdl, null,
                 ce ? "PENDING_MEANINGFUL_SWING_HIGH_ATR_BREAKOUT" : "PENDING_MEANINGFUL_SWING_LOW_ATR_BREAKDOWN"));
     }
 
@@ -210,9 +210,6 @@ public class AtrPreviousDayBreakoutQualificationService {
     private List<StrategyCandle> loadMStockFiveMinuteChart(ScriptMasterEntity spot, LocalDateTime now) {
         try {
             List<StrategyCandle> intraday = sorted(support.loadCandles(spot, "5minute").candles());
-            if (intraday.isEmpty()) {
-                throw new IllegalStateException("MStock intraday chart returned no five-minute candles");
-            }
             LocalDateTime from = now.minusDays(15).withHour(9).withMinute(15).withSecond(0).withNano(0);
             MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandles(
                     spot.getScripCode(), null, null, null, null, null,
@@ -227,7 +224,16 @@ public class AtrPreviousDayBreakoutQualificationService {
             }
             // Put current-day intraday candles last so their highs/lows determine PDH and swing structure.
             intraday.forEach(candle -> merged.put(candle.date() + "T" + candle.time(), candle));
-            return sorted(List.copyOf(merged.values()));
+            List<StrategyCandle> candles = sorted(List.copyOf(merged.values()));
+            if (candles.isEmpty()) {
+                throw new IllegalStateException("MStock returned no five-minute intraday or historical candles");
+            }
+            if (intraday.isEmpty()) {
+                LocalDate latestCompletedSession = candles.get(candles.size() - 1).date();
+                log.info("ATR_PREVIOUS_DAY_HISTORICAL_FALLBACK | symbol={} requestedAt={} latestCompletedSession={} candles={}",
+                        spot.getTradingSymbol(), now, latestCompletedSession, candles.size());
+            }
+            return candles;
         } catch (Exception e) {
             throw new IllegalStateException("MStock 5-minute chart is unavailable for "
                     + (spot != null ? spot.getTradingSymbol() : "selected symbol") + ": " + e.getMessage(), e);

@@ -70,6 +70,11 @@ app:
       reclaim-vwap-confirmations: ${FNO_0925_MOVER_RECLAIM_VWAP_CONFIRMATIONS:1}
       vwap-side-tolerance: ${FNO_0925_MOVER_VWAP_SIDE_TOLERANCE:0.001}
       vwap-direction-tolerance: ${FNO_0925_MOVER_VWAP_DIRECTION_TOLERANCE:0.0003}
+      # A VWAP-base trade must be a fresh retest and expansion, not a late trend chase.
+      vwap-retest-max-distance-atr: ${FNO_0925_MOVER_VWAP_RETEST_MAX_DISTANCE_ATR:0.35}
+      vwap-max-extension-atr: ${FNO_0925_MOVER_VWAP_MAX_EXTENSION_ATR:1.5}
+      base-break-min-atr: ${FNO_0925_MOVER_BASE_BREAK_MIN_ATR:0.20}
+      session-extreme-buffer-atr: ${FNO_0925_MOVER_SESSION_EXTREME_BUFFER_ATR:0.50}
   market-data:
     # Comma-separated ISO dates, e.g. NSE_HOLIDAYS=2026-01-26,2026-03-03
     nse-holidays: ${NSE_HOLIDAYS:}

@@ -72,6 +72,10 @@ class Fno925EntryQualificationServiceTest {
                 .thenReturn(new CandleLoad(candles, true, null));
 
         Fno925EntryQualificationService service = configuredService(support);
+        // This fixture intentionally uses very large historical ranges to exercise the
+        // VWAP-reclaim path; keep the unrelated extension/support guards out of scope.
+        ReflectionTestUtils.setField(service, "baseBreakMinAtr", 0.04d);
+        ReflectionTestUtils.setField(service, "sessionExtremeBufferAtr", 0d);
         Fno925Candidate candidate = new Fno925Candidate("TCS", ScriptMasterEntity.builder().build(), "CE");
 
         Fno925EntryQualificationService.Qualification result = service.qualify(candidate, day.atTime(9, 50));
@@ -141,6 +145,27 @@ class Fno925EntryQualificationServiceTest {
         Boolean twoConfirmations = ReflectionTestUtils.invokeMethod(service, "holdsReclaimedVwap", candles, base,
                 breakout, "CE");
         assertThat(twoConfirmations).isFalse();
+    }
+
+    @Test
+    void vwapBaseBreakRequiresARecentVwapRetestAndRejectsExtendedSupportEntries() {
+        Fno925EntryQualificationService service = configuredService(mock(StrategySupport.class));
+        List<StrategyCandle> candles = List.of(
+                candle(LocalTime.of(9, 15), 100d, 100d, 100d, 100d),
+                candle(LocalTime.of(9, 20), 90d, 90d, 89d, 89.5d),
+                candle(LocalTime.of(9, 25), 89.5d, 90d, 89d, 89.4d),
+                candle(LocalTime.of(9, 30), 89.4d, 90d, 89d, 89.3d));
+        List<StrategyCandle> base = candles.subList(1, 4);
+
+        Boolean hasRetest = ReflectionTestUtils.invokeMethod(service, "hasRecentVwapRetest", candles, base, "PE", 2d);
+        Boolean tooExtended = ReflectionTestUtils.invokeMethod(service, "isTooExtendedFromVwap", candles,
+                candle(LocalTime.of(9, 35), 89d, 89d, 84d, 84d), "PE", 2d);
+        Boolean nearSupport = ReflectionTestUtils.invokeMethod(service, "isNearPriorSessionExtreme", base,
+                candle(LocalTime.of(9, 35), 89.4d, 89.5d, 89.2d, 89.5d), "PE", 2d);
+
+        assertThat(hasRetest).isFalse();
+        assertThat(tooExtended).isTrue();
+        assertThat(nearSupport).isTrue();
     }
 
     private Fno925EntryQualificationService configuredService(StrategySupport support) {
