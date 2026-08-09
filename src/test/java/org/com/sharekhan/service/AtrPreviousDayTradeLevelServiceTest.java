@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -34,6 +35,22 @@ class AtrPreviousDayTradeLevelServiceTest {
         assertEquals(199, levels.get().target1());
         assertEquals(198, levels.get().target2());
         assertEquals(197, levels.get().target3());
+    }
+
+    @Test
+    void recalculatesExecutedAtrTradeLevelsWhenSpotEntryIsEdited() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .source(AtrPreviousDayTradeLevelService.SOURCE).optionType("CE")
+                .entryPrice(1309.10).stopLoss(1299.94)
+                .target1(1318.26).target2(1322.84).target3(1327.42).build();
+
+        var levels = service.recalculate(trade, 1299.60);
+
+        assertTrue(levels.isPresent());
+        assertEquals(1290.44, levels.get().stopLoss());
+        assertEquals(1308.76, levels.get().target1());
+        assertEquals(1313.34, levels.get().target2());
+        assertEquals(1317.92, levels.get().target3());
     }
 
     private TriggerTradeRequestEntity request(String optionType, double entry, double stop, double target1,

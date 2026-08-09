@@ -6,6 +6,7 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.CurrentUserService;
+import org.com.sharekhan.service.AtrPreviousDayTradeLevelService;
 import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.http.HttpStatus;
@@ -26,15 +27,18 @@ public class TradeExecutionController {
     private final TriggeredTradeSetupRepository triggeredTradeSetupRepository;
     private final CurrentUserService currentUserService;
     private final PriceTriggerService priceTriggerService;
+    private final AtrPreviousDayTradeLevelService atrPreviousDayTradeLevelService;
 
     public TradeExecutionController(TradeExecutionService tradeExecutionService,
                                     TriggeredTradeSetupRepository triggeredTradeSetupRepository,
                                     CurrentUserService currentUserService,
-                                    PriceTriggerService priceTriggerService) {
+                                    PriceTriggerService priceTriggerService,
+                                    AtrPreviousDayTradeLevelService atrPreviousDayTradeLevelService) {
         this.tradeExecutionService = tradeExecutionService;
         this.triggeredTradeSetupRepository = triggeredTradeSetupRepository;
         this.currentUserService = currentUserService;
         this.priceTriggerService = priceTriggerService;
+        this.atrPreviousDayTradeLevelService = atrPreviousDayTradeLevelService;
     }
 
     @PostMapping("/square-off/{id}")
@@ -123,23 +127,39 @@ public class TradeExecutionController {
                     }
                     boolean changed = false;
                     boolean tslChanged = false;
-                    if (update.getEntryPrice() != null) {
+                    boolean recalculatedAtrLevels = false;
+                    if (update.getEntryPrice() != null && atrPreviousDayTradeLevelService.appliesTo(trade)) {
+                        var levels = atrPreviousDayTradeLevelService.recalculate(trade, update.getEntryPrice());
+                        if (levels.isEmpty()) {
+                            return ResponseEntity.badRequest()
+                                    .body("Cannot recalculate ATR levels: the existing execution has no valid ATR risk distance");
+                        }
+                        trade.setEntryPrice(update.getEntryPrice());
+                        trade.setStopLoss(levels.get().stopLoss());
+                        trade.setTarget1(levels.get().target1());
+                        trade.setTarget2(levels.get().target2());
+                        trade.setTarget3(levels.get().target3());
+                        recalculatedAtrLevels = true;
+                        changed = true;
+                    } else if (update.getEntryPrice() != null) {
                         trade.setEntryPrice(update.getEntryPrice());
                         changed = true;
                     }
-                    if (update.getStopLoss() != null) {
+                    // An ATR prior-day entry edit owns SL/T1/T2/T3, even if the
+                    // UI also submits the values currently shown on screen.
+                    if (!recalculatedAtrLevels && update.getStopLoss() != null) {
                         trade.setStopLoss(update.getStopLoss());
                         changed = true;
                     }
-                    if (update.getTarget1() != null) {
+                    if (!recalculatedAtrLevels && update.getTarget1() != null) {
                         trade.setTarget1(update.getTarget1());
                         changed = true;
                     }
-                    if (update.getTarget2() != null) {
+                    if (!recalculatedAtrLevels && update.getTarget2() != null) {
                         trade.setTarget2(update.getTarget2());
                         changed = true;
                     }
-                    if (update.getTarget3() != null) {
+                    if (!recalculatedAtrLevels && update.getTarget3() != null) {
                         trade.setTarget3(update.getTarget3());
                         changed = true;
                     }

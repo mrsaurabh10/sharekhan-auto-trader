@@ -238,6 +238,18 @@ public class PriceTriggerService {
         }
         Long requestId = request.getId();
 
+        // A prior-day ATR CE must always stop below its spot entry (and PE above).
+        // Refuse malformed risk geometry before it can reach the broker.  This
+        // prevents a BDL-type inverted/near-entry stop from creating an order.
+        if (isAtrPreviousDaySource(request) && !hasValidAtrPreviousDayRiskGeometry(request)) {
+            triggerRepo.claimIfStatusEqualsWithOutcome(requestId,
+                    TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.REJECTED.name(),
+                    "INVALID_ATR_RISK_LEVELS", "ATR prior-day stop must be below CE entry and above PE entry.");
+            log.error("Rejected malformed ATR prior-day request {} for {}: optionType={} entry={} stopLoss={}",
+                    requestId, request.getSymbol(), request.getOptionType(), request.getEntryPrice(), request.getStopLoss());
+            return;
+        }
+
         // CE and PE requests can both be pending at the open.  Once either side has
         // actually entered, the other side must not become a same-day re-entry.
         if (isAtrPreviousDaySource(request) && request.getAppUserId() != null
@@ -1500,6 +1512,20 @@ public class PriceTriggerService {
 
     private boolean isAtrPreviousDaySource(TriggerTradeRequestEntity trigger) {
         return trigger != null && ATR_PREVIOUS_DAY_SOURCE.equalsIgnoreCase(trigger.getSource());
+    }
+
+    private boolean hasValidAtrPreviousDayRiskGeometry(TriggerTradeRequestEntity request) {
+        if (request == null || request.getEntryPrice() == null || request.getStopLoss() == null
+                || request.getEntryPrice() <= 0d || request.getStopLoss() <= 0d) {
+            return false;
+        }
+        if ("CE".equalsIgnoreCase(request.getOptionType())) {
+            return request.getStopLoss() < request.getEntryPrice();
+        }
+        if ("PE".equalsIgnoreCase(request.getOptionType())) {
+            return request.getStopLoss() > request.getEntryPrice();
+        }
+        return false;
     }
 
     private int resolveCurrentLots(TriggeredTradeSetupEntity trade) {
