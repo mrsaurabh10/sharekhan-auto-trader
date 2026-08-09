@@ -365,6 +365,29 @@ public class StrategySupport {
         return matches == null || matches.isEmpty() ? null : matches.get(0);
     }
 
+    /**
+     * The prior-day ATR setup is directional, rather than strike-specific.  Its
+     * qualifying entry/ATM strike can change between two Apply requests, so a
+     * strike-based duplicate lookup would create a second live setup for the
+     * same symbol.  CE and PE remain independent strategies.
+     */
+    public TriggerTradeRequestEntity findActiveAtrPreviousDaySetup(TriggerRequest trigger) {
+        if (trigger == null || trigger.getUserId() == null || !StringUtils.hasText(trigger.getInstrument())
+                || !StringUtils.hasText(trigger.getOptionType())) {
+            return null;
+        }
+        List<TriggerTradeRequestEntity> matches = triggerTradeRequestRepository
+                .findBySymbolAndAppUserIdAndStatusIn(trigger.getInstrument(), trigger.getUserId(), List.of(
+                        TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION,
+                        TriggeredTradeStatus.ENTRY_SUBMITTING,
+                        TriggeredTradeStatus.TRIGGERED));
+        return matches == null ? null : matches.stream()
+                .filter(item -> AbstractAtrPreviousDayFnoStrategy.SOURCE.equalsIgnoreCase(item.getSource()))
+                .filter(item -> trigger.getOptionType().equalsIgnoreCase(item.getOptionType()))
+                .findFirst()
+                .orElse(null);
+    }
+
     /** A prior-day ATR symbol may enter only once in an IST trading day, even after its request has exited. */
     public boolean hasAtrPreviousDayEntryOn(LocalDate day, Long appUserId, String symbol) {
         return hasEntryForSymbolOn(AbstractAtrPreviousDayFnoStrategy.SOURCE, day, appUserId, symbol);
