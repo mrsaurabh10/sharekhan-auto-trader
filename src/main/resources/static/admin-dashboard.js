@@ -145,7 +145,11 @@
     const day = source ? new Date(source) : new Date();
     if (Number.isNaN(day.getTime())) return {};
     const format = function (value) { return value.toISOString().slice(0, 10); };
-    const from = new Date(day); from.setDate(from.getDate() - 1);
+    // A request can be configured on a weekend or market holiday.  One calendar
+    // day back would then start on Saturday/Sunday and omit Friday altogether.
+    // Keep a full week of completed sessions visible so the chart has candles
+    // even when the request was created while markets were closed.
+    const from = new Date(day); from.setDate(from.getDate() - 7);
     const to = new Date(day); to.setDate(to.getDate() + 1);
     return { from: format(from), to: format(to) };
   }
