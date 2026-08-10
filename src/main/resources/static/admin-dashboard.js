@@ -141,7 +141,7 @@
   }
 
   function requestChartDateRange(row) {
-    const source = requestValue(row, 'createdAt') || requestValue(row, 'entryAt');
+    const source = requestValue(row, 'createdAt') || requestValue(row, 'triggeredAt') || requestValue(row, 'entryAt');
     const day = source ? new Date(source) : new Date();
     if (Number.isNaN(day.getTime())) return {};
     const format = function (value) { return value.toISOString().slice(0, 10); };
@@ -237,7 +237,7 @@
     return null;
   }
 
-  async function openRequestChart(row) {
+  async function openRequestChart(row, chartLabel) {
     const modal = document.getElementById('tradeChartModal');
     const title = document.getElementById('tradeChartTitle');
     const meta = document.getElementById('tradeChartMeta');
@@ -251,17 +251,18 @@
     const spotScripCode = requestValue(row, 'spotScripCode', 'spot_scrip_code');
     const allLevelsUseSpot = !!row.useSpotForEntry && !!row.useSpotForSl && !!row.useSpotForTarget;
     const scripCode = allLevelsUseSpot && spotScripCode ? spotScripCode : requestScripCode;
-    title.textContent = symbol + ' — Trading Request Chart';
+    const recordLabel = chartLabel || 'Trading Request';
+    title.textContent = symbol + ' — ' + recordLabel + ' Chart';
     meta.textContent = '5-minute candles · ' + (allLevelsUseSpot ? 'Spot · ' : '') + (requestValue(row, 'exchange') || 'exchange unavailable') + (scripCode ? ' · Scrip ' + scripCode : '');
     levels.innerHTML = '';
-    if (!scripCode) { status.textContent = 'This request has no scrip code, so historical candles cannot be resolved.'; return; }
+    if (!scripCode) { status.textContent = 'This ' + recordLabel.toLowerCase() + ' has no scrip code, so historical candles cannot be resolved.'; return; }
     if (!window.LightweightCharts) { status.textContent = 'TradingView Lightweight Charts could not be loaded. Check network access and retry.'; return; }
     try {
       const range = requestChartDateRange(row);
       const loaded = await loadRequestChartCandles(scripCode, range);
       const response = loaded.response;
       const data = loaded.candles;
-      if (!data.length) { status.textContent = 'Historical data was returned without usable OHLC prices for this request.'; return; }
+      if (!data.length) { status.textContent = 'Historical data was returned without usable OHLC prices for this ' + recordLabel.toLowerCase() + '.'; return; }
       canvas.innerHTML = '';
       requestChart = window.LightweightCharts.createChart(canvas, { autoSize: true, width: canvas.clientWidth || 900, height: 460, layout: { background: { color: '#ffffff' }, textColor: '#222' }, grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } }, rightPriceScale: { autoScale: true, alignLabels: true, scaleMargins: { top: 0.12, bottom: 0.12 } }, leftPriceScale: { visible: false }, timeScale: { timeVisible: true, secondsVisible: false } });
       const series = requestChart.addSeries(window.LightweightCharts.CandlestickSeries, { upColor: '#16a34a', downColor: '#dc2626', borderVisible: false, wickUpColor: '#16a34a', wickDownColor: '#dc2626', lastValueVisible: false, priceLineVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } });
@@ -278,6 +279,9 @@
       addRequestPriceLine(series, labels, 'T1', requestValue(row, 'target1', 't1'), '#16a34a', row.useSpotForTarget ? 'Spot' : 'Option');
       addRequestPriceLine(series, labels, 'T2', requestValue(row, 'target2', 't2'), '#15803d', row.useSpotForTarget ? 'Spot' : 'Option');
       addRequestPriceLine(series, labels, 'T3', requestValue(row, 'target3', 't3'), '#166534', row.useSpotForTarget ? 'Spot' : 'Option');
+      const status = String(requestValue(row, 'status') || '').toUpperCase();
+      const exited = requestValue(row, 'exitedAt') || status === 'EXITED' || status.indexOf('EXITED_') === 0;
+      if (exited) addRequestPriceLine(series, labels, 'Exit', requestValue(row, 'exitPrice', 'exit_price'), '#ea580c', 'Actual');
       levels.innerHTML = labels.join('');
       requestChart.timeScale().fitContent();
       requestChartLiveState = { chart: requestChart, series: series, ltpLine: ltpLine, scripCode: scripCode, allLevelsUseSpot: allLevelsUseSpot };
@@ -1486,7 +1490,7 @@
                        tradeScopeCellHtml(t) +
                        '<td>' + escapeHtml(String(source)) + '</td>' +
                        '<td>' + escapeHtml(String(status)) + '</td>' +
-                       '<td>' + escapeHtml(String(symbol)) + '</td>' +
+                       '<td><button type="button" class="symbol-chart-link" title="Open trading setup chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(optType || '-')) + '</td>' +
@@ -1495,6 +1499,9 @@
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
                        '<td>' + escapeHtml(String(qty)) + '</td>';
         tr.appendChild(actionCell);
+
+        const chartBtn = tr.querySelector('.symbol-chart-link');
+        if (chartBtn) chartBtn.addEventListener('click', function () { openRequestChart(t, 'Trading Setup'); });
 
         const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
         const spotLtpTd = document.createElement('td'); spotLtpTd.innerText = '-'; tr.appendChild(spotLtpTd);
