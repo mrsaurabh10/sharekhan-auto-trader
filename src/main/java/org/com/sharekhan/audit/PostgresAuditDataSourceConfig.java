@@ -17,7 +17,7 @@ import javax.sql.DataSource;
 
 /** Separate PostgreSQL connection used exclusively by the audit-event migration POC. */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnExpression("'${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true' or '${app.user-broker.postgres.enabled:false}' == 'true' or '${app.trading-state.postgres.enabled:false}' == 'true' or '${app.configuration.postgres.enabled:false}' == 'true'")
+@ConditionalOnExpression("'${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true' or '${app.user-broker.postgres.enabled:false}' == 'true' or '${app.trading-state.postgres.enabled:false}' == 'true' or '${app.configuration.postgres.enabled:false}' == 'true' or '${app.reference-data.postgres.enabled:false}' == 'true'")
 public class PostgresAuditDataSourceConfig {
 
     @Bean
@@ -54,7 +54,8 @@ public class PostgresAuditDataSourceConfig {
                 new ClassPathResource("db/postgresql/backtest-replay-schema.sql"),
                 new ClassPathResource("db/postgresql/user-broker-schema.sql"),
                 new ClassPathResource("db/postgresql/trading-state-schema.sql"),
-                new ClassPathResource("db/postgresql/configuration-schema.sql"));
+                new ClassPathResource("db/postgresql/configuration-schema.sql"),
+                new ClassPathResource("db/postgresql/reference-data-schema.sql"));
         DataSourceInitializer initializer = new DataSourceInitializer();
         initializer.setDataSource(auditPostgresDataSource);
         initializer.setDatabasePopulator(populator);

@@ -51,6 +51,10 @@ logging:
 
 # Application specific
 app:
+  reference-data:
+    postgres:
+      enabled: ${APP_REFERENCE_DATA_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_REFERENCE_DATA_POSTGRES_BACKFILL_ON_STARTUP:false}
   configuration:
     postgres:
       enabled: ${APP_CONFIGURATION_POSTGRES_ENABLED:false}
