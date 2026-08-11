@@ -15,6 +15,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+
 /** One-time idempotent H2 to PostgreSQL copy; H2 continues serving all live access. */
 @Component
 @Slf4j
