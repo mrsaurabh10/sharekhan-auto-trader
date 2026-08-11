@@ -1,6 +1,6 @@
 package org.com.sharekhan.backtest;
-import lombok.RequiredArgsConstructor;import lombok.extern.slf4j.Slf4j;import org.com.sharekhan.entity.*;import org.com.sharekhan.repository.*;import org.springframework.boot.*;import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;import org.springframework.data.domain.*;import org.springframework.stereotype.Component;
-@Component @Slf4j @RequiredArgsConstructor @ConditionalOnProperty(prefix="app.backtest.postgres",name="backfill-on-startup",havingValue="true")
+import lombok.RequiredArgsConstructor;import lombok.extern.slf4j.Slf4j;import org.com.sharekhan.entity.*;import org.com.sharekhan.repository.*;import org.springframework.boot.*;import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;import org.springframework.data.domain.*;import org.springframework.stereotype.Component;
+@Component @Slf4j @RequiredArgsConstructor @ConditionalOnExpression("'${app.backtest.postgres.enabled:false}' == 'true' and '${app.backtest.postgres.backfill-on-startup:false}' == 'true'")
 public class BacktestReplayBackfillRunner implements ApplicationRunner{
  private final BacktestReplayResultRepository results;private final BacktestReplayEventRepository events;private final PostgresBacktestReplayStore target;
  public void run(ApplicationArguments a){copyResults();copyEvents();target.syncSequences();long hr=results.count(),he=events.count(),pr=target.countResults(),pe=target.countEvents();if(pr<hr||pe<he)throw new IllegalStateException("Backtest backfill incomplete H2="+hr+"/"+he+" PostgreSQL="+pr+"/"+pe);log.info("PostgreSQL backtest backfill complete: results={} events={}",pr,pe);}
