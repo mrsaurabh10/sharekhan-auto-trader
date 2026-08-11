@@ -17,6 +17,7 @@ import org.com.sharekhan.repository.BacktestReplayResultRepository;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -38,7 +39,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class BacktestDailyReplayService {
 
@@ -64,6 +64,17 @@ public class BacktestDailyReplayService {
         thread.setDaemon(true);
         return thread;
     });
+
+    @Autowired
+    public BacktestDailyReplayService(TriggeredTradeSetupRepository tradeRepository,
+                                      BacktestReplayService backtestReplayService,
+                                      BacktestReplayStore replayStore,
+                                      BrokerCredentialsRepository brokerCredentialsRepository) {
+        this.tradeRepository = tradeRepository;
+        this.backtestReplayService = backtestReplayService;
+        this.replayStore = replayStore;
+        this.brokerCredentialsRepository = brokerCredentialsRepository;
+    }
 
     /** Compatibility constructor retained for focused unit tests. */
     public BacktestDailyReplayService(TriggeredTradeSetupRepository tradeRepository,
