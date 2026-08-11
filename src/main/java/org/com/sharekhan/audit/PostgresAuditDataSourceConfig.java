@@ -17,7 +17,7 @@ import javax.sql.DataSource;
 
 /** Separate PostgreSQL connection used exclusively by the audit-event migration POC. */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnExpression("'${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true'")
+@ConditionalOnExpression("'${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true' or '${app.user-broker.postgres.enabled:false}' == 'true'")
 public class PostgresAuditDataSourceConfig {
 
     @Bean
@@ -51,7 +51,8 @@ public class PostgresAuditDataSourceConfig {
             @Qualifier("auditPostgresDataSource") DataSource auditPostgresDataSource) {
         ResourceDatabasePopulator populator = new ResourceDatabasePopulator(
                 new ClassPathResource("db/postgresql/audit-event-schema.sql"),
-                new ClassPathResource("db/postgresql/backtest-replay-schema.sql"));
+                new ClassPathResource("db/postgresql/backtest-replay-schema.sql"),
+                new ClassPathResource("db/postgresql/user-broker-schema.sql"));
         DataSourceInitializer initializer = new DataSourceInitializer();
         initializer.setDataSource(auditPostgresDataSource);
         initializer.setDatabasePopulator(populator);

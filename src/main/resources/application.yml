@@ -51,6 +51,11 @@ logging:
 
 # Application specific
 app:
+  user-broker:
+    postgres:
+      # Copies users and encrypted broker credentials to PostgreSQL without changing live H2 access.
+      enabled: ${APP_USER_BROKER_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_USER_BROKER_POSTGRES_BACKFILL_ON_STARTUP:false}
   backtest:
     postgres:
       # Disabled until the paired result/event backfill has been validated.
