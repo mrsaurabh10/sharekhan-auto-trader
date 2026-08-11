@@ -51,6 +51,10 @@ logging:
 
 # Application specific
 app:
+  configuration:
+    postgres:
+      enabled: ${APP_CONFIGURATION_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_CONFIGURATION_POSTGRES_BACKFILL_ON_STARTUP:false}
   trading-state:
     postgres:
       enabled: ${APP_TRADING_STATE_POSTGRES_ENABLED:false}
