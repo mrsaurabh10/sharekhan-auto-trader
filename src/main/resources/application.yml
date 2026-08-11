@@ -51,6 +51,10 @@ logging:
 
 # Application specific
 app:
+  trading-state:
+    postgres:
+      enabled: ${APP_TRADING_STATE_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_TRADING_STATE_POSTGRES_BACKFILL_ON_STARTUP:false}
   user-broker:
     postgres:
       # Copies users and encrypted broker credentials to PostgreSQL without changing live H2 access.
