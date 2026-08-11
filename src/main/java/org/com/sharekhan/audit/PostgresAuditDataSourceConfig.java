@@ -1,0 +1,52 @@
+package org.com.sharekhan.audit;
+
+import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.datasource.init.DataSourceInitializer;
+import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+
+import javax.sql.DataSource;
+
+/** Separate PostgreSQL connection used exclusively by the audit-event migration POC. */
+@Configuration(proxyBeanMethods = false)
+@ConditionalOnProperty(prefix = "app.audit.postgres", name = "enabled", havingValue = "true")
+public class PostgresAuditDataSourceConfig {
+
+    @Bean
+    @ConfigurationProperties("app.audit.postgres")
+    DataSourceProperties auditPostgresDataSourceProperties() {
+        return new DataSourceProperties();
+    }
+
+    @Bean(name = "auditPostgresDataSource")
+    DataSource auditPostgresDataSource(
+            @Qualifier("auditPostgresDataSourceProperties") DataSourceProperties auditPostgresDataSourceProperties) {
+        return auditPostgresDataSourceProperties.initializeDataSourceBuilder()
+                .type(HikariDataSource.class)
+                .build();
+    }
+
+    @Bean
+    NamedParameterJdbcTemplate auditPostgresJdbcTemplate(
+            @Qualifier("auditPostgresDataSource") DataSource auditPostgresDataSource) {
+        return new NamedParameterJdbcTemplate(auditPostgresDataSource);
+    }
+
+    @Bean
+    DataSourceInitializer auditPostgresSchemaInitializer(
+            @Qualifier("auditPostgresDataSource") DataSource auditPostgresDataSource) {
+        ResourceDatabasePopulator populator = new ResourceDatabasePopulator(
+                new ClassPathResource("db/postgresql/audit-event-schema.sql"));
+        DataSourceInitializer initializer = new DataSourceInitializer();
+        initializer.setDataSource(auditPostgresDataSource);
+        initializer.setDatabasePopulator(populator);
+        return initializer;
+    }
+}

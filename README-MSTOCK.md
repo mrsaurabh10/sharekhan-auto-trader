@@ -101,6 +101,17 @@ PostgreSQL is provisioned alongside the existing H2-backed application so it can
 
 The `postgres_data` Docker volume persists the database. Do not run `docker compose down -v` unless you intentionally want to delete the PostgreSQL data volume. PostgreSQL is bound to `127.0.0.1` and therefore is not exposed to the network.
 
+### Audit-event PostgreSQL POC
+
+The first incremental migration moves only `trade_audit_events` to PostgreSQL. Orders, trade requests, broker tokens, credentials, and all other persistence remain on H2.
+
+1. Start PostgreSQL and confirm it is healthy.
+2. Set `APP_AUDIT_POSTGRES_ENABLED=true` in `.env`.
+3. Start the application with Docker Compose. It connects to PostgreSQL via the internal `postgres` hostname and creates the audit-event table/indexes if they do not exist.
+4. Generate or view an audit event, then verify the PostgreSQL row with: `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT id, occurred_at, event_type, symbol FROM trade_audit_events ORDER BY id DESC LIMIT 10;"'`.
+
+Set `APP_AUDIT_POSTGRES_ENABLED=false` and restart the application to immediately return audit reads and writes to H2. This is a POC rollback only; events written while PostgreSQL is enabled are intentionally not copied back to H2.
+
 Then run:
 
 ```sql

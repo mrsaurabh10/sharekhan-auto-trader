@@ -51,6 +51,14 @@ logging:
 
 # Application specific
 app:
+  audit:
+    postgres:
+      # POC only: set APP_AUDIT_POSTGRES_ENABLED=true after PostgreSQL is healthy.
+      # All non-audit persistence continues to use the primary H2 datasource.
+      enabled: ${APP_AUDIT_POSTGRES_ENABLED:false}
+      url: ${APP_AUDIT_POSTGRES_URL:jdbc:postgresql://localhost:5432/sharekhan}
+      username: ${APP_AUDIT_POSTGRES_USERNAME:sharekhan_app}
+      password: ${APP_AUDIT_POSTGRES_PASSWORD:}
   monitoring:
     api-token: ${MONITORING_API_TOKEN:}
   scheduler:
