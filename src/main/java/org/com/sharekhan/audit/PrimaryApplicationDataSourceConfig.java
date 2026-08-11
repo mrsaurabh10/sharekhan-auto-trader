@@ -8,8 +8,11 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.orm.jpa.JpaTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import javax.sql.DataSource;
+import jakarta.persistence.EntityManagerFactory;
 
 /**
  * Keeps the configured application datasource as the primary datasource while the
@@ -35,5 +38,15 @@ public class PrimaryApplicationDataSourceConfig {
         return applicationDataSourceProperties.initializeDataSourceBuilder()
                 .type(HikariDataSource.class)
                 .build();
+    }
+
+    /**
+     * Retains the conventional transaction-manager name for all existing H2/JPA
+     * repositories. The PostgreSQL migration manager is deliberately separately named.
+     */
+    @Bean(name = "transactionManager")
+    @Primary
+    PlatformTransactionManager transactionManager(EntityManagerFactory entityManagerFactory) {
+        return new JpaTransactionManager(entityManagerFactory);
     }
 }
