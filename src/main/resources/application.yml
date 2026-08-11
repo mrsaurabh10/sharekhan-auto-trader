@@ -51,6 +51,11 @@ logging:
 
 # Application specific
 app:
+  backtest:
+    postgres:
+      # Disabled until the paired result/event backfill has been validated.
+      enabled: ${APP_BACKTEST_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_BACKTEST_POSTGRES_BACKFILL_ON_STARTUP:false}
   audit:
     postgres:
       # POC only: set APP_AUDIT_POSTGRES_ENABLED=true after PostgreSQL is healthy.

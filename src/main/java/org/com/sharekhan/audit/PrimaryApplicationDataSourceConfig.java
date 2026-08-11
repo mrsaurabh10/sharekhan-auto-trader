@@ -18,7 +18,7 @@ import javax.sql.DataSource;
  * JPA repositories to PostgreSQL.
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(prefix = "app.audit.postgres", name = "enabled", havingValue = "true")
+@ConditionalOnExpression("'${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true'")
 public class PrimaryApplicationDataSourceConfig {
 
     @Bean

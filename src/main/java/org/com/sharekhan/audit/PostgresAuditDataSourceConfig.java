@@ -11,12 +11,13 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.datasource.init.DataSourceInitializer;
 import org.springframework.jdbc.datasource.init.ResourceDatabasePopulator;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 
 import javax.sql.DataSource;
 
 /** Separate PostgreSQL connection used exclusively by the audit-event migration POC. */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnProperty(prefix = "app.audit.postgres", name = "enabled", havingValue = "true")
+@ConditionalOnExpression("'${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true'")
 public class PostgresAuditDataSourceConfig {
 
     @Bean
@@ -39,11 +40,18 @@ public class PostgresAuditDataSourceConfig {
         return new NamedParameterJdbcTemplate(auditPostgresDataSource);
     }
 
+    @Bean(name = "auditPostgresTransactionManager")
+    DataSourceTransactionManager auditPostgresTransactionManager(
+            @Qualifier("auditPostgresDataSource") DataSource auditPostgresDataSource) {
+        return new DataSourceTransactionManager(auditPostgresDataSource);
+    }
+
     @Bean
     DataSourceInitializer auditPostgresSchemaInitializer(
             @Qualifier("auditPostgresDataSource") DataSource auditPostgresDataSource) {
         ResourceDatabasePopulator populator = new ResourceDatabasePopulator(
-                new ClassPathResource("db/postgresql/audit-event-schema.sql"));
+                new ClassPathResource("db/postgresql/audit-event-schema.sql"),
+                new ClassPathResource("db/postgresql/backtest-replay-schema.sql"));
         DataSourceInitializer initializer = new DataSourceInitializer();
         initializer.setDataSource(auditPostgresDataSource);
         initializer.setDatabasePopulator(populator);

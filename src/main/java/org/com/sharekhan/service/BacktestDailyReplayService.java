@@ -10,9 +10,11 @@ import org.com.sharekhan.entity.BacktestReplayEventEntity;
 import org.com.sharekhan.entity.BacktestReplayResultEntity;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
-import org.com.sharekhan.enums.Broker;
+import org.com.sharekhan.backtest.BacktestReplayStore;
+import org.com.sharekhan.backtest.H2BacktestReplayStore;
 import org.com.sharekhan.repository.BacktestReplayEventRepository;
 import org.com.sharekhan.repository.BacktestReplayResultRepository;
+import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -53,8 +55,7 @@ public class BacktestDailyReplayService {
 
     private final TriggeredTradeSetupRepository tradeRepository;
     private final BacktestReplayService backtestReplayService;
-    private final BacktestReplayResultRepository resultRepository;
-    private final BacktestReplayEventRepository eventRepository;
+    private final BacktestReplayStore replayStore;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final Map<String, BacktestDailyReplayRangeRunResponse> rangeRuns = new ConcurrentHashMap<>();
@@ -63,6 +64,16 @@ public class BacktestDailyReplayService {
         thread.setDaemon(true);
         return thread;
     });
+
+    /** Compatibility constructor retained for focused unit tests. */
+    public BacktestDailyReplayService(TriggeredTradeSetupRepository tradeRepository,
+                                      BacktestReplayService backtestReplayService,
+                                      BacktestReplayResultRepository resultRepository,
+                                      BacktestReplayEventRepository eventRepository,
+                                      BrokerCredentialsRepository brokerCredentialsRepository) {
+        this(tradeRepository, backtestReplayService,
+                new H2BacktestReplayStore(resultRepository, eventRepository), brokerCredentialsRepository);
+    }
 
     @Scheduled(cron = "0 0 16 * * MON-FRI", zone = "Asia/Kolkata")
     public void runPreviousAvailableDayAfterMarketClose() {
@@ -358,7 +369,7 @@ public class BacktestDailyReplayService {
             result.setBacktestPnl(backtest.getPnl());
             result.setBacktestExitCount(backtest.getExitCount());
         }
-        BacktestReplayResultEntity saved = resultRepository.save(result);
+        BacktestReplayResultEntity saved = replayStore.saveResult(result);
         if (saved == null) {
             saved = result;
         }
@@ -376,7 +387,7 @@ public class BacktestDailyReplayService {
         result.setBacktestExitReason(null);
         result.setBacktestPnl(null);
         result.setBacktestExitCount(null);
-        resultRepository.save(result);
+        replayStore.saveResult(result);
     }
 
     private void saveEvents(BacktestReplayResultEntity result,
@@ -386,8 +397,8 @@ public class BacktestDailyReplayService {
         if (result.getId() == null) {
             return;
         }
-        eventRepository.deleteByResultId(result.getId());
         if (response.getEvents() == null || response.getEvents().isEmpty()) {
+            replayStore.replaceEvents(result.getId(), List.of());
             return;
         }
         List<BacktestReplayEventEntity> events = new ArrayList<>();
@@ -417,9 +428,7 @@ public class BacktestDailyReplayService {
                     .runAt(runAt)
                     .build());
         }
-        if (!events.isEmpty()) {
-            eventRepository.saveAll(events);
-        }
+        replayStore.replaceEvents(result.getId(), events);
     }
 
     private BacktestReplayResultEntity existingResult(Long tradeSetupId, ReplayScenario scenario) {
@@ -434,7 +443,7 @@ public class BacktestDailyReplayService {
     }
 
     private Optional<BacktestReplayResultEntity> existingResultOptional(Long tradeSetupId, ReplayScenario scenario) {
-        return resultRepository.findByTradeSetupIdAndIntervalAndTriggerPricePolicyAndSquareOffTime(
+        return replayStore.findResult(
                 tradeSetupId,
                 scenario.interval(),
                 scenario.resultTriggerPricePolicy(),
