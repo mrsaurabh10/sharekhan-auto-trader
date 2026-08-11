@@ -90,6 +90,17 @@ Verifying persisted token
   - username: `sa`
   - no password
 
+## Local PostgreSQL (pre-migration setup)
+
+PostgreSQL is provisioned alongside the existing H2-backed application so it can be validated before any data is migrated. The application continues to use H2 until a later PostgreSQL profile is introduced.
+
+1. Copy `.env.example` to `.env` if you do not already have one, then set a long, unique `POSTGRES_PASSWORD`. Do not commit `.env`.
+2. Start only the database: `docker compose up -d postgres`.
+3. Confirm readiness: `docker compose ps postgres` (status should report healthy).
+4. Stop it without deleting data: `docker compose stop postgres`.
+
+The `postgres_data` Docker volume persists the database. Do not run `docker compose down -v` unless you intentionally want to delete the PostgreSQL data volume. PostgreSQL is bound to `127.0.0.1` and therefore is not exposed to the network.
+
 Then run:
 
 ```sql

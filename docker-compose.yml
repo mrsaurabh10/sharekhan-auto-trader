@@ -1,4 +1,26 @@
 services:
+  postgres:
+    image: postgres:16
+    container_name: sharekhan-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-sharekhan}"
+      POSTGRES_USER: "${POSTGRES_USER:-sharekhan_app}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting PostgreSQL}"
+      TZ: Asia/Kolkata
+    ports:
+      # Keep PostgreSQL reachable only from this host. The app will later use
+      # the Docker service name "postgres" when both services run in Compose.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   sharekhan-auto-trader:
     container_name: sharekhan-auto-trader-container
     build:
@@ -49,3 +71,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  postgres_data:

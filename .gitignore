@@ -37,3 +37,8 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# Local runtime secrets and PostgreSQL backup artifacts
+.env
+*.dump
+*.sql.gz
