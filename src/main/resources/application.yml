@@ -51,6 +51,10 @@ logging:
 
 # Application specific
 app:
+  database:
+    # PostgreSQL-only branch cutover. When true, SPRING_DATASOURCE_* is the
+    # primary JPA datasource and H2 is not constructed as the application DB.
+    postgres-primary: ${APP_DATABASE_POSTGRES_PRIMARY:false}
   reference-data:
     postgres:
       enabled: ${APP_REFERENCE_DATA_POSTGRES_ENABLED:false}

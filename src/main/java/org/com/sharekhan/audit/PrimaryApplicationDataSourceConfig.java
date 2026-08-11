@@ -21,7 +21,7 @@ import jakarta.persistence.EntityManagerFactory;
  * JPA repositories to PostgreSQL.
  */
 @Configuration(proxyBeanMethods = false)
-@ConditionalOnExpression("'${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true' or '${app.user-broker.postgres.enabled:false}' == 'true' or '${app.trading-state.postgres.enabled:false}' == 'true' or '${app.configuration.postgres.enabled:false}' == 'true' or '${app.reference-data.postgres.enabled:false}' == 'true'")
+@ConditionalOnExpression("('${app.audit.postgres.enabled:false}' == 'true' or '${app.backtest.postgres.enabled:false}' == 'true' or '${app.user-broker.postgres.enabled:false}' == 'true' or '${app.trading-state.postgres.enabled:false}' == 'true' or '${app.configuration.postgres.enabled:false}' == 'true' or '${app.reference-data.postgres.enabled:false}' == 'true') and '${app.database.postgres-primary:false}' != 'true'")
 public class PrimaryApplicationDataSourceConfig {
 
     @Bean
