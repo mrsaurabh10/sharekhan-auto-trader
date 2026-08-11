@@ -101,7 +101,7 @@ public class ReferenceDataBackfillRunner implements ApplicationRunner {
         @Override
         public Object getValue(String paramName) throws IllegalArgumentException {
             Object value = super.getValue(paramName);
-            return value instanceof String text ? text.replace("\\u0000", "") : value;
+            return value instanceof String text ? text.replace("\0", "") : value;
         }
     }
 }
