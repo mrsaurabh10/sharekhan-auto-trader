@@ -30,6 +30,18 @@ public class PostgresAuditEventStore implements AuditEventStore {
             ) RETURNING id
             """;
 
+    private static final String INSERT_WITH_ID = """
+            INSERT INTO trade_audit_events (
+                id, occurred_at, app_user_id, trigger_request_id, trade_id, strategy_id, source, symbol,
+                event_type, outcome, reason, option_type, expiry, strike_price, spot_price,
+                option_ltp, best_bid, best_ask, details
+            ) OVERRIDING SYSTEM VALUE VALUES (
+                :id, :occurredAt, :appUserId, :triggerRequestId, :tradeId, :strategyId, :source, :symbol,
+                :eventType, :outcome, :reason, :optionType, :expiry, :strikePrice, :spotPrice,
+                :optionLtp, :bestBid, :bestAsk, :details
+            ) ON CONFLICT (id) DO NOTHING
+            """;
+
     private final NamedParameterJdbcTemplate jdbcTemplate;
 
     public PostgresAuditEventStore(
@@ -69,6 +81,33 @@ public class PostgresAuditEventStore implements AuditEventStore {
                 new MapSqlParameterSource("tradeId", tradeId), ROW_MAPPER);
     }
 
+    int copyHistoricalEvents(List<TradeAuditEventEntity> events) {
+        if (events.isEmpty()) {
+            return 0;
+        }
+        MapSqlParameterSource[] batch = events.stream()
+                .map(this::parametersWithId)
+                .toArray(MapSqlParameterSource[]::new);
+        int[] results = jdbcTemplate.batchUpdate(INSERT_WITH_ID, batch);
+        return (int) java.util.Arrays.stream(results).filter(result -> result > 0).count();
+    }
+
+    long count() {
+        Long count = jdbcTemplate.getJdbcTemplate().queryForObject(
+                "SELECT COUNT(*) FROM trade_audit_events", Long.class);
+        return count == null ? 0 : count;
+    }
+
+    void synchronizeIdentitySequence() {
+        jdbcTemplate.getJdbcTemplate().queryForObject("""
+                SELECT setval(
+                    pg_get_serial_sequence('trade_audit_events', 'id'),
+                    COALESCE((SELECT MAX(id) FROM trade_audit_events), 1),
+                    true
+                )
+                """, Long.class);
+    }
+
     private MapSqlParameterSource parameters(TradeAuditEventEntity event) {
         return new MapSqlParameterSource()
                 .addValue("occurredAt", event.getOccurredAt())
@@ -89,6 +128,10 @@ public class PostgresAuditEventStore implements AuditEventStore {
                 .addValue("bestBid", event.getBestBid())
                 .addValue("bestAsk", event.getBestAsk())
                 .addValue("details", event.getDetails());
+    }
+
+    private MapSqlParameterSource parametersWithId(TradeAuditEventEntity event) {
+        return parameters(event).addValue("id", event.getId());
     }
 
     private static final RowMapper<TradeAuditEventEntity> ROW_MAPPER = new RowMapper<>() {

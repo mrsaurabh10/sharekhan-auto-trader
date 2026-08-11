@@ -56,6 +56,9 @@ app:
       # POC only: set APP_AUDIT_POSTGRES_ENABLED=true after PostgreSQL is healthy.
       # All non-audit persistence continues to use the primary H2 datasource.
       enabled: ${APP_AUDIT_POSTGRES_ENABLED:false}
+      # Set true for one controlled startup to copy the existing H2 audit history.
+      # The copy is idempotent and preserves IDs; reset it to false after validation.
+      backfill-on-startup: ${APP_AUDIT_POSTGRES_BACKFILL_ON_STARTUP:false}
       url: ${APP_AUDIT_POSTGRES_URL:jdbc:postgresql://localhost:5432/sharekhan}
       username: ${APP_AUDIT_POSTGRES_USERNAME:sharekhan_app}
       password: ${APP_AUDIT_POSTGRES_PASSWORD:}

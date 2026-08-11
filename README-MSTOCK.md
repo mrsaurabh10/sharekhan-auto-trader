@@ -112,6 +112,8 @@ The first incremental migration moves only `trade_audit_events` to PostgreSQL. O
 
 Set `APP_AUDIT_POSTGRES_ENABLED=false` and restart the application to immediately return audit reads and writes to H2. This is a POC rollback only; events written while PostgreSQL is enabled are intentionally not copied back to H2.
 
+To backfill the existing H2 audit history, set `APP_AUDIT_POSTGRES_BACKFILL_ON_STARTUP=true` for one restart. The importer copies rows in batches, preserves their original IDs, skips IDs already copied, verifies the H2 count is present in PostgreSQL, and advances the PostgreSQL identity sequence. Set it back to `false` after the startup log confirms completion.
+
 Then run:
 
 ```sql
