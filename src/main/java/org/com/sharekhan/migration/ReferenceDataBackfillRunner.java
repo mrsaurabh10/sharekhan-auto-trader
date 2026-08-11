@@ -79,7 +79,7 @@ public class ReferenceDataBackfillRunner implements ApplicationRunner {
             return;
         }
         pg.batchUpdate("INSERT INTO " + table + " (" + columns + ") OVERRIDING SYSTEM VALUE VALUES (" + values + ") ON CONFLICT DO NOTHING",
-                rows.stream().map(BeanPropertySqlParameterSource::new).toArray(SqlParameterSource[]::new));
+                rows.stream().map(PostgresSafeBeanPropertySqlParameterSource::new).toArray(SqlParameterSource[]::new));
     }
 
     private void syncShoonyaSequence() {
@@ -90,5 +90,18 @@ public class ReferenceDataBackfillRunner implements ApplicationRunner {
     private long count(String table) {
         Long result = pg.getJdbcTemplate().queryForObject("SELECT COUNT(*) FROM " + table, Long.class);
         return result == null ? 0 : result;
+    }
+
+    /** PostgreSQL text values cannot contain the NUL byte that is present in a few legacy H2 rows. */
+    private static final class PostgresSafeBeanPropertySqlParameterSource extends BeanPropertySqlParameterSource {
+        private PostgresSafeBeanPropertySqlParameterSource(Object object) {
+            super(object);
+        }
+
+        @Override
+        public Object getValue(String paramName) throws IllegalArgumentException {
+            Object value = super.getValue(paramName);
+            return value instanceof String text ? text.replace("\\u0000", "") : value;
+        }
     }
 }
