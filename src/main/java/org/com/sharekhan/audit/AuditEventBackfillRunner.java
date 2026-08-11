@@ -7,7 +7,6 @@ import org.com.sharekhan.repository.TradeAuditEventRepository;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.PageRequest;
@@ -21,7 +20,6 @@ import org.springframework.stereotype.Component;
 @Component
 @Slf4j
 @RequiredArgsConstructor
-@ConditionalOnBean(PostgresAuditEventStore.class)
 @ConditionalOnProperty(prefix = "app.audit.postgres", name = "backfill-on-startup", havingValue = "true")
 public class AuditEventBackfillRunner implements ApplicationRunner {
     private static final int PAGE_SIZE = 500;
