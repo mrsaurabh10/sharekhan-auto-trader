@@ -1448,11 +1448,17 @@ public class PriceTriggerService {
         if (actualEntryPrice == null || actualEntryPrice <= 0d || !Double.isFinite(actualEntryPrice)) {
             return true;
         }
-        if (Double.isFinite(tradedLtp) && tradedLtp + 0.000001d >= actualEntryPrice) {
+        Double minimumExitPrice = TradeCostCalculator.minimumProfitableExitPrice(trade, 0.05d);
+        if (minimumExitPrice == null) {
+            log.warn("Spot target reached for trade {}, but a minimum profitable option exit price could not be calculated. Keeping the position open.",
+                    trade.getId());
+            return false;
+        }
+        if (Double.isFinite(tradedLtp) && tradedLtp + 0.000001d >= minimumExitPrice) {
             return true;
         }
-        log.info("🎯 Spot target reached for trade {}, but option LTP {} is below actual entry {}. Keeping the position open.",
-                trade.getId(), tradedLtp, actualEntryPrice);
+        log.info("🎯 Spot target reached for trade {}, but option LTP {} is below the net-profitable exit floor {} (entry {}). Keeping the position open.",
+                trade.getId(), tradedLtp, minimumExitPrice, actualEntryPrice);
         return false;
     }
 

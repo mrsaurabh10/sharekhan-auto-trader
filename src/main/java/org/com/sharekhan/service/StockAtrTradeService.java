@@ -38,6 +38,8 @@ public class StockAtrTradeService {
     private static final double TARGET1_ATR_MULTIPLIER = 2.0d;
     private static final double TARGET2_ATR_MULTIPLIER = 3.0d;
     private static final double TARGET3_ATR_MULTIPLIER = 4.0d;
+    /** Do not re-anchor levels from an independent quote that has drifted from the trigger reference. */
+    private static final double ENTRY_REFRESH_SPOT_TOLERANCE_PERCENT = 0.0005d;
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
     private static final DateTimeFormatter EXPIRY_FORMAT = DateTimeFormatter.ofPattern("dd/MM/uuuu");
 
@@ -55,6 +57,16 @@ public class StockAtrTradeService {
     public boolean refreshLevelsAtEntry(TriggeredTradeSetupEntity trade, Double spotEntryPrice) {
         if (!isAtrSignalSpotTrade(trade) || spotEntryPrice == null || !Double.isFinite(spotEntryPrice)
                 || spotEntryPrice <= 0d || mStockHistoricalService == null) {
+            return false;
+        }
+
+        Double triggerSpotEntry = trade.getEntryPrice();
+        if (triggerSpotEntry != null && triggerSpotEntry > 0d
+                && Math.abs(spotEntryPrice - triggerSpotEntry) / triggerSpotEntry
+                > ENTRY_REFRESH_SPOT_TOLERANCE_PERCENT) {
+            log.warn("Keeping original ATR levels for trade {} because MStock entry spot {} differs from trigger reference {} by more than {}%",
+                    trade.getId(), roundPrice(spotEntryPrice), roundPrice(triggerSpotEntry),
+                    ENTRY_REFRESH_SPOT_TOLERANCE_PERCENT * 100d);
             return false;
         }
 

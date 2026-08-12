@@ -3131,6 +3131,21 @@ public class TradeExecutionService {
         return null;
     }
 
+    private double applySpotTargetExitFloor(TriggeredTradeSetupEntity trade, double candidatePrice, String exitReason) {
+        boolean targetExit = "TARGET_HIT".equalsIgnoreCase(exitReason)
+                || ("EXIT_CHASE".equalsIgnoreCase(exitReason) && "TARGET_HIT".equalsIgnoreCase(trade.getExitReason()));
+        if (!targetExit || !Boolean.TRUE.equals(trade.getUseSpotForTarget())) {
+            return candidatePrice;
+        }
+        Double floor = TradeCostCalculator.minimumProfitableExitPrice(trade, 0.05d);
+        if (floor == null || candidatePrice + 0.000001d >= floor) {
+            return candidatePrice;
+        }
+        log.info("Keeping spot-target exit price for trade {} at net-profitable floor {} instead of {}",
+                trade.getId(), floor, candidatePrice);
+        return floor;
+    }
+
     private double resolveEntryAttemptPrice(TriggeredTradeSetupEntity trigger,
                                             EntryDiagnostics diagnostics,
                                             int attemptIndex,
@@ -3412,6 +3427,7 @@ public class TradeExecutionService {
         // Keep subsequent polling pinned to the broker that accepted this exit.
         persisted.setBrokerCredentialsId(exitCtx.getBrokerCredentialsId());
 
+        exitPrice = applySpotTargetExitFloor(persisted, exitPrice, exitReason);
         Double safeExitPrice = sanitizeExitPriceCandidate(persisted, exitPrice, "EXIT_PLACE");
         if (safeExitPrice == null) {
             return OrderPlacementResult.builder()
@@ -4222,6 +4238,7 @@ public class TradeExecutionService {
             return new ModifyExitOrderResult(false, "No exit order is currently active for this trade.");
         }
 
+        newPrice = applySpotTargetExitFloor(trade, newPrice, exitReason);
         Double safeNewPrice = sanitizeExitPriceCandidate(trade, newPrice, "EXIT_MODIFY_" + (exitReason != null ? exitReason : "UNKNOWN"));
         if (safeNewPrice == null) {
             String msg = String.format("Modify exit order skipped for trade %s due to implausible price %.2f", trade.getId(), newPrice);

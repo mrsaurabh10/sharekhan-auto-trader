@@ -22,6 +22,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class StockAtrTradeServiceTest {
@@ -101,6 +102,7 @@ class StockAtrTradeServiceTest {
                 .source("atr-signal")
                 .spotScripCode(12345)
                 .optionType("CE")
+                .entryPrice(200.0)
                 .useSpotForSl(true)
                 .useSpotForTarget(true)
                 .stopLoss(180.0)
@@ -141,6 +143,32 @@ class StockAtrTradeServiceTest {
         assertThat(trade.getTarget1()).isEqualTo(220.0);
         assertThat(trade.getTarget2()).isEqualTo(230.0);
         assertThat(trade.getTarget3()).isEqualTo(240.0);
+    }
+
+    @Test
+    void keepsOriginalLevelsWhenEntryRefreshSpotMateriallyDiffersFromTriggerReference() {
+        StockAtrTradeService service = new StockAtrTradeService(mock(ScriptMasterRepository.class), mock(SharekhanHistoricalService.class));
+        MStockHistoricalService mStockHistoricalService = mock(MStockHistoricalService.class);
+        ReflectionTestUtils.setField(service, "mStockHistoricalService", mStockHistoricalService);
+
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(12L)
+                .source("atr-signal")
+                .spotScripCode(12345)
+                .optionType("CE")
+                .entryPrice(404.65)
+                .useSpotForSl(true)
+                .useSpotForTarget(true)
+                .stopLoss(403.43)
+                .target1(405.87)
+                .target2(406.48)
+                .target3(407.09)
+                .build();
+
+        assertThat(service.refreshLevelsAtEntry(trade, 404.20)).isFalse();
+        assertThat(trade.getStopLoss()).isEqualTo(403.43);
+        assertThat(trade.getTarget1()).isEqualTo(405.87);
+        verifyNoInteractions(mStockHistoricalService);
     }
 
     private List<SharekhanHistoricalService.HistoricalCandle> candles(int count) {
