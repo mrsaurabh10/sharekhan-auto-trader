@@ -31,9 +31,30 @@ public class ShoonyaQuoteService {
     private final BrokerAuthProviderRegistry providerRegistry;
     private final ShoonyaInstrumentMasterService instrumentMasterService;
 
-    public record LiveQuote(String tradingSymbol, String token, Double lastPrice, Double bestBid, Double bestAsk) {
+    /**
+     * A quote retains both the identity we requested and the identity echoed by
+     * Shoonya.  Never infer the latter from the request: that would hide an
+     * incorrect token/symbol routing response.
+     */
+    public record LiveQuote(String tradingSymbol,
+                            String token,
+                            String returnedTradingSymbol,
+                            String returnedToken,
+                            Double lastPrice,
+                            Double bestBid,
+                            Double bestAsk) {
+        /** Convenience constructor retained for tests and explicitly trusted callers. */
+        public LiveQuote(String tradingSymbol, String token, Double lastPrice, Double bestBid, Double bestAsk) {
+            this(tradingSymbol, token, tradingSymbol, token, lastPrice, bestBid, bestAsk);
+        }
         public boolean hasUsablePrice() { return usable(lastPrice) || usable(bestAsk) || usable(bestBid); }
         public Double referencePrice() { return usable(lastPrice) ? lastPrice : usable(bestAsk) ? bestAsk : bestBid; }
+        public boolean hasConfirmedIdentity() {
+            return StringUtils.hasText(returnedTradingSymbol)
+                    && StringUtils.hasText(returnedToken)
+                    && tradingSymbol.equalsIgnoreCase(returnedTradingSymbol)
+                    && token.equalsIgnoreCase(returnedToken);
+        }
         private static boolean usable(Double value) { return value != null && Double.isFinite(value) && value > 0d; }
     }
 
@@ -71,6 +92,7 @@ public class ShoonyaQuoteService {
             JSONObject quote = getQuotes(resolved.getExchange(), resolved.getToken(), null);
             if (!"Ok".equalsIgnoreCase(quote.optString("stat"))) return Optional.empty();
             LiveQuote result = new LiveQuote(resolved.getTradingSymbol(), resolved.getToken(),
+                    firstText(quote, "tsym", "trading_symbol"), firstText(quote, "tk", "token"),
                     decimal(quote, "lp"), decimal(quote, "bp1"), decimal(quote, "sp1"));
             return result.hasUsablePrice() ? Optional.of(result) : Optional.empty();
         } catch (Exception e) {
@@ -82,6 +104,14 @@ public class ShoonyaQuoteService {
         String value = quote.optString(key, "");
         try { return StringUtils.hasText(value) ? Double.valueOf(value) : null; }
         catch (NumberFormatException ignored) { return null; }
+    }
+
+    private static String firstText(JSONObject quote, String... keys) {
+        for (String key : keys) {
+            String value = quote.optString(key, "");
+            if (StringUtils.hasText(value)) return value.trim();
+        }
+        return null;
     }
 
     private JSONObject post(JSONObject request, String sessionToken) {

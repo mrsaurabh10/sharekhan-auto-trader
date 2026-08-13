@@ -337,16 +337,44 @@ public class TradeExecutionService {
             Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
             if (quoteOpt.isEmpty()) return null;
             ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            if (!quote.hasConfirmedIdentity()) {
+                String details = String.format(Locale.ROOT,
+                        "provider=SHOONYA; requestedSymbol=%s; requestedToken=%s; returnedSymbol=%s; returnedToken=%s; ltp=%s",
+                        quote.tradingSymbol(), quote.token(), quote.returnedTradingSymbol(), quote.returnedToken(),
+                        formatPrice(quote.referencePrice()));
+                log.error("OPTION_QUOTE_IDENTITY_MISMATCH | context={} | scrip={} | {}",
+                        context, script.getScripCode(), details);
+                recordOptionQuoteAudit(script, context, "REJECTED", "OPTION_QUOTE_IDENTITY_MISMATCH", quote, details);
+                return null;
+            }
             double price = quote.referencePrice();
             ltpCacheService.updateLtp(script.getScripCode(), price);
             if (quoteCacheService != null) quoteCacheService.recordQuote(script.getScripCode(), quote.bestBid(), quote.bestAsk(), quote.lastPrice());
             log.info("[{}] Using Shoonya option quote for {} token={}: ltp={} bid={} ask={}", context,
                     quote.tradingSymbol(), quote.token(), quote.lastPrice(), quote.bestBid(), quote.bestAsk());
+            recordOptionQuoteAudit(script, context, "ACCEPTED", "OPTION_QUOTE_IDENTITY_VERIFIED", quote,
+                    String.format(Locale.ROOT, "provider=SHOONYA; requestedSymbol=%s; requestedToken=%s; returnedSymbol=%s; returnedToken=%s",
+                            quote.tradingSymbol(), quote.token(), quote.returnedTradingSymbol(), quote.returnedToken()));
             return price;
         } catch (Exception e) {
             log.warn("[{}] Shoonya option quote failed for scrip {}: {}", context, script.getScripCode(), e.getMessage());
             return null;
         }
+    }
+
+    private void recordOptionQuoteAudit(ScriptMasterEntity script,
+                                        String context,
+                                        String outcome,
+                                        String reason,
+                                        ShoonyaQuoteService.LiveQuote quote,
+                                        String details) {
+        if (tradeAuditService == null || script == null) return;
+        tradeAuditService.record(TradeAuditEventEntity.builder()
+                .source(context).symbol(script.getTradingSymbol()).eventType("OPTION_QUOTE_VALIDATION")
+                .outcome(outcome).reason(reason).optionType(script.getOptionType()).expiry(script.getExpiry())
+                .strikePrice(script.getStrikePrice()).optionLtp(quote != null ? quote.referencePrice() : null)
+                .bestBid(quote != null ? quote.bestBid() : null).bestAsk(quote != null ? quote.bestAsk() : null)
+                .details(details).build());
     }
 
     private Double resolveFreshSharekhanReferencePrice(Integer scripCode, String context) {
@@ -5120,11 +5148,21 @@ public class TradeExecutionService {
                 log.warn("[{}] MStock LTP API returned null data for instrument {} (scrip {}).", context, instrumentKey, scripCode);
                 return null;
             }
+            Object returnedToken = payload.get("instrument_token");
+            if (isFnoOption(script) && !matchesRequestedOptionToken(script, returnedToken)) {
+                String details = String.format(Locale.ROOT,
+                        "provider=MSTOCK; requestedScrip=%s; requestedInstrument=%s; returnedInstrumentToken=%s; payload=%s",
+                        script.getScripCode(), instrumentKey, returnedToken, payload);
+                log.error("OPTION_QUOTE_IDENTITY_MISMATCH | context={} | {}", context, details);
+                recordOptionQuoteAudit(script, context, "REJECTED", "OPTION_QUOTE_IDENTITY_MISMATCH", null, details);
+                return null;
+            }
             Object lastPriceObj = payload.get("last_price");
             if (lastPriceObj instanceof Number number) {
                 double fetchedLtp = number.doubleValue();
                 ltpCacheService.updateLtp(scripCode, fetchedLtp);
-                log.info("[{}] Fetched LTP {} via MStock for scrip {} (instrument {}).", context, fetchedLtp, scripCode, instrumentKey);
+                log.info("[{}] Fetched verified LTP {} via MStock for scrip {} (instrument={}, returnedToken={}).",
+                        context, fetchedLtp, scripCode, instrumentKey, returnedToken);
                 return fetchedLtp;
             }
             log.warn("[{}] MStock LTP API returned missing last_price for instrument {} (scrip {}). Payload={}", context, instrumentKey, scripCode, payload);
@@ -5133,6 +5171,13 @@ public class TradeExecutionService {
             log.debug("[{}] MStock fallback stacktrace", context, ex);
         }
         return null;
+    }
+
+    private boolean matchesRequestedOptionToken(ScriptMasterEntity script, Object returnedToken) {
+        if (script == null || script.getScripCode() == null || !(returnedToken instanceof Number number)) {
+            return false;
+        }
+        return number.longValue() == script.getScripCode().longValue();
     }
 
     private String buildEntryLockKey(TriggerTradeRequestEntity request) {

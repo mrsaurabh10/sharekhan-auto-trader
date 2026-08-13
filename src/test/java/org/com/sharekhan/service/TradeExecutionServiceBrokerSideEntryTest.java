@@ -124,6 +124,26 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void rejectsShoonyaOptionQuoteWhenReturnedIdentityIsNotTheRequestedContract() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(123456).tradingSymbol("AUROPHARMA").exchange("NF")
+                .instrumentType("OI").strikePrice(1560.0).optionType("CE").expiry("25/08/2026").build();
+        when(ctx.scriptRepo.findByScripCode(123456)).thenReturn(option);
+
+        ShoonyaQuoteService shoonya = mock(ShoonyaQuoteService.class);
+        when(shoonya.getOptionQuote(option)).thenReturn(Optional.of(new ShoonyaQuoteService.LiveQuote(
+                "AUROPHARMA25AUG26C1560", "73045", "AUROPHARMA-EQ", "275", 1560.0, 1559.0, 1561.0)));
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+
+        Double price = ReflectionTestUtils.invokeMethod(
+                ctx.service, "resolveEntryReferencePrice", 123456, "executeTriggeredTrade");
+
+        assertThat(price).isNull();
+        verify(ctx.ltpCache, never()).updateLtp(123456, 1560.0);
+    }
+
+    @Test
     void advancesStopsForLaterInitialTargetLegsWhenEarlierTargetFills() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         TriggeredTradeSetupEntity targetOne = new TriggeredTradeSetupEntity();
