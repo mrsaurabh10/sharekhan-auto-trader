@@ -31,6 +31,7 @@ public class AtrPreviousDayBreakoutQualificationService {
     /** Minimum close-to-entry breakout buffer when PDH/PDL is at the close. */
     private static final double DEFAULT_MIN_ENTRY_DISTANCE_ATR = 0.35d;
     private static final double MAX_ENTRY_DISTANCE_ATR = 3d;
+    private static final double ENTRY_DISTANCE_COMPARISON_EPSILON = 1e-9d;
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
     private final StrategySupport support;
@@ -177,7 +178,12 @@ public class AtrPreviousDayBreakoutQualificationService {
                     double entry = entryFor(swing.price(), referenceClose, entryOffset, minimumDistanceAtr, atr, ce);
                     double distance = ce ? entry - referenceClose : referenceClose - entry;
                     return (ce ? entry > referenceClose : entry < referenceClose)
-                            && distance >= minimumDistanceAtr * atr && distance <= MAX_ENTRY_DISTANCE_ATR * atr;
+                            // The buffer itself can create an exact 0.35-ATR
+                            // distance. Allow a tiny IEEE-754 tolerance so a
+                            // value such as 0.18199999999996 is not rejected
+                            // against the mathematically identical 0.182.
+                            && distance + ENTRY_DISTANCE_COMPARISON_EPSILON >= minimumDistanceAtr * atr
+                            && distance <= MAX_ENTRY_DISTANCE_ATR * atr + ENTRY_DISTANCE_COMPARISON_EPSILON;
                 })
                 .min(Comparator.comparingDouble(swing -> Math.abs(entryFor(
                         swing.price(), referenceClose, entryOffset, minimumDistanceAtr, atr, ce) - referenceClose)));
@@ -189,7 +195,9 @@ public class AtrPreviousDayBreakoutQualificationService {
             boolean structuralSideValid = ce ? swing.price() >= referenceClose : swing.price() <= referenceClose;
             double entry = entryFor(swing.price(), referenceClose, entryOffset, minimumDistanceAtr, atr, ce);
             double distanceAtr = (ce ? entry - referenceClose : referenceClose - entry) / atr;
-            boolean accepted = structuralSideValid && distanceAtr >= minimumDistanceAtr && distanceAtr <= MAX_ENTRY_DISTANCE_ATR;
+            boolean accepted = structuralSideValid
+                    && distanceAtr + ENTRY_DISTANCE_COMPARISON_EPSILON >= minimumDistanceAtr
+                    && distanceAtr <= MAX_ENTRY_DISTANCE_ATR + ENTRY_DISTANCE_COMPARISON_EPSILON;
             return swing.time() + "@" + support.roundPrice(swing.price()) + " entry=" + support.roundPrice(entry)
                     + " distanceAtr=" + support.roundPrice(distanceAtr) + " structuralSideValid=" + structuralSideValid
                     + " accepted=" + accepted;
