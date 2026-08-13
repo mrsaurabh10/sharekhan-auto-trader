@@ -24,12 +24,12 @@ public class AtrPreviousDayBreakoutQualificationService {
 
     static final int ATR_PERIOD = 75;
     static final String ENTRY_OFFSET_ATR_CONFIG = "fno_atr_previous_day_entry_offset_atr";
+    static final String MIN_ENTRY_DISTANCE_ATR_CONFIG = "fno_atr_previous_day_min_entry_distance_atr";
     private static final double DEFAULT_ENTRY_OFFSET_ATR = 0.25d;
     /** Avoid minor pivots and untradeable, distant prior-day levels. */
     private static final double MIN_SWING_REVERSAL_ATR = 0.75d;
-    // A 0.35-ATR buffer admits usable nearby levels while still rejecting an entry
-    // already at or beyond the prior close.
-    private static final double MIN_ENTRY_DISTANCE_ATR = 0.35d;
+    /** Minimum close-to-entry breakout buffer when PDH/PDL is at the close. */
+    private static final double DEFAULT_MIN_ENTRY_DISTANCE_ATR = 0.35d;
     private static final double MAX_ENTRY_DISTANCE_ATR = 3d;
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
@@ -62,34 +62,38 @@ public class AtrPreviousDayBreakoutQualificationService {
         double referenceClose = previousDayCandles.get(previousDayCandles.size() - 1).close();
         double offsetMultiplier = entryOffsetAtr(appUserId);
         double entryOffset = offsetMultiplier * atr;
+        double minimumDistanceAtr = minimumEntryDistanceAtr(appUserId);
         List<SwingPoint> swingHighs = withReferenceLevel(meaningfulSwingHighs(previousDayCandles, atr), pdh);
         List<SwingPoint> swingLows = withReferenceLevel(meaningfulSwingLows(previousDayCandles, atr), pdl);
         Optional<SwingPoint> selectedSwing = selectTradableSwing(
-                ce ? swingHighs : swingLows, referenceClose, entryOffset, atr, ce);
-        List<String> swingAssessments = assessSwingEntries(ce ? swingHighs : swingLows, referenceClose, entryOffset, atr, ce);
+                ce ? swingHighs : swingLows, referenceClose, entryOffset, minimumDistanceAtr, atr, ce);
+        List<String> swingAssessments = assessSwingEntries(
+                ce ? swingHighs : swingLows, referenceClose, entryOffset, minimumDistanceAtr, atr, ce);
         String selectedLevelType = selectedSwing.map(swing -> swing.referenceLevel()
                 ? (ce ? "PDH" : "PDL")
                 : (ce ? "PD_MEANINGFUL_SWING_HIGH" : "PD_MEANINGFUL_SWING_LOW"))
                 .orElse(ce ? "PD_MEANINGFUL_SWING_HIGH" : "PD_MEANINGFUL_SWING_LOW");
         log.info("ATR_PREVIOUS_DAY_LEVELS | symbol={} | referenceDate={} | optionType={} | pdh={} | pdl={} | "
                         + "referenceClose={} | referenceCloseSource={} | swingHighCandidates={} | swingLowCandidates={} | atr75_5m={} | "
-                        + "offsetAtr={} | minReversalAtr={} | entryDistanceAtrRange={}-{} | swingEntryAssessments={} | "
+                        + "offsetAtr={} | minEntryDistanceAtr={} | minReversalAtr={} | entryDistanceAtrRange={}-{} | swingEntryAssessments={} | "
                         + "selectedType={} | selectedLevel={} | entry={}",
                 spot.getTradingSymbol(), referenceDay, optionType, support.roundPrice(pdh), support.roundPrice(pdl),
                 support.roundPrice(referenceClose), "FINAL_MSTOCK_CLOSE", swingHighs, swingLows, support.roundPrice(atr), offsetMultiplier,
-                MIN_SWING_REVERSAL_ATR, MIN_ENTRY_DISTANCE_ATR, MAX_ENTRY_DISTANCE_ATR, swingAssessments, selectedLevelType,
+                minimumDistanceAtr, MIN_SWING_REVERSAL_ATR, minimumDistanceAtr, MAX_ENTRY_DISTANCE_ATR, swingAssessments, selectedLevelType,
                 selectedSwing.map(SwingPoint::price).map(support::roundPrice).orElse(null),
-                selectedSwing.map(swing -> support.roundPrice(entryFor(swing.price(), entryOffset, ce))).orElse(null));
+                selectedSwing.map(swing -> support.roundPrice(entryFor(
+                        swing.price(), referenceClose, entryOffset, minimumDistanceAtr, atr, ce))).orElse(null));
 
         if (selectedSwing.isEmpty()) {
             return Fno925EntryQualificationService.Qualification.waiting(
                     "no meaningful prior-day " + (ce ? "swing high" : "swing low")
-                            + " has an entry between " + MIN_ENTRY_DISTANCE_ATR + " and "
+                            + " has an entry between " + minimumDistanceAtr + " and "
                             + MAX_ENTRY_DISTANCE_ATR + " ATR from the prior-day close");
         }
 
         double structuralLevel = selectedSwing.get().price();
-        double entry = support.roundPrice(entryFor(structuralLevel, entryOffset, ce));
+        double entry = support.roundPrice(entryFor(
+                structuralLevel, referenceClose, entryOffset, minimumDistanceAtr, atr, ce));
         // This is intentionally checked again after price rounding. A PE must
         // never be configured above/equal to the reference close (and a CE
         // never below/equal), irrespective of source quirks or tick rounding.
@@ -161,25 +165,34 @@ public class AtrPreviousDayBreakoutQualificationService {
     }
 
     private Optional<SwingPoint> selectTradableSwing(List<SwingPoint> candidates, double referenceClose,
-                                                       double entryOffset, double atr, boolean ce) {
+                                                       double entryOffset, double minimumDistanceAtr, double atr, boolean ce) {
         return candidates.stream()
                 .filter(swing -> {
-                    double entry = entryFor(swing.price(), entryOffset, ce);
+                    // A breakout must originate at/above the close for CE and
+                    // at/below it for PE. The buffer is for close-at-PDH/PDL,
+                    // not a way to turn a structurally wrong-side swing into a trigger.
+                    if (ce ? swing.price() < referenceClose : swing.price() > referenceClose) {
+                        return false;
+                    }
+                    double entry = entryFor(swing.price(), referenceClose, entryOffset, minimumDistanceAtr, atr, ce);
                     double distance = ce ? entry - referenceClose : referenceClose - entry;
                     return (ce ? entry > referenceClose : entry < referenceClose)
-                            && distance >= MIN_ENTRY_DISTANCE_ATR * atr && distance <= MAX_ENTRY_DISTANCE_ATR * atr;
+                            && distance >= minimumDistanceAtr * atr && distance <= MAX_ENTRY_DISTANCE_ATR * atr;
                 })
-                .min(Comparator.comparingDouble(swing -> Math.abs(entryFor(swing.price(), entryOffset, ce) - referenceClose)));
+                .min(Comparator.comparingDouble(swing -> Math.abs(entryFor(
+                        swing.price(), referenceClose, entryOffset, minimumDistanceAtr, atr, ce) - referenceClose)));
     }
 
     private List<String> assessSwingEntries(List<SwingPoint> candidates, double referenceClose,
-                                            double entryOffset, double atr, boolean ce) {
+                                            double entryOffset, double minimumDistanceAtr, double atr, boolean ce) {
         return candidates.stream().map(swing -> {
-            double entry = entryFor(swing.price(), entryOffset, ce);
+            boolean structuralSideValid = ce ? swing.price() >= referenceClose : swing.price() <= referenceClose;
+            double entry = entryFor(swing.price(), referenceClose, entryOffset, minimumDistanceAtr, atr, ce);
             double distanceAtr = (ce ? entry - referenceClose : referenceClose - entry) / atr;
-            boolean accepted = distanceAtr >= MIN_ENTRY_DISTANCE_ATR && distanceAtr <= MAX_ENTRY_DISTANCE_ATR;
+            boolean accepted = structuralSideValid && distanceAtr >= minimumDistanceAtr && distanceAtr <= MAX_ENTRY_DISTANCE_ATR;
             return swing.time() + "@" + support.roundPrice(swing.price()) + " entry=" + support.roundPrice(entry)
-                    + " distanceAtr=" + support.roundPrice(distanceAtr) + " accepted=" + accepted;
+                    + " distanceAtr=" + support.roundPrice(distanceAtr) + " structuralSideValid=" + structuralSideValid
+                    + " accepted=" + accepted;
         }).toList();
     }
 
@@ -193,8 +206,11 @@ public class AtrPreviousDayBreakoutQualificationService {
         return List.copyOf(candidates);
     }
 
-    private double entryFor(double level, double entryOffset, boolean ce) {
-        return level + (ce ? entryOffset : -entryOffset);
+    private double entryFor(double level, double referenceClose, double entryOffset,
+                            double minimumDistanceAtr, double atr, boolean ce) {
+        double levelEntry = level + (ce ? entryOffset : -entryOffset);
+        double bufferedCloseEntry = referenceClose + (ce ? 1d : -1d) * minimumDistanceAtr * atr;
+        return ce ? Math.max(levelEntry, bufferedCloseEntry) : Math.min(levelEntry, bufferedCloseEntry);
     }
 
     private double entryOffsetAtr(Long appUserId) {
@@ -207,6 +223,19 @@ public class AtrPreviousDayBreakoutQualificationService {
             return Double.isFinite(value) && value >= 0d ? value : DEFAULT_ENTRY_OFFSET_ATR;
         } catch (Exception ignored) {
             return DEFAULT_ENTRY_OFFSET_ATR;
+        }
+    }
+
+    private double minimumEntryDistanceAtr(Long appUserId) {
+        try {
+            String configured = userConfigService.getConfig(appUserId, MIN_ENTRY_DISTANCE_ATR_CONFIG, null);
+            if (configured == null || configured.isBlank()) {
+                return DEFAULT_MIN_ENTRY_DISTANCE_ATR;
+            }
+            double value = Double.parseDouble(configured.trim());
+            return Double.isFinite(value) && value > 0d ? value : DEFAULT_MIN_ENTRY_DISTANCE_ATR;
+        } catch (Exception ignored) {
+            return DEFAULT_MIN_ENTRY_DISTANCE_ATR;
         }
     }
 
