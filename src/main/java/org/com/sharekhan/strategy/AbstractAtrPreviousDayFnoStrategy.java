@@ -55,11 +55,9 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
                 waiting.add(symbol + ": an ATR prior-day setup is already being created or monitored today");
                 continue;
             }
-            boolean retainRunKey = false;
             try {
                 if (support.hasAtrPreviousDayEntryOn(now.toLocalDate(), request.getUserId(), symbol)) {
                     waiting.add(symbol + ": an ATR prior-day entry has already been triggered for this symbol today");
-                    retainRunKey = true;
                     continue;
                 }
                 ScriptMasterEntity spot = support.resolveSpotScript(symbol);
@@ -77,13 +75,14 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
                     TriggerTradeRequestEntity trade = existing != null ? existing : support.createPendingTradeRequest(trigger);
                     triggered.add(new Triggered(symbol, trigger, trade, existing != null));
                 });
-                retainRunKey = !triggered.isEmpty() && triggered.get(triggered.size() - 1).symbol().equals(symbol);
             } catch (Exception e) {
                 waiting.add(symbol + ": " + e.getMessage());
             } finally {
-                if (!retainRunKey) {
-                    submittedSymbols.remove(key);
-                }
+                // This set is a short-lived concurrent-Apply lock only. Persisted
+                // active requests are the durable duplicate guard. Retaining a
+                // key after a request is later cancelled/deleted leaves the
+                // subscription permanently stuck until an application restart.
+                submittedSymbols.remove(key);
             }
         }
         if (triggered.isEmpty()) {

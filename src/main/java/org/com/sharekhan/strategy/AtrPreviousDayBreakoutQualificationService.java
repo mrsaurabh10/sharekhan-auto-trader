@@ -89,7 +89,14 @@ public class AtrPreviousDayBreakoutQualificationService {
         }
 
         double structuralLevel = selectedSwing.get().price();
-        double entry = entryFor(structuralLevel, entryOffset, ce);
+        double entry = support.roundPrice(entryFor(structuralLevel, entryOffset, ce));
+        // This is intentionally checked again after price rounding. A PE must
+        // never be configured above/equal to the reference close (and a CE
+        // never below/equal), irrespective of source quirks or tick rounding.
+        if (ce ? entry <= referenceClose : entry >= referenceClose) {
+            return Fno925EntryQualificationService.Qualification.waiting(
+                    "rounded prior-day " + (ce ? "CE" : "PE") + " entry is not beyond the prior-session close");
+        }
 
         double stop = ce ? entry - 2d * atr : entry + 2d * atr;
         return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
@@ -211,9 +218,11 @@ public class AtrPreviousDayBreakoutQualificationService {
         try {
             List<StrategyCandle> intraday = sorted(support.loadCandles(spot, "5minute").candles());
             LocalDateTime from = now.minusDays(15).withHour(9).withMinute(15).withSecond(0).withNano(0);
-            MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandles(
-                    spot.getScripCode(), null, null, null, null, null,
-                    "5minute", from.toLocalDate().toString(), now.toLocalDate().toString());
+            StrategySupport.MStockHistoricalIdentity historicalIdentity = support.resolveMStockHistoricalIdentity(spot)
+                    .orElseThrow(() -> new IllegalStateException("MStock strategy candle identity is unavailable"));
+            MStockHistoricalService.HistoricalResponse response = mStockHistoricalService.getHistoricalCandlesByToken(
+                    historicalIdentity.exchange(), historicalIdentity.instrumentToken(), "5minute",
+                    from.toLocalDate().toString(), now.toLocalDate().toString());
             Map<String, StrategyCandle> merged = new TreeMap<>();
             if (response != null && response.candles() != null) {
                 response.candles().stream()

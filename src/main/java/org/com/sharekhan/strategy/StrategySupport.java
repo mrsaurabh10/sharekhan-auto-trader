@@ -442,6 +442,24 @@ public class StrategySupport {
         }
     }
 
+    /**
+     * Resolves the exact market identity used for strategy candles.  Historical
+     * candles must use this same exchange/token; mixing NSE historical data with
+     * BSE intraday data (or the reverse) produces invalid prior-day levels.
+     */
+    public Optional<MStockHistoricalIdentity> resolveMStockHistoricalIdentity(ScriptMasterEntity spotScript) {
+        return resolveMStockPollInstrument(spotScript).flatMap(instrument -> {
+            try {
+                long token = Long.parseLong(instrument.token());
+                return token > 0L
+                        ? Optional.of(new MStockHistoricalIdentity(instrument.exchange(), token, instrument.key()))
+                        : Optional.empty();
+            } catch (NumberFormatException ignored) {
+                return Optional.empty();
+            }
+        });
+    }
+
     public String nearestExpiry(String symbol, String optionType) {
         LocalDateTime now = LocalDateTime.now(MARKET_ZONE);
         LocalTime expiryCutoff = LocalTime.of(15, 30);
@@ -630,7 +648,41 @@ public class StrategySupport {
             }
         }
 
+        // F&O entries are traded against the NSE underlying.  A BSE fallback can
+        // be useful for a display-only chart, but must never define PDH/PDL,
+        // ATR, or a live NSE option trigger: the two exchanges can close at
+        // different prices.  Use the NSE cash token directly when the MStock
+        // master is incomplete; if MStock cannot serve it, leave the strategy
+        // waiting instead of silently calculating from BSE candles.
+        Optional<MStockPollInstrument> directNse = resolveDirectNseSpotInstrument(spotScript, keyOpt.orElse(null));
+        if (directNse.isPresent()) {
+            return directNse;
+        }
+
         return resolveBseSpotFallback(spotScript);
+    }
+
+    private Optional<MStockPollInstrument> resolveDirectNseSpotInstrument(ScriptMasterEntity spotScript, String resolvedKey) {
+        if (spotScript == null || spotScript.getScripCode() == null || spotScript.getScripCode() <= 0
+                || !("NC".equalsIgnoreCase(spotScript.getExchange()) || "NSE".equalsIgnoreCase(spotScript.getExchange()))) {
+            return Optional.empty();
+        }
+        String symbol = normalizeSymbolKey(spotScript.getTradingSymbol());
+        if (!StringUtils.hasText(symbol)) {
+            return Optional.empty();
+        }
+        String key = StringUtils.hasText(resolvedKey) ? resolvedKey : "NSE:" + symbol + "-EQ";
+        MStockInstrumentEntity instrument = MStockInstrumentEntity.builder()
+                .exchange("NSE")
+                .instrumentKey(key)
+                .tradingSymbol(symbol + "-EQ")
+                .instrumentToken(spotScript.getScripCode().longValue())
+                .exchangeToken(String.valueOf(spotScript.getScripCode()))
+                .build();
+        log.warn("MStock NSE master row is missing for symbol={}; using direct NSE spot token={} and refusing BSE strategy candles",
+                symbol, spotScript.getScripCode());
+        return Optional.of(new MStockPollInstrument(key, instrument, "NSE",
+                String.valueOf(spotScript.getScripCode()), false));
     }
 
     private Optional<MStockPollInstrument> resolveBseSpotFallback(ScriptMasterEntity spotScript) {
@@ -756,4 +808,6 @@ public class StrategySupport {
                                         String token,
                                         boolean bseFallback) {
     }
+
+    public record MStockHistoricalIdentity(String exchange, long instrumentToken, String instrumentKey) { }
 }
