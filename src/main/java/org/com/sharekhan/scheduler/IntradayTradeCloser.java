@@ -6,11 +6,14 @@ import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
+import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.service.TradeExecutionService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Slf4j
 @Component
@@ -18,6 +21,7 @@ import java.util.List;
 public class IntradayTradeCloser {
 
     private final TriggeredTradeSetupRepository setupRepository;
+    private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final TradeExecutionService tradeExecutionService;
     private final LtpCacheService ltpCacheService;
 
@@ -61,5 +65,18 @@ public class IntradayTradeCloser {
                 log.error("❌ Failed to update intraday target trade {}: {}", trade.getId(), e.getMessage(), e);
             }
         }
+    }
+
+    /**
+     * Keeps the day's requests available for post-market investigation, then removes
+     * the intraday-only request rows after the analysis window has ended.
+     * Executed trade rows are deliberately retained as the permanent audit trail.
+     */
+    @Scheduled(cron = "0 30 23 * * MON-FRI", zone = "Asia/Kolkata")
+    public void purgeTodayIntradayTradeRequests() {
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
+        LocalDateTime dayStart = today.atStartOfDay();
+        int deleted = triggerTradeRequestRepository.deleteIntradayRequestsCreatedBetween(dayStart, dayStart.plusDays(1));
+        log.info("🧹 Removed {} intraday trade requests created on {} after the analysis window", deleted, today);
     }
 }

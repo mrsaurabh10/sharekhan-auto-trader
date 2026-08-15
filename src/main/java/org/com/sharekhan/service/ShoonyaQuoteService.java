@@ -20,6 +20,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /** Read-only Shoonya client. It intentionally exposes only NorenWClientAPI/GetQuotes. */
@@ -74,8 +75,12 @@ public class ShoonyaQuoteService {
             tokenStoreService.updateToken(Broker.SHOONYA, authenticated.token(), authenticated.expiresIn());
             sessionToken = authenticated.token();
         }
+        String quoteRequestId = UUID.randomUUID().toString();
         JSONObject request = new JSONObject().put("uid", properties.getUid()).put("exch", exchange).put("token", token);
-        return post(request, sessionToken);
+        // This is the wire-request identity, recorded immediately before the HTTP call.
+        // Do not add uid or Authorization to this log.
+        log.info("SHOONYA_QUOTE_REQUEST | requestId={} | exchange={} | token={}", quoteRequestId, exchange, token);
+        return post(request, sessionToken, quoteRequestId);
     }
 
     /** Fetches a current option quote using the persisted Shoonya symbol master mapping. */
@@ -114,7 +119,7 @@ public class ShoonyaQuoteService {
         return null;
     }
 
-    private JSONObject post(JSONObject request, String sessionToken) {
+    private JSONObject post(JSONObject request, String sessionToken, String quoteRequestId) {
         try {
             HttpURLConnection connection = (HttpURLConnection) URI.create(properties.getApiUrl() + "/GetQuotes").toURL().openConnection();
             connection.setRequestMethod("POST");
@@ -130,9 +135,14 @@ public class ShoonyaQuoteService {
                     status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream(), StandardCharsets.UTF_8))) {
                 String response = reader.lines().collect(Collectors.joining());
                 if (response.isBlank()) throw new IllegalStateException("Shoonya GetQuotes returned HTTP " + status + " with no body");
-                return new JSONObject(response);
+                JSONObject parsed = new JSONObject(response);
+                log.info("SHOONYA_QUOTE_RESPONSE | requestId={} | httpStatus={} | returnedExchange={} | returnedToken={} | returnedSymbol={} | status={} | ltp={}",
+                        quoteRequestId, status, firstText(parsed, "exch", "exchange"), firstText(parsed, "tk", "token"),
+                        firstText(parsed, "tsym", "trading_symbol"), parsed.optString("stat", ""), decimal(parsed, "lp"));
+                return parsed;
             }
         } catch (Exception e) {
+            log.error("SHOONYA_QUOTE_FAILURE | requestId={} | message={}", quoteRequestId, e.getMessage());
             throw new IllegalStateException("Shoonya GetQuotes failed: " + e.getMessage(), e);
         }
     }

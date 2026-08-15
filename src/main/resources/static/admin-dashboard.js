@@ -1425,7 +1425,24 @@
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.innerText = 'Edit';
           editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, tslEnabled: t.tslEnabled, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); await loadAnalyticsForUser(uid); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginLeft = '4px'; moveBtn.innerText = 'Move SL to Cost';
-          moveBtn.addEventListener('click', async function () { await ensureCsrf(); try { await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); } catch(e) { alert('Failed to move SL to cost: ' + (e && e.message ? e.message : e)); } }); actionCell.appendChild(moveBtn);
+          moveBtn.addEventListener('click', async function () {
+            const spotBasedSl = t.useSpotForSl === true || (t.useSpotForSl == null && t.useSpotPrice === true);
+            let reference = null;
+            if (spotBasedSl) {
+              reference = prompt('Move SL to which cost basis? Enter SPOT for the original spot entry, or PREMIUM for the actual option entry premium.', 'SPOT');
+              if (reference === null) return;
+              reference = String(reference).trim().toUpperCase();
+              if (reference !== 'SPOT' && reference !== 'PREMIUM') { alert('Please choose SPOT or PREMIUM.'); return; }
+              if (reference === 'PREMIUM' && !confirm('Premium break-even includes estimated round-trip charges and can exit immediately if the option premium is already at or below that level. Continue?')) return;
+            }
+            await ensureCsrf();
+            try {
+              const suffix = reference ? '?reference=' + encodeURIComponent(reference) : '';
+              const message = await fetchJson('/api/trades/move-sl-to-cost/' + id + suffix, { method: 'POST' });
+              if (typeof message === 'string') alert(message);
+              setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800);
+            } catch(e) { alert('Failed to move SL to cost: ' + (e && e.message ? e.message : e)); }
+          }); actionCell.appendChild(moveBtn);
           const modifyExitBtn = document.createElement('button'); modifyExitBtn.className = 'btn small'; modifyExitBtn.style.marginLeft = '4px'; modifyExitBtn.innerText = 'Modify Exit';
           modifyExitBtn.addEventListener('click', async function () {
             const price = prompt('Enter new exit price for trade ' + id + ':');

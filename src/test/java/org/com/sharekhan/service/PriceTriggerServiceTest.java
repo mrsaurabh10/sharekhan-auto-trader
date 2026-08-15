@@ -433,6 +433,49 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void atrPreviousDaySpotEntryRejectsWhenTarget1WasAlreadyPassed() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 33, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7024L, 640.25, 643.05, 637.45);
+        trigger.setSource("atr-pdh-pdl-strategy");
+        trigger.setOptionType("PE");
+        trigger.setCreatedAt(LocalDateTime.of(2026, 7, 3, 9, 32, 10));
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        stubIntradayCandle(9, 32, 638.0, 638.0, 633.0, 633.0);
+
+        timedService.evaluatePriceTrigger(20000, 633.0);
+
+        verify(triggerRepo).claimIfStatusEquals(7024L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+        verify(tradeExecutionService, never()).executeTradeFromEntity(trigger);
+    }
+
+    @Test
+    void atrPreviousDaySpotEntryRejectsInsideTenPercentOfTarget1Distance() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 33, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7025L, 100.0, 95.0, 110.0);
+        trigger.setSource("atr-pdh-pdl-strategy");
+        trigger.setCreatedAt(LocalDateTime.of(2026, 7, 3, 9, 32, 10));
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        stubIntradayCandle(9, 32, 100.0, 109.0, 100.0, 109.0);
+
+        timedService.evaluatePriceTrigger(20000, 109.0);
+
+        verify(triggerRepo).claimIfStatusEquals(7025L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+        verify(tradeExecutionService, never()).executeTradeFromEntity(trigger);
+    }
+
+    @Test
     void dynamicStrategySpotSignalSkipsTheOpeningGapGuard() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();

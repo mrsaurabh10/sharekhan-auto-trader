@@ -46,6 +46,7 @@ public class PriceTriggerService {
     private static final LocalTime EQUITY_MARKET_CLOSE = LocalTime.of(15, 30);
     private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
+    private static final double ATR_TARGET1_PROXIMITY_FRACTION = 0.10d;
     private static final String ATR_PREVIOUS_DAY_SOURCE = "atr-pdh-pdl-strategy";
     private static final double ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT = 3000d;
     private static final String GAP_FILL_EXIT_REASON = "GAP_FILL_STOP";
@@ -358,12 +359,9 @@ public class PriceTriggerService {
             return false;
         }
 
-        // Opening-gap protection belongs exclusively to the ATR opening signal.
-        // Manual, Telegram and strategy-generated levels are created intraday, so
-        // comparing them with the market open can falsely reject a valid entry.
-        // The prior-day ATR strategy creates a pending level first. Its gap policy is applied separately,
-        // but it must not be rejected merely because a pre-creation tick was already beyond T1.
-        if (!ATR_SIGNAL_SOURCE.equalsIgnoreCase(trigger.getSource())) {
+        // This guard applies only to ATR spot-entry requests. Other manual and
+        // strategy requests can legitimately use their own price geometry.
+        if (!isAtrSource(trigger.getSource())) {
             return false;
         }
 
@@ -413,16 +411,22 @@ public class PriceTriggerService {
         if (target1 == null || target1 <= 0d || !Double.isFinite(referencePrice)) {
             return false;
         }
+        Double entryPrice = trigger.getEntryPrice();
+        double entryToTargetDistance = entryPrice == null ? 0d : Math.abs(target1 - entryPrice);
+        double proximityBuffer = entryToTargetDistance * ATR_TARGET1_PROXIMITY_FRACTION;
         boolean reached = downsideEntry ? referencePrice <= target1 : referencePrice >= target1;
-        if (!reached) {
+        boolean withinBuffer = proximityBuffer > 0d
+                && (downsideEntry ? referencePrice <= target1 + proximityBuffer : referencePrice >= target1 - proximityBuffer);
+        if (!reached && !withinBuffer) {
             return false;
         }
         int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
                 TriggeredTradeStatus.REJECTED.name());
         if (claimed == 1) {
-            log.warn("{} {} has already reached/breached ATR target1 {} for trigger {}. Marking as REJECTED.",
-                    priceLabel, referencePrice, target1, trigger.getId());
+            log.warn("{} {} has {} ATR target1 {} for trigger {} (T1 buffer={}). Marking as REJECTED.",
+                    priceLabel, referencePrice, reached ? "reached/breached" : "entered the proximity buffer for",
+                    target1, trigger.getId(), proximityBuffer);
         }
         return true;
     }

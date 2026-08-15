@@ -1669,17 +1669,52 @@ public class TradeExecutionService {
         return saved;
     }
 
-    public boolean moveStopLossToCost(Long tradeId) {
-        TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(tradeId).orElse(null);
-        if (tradeSetupEntity == null) return false;
+    public enum CostStopReference {
+        SPOT,
+        PREMIUM
+    }
 
-        Double costPrice = tradeSetupEntity.getActualEntryPrice() != null && tradeSetupEntity.getActualEntryPrice() > 0d
-                ? tradeSetupEntity.getActualEntryPrice()
-                : tradeSetupEntity.getEntryPrice();
-        tradeSetupEntity.setStopLoss(costPrice);
-        tradeSetupEntity.setUseSpotForSl(Boolean.FALSE);
-        triggeredTradeRepo.save(tradeSetupEntity);
-        return true;
+    public enum MoveStopLossToCostResult {
+        UPDATED_SPOT,
+        UPDATED_PREMIUM_BREAK_EVEN,
+        REFERENCE_CHOICE_REQUIRED,
+        INVALID_COST_PRICE,
+        TRADE_NOT_FOUND
+    }
+
+    public MoveStopLossToCostResult moveStopLossToCost(Long tradeId, CostStopReference reference) {
+        TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(tradeId).orElse(null);
+        if (tradeSetupEntity == null) return MoveStopLossToCostResult.TRADE_NOT_FOUND;
+
+        boolean spotBased = Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForSl())
+                || (tradeSetupEntity.getUseSpotForSl() == null && Boolean.TRUE.equals(tradeSetupEntity.getUseSpotPrice()));
+        if (!spotBased) {
+            return movePremiumStopLossToBreakEven(tradeSetupEntity);
+        }
+        if (reference == null) return MoveStopLossToCostResult.REFERENCE_CHOICE_REQUIRED;
+
+        if (reference == CostStopReference.SPOT) {
+            Double spotEntry = tradeSetupEntity.getEntryPrice();
+            if (spotEntry == null || spotEntry <= 0d) return MoveStopLossToCostResult.INVALID_COST_PRICE;
+            tradeSetupEntity.setStopLoss(spotEntry);
+            tradeSetupEntity.setUseSpotForSl(Boolean.TRUE);
+            triggeredTradeRepo.save(tradeSetupEntity);
+            return MoveStopLossToCostResult.UPDATED_SPOT;
+        }
+
+        return movePremiumStopLossToBreakEven(tradeSetupEntity);
+    }
+
+    private MoveStopLossToCostResult movePremiumStopLossToBreakEven(TriggeredTradeSetupEntity trade) {
+        // An option price at its entry premium still loses money once the round-trip
+        // brokerage and statutory charges are applied. Set the SL at the smallest
+        // tick-aligned premium that leaves a positive effective P&L instead.
+        Double netProfitableExitPrice = TradeCostCalculator.minimumProfitableExitPrice(trade, ENTRY_TICK_SIZE);
+        if (netProfitableExitPrice == null) return MoveStopLossToCostResult.INVALID_COST_PRICE;
+        trade.setStopLoss(netProfitableExitPrice);
+        trade.setUseSpotForSl(Boolean.FALSE);
+        triggeredTradeRepo.save(trade);
+        return MoveStopLossToCostResult.UPDATED_PREMIUM_BREAK_EVEN;
     }
 
     public TriggeredTradeSetupEntity execute(TriggeredTradeSetupEntity trigger, double ltp) {

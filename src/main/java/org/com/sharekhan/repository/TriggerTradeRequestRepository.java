@@ -19,6 +19,17 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
 
     List<TriggerTradeRequestEntity> findByStatus(TriggeredTradeStatus status);
 
+    @Modifying
+    @Transactional
+    @Query("""
+            delete from TriggerTradeRequestEntity r
+            where r.intraday = true
+              and r.createdAt >= :dayStart
+              and r.createdAt < :nextDayStart
+            """)
+    int deleteIntradayRequestsCreatedBetween(@Param("dayStart") LocalDateTime dayStart,
+                                             @Param("nextDayStart") LocalDateTime nextDayStart);
+
     List<TriggerTradeRequestEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
 
     long countByExchangeAndScripCodeAndStatusIn(String exchange, Integer scripCode,
