@@ -41,6 +41,11 @@ public class TelegramSignalParser implements TradingSignalParser {
             "\\bTRIGGER\\s+PRICE\\s*:\\s*BUY\\s*"
                     + "(?:ABOVE|ABIVE|ABV|ABVE)\\s*([\\d.]+)",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern TSL_KEYWORD_PATTERN = Pattern.compile(
+            "\\b(?:TSL|TRAIL(?:ING)?\\s*(?:SL|STOP(?:\\s*LOSS)?))\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern LOTS_PATTERN = Pattern.compile(
+            "\\b(?:(\\d+)\\s*LOTS?|LOTS?\\s*(\\d+))\\b", Pattern.CASE_INSENSITIVE);
 
     @Override
     public Map<String, Object> parse(String text) {
@@ -178,18 +183,14 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .findFirst()
                 .orElse(null);
         
-        // Parse Lots from dedicated LOTS line
-        Optional<String> lotsLine = lines.stream()
-                .filter(l -> l.toUpperCase().startsWith("LOTS"))
-                .findFirst();
-
         Integer quantity = null;
-        if (lotsLine.isPresent()) {
-            String lotsVal = lotsLine.get();
-            String lotsStr = lotsVal.replaceAll("(?i)^LOTS[\\s:\\-]*", "").trim();
-            Double d = tryParseDouble(lotsStr);
-            if (d != null) {
-                quantity = d.intValue();
+        Matcher lotsMatcher = LOTS_PATTERN.matcher(normalizedForQuick);
+        if (lotsMatcher.find()) {
+            String lotsText = lotsMatcher.group(1) != null ? lotsMatcher.group(1) : lotsMatcher.group(2);
+            try {
+                quantity = Integer.parseInt(lotsText);
+            } catch (NumberFormatException ignored) {
+                // Leave quantity unset so the user's configured lot size applies.
             }
         }
 
@@ -226,6 +227,15 @@ public class TelegramSignalParser implements TradingSignalParser {
         // Set intraday false if "BTST" present anywhere in original message
         boolean intraday = !text.toUpperCase().contains("BTST");
         result.put("intraday", intraday);
+
+        boolean hasMultipleTargets = tryParseDouble(target2) != null || tryParseDouble(target3) != null;
+        boolean tslRequested = TSL_KEYWORD_PATTERN.matcher(normalizedForQuick).find();
+        // Telegram recommendations with multiple targets and lots are staged by default:
+        // book a portion at each target and protect the remaining position.
+        boolean defaultTsl = quantity != null && quantity > 1 && hasMultipleTargets;
+        if (tslRequested || defaultTsl) {
+            result.put("tslEnabled", true);
+        }
         
         // Pass quantity/lots in "quantity" field
         if (quantity != null) {

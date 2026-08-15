@@ -707,7 +707,8 @@ public class TradeExecutionService {
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
                 .lots(isNoStrikeExchange ? null : request.getQuantity()) // Equities use a share quantity, not lots
-                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
+                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity(),
+                        request.getTarget2(), request.getTarget3()))
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
@@ -949,7 +950,8 @@ public class TradeExecutionService {
         trade.setSymbol(requestEntity.getSymbol());
         trade.setQuantity(requestEntity.getQuantity());
         trade.setLots(requestEntity.getLots());
-        trade.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots()));
+        trade.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots(),
+                requestEntity.getTarget2(), requestEntity.getTarget3()));
         trade.setInstrumentType(requestEntity.getInstrumentType());
         trade.setStrikePrice(requestEntity.getStrikePrice());
         trade.setOptionType(requestEntity.getOptionType());
@@ -1256,7 +1258,8 @@ public class TradeExecutionService {
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
                 .lots(request.getQuantity())
-                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
+                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity(),
+                        request.getTarget2(), request.getTarget3()))
                 .status(TriggeredTradeStatus.TRIGGERED)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
@@ -1631,7 +1634,8 @@ public class TradeExecutionService {
         trade.setTrailingSl(request.getTrailingSl());
         trade.setQuantity(finalQuantity);
         trade.setLots(request.getQuantity()); // Store the lots
-        trade.setTslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()));
+        trade.setTslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity(),
+                request.getTarget2(), request.getTarget3()));
         trade.setStatus(TriggeredTradeStatus.EXECUTED); // Mark as EXECUTED immediately
         trade.setTriggeredAt(LocalDateTime.now());
         trade.setEntryAt(LocalDateTime.now());
@@ -1936,7 +1940,8 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setQuantity(confirmedEntryQuantity);
             triggeredTradeSetupEntity.setLots(resolveExecutedLots(trigger, confirmedEntryQuantity));
             triggeredTradeSetupEntity.setTslEnabled(resolveTslEnabled(
-                    trigger.getTslEnabled(), trigger.getSource(), resolveExecutedLots(trigger, confirmedEntryQuantity)));
+                    trigger.getTslEnabled(), trigger.getSource(), resolveExecutedLots(trigger, confirmedEntryQuantity),
+                    trigger.getTarget2(), trigger.getTarget3()));
             triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
             triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
             triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
@@ -4166,15 +4171,20 @@ public class TradeExecutionService {
     }
 
     /**
-     * ATR and StockBazaari calls are staged recommendations: whenever they
-     * carry more than one lot, preserve a runner after each target instead of
-     * closing the entire position at target one.  This is intentionally
-     * source-scoped so a manually submitted multi-lot order still honours the
-     * user's explicit TSL choice.
+     * ATR and StockBazaari calls are staged recommendations whenever they
+     * carry more than one lot. Telegram calls opt into the same behavior only
+     * when they have multiple targets and more than one final lot. This keeps
+     * a manually submitted multi-lot order under the user's explicit control.
      */
-    private boolean resolveTslEnabled(Boolean requestedTslEnabled, String source, Integer lots) {
+    private boolean resolveTslEnabled(Boolean requestedTslEnabled, String source, Integer lots,
+                                      Double target2, Double target3) {
         return Boolean.TRUE.equals(requestedTslEnabled)
-                || (lots != null && lots > 1 && isStagedSignalSource(source));
+                || (lots != null && lots > 1 && (isStagedSignalSource(source)
+                || ("telegram".equalsIgnoreCase(source) && hasMultipleTargets(target2, target3))));
+    }
+
+    private boolean hasMultipleTargets(Double target2, Double target3) {
+        return (target2 != null && target2 > 0d) || (target3 != null && target3 > 0d);
     }
 
     private boolean isStagedSignalSource(String source) {
@@ -5111,7 +5121,8 @@ public class TradeExecutionService {
             temp.setQuantity(requestEntity.getQuantity());
         }
         temp.setLots(requestEntity.getLots()); // Pass lots
-        temp.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots()));
+        temp.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots(),
+                requestEntity.getTarget2(), requestEntity.getTarget3()));
         temp.setInstrumentType(requestEntity.getInstrumentType());
         temp.setStrikePrice(requestEntity.getStrikePrice());
         temp.setOptionType(requestEntity.getOptionType());

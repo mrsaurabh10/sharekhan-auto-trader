@@ -106,6 +106,47 @@ class TelegramSignalParserTest {
     }
 
     @Test
+    void enablesTslWhenTelegramSignalExplicitlyRequestsIt() {
+        Map<String, Object> result = parser.parse("""
+                BUY BAJAJ-AUTO 10100 CE ABOVE 120
+                TARGET :- 130
+                SL :- 110
+                TSL
+                """);
+
+        assertNotNull(result);
+        assertEquals(true, result.get("tslEnabled"));
+    }
+
+    @Test
+    void enablesTslByDefaultForMultipleTargetsAndMultipleLots() {
+        Map<String, Object> result = parser.parse("""
+                BUY BAJAJ-AUTO 10100 CE ABOVE 120
+                TARGET :- 130 / 140 / 150
+                SL :- 110
+                3 LOTS
+                """);
+
+        assertNotNull(result);
+        assertEquals(3, result.get("quantity"));
+        assertEquals(true, result.get("tslEnabled"));
+    }
+
+    @Test
+    void doesNotEnableDefaultTslForOneLot() {
+        Map<String, Object> result = parser.parse("""
+                BUY BAJAJ-AUTO 10100 CE ABOVE 120
+                TARGET :- 130 / 140
+                SL :- 110
+                LOTS 1
+                """);
+
+        assertNotNull(result);
+        assertEquals(1, result.get("quantity"));
+        assertNull(result.get("tslEnabled"));
+    }
+
+    @Test
     void parsesStockBazaariSignalAndKeepsTheContractMonth() {
         Map<String, Object> result = parser.parse("""
                 New Trade Opportunity – Delivered as part of your subscription plan
