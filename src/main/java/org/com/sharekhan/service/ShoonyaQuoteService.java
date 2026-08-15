@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.AuthTokenResult;
 import org.com.sharekhan.auth.BrokerAuthProvider;
 import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
@@ -26,6 +27,7 @@ import java.util.stream.Collectors;
 /** Read-only Shoonya client. It intentionally exposes only NorenWClientAPI/GetQuotes. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ShoonyaQuoteService {
     private final ShoonyaProperties properties;
     private final TokenStoreService tokenStoreService;
