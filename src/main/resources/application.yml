@@ -116,6 +116,17 @@ app:
     # Comma-separated ISO dates, e.g. NSE_HOLIDAYS=2026-01-26,2026-03-03
     nse-holidays: ${NSE_HOLIDAYS:}
     sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
+  marketaux:
+    # Set MARKETAUX_API_TOKEN outside source control. India news is always requested with countries=in.
+    enabled: ${MARKETAUX_ENABLED:true}
+    api-token: ${MARKETAUX_API_TOKEN:}
+    base-url: ${MARKETAUX_BASE_URL:https://api.marketaux.com/v1}
+    connect-timeout-ms: ${MARKETAUX_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${MARKETAUX_READ_TIMEOUT_MS:10000}
+    # 100 requests are placed at even 216-second intervals from 09:20 (inclusive) to 15:20 IST.
+    india-sentiment-collection-enabled: ${MARKETAUX_INDIA_SENTIMENT_COLLECTION_ENABLED:true}
+    india-sentiment-calls-per-day: ${MARKETAUX_INDIA_SENTIMENT_CALLS_PER_DAY:100}
+    india-sentiment-articles-per-call: ${MARKETAUX_INDIA_SENTIMENT_ARTICLES_PER_CALL:50}
   trading:
     order-execution:
       # Exit capacity is intentionally reserved: a target/SL cannot queue behind entries.
