@@ -10,6 +10,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.ResourceAccessException;
@@ -37,6 +38,7 @@ public class MarketauxNewsService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
+    @Autowired
     public MarketauxNewsService(MarketauxProperties properties, ObjectMapper objectMapper) {
         this(properties, restTemplate(properties), objectMapper);
     }
