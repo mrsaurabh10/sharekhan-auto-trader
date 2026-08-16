@@ -57,8 +57,8 @@ class MarketauxNewsServiceTest {
         List<MarketauxNewsService.IndiaEntitySentiment> sentiments = service.latestIndiaEntitySentiments(20);
 
         assertEquals(1, sentiments.size());
-        assertEquals("^NSEI", sentiments.getFirst().entitySymbol());
-        assertEquals(0.82, sentiments.getFirst().sentimentScore());
+        assertEquals("^NSEI", sentiments.get(0).entitySymbol());
+        assertEquals(0.82, sentiments.get(0).sentimentScore());
         server.verify();
     }
 
