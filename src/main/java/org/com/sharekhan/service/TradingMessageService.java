@@ -127,10 +127,9 @@ public class TradingMessageService {
                 return;
             }
             TriggerRequest base = mapToTriggerRequest(parsed);
-            // StockBazaari is identified from its message structure. Preserve
-            // that provider source even when Telegram supplies a display name
-            // such as "Stock Bazaari", so its per-user configuration applies.
-            if (source != null && !"StockBazaari".equalsIgnoreCase(String.valueOf(parsed.get("source")))) {
+            // Provider templates identify their own source. Preserve that
+            // identity even when Telegram supplies a channel/display name.
+            if (source != null && !isProviderSource(parsed.get("source"))) {
                 base.setSource(source);
             }
 
@@ -624,6 +623,14 @@ public class TradingMessageService {
             case "true", "1", "yes", "on" -> true;
             default -> false;
         };
+    }
+
+    private boolean isProviderSource(Object parsedSource) {
+        if (parsedSource == null) {
+            return false;
+        }
+        String source = parsedSource.toString();
+        return "StockBazaari".equalsIgnoreCase(source) || "awr".equalsIgnoreCase(source);
     }
 
     /**

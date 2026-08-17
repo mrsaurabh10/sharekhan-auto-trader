@@ -43,7 +43,12 @@ public class PriceTriggerService {
      * of the equity session, when opening volatility can produce false triggers.
      */
     private static final LocalTime ENTRY_EVALUATION_START = LocalTime.of(9, 20);
-    private static final LocalTime EQUITY_MARKET_CLOSE = LocalTime.of(15, 30);
+    /**
+     * Intraday entries must stop before the square-off workflow.  The exchange
+     * may remain open until 15:30, but opening a new intraday position after
+     * 15:20 leaves too little time to exit it safely.
+     */
+    private static final LocalTime INTRADAY_ENTRY_CUTOFF = LocalTime.of(15, 20);
     private static final LocalTime OPENING_RULE_CUTOFF = LocalTime.of(9, 30);
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
     private static final double ATR_TARGET1_PROXIMITY_FRACTION = 0.10d;
@@ -87,8 +92,8 @@ public class PriceTriggerService {
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         LocalDateTime nowIst = nowIst();
-        if (!isEquityMarketOpen(nowIst)) {
-            log.debug("Skipping price trigger evaluation outside equity market hours: {} IST", nowIst);
+        if (!isIntradayEntryWindowOpen(nowIst)) {
+            log.debug("Skipping price trigger evaluation outside the intraday entry window: {} IST", nowIst);
             return;
         }
 
@@ -312,8 +317,8 @@ public class PriceTriggerService {
      */
     @Scheduled(fixedDelayString = "${app.trading.trigger-recovery-delay-ms:15000}")
     public void recoverStaleTriggeredRequests() {
-        if (!isEquityMarketOpen(nowIst())) {
-            log.debug("Skipping triggered-request recovery outside equity market hours.");
+        if (!isIntradayEntryWindowOpen(nowIst())) {
+            log.debug("Skipping triggered-request recovery outside the intraday entry window.");
             return;
         }
         recoverIncompleteEntrySubmissions(TriggeredTradeStatus.TRIGGERED);
@@ -590,7 +595,11 @@ public class PriceTriggerService {
             return false;
         }
         LocalTime localTime = time.toLocalTime();
-        return !localTime.isBefore(ENTRY_EVALUATION_START) && !localTime.isAfter(EQUITY_MARKET_CLOSE);
+        return !localTime.isBefore(ENTRY_EVALUATION_START) && !localTime.isAfter(LocalTime.of(15, 30));
+    }
+
+    private boolean isIntradayEntryWindowOpen(LocalDateTime time) {
+        return isEquityMarketOpen(time) && time.toLocalTime().isBefore(INTRADAY_ENTRY_CUTOFF);
     }
 
     private Optional<ReferencePrice> getTodayOpenReferencePrice(TriggerTradeRequestEntity trigger,

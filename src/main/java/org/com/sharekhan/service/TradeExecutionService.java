@@ -86,6 +86,7 @@ public class TradeExecutionService {
             TriggeredTradeStatus.ENTRY_SUBMITTING,
             TriggeredTradeStatus.TRIGGERED);
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime INTRADAY_ENTRY_CUTOFF = LocalTime.of(15, 20);
     private static final Map<String, String> INDEX_FUTURE_EXCHANGES = Map.of(
             "NIFTY", "NF",
             "BANKNIFTY", "NF",
@@ -745,6 +746,11 @@ public class TradeExecutionService {
     }
 
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {
+        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
+            log.info("Skipping broker-side intraday entry request {} after the {} IST cutoff",
+                    requestEntity.getId(), INTRADAY_ENTRY_CUTOFF);
+            return;
+        }
         if (isStockBazaariEquity(requestEntity) && !isEquityMarketOpen()) {
             log.info("Deferring StockBazaari equity entry request {} until the market opens", requestEntity.getId());
             return;
@@ -904,6 +910,64 @@ public class TradeExecutionService {
     private boolean isEquityMarketOpen() {
         LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
         return !time.isBefore(LocalTime.of(9, 15)) && !time.isAfter(LocalTime.of(15, 30));
+    }
+
+    /**
+     * Applies to every intraday instrument, not just equities.  The broker-side
+     * trigger path bypasses PriceTriggerService, so it must enforce the same
+     * cutoff itself.
+     */
+    boolean isIntradayEntryWindowOpen() {
+        LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
+        return time.isBefore(INTRADAY_ENTRY_CUTOFF);
+    }
+
+    private boolean isIntradayRequest(TriggerTradeRequestEntity request) {
+        return request != null && Boolean.TRUE.equals(request.getIntraday());
+    }
+
+    /**
+     * Cancels broker-held intraday entry triggers at the cutoff.  These orders
+     * are already at the broker and therefore cannot be stopped by merely
+     * disabling websocket trigger evaluation.
+     */
+    public int cancelPendingIntradayEntryOrdersAtCutoff() {
+        int cancelled = 0;
+        for (TriggeredTradeSetupEntity trade : triggeredTradeRepo
+                .findByIntradayTrueAndStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)) {
+            if (trade.getOrderId() == null || trade.getOrderId().isBlank()) {
+                continue;
+            }
+            try {
+                BrokerContext context = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+                if (context == null || context.getBrokerName() == null) {
+                    log.warn("Cannot cancel cutoff entry order {} for trade {}: broker context unavailable",
+                            trade.getOrderId(), trade.getId());
+                    continue;
+                }
+                BrokerService brokerService = brokerServiceFactory.getService(context.getBrokerName());
+                if (!(brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker)) {
+                    log.warn("Cannot cancel cutoff entry order {} for trade {}: broker does not support entry cancellation",
+                            trade.getOrderId(), trade.getId());
+                    continue;
+                }
+                modifiableEntryBroker.cancelEntryOrder(trade, context, trade.getOrderId());
+                trade.setStatus(TriggeredTradeStatus.REJECTED);
+                trade.setReason("INTRADAY_ENTRY_CUTOFF");
+                trade.setComment("Open entry order cancelled at the 15:20 IST intraday cutoff.");
+                triggeredTradeRepo.save(trade);
+                syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.REJECTED);
+                cancelled++;
+                log.info("Cancelled pending intraday entry order {} for trade {} at cutoff",
+                        trade.getOrderId(), trade.getId());
+            } catch (Exception e) {
+                // Keep the trade pending when the broker has not confirmed the
+                // cancellation, so status polling can still observe a late fill.
+                log.error("Failed cancelling pending intraday entry order {} for trade {} at cutoff: {}",
+                        trade.getOrderId(), trade.getId(), e.getMessage(), e);
+            }
+        }
+        return cancelled;
     }
 
     private boolean usesSpotForEntry(TriggerTradeRequestEntity requestEntity) {
@@ -4178,9 +4242,17 @@ public class TradeExecutionService {
      */
     private boolean resolveTslEnabled(Boolean requestedTslEnabled, String source, Integer lots,
                                       Double target2, Double target3) {
-        return Boolean.TRUE.equals(requestedTslEnabled)
-                || (lots != null && lots > 1 && (isStagedSignalSource(source)
-                || ("telegram".equalsIgnoreCase(source) && hasMultipleTargets(target2, target3))));
+        if (Boolean.TRUE.equals(requestedTslEnabled)) {
+            return true;
+        }
+        if (lots == null || lots <= 1) {
+            return false;
+        }
+        if (isStagedSignalSource(source)) {
+            return true;
+        }
+        return ("telegram".equalsIgnoreCase(source) || "awr".equalsIgnoreCase(source))
+                && hasMultipleTargets(target2, target3);
     }
 
     private boolean hasMultipleTargets(Double target2, Double target3) {
@@ -5020,6 +5092,11 @@ public class TradeExecutionService {
 
     public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
                                                             boolean chaseEntryUntilExecuted) {
+        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
+            log.info("Blocking queued intraday entry request {} after the {} IST cutoff",
+                    requestEntity != null ? requestEntity.getId() : null, INTRADAY_ENTRY_CUTOFF);
+            return null;
+        }
         // If the saved request is missing broker credentials, resolve a sensible default
         try {
             if (requestEntity.getBrokerCredentialsId() == null) {

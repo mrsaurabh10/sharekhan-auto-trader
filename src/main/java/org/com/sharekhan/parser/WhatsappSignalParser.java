@@ -90,6 +90,10 @@ public class WhatsappSignalParser implements TradingSignalParser {
             }
 
             Map<String, Object> result = new HashMap<>();
+            // This subscription template is delivered through Telegram as well
+            // as WhatsApp. Keep its provider identity instead of replacing it
+            // with the Telegram sender/channel username downstream.
+            result.put("source", "awr");
             result.put("symbol", instrument);
             result.put("exchange", isEquity ? "NC" : null);
             result.put("entry", entryPrice);

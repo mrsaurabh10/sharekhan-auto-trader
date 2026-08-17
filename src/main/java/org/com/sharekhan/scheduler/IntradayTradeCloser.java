@@ -14,21 +14,31 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.ZoneId;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class IntradayTradeCloser {
 
+    private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
+
     private final TriggeredTradeSetupRepository setupRepository;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
     private final TradeExecutionService tradeExecutionService;
     private final LtpCacheService ltpCacheService;
 
-    // Run every day at 15:25 IST
-    @Scheduled(cron = "0 25 15 * * MON-FRI", zone = "Asia/Kolkata")
+    // Run every day at 15:20 IST, which is also the last permitted intraday entry time.
+    @Scheduled(cron = "0 20 15 * * MON-FRI", zone = "Asia/Kolkata")
     public void closeIntradayTrades() {
         log.info("📆 Running intraday trade closer...");
+
+        int cancelledEntries = tradeExecutionService.cancelPendingIntradayEntryOrdersAtCutoff();
+        if (cancelledEntries > 0) {
+            log.info("Cancelled {} pending intraday entry order(s) at the cutoff", cancelledEntries);
+        }
 
         List<TriggeredTradeSetupEntity> intradayTrades = setupRepository
             .findByIntradayTrueAndStatus(TriggeredTradeStatus.EXECUTED);
@@ -43,7 +53,7 @@ public class IntradayTradeCloser {
                     ltp = 0.0;
                     //TODO get the ltp from a different service
                 }
-                tradeExecutionService.squareOff(trade, ltp,"Intraday closing at 3:25 PM");
+                tradeExecutionService.squareOff(trade, ltp,"Intraday closing at 3:20 PM");
                 log.info("💼 Closed intraday trade for {}", trade.getSymbol());
             } catch (Exception e) {
                 log.error("❌ Failed to close intraday trade {}: {}", trade.getId(), e.getMessage(), e);
@@ -68,15 +78,17 @@ public class IntradayTradeCloser {
     }
 
     /**
-     * Keeps the day's requests available for post-market investigation, then removes
-     * the intraday-only request rows after the analysis window has ended.
+     * Removes the previous trading day's requests and today's pre-close requests.
+     * Requests created after the 15:30 IST close are preserved for the next day.
      * Executed trade rows are deliberately retained as the permanent audit trail.
      */
     @Scheduled(cron = "0 30 23 * * MON-FRI", zone = "Asia/Kolkata")
     public void purgeTodayIntradayTradeRequests() {
-        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"));
-        LocalDateTime dayStart = today.atStartOfDay();
-        int deleted = triggerTradeRequestRepository.deleteIntradayRequestsCreatedBetween(dayStart, dayStart.plusDays(1));
-        log.info("🧹 Removed {} intraday trade requests created on {} after the analysis window", deleted, today);
+        LocalDate today = LocalDate.now(MARKET_ZONE);
+        LocalDateTime purgeStart = today.minusDays(1).atStartOfDay();
+        LocalDateTime purgeEnd = today.atTime(MARKET_CLOSE);
+        int deleted = triggerTradeRequestRepository.deleteIntradayRequestsCreatedBetween(purgeStart, purgeEnd);
+        log.info("🧹 Removed {} intraday trade requests created from {} through {} IST",
+                deleted, purgeStart, purgeEnd);
     }
 }
