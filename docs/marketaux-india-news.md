@@ -41,6 +41,10 @@ limit even across restarts. The application stores only these article entity fie
 `marketaux_entity_sentiments`: entity name, symbol, sentiment score, article UUID, article publish
 time, and collection time. It does not persist article content.
 
+The collector stores each `(article UUID, entity symbol)` combination only once. At application
+startup it removes any previously stored duplicates (retaining the earliest row) and creates a
+database uniqueness guard, so repeat provider pages do not grow the table unnecessarily.
+
 Read the latest stored score for each entity without spending a Marketaux request:
 
 ```text

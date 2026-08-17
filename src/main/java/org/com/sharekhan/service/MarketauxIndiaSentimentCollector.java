@@ -8,11 +8,14 @@ import org.com.sharekhan.repository.MarketauxCollectionRunRepository;
 import org.com.sharekhan.repository.MarketauxEntitySentimentRepository;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.HashSet;
+import java.util.Set;
 
 /** Persists the small sentiment subset required for intraday market analysis. */
 @Slf4j
@@ -40,7 +43,15 @@ public class MarketauxIndiaSentimentCollector {
         try {
             List<MarketauxNewsService.IndiaEntitySentiment> sentiments =
                     newsService.latestIndiaEntitySentiments(articleLimit);
-            List<MarketauxEntitySentimentEntity> rows = sentiments.stream().map(sentiment ->
+            Set<ArticleEntityKey> responseKeys = new HashSet<>();
+            List<MarketauxEntitySentimentEntity> rows = sentiments.stream()
+                    .filter(sentiment -> StringUtils.hasText(sentiment.articleUuid()))
+                    .filter(sentiment -> StringUtils.hasText(sentiment.entitySymbol()))
+                    .filter(sentiment -> responseKeys.add(new ArticleEntityKey(
+                            sentiment.articleUuid(), sentiment.entitySymbol())))
+                    .filter(sentiment -> !sentimentRepository.existsByArticleUuidAndEntitySymbol(
+                            sentiment.articleUuid(), sentiment.entitySymbol()))
+                    .map(sentiment ->
                     MarketauxEntitySentimentEntity.builder()
                             .collectionRunId(run.getId()).tradingDate(tradingDate)
                             .articleUuid(sentiment.articleUuid()).entitySymbol(sentiment.entitySymbol())
@@ -62,5 +73,8 @@ public class MarketauxIndiaSentimentCollector {
     private String truncate(String message) {
         if (message == null) return "Unknown error";
         return message.length() <= 300 ? message : message.substring(0, 300);
+    }
+
+    private record ArticleEntityKey(String articleUuid, String entitySymbol) {
     }
 }

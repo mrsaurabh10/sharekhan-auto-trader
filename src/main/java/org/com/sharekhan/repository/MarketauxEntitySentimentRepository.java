@@ -8,4 +8,6 @@ import java.util.List;
 
 public interface MarketauxEntitySentimentRepository extends JpaRepository<MarketauxEntitySentimentEntity, Long> {
     List<MarketauxEntitySentimentEntity> findTop500ByTradingDateOrderByCollectedAtDesc(LocalDate tradingDate);
+    boolean existsByArticleUuidAndEntitySymbol(String articleUuid, String entitySymbol);
+    List<MarketauxEntitySentimentEntity> findAllByOrderByIdAsc();
 }
