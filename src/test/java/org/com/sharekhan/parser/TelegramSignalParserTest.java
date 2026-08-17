@@ -147,6 +147,20 @@ class TelegramSignalParserTest {
     }
 
     @Test
+    void preservesLotsDirectiveOnLineAfterStopLoss() {
+        Map<String, Object> result = parser.parse("""
+                BUY TATAELXSI 3750 CE above 68
+                TARGET 90
+                SL 35
+                LOTS 2
+                """);
+
+        assertNotNull(result);
+        assertEquals(2, result.get("quantity"));
+        assertEquals(35.0, (Double) result.get("stopLoss"), 0.01);
+    }
+
+    @Test
     void parsesStockBazaariSignalAndKeepsTheContractMonth() {
         Map<String, Object> result = parser.parse("""
                 New Trade Opportunity – Delivered as part of your subscription plan

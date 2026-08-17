@@ -45,7 +45,7 @@ public class TelegramSignalParser implements TradingSignalParser {
             "\\b(?:TSL|TRAIL(?:ING)?\\s*(?:SL|STOP(?:\\s*LOSS)?))\\b",
             Pattern.CASE_INSENSITIVE);
     private static final Pattern LOTS_PATTERN = Pattern.compile(
-            "\\b(?:(\\d+)\\s*LOTS?|LOTS?\\s*(\\d+))\\b", Pattern.CASE_INSENSITIVE);
+            "\\b(?:(\\d+)[ \\t]*LOTS?|LOTS?[ \\t]*(\\d+))\\b", Pattern.CASE_INSENSITIVE);
 
     @Override
     public Map<String, Object> parse(String text) {
@@ -184,7 +184,10 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .orElse(null);
         
         Integer quantity = null;
-        Matcher lotsMatcher = LOTS_PATTERN.matcher(normalizedForQuick);
+        // Preserve line boundaries here.  Flattening the message makes an SL
+        // value on one line look like '<SL> LOTS' when the next line starts
+        // with LOTS, e.g. 'SL 35\nLOTS 2' incorrectly becomes 35 lots.
+        Matcher lotsMatcher = LOTS_PATTERN.matcher(cleanedText);
         if (lotsMatcher.find()) {
             String lotsText = lotsMatcher.group(1) != null ? lotsMatcher.group(1) : lotsMatcher.group(2);
             try {
