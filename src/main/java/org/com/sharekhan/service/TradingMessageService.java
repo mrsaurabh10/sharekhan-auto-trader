@@ -831,6 +831,10 @@ public class TradingMessageService {
 
     private TriggerRequest mapToTriggerRequest(Map<String, Object> parsed) {
         TriggerRequest request = new TriggerRequest();
+        Object source = parsed.get("source");
+        if (source != null && !source.toString().isBlank()) {
+            request.setSource(source.toString().trim());
+        }
         //request.setAction((String) parsed.get("action"));
         request.setInstrument((String) parsed.get("symbol"));
         request.setStrikePrice(parseDouble(parsed.get("strike")));
