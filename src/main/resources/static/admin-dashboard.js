@@ -1633,7 +1633,52 @@
   // --- LTP helpers ---
   let adminWs = null;
   let pollHandle = null;
+  let adminWsReconnectStopped = false;
   let ltpCache = {};
+
+  function stopAdminWsReconnect(reason) {
+    adminWsReconnectStopped = true;
+    if (pollHandle) {
+      clearTimeout(pollHandle);
+      pollHandle = null;
+    }
+    console.warn('admin LTP websocket reconnect stopped: ' + reason);
+  }
+
+  function hasAuthenticatedDashboardSession() {
+    const session = window.currentSession;
+    return !!(session && session.username && session.username !== 'anonymousUser');
+  }
+
+  async function canReconnectAdminWs() {
+    if (adminWsReconnectStopped) return false;
+    try {
+      const response = await fetch('/api/user/me', {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (response.status === 401 || response.status === 403) {
+        window.currentSession = {};
+        window.isAdminSession = false;
+        stopAdminWsReconnect('authentication expired');
+        return false;
+      }
+      // Only an authentication failure disables reconnecting. Other HTTP failures
+      // are treated like transient connectivity problems and keep the retry path.
+      return true;
+    } catch (e) {
+      // A transient network failure should not permanently disable live updates.
+      return true;
+    }
+  }
+
+  function scheduleAdminWsReconnect(delay) {
+    if (adminWsReconnectStopped || pollHandle) return;
+    pollHandle = setTimeout(function() {
+      pollHandle = null;
+      startAdminWs();
+    }, delay);
+  }
 
   async function batchFetchMstockLtp(keys) {
     const out = {};
@@ -1743,13 +1788,18 @@
 
   function startAdminWs() {
     try {
-      if (adminWs && adminWs.readyState === WebSocket.OPEN) return;
+      if (adminWsReconnectStopped || !hasAuthenticatedDashboardSession()) {
+        stopAdminWsReconnect('no authenticated dashboard session');
+        return;
+      }
+      if (adminWs && (adminWs.readyState === WebSocket.OPEN || adminWs.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
       const url = proto + location.host + '/ws/ltp';
-      adminWs = new WebSocket(url);
+      const socket = new WebSocket(url);
+      adminWs = socket;
 
-      adminWs.onopen = function() { console.debug('admin LTP ws open'); if (pollHandle) { clearTimeout(pollHandle); pollHandle = null; } };
-      adminWs.onmessage = function(ev) {
+      socket.onopen = function() { console.debug('admin LTP ws open'); if (pollHandle) { clearTimeout(pollHandle); pollHandle = null; } };
+      socket.onmessage = function(ev) {
         try {
           const js = JSON.parse(ev.data);
           if (!js) return;
@@ -1795,9 +1845,15 @@
 
         } catch (e) { console.debug('adminWs parse failed', e); }
       };
-      adminWs.onclose = function() { console.debug('admin LTP ws closed'); adminWs = null; if (!pollHandle) pollHandle = setTimeout(function() { pollHandle = null; startAdminWs(); }, 2000); };
-      adminWs.onerror = function(e) { console.debug('admin LTP ws error', e); if (adminWs) try { adminWs.close(); } catch (ign) {} };
-    } catch (e) { console.debug('startAdminWs failed', e); if (!pollHandle) pollHandle = setTimeout(function() { pollHandle = null; startAdminWs(); }, 3000); }
+      socket.onclose = function() {
+        console.debug('admin LTP ws closed');
+        if (adminWs === socket) adminWs = null;
+        canReconnectAdminWs().then(function(canReconnect) {
+          if (canReconnect) scheduleAdminWsReconnect(2000);
+        });
+      };
+      socket.onerror = function(e) { console.debug('admin LTP ws error', e); try { socket.close(); } catch (ign) {} };
+    } catch (e) { console.debug('startAdminWs failed', e); scheduleAdminWsReconnect(3000); }
   }
 
   // --- Helper functions for instrument/strike/expiry/broker/user loading ---
