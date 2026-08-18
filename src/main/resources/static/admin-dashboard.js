@@ -1193,7 +1193,7 @@
     const loadSeq = ++requestLoadSeq;
     if (typeof page === 'number') currentRequestPage = page;
     const orderScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="14">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="15">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
     try {
       const responseData = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(orderScope) + '&page=' + currentRequestPage + '&size=' + requestPageSize);
       if (loadSeq !== requestLoadSeq) return;
@@ -1205,7 +1205,7 @@
           data = responseData;
       }
 
-      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="14">No requests</td></tr>'; updateRequestPaginationUI(pageInfo); return; }
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="15">No requests</td></tr>'; updateRequestPaginationUI(pageInfo); return; }
       const seen = new Set(); const uniq = [];
       for (const r of data) { const rid = r && (r.id || r.requestId || r.request_id); if (!rid) { uniq.push(r); continue; } if (seen.has(rid)) continue; seen.add(rid); uniq.push(r); }
 
@@ -1228,6 +1228,7 @@
         const t1 = r.target1 != null ? r.target1 : (r.t1 || '-');
         const qty = r.quantity != null ? r.quantity : (r.qty || '-');
         const status = r.status || r.requestStatus || '-';
+        const createdAt = r.createdAt || r.created_at || null;
 
         // Action cell
         const actionCell = document.createElement('td');
@@ -1272,6 +1273,7 @@
         }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       '<td>' + escapeHtml(formatAnalyticsDateTime(createdAt)) + '</td>' +
                        tradeScopeCellHtml(r) +
                        '<td><button type="button" class="symbol-chart-link" title="Open request chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
@@ -1332,7 +1334,7 @@
         applyLtpMap(map);
       }
       updateRequestPaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== requestLoadSeq) return; console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="14">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
+    } catch (e) { if (loadSeq !== requestLoadSeq) return; console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="15">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
   }
 
   function updateRequestPaginationUI(pageInfo) {
@@ -1362,7 +1364,7 @@
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="16">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="17">No user selected</td></tr>'; updatePaginationUI(null); return; }
     loadExecutionSourcesForUser(uid, tradeScope).catch(function(){});
 
     try {
@@ -1382,7 +1384,7 @@
       }
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="16">No executed trades</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="17">No executed trades</td></tr>';
         refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
         updatePaginationUI(pageInfo);
         return;
@@ -1411,6 +1413,7 @@
         const qty = t.quantity != null ? t.quantity : (t.qty || '-');
         const status = t.status || '-';
         const source = t.source || '-';
+        const setupDate = t.triggeredAt || t.triggered_at || t.entryAt || t.entry_at || null;
         const statusUpper = String(status).toUpperCase();
         const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
 
@@ -1504,6 +1507,7 @@
         actionCell.appendChild(auditBtn);
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       '<td>' + escapeHtml(formatAnalyticsDateTime(setupDate)) + '</td>' +
                        tradeScopeCellHtml(t) +
                        '<td>' + escapeHtml(String(source)) + '</td>' +
                        '<td>' + escapeHtml(String(status)) + '</td>' +
@@ -1583,7 +1587,7 @@
       }
       refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
       updatePaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="16">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="17">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
