@@ -22,7 +22,7 @@ public class AtrPreviousDayTradeLevelService {
 
     /**
      * Preserves the originally calculated ATR from the request, then rebuilds the
-     * 2-ATR stop and 2/3/4-ATR targets around a user-selected spot entry.
+     * 2-ATR stop and 3/5/6-ATR targets around a user-selected spot entry.
      */
     public Optional<Levels> recalculate(TriggerTradeRequestEntity request, double updatedEntry) {
         if (!appliesTo(request) || !valid(updatedEntry)) return Optional.empty();
@@ -50,20 +50,20 @@ public class AtrPreviousDayTradeLevelService {
         double direction = ce ? 1d : -1d;
         return Optional.of(new Levels(
                 round(updatedEntry - direction * 2d * atr),
-                round(updatedEntry + direction * 2d * atr),
                 round(updatedEntry + direction * 3d * atr),
-                round(updatedEntry + direction * 4d * atr)));
+                round(updatedEntry + direction * 5d * atr),
+                round(updatedEntry + direction * 6d * atr)));
     }
 
     private Double originalAtr(Double entry, Double stopLoss, Double target1, Double target2, Double target3) {
         if (!valid(entry)) return null;
         Double fromStop = divideDistance(entry, stopLoss, 2d);
         if (fromStop != null) return fromStop;
-        Double fromT1 = divideDistance(entry, target1, 2d);
+        Double fromT1 = divideDistance(entry, target1, 3d);
         if (fromT1 != null) return fromT1;
-        Double fromT2 = divideDistance(entry, target2, 3d);
+        Double fromT2 = divideDistance(entry, target2, 5d);
         if (fromT2 != null) return fromT2;
-        return divideDistance(entry, target3, 4d);
+        return divideDistance(entry, target3, 6d);
     }
 
     private Double divideDistance(Double entry, Double level, double multiple) {

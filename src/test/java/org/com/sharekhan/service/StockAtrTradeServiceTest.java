@@ -117,6 +117,37 @@ class StockAtrTradeServiceTest {
     }
 
     @Test
+    void refreshesPreviousDayAtrSpotLevelsWithThreeFiveSixAtrTargets() {
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        StockAtrTradeService service = new StockAtrTradeService(scriptMasterRepository, mock(SharekhanHistoricalService.class));
+        MStockHistoricalService mStockHistoricalService = mock(MStockHistoricalService.class);
+        ReflectionTestUtils.setField(service, "mStockHistoricalService", mStockHistoricalService);
+        when(mStockHistoricalService.getHistoricalCandles(eq(12345), any(), any(), any(), any(), any(),
+                eq("5minute"), anyString(), anyString()))
+                .thenReturn(MStockHistoricalService.HistoricalResponse.builder().candles(mStockCandles(76)).build());
+
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(13L)
+                .source("atr-pdh-pdl-strategy")
+                .spotScripCode(12345)
+                .optionType("CE")
+                .entryPrice(200.0)
+                .useSpotForSl(true)
+                .useSpotForTarget(true)
+                .stopLoss(180.0)
+                .target1(230.0)
+                .target2(250.0)
+                .target3(260.0)
+                .build();
+
+        assertThat(service.refreshLevelsAtEntry(trade, 200.0)).isTrue();
+        assertThat(trade.getStopLoss()).isEqualTo(192.0);
+        assertThat(trade.getTarget1()).isEqualTo(212.0);
+        assertThat(trade.getTarget2()).isEqualTo(220.0);
+        assertThat(trade.getTarget3()).isEqualTo(224.0);
+    }
+
+    @Test
     void keepsOriginalLevelsWhenMStockAtrRefreshFails() {
         StockAtrTradeService service = new StockAtrTradeService(mock(ScriptMasterRepository.class), mock(SharekhanHistoricalService.class));
         MStockHistoricalService mStockHistoricalService = mock(MStockHistoricalService.class);

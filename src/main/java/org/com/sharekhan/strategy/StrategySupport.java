@@ -8,6 +8,7 @@ import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.MStockInstrumentEntity;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.entity.TradeAuditEventEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.MStockInstrumentRepository;
@@ -391,6 +392,18 @@ public class StrategySupport {
     /** A prior-day ATR symbol may enter only once in an IST trading day, even after its request has exited. */
     public boolean hasAtrPreviousDayEntryOn(LocalDate day, Long appUserId, String symbol) {
         return hasEntryForSymbolOn(AbstractAtrPreviousDayFnoStrategy.SOURCE, day, appUserId, symbol);
+    }
+
+    public List<TriggeredTradeSetupEntity> atrPreviousDayEntriesOn(LocalDate day, Long appUserId,
+                                                                     String symbol, String optionType) {
+        if (day == null || appUserId == null || !StringUtils.hasText(symbol) || !StringUtils.hasText(optionType)
+                || triggeredTradeSetupRepository == null) {
+            return List.of();
+        }
+        LocalDateTime start = day.atStartOfDay();
+        return triggeredTradeSetupRepository.findTriggeredForSymbolOptionTypeOnDay(
+                AbstractAtrPreviousDayFnoStrategy.SOURCE, symbol.trim(), optionType.trim(), appUserId,
+                start, start.plusDays(1));
     }
 
     /** Returns whether this strategy source has already entered the underlying for this user on the IST day. */

@@ -38,6 +38,9 @@ public class StockAtrTradeService {
     private static final double TARGET1_ATR_MULTIPLIER = 2.0d;
     private static final double TARGET2_ATR_MULTIPLIER = 3.0d;
     private static final double TARGET3_ATR_MULTIPLIER = 4.0d;
+    private static final double PREVIOUS_DAY_TARGET1_ATR_MULTIPLIER = 3.0d;
+    private static final double PREVIOUS_DAY_TARGET2_ATR_MULTIPLIER = 5.0d;
+    private static final double PREVIOUS_DAY_TARGET3_ATR_MULTIPLIER = 6.0d;
     /** Do not re-anchor levels from an independent quote that has drifted from the trigger reference. */
     private static final double ENTRY_REFRESH_SPOT_TOLERANCE_PERCENT = 0.0005d;
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
@@ -111,20 +114,24 @@ public class StockAtrTradeService {
             }
 
             boolean ce = "CE".equalsIgnoreCase(trade.getOptionType());
+            boolean previousDay = "atr-pdh-pdl-strategy".equalsIgnoreCase(trade.getSource());
+            double target1Multiplier = previousDay ? PREVIOUS_DAY_TARGET1_ATR_MULTIPLIER : TARGET1_ATR_MULTIPLIER;
+            double target2Multiplier = previousDay ? PREVIOUS_DAY_TARGET2_ATR_MULTIPLIER : TARGET2_ATR_MULTIPLIER;
+            double target3Multiplier = previousDay ? PREVIOUS_DAY_TARGET3_ATR_MULTIPLIER : TARGET3_ATR_MULTIPLIER;
             Double originalStopLoss = trade.getStopLoss();
             Double originalTarget1 = trade.getTarget1();
             trade.setStopLoss(roundPrice(ce
                     ? spotEntryPrice - (STOP_LOSS_ATR_MULTIPLIER * atr)
                     : spotEntryPrice + (STOP_LOSS_ATR_MULTIPLIER * atr)));
             trade.setTarget1(roundPrice(ce
-                    ? spotEntryPrice + (TARGET1_ATR_MULTIPLIER * atr)
-                    : spotEntryPrice - (TARGET1_ATR_MULTIPLIER * atr)));
+                    ? spotEntryPrice + (target1Multiplier * atr)
+                    : spotEntryPrice - (target1Multiplier * atr)));
             trade.setTarget2(roundPrice(ce
-                    ? spotEntryPrice + (TARGET2_ATR_MULTIPLIER * atr)
-                    : spotEntryPrice - (TARGET2_ATR_MULTIPLIER * atr)));
+                    ? spotEntryPrice + (target2Multiplier * atr)
+                    : spotEntryPrice - (target2Multiplier * atr)));
             trade.setTarget3(roundPrice(ce
-                    ? spotEntryPrice + (TARGET3_ATR_MULTIPLIER * atr)
-                    : spotEntryPrice - (TARGET3_ATR_MULTIPLIER * atr)));
+                    ? spotEntryPrice + (target3Multiplier * atr)
+                    : spotEntryPrice - (target3Multiplier * atr)));
             log.info("📐 ATR levels refreshed at option entry | trade={} source=mstock spotEntry={} atrPeriod={} atr5m={} stopLoss={} target1={} target2={} target3={} originalStopLoss={} originalTarget1={}",
                     trade.getId(), roundPrice(spotEntryPrice), ATR_PERIOD, atr, trade.getStopLoss(), trade.getTarget1(),
                     trade.getTarget2(), trade.getTarget3(), originalStopLoss, originalTarget1);

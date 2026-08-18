@@ -3,6 +3,7 @@ package org.com.sharekhan.strategy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.service.MStockHistoricalService;
 import org.com.sharekhan.service.UserConfigService;
 import org.springframework.stereotype.Component;
@@ -31,6 +32,8 @@ public class AtrPreviousDayBreakoutQualificationService {
     /** Minimum close-to-entry breakout buffer when PDH/PDL is at the close. */
     private static final double DEFAULT_MIN_ENTRY_DISTANCE_ATR = 0.35d;
     private static final double MAX_ENTRY_DISTANCE_ATR = 3d;
+    private static final double REENTRY_RESET_ATR = 0.5d;
+    private static final double REENTRY_BREAKOUT_ATR = 0.25d;
     private static final double ENTRY_DISTANCE_COMPARISON_EPSILON = 1e-9d;
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
@@ -107,6 +110,68 @@ public class AtrPreviousDayBreakoutQualificationService {
         return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
                 support.roundPrice(entry), support.roundPrice(stop), support.roundPrice(atr), pdh, pdl, null,
                 ce ? "PENDING_MEANINGFUL_SWING_HIGH_ATR_BREAKOUT" : "PENDING_MEANINGFUL_SWING_LOW_ATR_BREAKDOWN"));
+    }
+
+    /**
+     * A re-entry is not a second touch of yesterday's level.  It requires price
+     * to reset through the old entry, form a new five-minute reversal, then
+     * break that new structure by a meaningful buffer.
+     */
+    public Fno925EntryQualificationService.Qualification qualifyReentry(ScriptMasterEntity spot,
+                                                                          String optionType,
+                                                                          TriggeredTradeSetupEntity priorTrade,
+                                                                          LocalDateTime now) {
+        if (priorTrade == null || priorTrade.getExitedAt() == null || priorTrade.getEntryPrice() == null) {
+            return Fno925EntryQualificationService.Qualification.waiting("prior ATR entry is not terminal");
+        }
+        List<StrategyCandle> candles = loadMStockFiveMinuteChart(spot, now);
+        double atr = atr(candles);
+        if (atr <= 0d) return Fno925EntryQualificationService.Qualification.waiting("ATR(75) 5-minute data is unavailable");
+        boolean ce = "CE".equalsIgnoreCase(optionType);
+        List<StrategyCandle> afterExit = candles.stream()
+                .filter(c -> c.date().equals(now.toLocalDate()))
+                .filter(c -> LocalDateTime.of(c.date(), c.time()).isAfter(priorTrade.getExitedAt()))
+                .filter(c -> LocalDateTime.of(c.date(), c.time()).isBefore(now.withSecond(0).withNano(0)))
+                .toList();
+        if (afterExit.size() < 3) return Fno925EntryQualificationService.Qualification.waiting("waiting for post-exit five-minute structure");
+
+        double oldEntry = priorTrade.getEntryPrice();
+        int resetIndex = -1;
+        for (int i = 0; i < afterExit.size(); i++) {
+            StrategyCandle candle = afterExit.get(i);
+            boolean reset = ce ? candle.low() <= oldEntry - REENTRY_RESET_ATR * atr
+                    : candle.high() >= oldEntry + REENTRY_RESET_ATR * atr;
+            if (reset) { resetIndex = i; break; }
+        }
+        if (resetIndex < 0 || afterExit.size() - resetIndex < 3) {
+            return Fno925EntryQualificationService.Qualification.waiting("waiting for a 0.5-ATR reset through the original entry");
+        }
+
+        // Keep the reset, reversal and breakout as distinct five-minute events.
+        // Otherwise a single volatile candle can satisfy all three predicates and
+        // recreate the exact stale-level re-entry this guard is intended to stop.
+        List<StrategyCandle> structure = afterExit.subList(resetIndex, afterExit.size());
+        StrategyCandle latest = structure.get(structure.size() - 1);
+        List<StrategyCandle> reversalStructure = structure.subList(1, structure.size() - 1);
+        if (reversalStructure.isEmpty()) {
+            return Fno925EntryQualificationService.Qualification.waiting("waiting for a post-reset five-minute reversal");
+        }
+        double resetExtreme = ce ? structure.get(0).low() : structure.get(0).high();
+        boolean reversal = ce
+                ? reversalStructure.stream().anyMatch(c -> c.close() >= resetExtreme + REENTRY_BREAKOUT_ATR * atr)
+                : reversalStructure.stream().anyMatch(c -> c.close() <= resetExtreme - REENTRY_BREAKOUT_ATR * atr);
+        double structuralBreak = ce
+                ? reversalStructure.stream().mapToDouble(StrategyCandle::high).max().orElse(Double.NaN)
+                : reversalStructure.stream().mapToDouble(StrategyCandle::low).min().orElse(Double.NaN);
+        double entry = ce ? structuralBreak + REENTRY_BREAKOUT_ATR * atr : structuralBreak - REENTRY_BREAKOUT_ATR * atr;
+        boolean broke = ce ? latest.close() >= entry : latest.close() <= entry;
+        if (!reversal || !broke) {
+            return Fno925EntryQualificationService.Qualification.waiting("waiting for fresh five-minute reversal and structural breakout");
+        }
+        double stop = ce ? entry - 2d * atr : entry + 2d * atr;
+        return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
+                support.roundPrice(entry), support.roundPrice(stop), support.roundPrice(atr), 0d, 0d, null,
+                ce ? "PENDING_FRESH_REENTRY_CE" : "PENDING_FRESH_REENTRY_PE"));
     }
 
     private List<StrategyCandle> sorted(List<StrategyCandle> candles) {

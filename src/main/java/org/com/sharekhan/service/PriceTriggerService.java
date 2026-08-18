@@ -256,16 +256,16 @@ public class PriceTriggerService {
             return;
         }
 
-        // CE and PE requests can both be pending at the open.  Once either side has
-        // actually entered, the other side must not become a same-day re-entry.
+        // A directional ATR prior-day setup may enter once, then re-enter once
+        // only after the strategy has built a fresh five-minute structure.
         if (isAtrPreviousDaySource(request) && request.getAppUserId() != null
-                && triggeredRepo.countTriggeredForSymbolOnDay(ATR_PREVIOUS_DAY_SOURCE, request.getSymbol(),
-                request.getAppUserId(), nowIst().toLocalDate().atStartOfDay(),
-                nowIst().toLocalDate().plusDays(1).atStartOfDay()) > 0) {
+                && triggeredRepo.findTriggeredForSymbolOptionTypeOnDay(ATR_PREVIOUS_DAY_SOURCE, request.getSymbol(),
+                request.getOptionType(), request.getAppUserId(), nowIst().toLocalDate().atStartOfDay(),
+                nowIst().toLocalDate().plusDays(1).atStartOfDay()).size() >= 2) {
             triggerRepo.claimIfStatusEqualsWithOutcome(requestId,
                     TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.CANCELLED.name(),
-                    "DAILY_ENTRY_LIMIT_REACHED", "An ATR prior-day entry for this symbol has already executed today.");
-            log.info("ATR prior-day request {} for {} cancelled: one entry per symbol per day",
+                    "DAILY_REENTRY_LIMIT_REACHED", "The one allowed ATR prior-day re-entry for this direction has already executed today.");
+            log.info("ATR prior-day request {} for {} cancelled: re-entry limit reached",
                     requestId, request.getSymbol());
             return;
         }
@@ -274,7 +274,8 @@ public class PriceTriggerService {
         // It is deliberately not a triggerable state: a restart or slow broker
         // response must never submit the same request a second time.
         List<TriggeredTradeSetupEntity> existing = triggeredRepo.findByTriggerRequestId(requestId);
-        if (existing != null && !existing.isEmpty()) {
+        if (existing != null && !existing.isEmpty()
+                && !isOpeningSpreadRetryEligible(request, existing.get(existing.size() - 1))) {
             TriggeredTradeSetupEntity latest = existing.get(existing.size() - 1);
             TriggeredTradeStatus status = latest.getStatus() == TriggeredTradeStatus.EXECUTED
                     ? TriggeredTradeStatus.EXECUTED
@@ -299,6 +300,15 @@ public class PriceTriggerService {
             return;
         }
 
+        if (isOpeningSpreadRetryEligible(request, executed)) {
+            int rearmed = triggerRepo.claimIfStatusEqualsWithOutcome(requestId,
+                    TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
+                    "OPENING_SPREAD_RETRY", "Opening option spread was too wide; retaining this original ATR request until 09:30 IST.");
+            if (rearmed == 1) {
+                log.info("ATR prior-day request {} retained for bounded opening spread retry", requestId);
+            }
+            return;
+        }
         TriggeredTradeStatus status = executed.getStatus() == TriggeredTradeStatus.EXECUTED
                 ? TriggeredTradeStatus.EXECUTED
                 : executed.getStatus() == TriggeredTradeStatus.REJECTED
@@ -308,6 +318,16 @@ public class PriceTriggerService {
                 TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
                 status.name(), executed.getReason(), executed.getComment());
         log.info("Trigger {} execution completed with trade {} status={}", requestId, executed.getId(), status);
+    }
+
+    private boolean isOpeningSpreadRetryEligible(TriggerTradeRequestEntity request, TriggeredTradeSetupEntity trade) {
+        if (!isAtrPreviousDaySource(request) || trade == null || trade.getStatus() != TriggeredTradeStatus.REJECTED
+                || !nowIst().toLocalTime().isBefore(LocalTime.of(9, 30))) {
+            return false;
+        }
+        String reason = trade.getReason();
+        return "ENTRY_SPREAD_HARD_LIMIT_EXCEEDED".equals(reason)
+                || "ENTRY_SPREAD_PERSISTENTLY_WIDE".equals(reason);
     }
 
     /**

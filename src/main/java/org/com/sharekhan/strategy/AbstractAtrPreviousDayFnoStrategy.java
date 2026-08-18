@@ -5,9 +5,12 @@ import org.com.sharekhan.dto.StrategyApplyResponse;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
+import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -20,6 +23,11 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
 
     static final String SOURCE = "atr-pdh-pdl-strategy";
     private static final int DEFAULT_LOTS = 3;
+    private static final double STOP_LOSS_ATR_MULTIPLIER = 2d;
+    private static final double TARGET1_ATR_MULTIPLIER = 3d;
+    private static final double TARGET2_ATR_MULTIPLIER = 5d;
+    private static final double TARGET3_ATR_MULTIPLIER = 6d;
+    private static final LocalTime REENTRY_CUTOFF = LocalTime.of(14, 30);
 
     private final StrategyMetadata metadata;
     private final StrategySupport support;
@@ -56,15 +64,24 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
                 continue;
             }
             try {
-                if (support.hasAtrPreviousDayEntryOn(now.toLocalDate(), request.getUserId(), symbol)) {
-                    waiting.add(symbol + ": an ATR prior-day entry has already been triggered for this symbol today");
+                List<TriggeredTradeSetupEntity> priorEntries = support.atrPreviousDayEntriesOn(
+                        now.toLocalDate(), request.getUserId(), symbol, metadata.optionType());
+                if (priorEntries.size() >= 2) {
+                    waiting.add(symbol + ": the maximum of one ATR prior-day re-entry has already been used today");
+                    continue;
+                }
+                TriggeredTradeSetupEntity priorEntry = priorEntries.isEmpty() ? null : priorEntries.get(0);
+                if (priorEntry != null && (priorEntry.getStatus() != TriggeredTradeStatus.EXITED_SUCCESS
+                        || !now.toLocalTime().isBefore(REENTRY_CUTOFF))) {
+                    waiting.add(symbol + ": prior ATR entry has not exited, or the 14:30 re-entry cutoff has passed");
                     continue;
                 }
                 ScriptMasterEntity spot = support.resolveSpotScript(symbol);
                 support.mstockAvailabilityFailure(spot).ifPresentOrElse(failure -> waiting.add(symbol + ": " + failure), () -> {
                     support.warmUpPreferredFnoFeeds(request, metadata, symbol, spot);
-                    Fno925EntryQualificationService.Qualification qualification = qualificationService
-                            .qualify(spot, metadata.optionType(), request.getUserId(), now);
+                    Fno925EntryQualificationService.Qualification qualification = priorEntry == null
+                            ? qualificationService.qualify(spot, metadata.optionType(), request.getUserId(), now)
+                            : qualificationService.qualifyReentry(spot, metadata.optionType(), priorEntry, now);
                     if (!qualification.qualified()) {
                         waiting.add(symbol + ": " + qualification.reason());
                         return;
@@ -112,16 +129,16 @@ abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
         if (!Double.isFinite(atr) || atr <= 0d) {
             throw new IllegalArgumentException("ATR(75) is unavailable for " + symbol);
         }
-        double stopLoss = support.roundPrice(ce ? entry - 2d * atr : entry + 2d * atr);
+        double stopLoss = support.roundPrice(ce ? entry - STOP_LOSS_ATR_MULTIPLIER * atr : entry + STOP_LOSS_ATR_MULTIPLIER * atr);
         String expiry = support.preferredFnoExpiry(symbol, metadata.optionType());
         StrategySupport.FnoOptionContract contract = support.resolveFnoEntryContract(request, metadata, symbol, expiry,
                 support.nearestStrike(symbol, metadata.optionType(), expiry, entry));
         int lots = request.getLots() != null && request.getLots() > 0 ? request.getLots() : DEFAULT_LOTS;
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(symbol); trigger.setEntryPrice(entry); trigger.setStopLoss(stopLoss);
-        trigger.setTarget1(support.roundPrice(ce ? entry + 2d * atr : entry - 2d * atr));
-        trigger.setTarget2(support.roundPrice(ce ? entry + 3d * atr : entry - 3d * atr));
-        trigger.setTarget3(support.roundPrice(ce ? entry + 4d * atr : entry - 4d * atr));
+        trigger.setTarget1(support.roundPrice(ce ? entry + TARGET1_ATR_MULTIPLIER * atr : entry - TARGET1_ATR_MULTIPLIER * atr));
+        trigger.setTarget2(support.roundPrice(ce ? entry + TARGET2_ATR_MULTIPLIER * atr : entry - TARGET2_ATR_MULTIPLIER * atr));
+        trigger.setTarget3(support.roundPrice(ce ? entry + TARGET3_ATR_MULTIPLIER * atr : entry - TARGET3_ATR_MULTIPLIER * atr));
         trigger.setOptionType(metadata.optionType()); trigger.setExpiry(contract.expiry()); trigger.setStrikePrice(contract.strike());
         trigger.setIntraday(request.getIntraday() == null || request.getIntraday());
         trigger.setUseSpotPrice(true); trigger.setUseSpotForEntry(true); trigger.setUseSpotForSl(true); trigger.setUseSpotForTarget(true);

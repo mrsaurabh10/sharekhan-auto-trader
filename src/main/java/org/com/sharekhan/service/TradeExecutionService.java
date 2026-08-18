@@ -119,6 +119,9 @@ public class TradeExecutionService {
     private static final long DEFAULT_ENTRY_RETRY_DELAY_MS = 2000L;
     private static final double DEFAULT_ENTRY_MAX_SLIPPAGE_PERCENT = 2.0d;
     private static final double ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT = 3.5d;
+    /** The first ten minutes have slightly wider but still executable F&O books. */
+    private static final double ATR_PREVIOUS_DAY_OPENING_MAX_SPREAD_PERCENT = 4.5d;
+    private static final LocalTime ATR_PREVIOUS_DAY_OPENING_SPREAD_CUTOFF = LocalTime.of(9, 30);
     private static final double ATR_PREVIOUS_DAY_MAX_SLIPPAGE_PERCENT = 3.0d;
     private static final double DEFAULT_ENTRY_HARD_SPREAD_PERCENT = 2.5d;
     private static final int DEFAULT_ENTRY_WIDE_SPREAD_CONFIRMATIONS = 2;
@@ -2539,7 +2542,7 @@ public class TradeExecutionService {
 
     private double configuredEntryHardSpreadPercent(TriggeredTradeSetupEntity trigger) {
         if (isAtrPreviousDayStrategy(trigger)) {
-            return ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT;
+            return atrPreviousDaySpreadCap();
         }
         double hardLimit = entryHardSpreadPercent > 0d
                 ? entryHardSpreadPercent
@@ -2548,7 +2551,13 @@ public class TradeExecutionService {
     }
 
     private double maxEntrySpreadPercent(TriggeredTradeSetupEntity trigger) {
-        return isAtrPreviousDayStrategy(trigger) ? ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT : entryMaxSpreadPercent;
+        return isAtrPreviousDayStrategy(trigger) ? atrPreviousDaySpreadCap() : entryMaxSpreadPercent;
+    }
+
+    private double atrPreviousDaySpreadCap() {
+        return LocalTime.now(MARKET_ZONE).isBefore(ATR_PREVIOUS_DAY_OPENING_SPREAD_CUTOFF)
+                ? ATR_PREVIOUS_DAY_OPENING_MAX_SPREAD_PERCENT
+                : ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT;
     }
 
     private boolean isAtrPreviousDayStrategy(TriggeredTradeSetupEntity trigger) {
