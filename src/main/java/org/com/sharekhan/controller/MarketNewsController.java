@@ -68,6 +68,11 @@ public class MarketNewsController {
                     item.put("entity", entity);
                     item.put("symbol", row.getEntitySymbol());
                     item.put("sentimentScore", row.getSentimentScore());
+                    item.put("articleTitle", row.getArticleTitle());
+                    item.put("articleSource", row.getArticleSource());
+                    item.put("articleUrl", row.getArticleUrl());
+                    item.put("identifiedEntityCount", row.getIdentifiedEntityCount());
+                    item.put("broadMarketArticle", Boolean.TRUE.equals(row.getBroadMarketArticle()));
                     latestByEntity.put(key, item);
                 }
             }

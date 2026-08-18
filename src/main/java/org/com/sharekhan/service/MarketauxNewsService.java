@@ -95,15 +95,21 @@ public class MarketauxNewsService {
     private List<IndiaEntitySentiment> sentimentsFromArticle(Map<?, ?> article) {
         String articleUuid = text(article.get("uuid"));
         OffsetDateTime publishedAt = parsePublishedAt(text(article.get("published_at")));
+        String articleTitle = text(article.get("title"));
+        String articleSource = text(article.get("source"));
+        String articleUrl = text(article.get("url"));
         Object entities = article.get("entities");
         if (!(entities instanceof List<?> entityList)) {
             return List.of();
         }
+        int identifiedEntityCount = (int) entityList.stream().filter(Map.class::isInstance).count();
+        boolean broadMarketArticle = identifiedEntityCount > 3;
         return entityList.stream().filter(Map.class::isInstance).map(entity -> {
             Map<?, ?> entityMap = (Map<?, ?>) entity;
             Object score = entityMap.get("sentiment_score");
             return new IndiaEntitySentiment(articleUuid, text(entityMap.get("symbol")), text(entityMap.get("name")),
-                    score instanceof Number number ? number.doubleValue() : null, publishedAt);
+                    score instanceof Number number ? number.doubleValue() : null, publishedAt,
+                    articleTitle, articleSource, articleUrl, identifiedEntityCount, broadMarketArticle);
         }).filter(sentiment -> sentiment.sentimentScore() != null).toList();
     }
 
@@ -179,6 +185,8 @@ public class MarketauxNewsService {
     }
 
     public record IndiaEntitySentiment(String articleUuid, String entitySymbol, String entityName,
-                                       Double sentimentScore, OffsetDateTime publishedAt) {
+                                       Double sentimentScore, OffsetDateTime publishedAt,
+                                       String articleTitle, String articleSource, String articleUrl,
+                                       int identifiedEntityCount, boolean broadMarketArticle) {
     }
 }

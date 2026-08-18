@@ -47,6 +47,8 @@ class MarketauxIndiaSentimentCollectorTest {
     }
 
     private MarketauxNewsService.IndiaEntitySentiment sentiment(String articleUuid, String symbol) {
-        return new MarketauxNewsService.IndiaEntitySentiment(articleUuid, symbol, symbol, 0.2, null);
+        return new MarketauxNewsService.IndiaEntitySentiment(
+                articleUuid, symbol, symbol, 0.2, null,
+                "Article title", "example.com", "https://example.com/article", 1, false);
     }
 }

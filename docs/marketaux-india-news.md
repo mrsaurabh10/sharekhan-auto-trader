@@ -45,6 +45,10 @@ The collector stores each `(article UUID, entity symbol)` combination only once.
 startup it removes any previously stored duplicates (retaining the earliest row) and creates a
 database uniqueness guard, so repeat provider pages do not grow the table unnecessarily.
 
+Each new row also includes the article title, source, and URL for manual review. Articles with more
+than three identified entities are flagged as `broadMarketArticle=true`; retain them for market
+context, but do not treat their entity-level scores as stock-specific catalysts.
+
 Read the latest stored score for each entity without spending a Marketaux request:
 
 ```text

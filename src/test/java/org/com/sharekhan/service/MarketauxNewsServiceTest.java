@@ -59,6 +59,9 @@ class MarketauxNewsServiceTest {
         assertEquals(1, sentiments.size());
         assertEquals("^NSEI", sentiments.get(0).entitySymbol());
         assertEquals(0.82, sentiments.get(0).sentimentScore());
+        assertEquals("article-1", sentiments.get(0).articleUuid());
+        assertEquals(1, sentiments.get(0).identifiedEntityCount());
+        assertFalse(sentiments.get(0).broadMarketArticle());
         server.verify();
     }
 

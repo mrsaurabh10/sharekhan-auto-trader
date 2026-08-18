@@ -57,6 +57,9 @@ public class MarketauxIndiaSentimentCollector {
                             .articleUuid(sentiment.articleUuid()).entitySymbol(sentiment.entitySymbol())
                             .entityName(sentiment.entityName()).sentimentScore(sentiment.sentimentScore())
                             .articlePublishedAt(sentiment.publishedAt() == null ? null : sentiment.publishedAt().toLocalDateTime())
+                            .articleTitle(sentiment.articleTitle()).articleSource(sentiment.articleSource())
+                            .articleUrl(sentiment.articleUrl()).identifiedEntityCount(sentiment.identifiedEntityCount())
+                            .broadMarketArticle(sentiment.broadMarketArticle())
                             .collectedAt(requestedAt).build()).toList();
             sentimentRepository.saveAll(rows);
             run.setSuccess(true);
