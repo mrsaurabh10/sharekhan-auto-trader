@@ -50,7 +50,8 @@ public class MStockLtpPollingService {
     private ScriptMasterRepository scriptMasterRepository;
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
-    private static final LocalTime MARKET_CLOSE_TIME = LocalTime.of(15, 30);
+    // Keep quote polling through the post-close buffer, then stop all market-data refreshes.
+    private static final LocalTime MARKET_CLOSE_TIME = LocalTime.of(15, 45);
     private static final long MAX_TRANSIENT_BACKOFF_MS = 60_000L;
 
     private final Map<Integer, String> scripCodeToMStockKeyCache = new ConcurrentHashMap<>();

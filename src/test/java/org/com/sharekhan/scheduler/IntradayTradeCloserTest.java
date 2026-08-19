@@ -7,7 +7,6 @@ import org.com.sharekhan.service.TradeExecutionService;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.ZoneId;
 
 import static org.mockito.ArgumentMatchers.eq;
@@ -18,11 +17,10 @@ import static org.mockito.Mockito.when;
 class IntradayTradeCloserTest {
 
     @Test
-    void purgeKeepsRequestsCreatedAfterTodayMarketClose() {
+    void purgeRemovesStaleRequestsAndKeepsPostMarketRequests() {
         TriggerTradeRequestRepository requestRepository = mock(TriggerTradeRequestRepository.class);
-        when(requestRepository.deleteIntradayRequestsCreatedBetween(
-                org.mockito.ArgumentMatchers.any(LocalDateTime.class),
-                org.mockito.ArgumentMatchers.any(LocalDateTime.class)))
+        when(requestRepository.deleteStaleIntradayRequestsCreatedBefore(
+                org.mockito.ArgumentMatchers.any()))
                 .thenReturn(3);
         IntradayTradeCloser scheduler = new IntradayTradeCloser(
                 mock(TriggeredTradeSetupRepository.class),
@@ -33,8 +31,7 @@ class IntradayTradeCloserTest {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
         scheduler.purgeTodayIntradayTradeRequests();
 
-        verify(requestRepository).deleteIntradayRequestsCreatedBetween(
-                eq(today.minusDays(1).atStartOfDay()),
+        verify(requestRepository).deleteStaleIntradayRequestsCreatedBefore(
                 eq(today.atTime(15, 30)));
     }
 }
