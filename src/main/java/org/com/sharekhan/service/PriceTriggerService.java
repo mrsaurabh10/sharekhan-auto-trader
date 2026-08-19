@@ -53,7 +53,8 @@ public class PriceTriggerService {
     private static final String ATR_SIGNAL_SOURCE = "atr-signal";
     private static final double ATR_TARGET1_PROXIMITY_FRACTION = 0.10d;
     private static final String ATR_PREVIOUS_DAY_SOURCE = "atr-pdh-pdl-strategy";
-    private static final double ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT = 3000d;
+    private static final double ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT = 2000d;
+    private static final double ATR_PREVIOUS_DAY_MAX_OPTION_LOSS_PERCENT = 0.30d;
     private static final String GAP_FILL_EXIT_REASON = "GAP_FILL_STOP";
     private static final int CLAIM_NONE = 0;
     private static final int CLAIM_EXIT_TRIGGERED = 1;
@@ -89,6 +90,9 @@ public class PriceTriggerService {
     /** Optional while Shoonya is being rolled out; existing trigger processing remains available. */
     @Autowired(required = false)
     private ShoonyaQuoteService shoonyaQuoteService;
+
+    @Autowired(required = false)
+    private AtrPreviousDayEntryQualityService atrPreviousDayEntryQualityService;
 
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         LocalDateTime nowIst = nowIst();
@@ -163,6 +167,13 @@ public class PriceTriggerService {
                 OpeningDecision openingDecision = evaluateAtrSpotEntryRule(trigger, nowIst, ltp);
                 if (openingDecision == OpeningDecision.WAIT || openingDecision == OpeningDecision.REJECTED) {
                     continue;
+                }
+                if (atrPreviousDayEntryQualityService != null) {
+                    AtrPreviousDayEntryQualityService.Decision quality = atrPreviousDayEntryQualityService.evaluate(trigger, nowIst, ltp);
+                    if (!quality.ready()) {
+                        log.info("ATR prior-day request {} for {} is waiting: {}", trigger.getId(), trigger.getSymbol(), quality.reason());
+                        continue;
+                    }
                 }
 
                 double entryPrice = trigger.getEntryPrice();
@@ -1537,11 +1548,13 @@ public class PriceTriggerService {
             return false;
         }
         double lossPerLot = (entry - optionLtp) * ((double) quantity / lots);
-        if (lossPerLot < ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT) {
+        double lossPercent = (entry - optionLtp) / entry;
+        if (lossPerLot < ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT && lossPercent < ATR_PREVIOUS_DAY_MAX_OPTION_LOSS_PERCENT) {
             return false;
         }
-        log.warn("ATR previous-day max loss reached for trade {}: lossPerLot={} cap={} entry={} optionLtp={} lots={} quantity={}",
-                trade.getId(), lossPerLot, ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT, entry, optionLtp, lots, quantity);
+        log.warn("ATR previous-day max loss reached for trade {}: lossPerLot={} cap={} lossPercent={} capPercent={} entry={} optionLtp={} lots={} quantity={}",
+                trade.getId(), lossPerLot, ATR_PREVIOUS_DAY_MAX_LOSS_PER_LOT, lossPercent,
+                ATR_PREVIOUS_DAY_MAX_OPTION_LOSS_PERCENT, entry, optionLtp, lots, quantity);
         return true;
     }
 

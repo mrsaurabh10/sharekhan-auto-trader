@@ -93,6 +93,12 @@ app:
   scheduler:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
   strategy:
+    atr-prior-day:
+      strict-entry:
+        # Accuracy-first: avoid live-price/one-minute false breakouts.
+        enabled: ${ATR_PRIOR_DAY_STRICT_ENTRY_ENABLED:true}
+        minimum-time: ${ATR_PRIOR_DAY_STRICT_ENTRY_MINIMUM_TIME:09:30}
+        max-vwap-extension-atr: ${ATR_PRIOR_DAY_MAX_VWAP_EXTENSION_ATR:1.25}
     fno-0925-mover:
       # Do not compare a later breakout to the unusually high opening-auction volume.
       orb-volume-multiplier: ${FNO_0925_MOVER_ORB_VOLUME_MULTIPLIER:0.75}

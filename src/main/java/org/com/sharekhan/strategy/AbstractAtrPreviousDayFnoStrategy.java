@@ -22,7 +22,7 @@ import java.util.concurrent.ConcurrentHashMap;
 abstract class AbstractAtrPreviousDayFnoStrategy implements StrategyEvaluator {
 
     static final String SOURCE = "atr-pdh-pdl-strategy";
-    private static final int DEFAULT_LOTS = 3;
+    private static final int DEFAULT_LOTS = 1;
     private static final double STOP_LOSS_ATR_MULTIPLIER = 2d;
     private static final double TARGET1_ATR_MULTIPLIER = 3d;
     private static final double TARGET2_ATR_MULTIPLIER = 5d;
