@@ -188,5 +188,9 @@ public class MarketauxNewsService {
                                        Double sentimentScore, OffsetDateTime publishedAt,
                                        String articleTitle, String articleSource, String articleUrl,
                                        int identifiedEntityCount, boolean broadMarketArticle) {
+        public IndiaEntitySentiment withEntitySymbol(String canonicalSymbol) {
+            return new IndiaEntitySentiment(articleUuid, canonicalSymbol, entityName, sentimentScore, publishedAt,
+                    articleTitle, articleSource, articleUrl, identifiedEntityCount, broadMarketArticle);
+        }
     }
 }

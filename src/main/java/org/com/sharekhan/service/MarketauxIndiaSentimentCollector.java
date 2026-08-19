@@ -25,6 +25,7 @@ public class MarketauxIndiaSentimentCollector {
     private static final ZoneId INDIA_ZONE = ZoneId.of("Asia/Kolkata");
 
     private final MarketauxNewsService newsService;
+    private final FnoStockUniverseService fnoStockUniverseService;
     private final MarketauxCollectionRunRepository collectionRunRepository;
     private final MarketauxEntitySentimentRepository sentimentRepository;
 
@@ -45,6 +46,8 @@ public class MarketauxIndiaSentimentCollector {
                     newsService.latestIndiaEntitySentiments(articleLimit);
             Set<ArticleEntityKey> responseKeys = new HashSet<>();
             List<MarketauxEntitySentimentEntity> rows = sentiments.stream()
+                    .flatMap(sentiment -> fnoStockUniverseService.resolveFnoStockUnderlying(sentiment.entitySymbol())
+                            .map(underlying -> sentiment.withEntitySymbol(underlying)).stream())
                     .filter(sentiment -> StringUtils.hasText(sentiment.articleUuid()))
                     .filter(sentiment -> StringUtils.hasText(sentiment.entitySymbol()))
                     .filter(sentiment -> responseKeys.add(new ArticleEntityKey(

@@ -24,6 +24,7 @@ class MarketauxIndiaSentimentCollectorTest {
     @Test
     void storesOnlyNewUniqueArticleEntityPairs() {
         MarketauxNewsService newsService = mock(MarketauxNewsService.class);
+        FnoStockUniverseService fnoStockUniverseService = mock(FnoStockUniverseService.class);
         MarketauxCollectionRunRepository runRepository = mock(MarketauxCollectionRunRepository.class);
         MarketauxEntitySentimentRepository sentimentRepository = mock(MarketauxEntitySentimentRepository.class);
         when(runRepository.saveAndFlush(any())).thenReturn(MarketauxCollectionRunEntity.builder().id(7L).build());
@@ -32,9 +33,11 @@ class MarketauxIndiaSentimentCollectorTest {
                 sentiment("article-1", "BHARTIARTL.NS"),
                 sentiment("article-2", "^NSEI")));
         when(sentimentRepository.existsByArticleUuidAndEntitySymbol("article-1", "BHARTIARTL.NS")).thenReturn(false);
-        when(sentimentRepository.existsByArticleUuidAndEntitySymbol("article-2", "^NSEI")).thenReturn(true);
+        when(fnoStockUniverseService.resolveFnoStockUnderlying("BHARTIARTL.NS")).thenReturn(java.util.Optional.of("BHARTIARTL"));
+        when(fnoStockUniverseService.resolveFnoStockUnderlying("^NSEI")).thenReturn(java.util.Optional.empty());
+        when(sentimentRepository.existsByArticleUuidAndEntitySymbol("article-1", "BHARTIARTL")).thenReturn(false);
 
-        new MarketauxIndiaSentimentCollector(newsService, runRepository, sentimentRepository)
+        new MarketauxIndiaSentimentCollector(newsService, fnoStockUniverseService, runRepository, sentimentRepository)
                 .collect(LocalDate.of(2026, 8, 17), 0, LocalDateTime.of(2026, 8, 17, 9, 20), 20);
 
         @SuppressWarnings("unchecked")
@@ -42,7 +45,7 @@ class MarketauxIndiaSentimentCollectorTest {
         verify(sentimentRepository).saveAll(rows.capture());
         assertEquals(1, rows.getValue().size());
         assertEquals("article-1", rows.getValue().get(0).getArticleUuid());
-        assertEquals("BHARTIARTL.NS", rows.getValue().get(0).getEntitySymbol());
+        assertEquals("BHARTIARTL", rows.getValue().get(0).getEntitySymbol());
         verify(sentimentRepository, never()).existsByArticleUuidAndEntitySymbol(eq("article-1"), eq("^NSEI"));
     }
 

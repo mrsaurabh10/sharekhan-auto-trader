@@ -49,6 +49,10 @@ Each new row also includes the article title, source, and URL for manual review.
 than three identified entities are flagged as `broadMarketArticle=true`; retain them for market
 context, but do not treat their entity-level scores as stock-specific catalysts.
 
+Only equities whose underlying has an active stock-option (`OS`) contract in the broker's NFO script
+master are persisted. Marketaux's NSE/BSE suffixes are normalized to the underlying symbol (for
+example, `BHARTIARTL.NS` becomes `BHARTIARTL`); index and non-F&O symbols are excluded.
+
 Read the latest stored score for each entity without spending a Marketaux request:
 
 ```text
