@@ -3654,6 +3654,7 @@ public class TradeExecutionService {
                         charges != null ? charges.effectivePnl() : null);
                 if (updated == 1) {
                     TradeEventLogger.logOrderExecuted("EXIT", persisted, exitPriceVal, result.getStatus());
+                    advanceStagedTargetStopsAfterTargetExit(persisted);
                     rearmGapFillRequestAfterImmediateExit(persisted);
                     try {
                         if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
@@ -4225,22 +4226,58 @@ public class TradeExecutionService {
         if (!isStagedTargetLeg(completedLeg)) {
             return;
         }
-        Double newStop = completedLeg.getTargetStage() == 1
-                ? resolveEntryPriceForPnl(completedLeg)
-                : completedLeg.getTarget1();
+        List<TriggeredTradeSetupEntity> groupLegs = triggeredTradeRepo.findByTargetOrderGroupIdAndStatusIn(
+                completedLeg.getTargetOrderGroupId(), List.of(
+                        TriggeredTradeStatus.EXECUTED,
+                        TriggeredTradeStatus.TARGET_ORDER_PLACED,
+                        TriggeredTradeStatus.EXITED_SUCCESS,
+                        TriggeredTradeStatus.COMPLETED));
+        Double newStop = nextStagedStopLoss(completedLeg, groupLegs);
         if (newStop == null || newStop <= 0d) {
             return;
         }
-        List<TriggeredTradeSetupEntity> openLegs = triggeredTradeRepo.findByTargetOrderGroupIdAndStatusIn(
-                completedLeg.getTargetOrderGroupId(), List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED));
-        for (TriggeredTradeSetupEntity leg : openLegs) {
+        for (TriggeredTradeSetupEntity leg : groupLegs) {
             if (!Objects.equals(leg.getId(), completedLeg.getId())
                     && leg.getTargetStage() != null && leg.getTargetStage() > completedLeg.getTargetStage()) {
+                if (leg.getStatus() != TriggeredTradeStatus.EXECUTED
+                        && leg.getStatus() != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
+                    continue;
+                }
                 leg.setStopLoss(newStop);
                 leg.setUseSpotForSl(false);
                 triggeredTradeRepo.save(leg);
             }
         }
+    }
+
+    private Double nextStagedStopLoss(TriggeredTradeSetupEntity completedLeg,
+                                      List<TriggeredTradeSetupEntity> groupLegs) {
+        if (completedLeg.getTargetStage() == 1) {
+            return resolveEntryPriceForPnl(completedLeg);
+        }
+        int previousStage = completedLeg.getTargetStage() - 1;
+        return groupLegs.stream()
+                .filter(leg -> leg.getTargetStage() != null && leg.getTargetStage() == previousStage)
+                .filter(leg -> isTargetExitReason(leg.getExitReason()))
+                .map(TriggeredTradeSetupEntity::getTarget1)
+                .filter(target -> target != null && target > 0d)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** Advance remaining staged legs only when this leg actually exited at its target. */
+    public void advanceStagedTargetStopsAfterTargetExit(TriggeredTradeSetupEntity completedLeg) {
+        if (completedLeg == null || !isTargetExitReason(completedLeg.getExitReason())) {
+            return;
+        }
+        advanceStagedTargetStops(completedLeg);
+    }
+
+    private boolean isTargetExitReason(String exitReason) {
+        return "TARGET_HIT".equalsIgnoreCase(exitReason)
+                || "TARGET_HIT_PARTIAL".equalsIgnoreCase(exitReason)
+                || "TARGET_HIT_FULL".equalsIgnoreCase(exitReason)
+                || "TARGET_ORDER_AUTO".equalsIgnoreCase(exitReason);
     }
 
     /**

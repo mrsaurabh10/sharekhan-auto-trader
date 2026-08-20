@@ -749,6 +749,41 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void stagedCashEquityLegExitsAtItsOwnTargetInsteadOfApplyingGroupPartialBooking() {
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setId(8079L);
+        trade.setScripCode(7553);
+        trade.setExchange("NC");
+        trade.setInstrumentType("EQ");
+        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+        trade.setQuantity(35L);
+        trade.setLots(35);
+        trade.setOriginalLots(106);
+        trade.setTargetOrderGroupId(8079L);
+        trade.setTargetStage(1);
+        trade.setTslEnabled(true);
+        trade.setTarget1(472.40);
+        trade.setStopLoss(440.60);
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(7553), anyList())).thenReturn(List.of(trade));
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(7553), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findById(8079L)).thenReturn(Optional.of(trade));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade, 483.15)).thenReturn(true);
+        when(triggeredRepo.claimIfStatusEquals(8079L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT")).thenAnswer(invocation -> {
+                    trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+                    trade.setExitReason("TARGET_HIT");
+                    return 1;
+                });
+
+        service.monitorOpenTrades(7553, 483.15);
+
+        verify(triggeredRepo).claimIfStatusEquals(8079L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+        verify(tradeExecutionService).squareOff(trade, 483.15, "TARGET_HIT");
+    }
+
+    @Test
     void monitorOpenTradesDoesNotUseSpotTickAsTradedPriceWhenOptionScripMatchesSpot() {
         TriggeredTradeSetupEntity trade = optionTrade(5209L, 20000, 20000);
         trade.setTarget1(131.2);

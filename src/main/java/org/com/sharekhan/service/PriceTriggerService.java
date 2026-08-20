@@ -931,8 +931,23 @@ public class PriceTriggerService {
 
                 // Check if any target hit and if we need to book lots
                 if (targetRefPrice != null) {
-                    // Only perform partial booking logic if TSL is enabled
-                    if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
+                    // A staged target leg already represents its own allocated quantity and
+                    // holds its target in target1. Re-applying the group-level partial-booking
+                    // calculation makes it look for target2/target3 on this individual leg,
+                    // which are intentionally null.
+                    if (isStagedTargetLeg(persisted)) {
+                        if (isTargetHit(persisted, targetRefPrice, 1)) {
+                            if (!hasSafeTradedExitPrice(persisted, confirmedTradedLtp, spotLtp, targetRefPrice, "Target")) {
+                                return CLAIM_NONE;
+                            }
+                            int updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.EXECUTED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            if (updated == 0) {
+                                updated = triggeredRepo.claimIfStatusEquals(tradeId, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(), TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+                            }
+                            return updated;
+                        }
+                    // Only perform partial booking logic if TSL is enabled for an unsplit position.
+                    } else if (Boolean.TRUE.equals(persisted.getTslEnabled())) {
                         int lotsToBook = calculateLotsToBook(persisted, targetRefPrice);
                         if (lotsToBook > 0) {
                             if (!canExitSpotTargetAtCurrentOptionPrice(persisted, confirmedTradedLtp)) {
@@ -1045,6 +1060,10 @@ public class PriceTriggerService {
                                 log.debug("Failed to persist TARGET_ORDER_PLACED status for trade {}: {}", tradeId, e.getMessage());
                             }
                         }
+                    } else if (isStagedTargetLeg(reloaded)) {
+                        log.info("🎯 Target hit for staged trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff its allocated quantity",
+                                tradeId, targetRefPrice, confirmedTradedLtp);
+                        dispatchSquareOff(reloaded, confirmedTradedLtp, "TARGET_HIT");
                     } else if (Boolean.TRUE.equals(reloaded.getTslEnabled())) {
                         int lots = resolveCurrentLots(reloaded);
                         // If lot count cannot be derived, fall back to single-lot target exit behavior.
@@ -1196,6 +1215,11 @@ public class PriceTriggerService {
             return;
         }
 
+        if (isStagedTargetLeg(trade)) {
+            dispatchSquareOff(trade, tradedLtp, exitReason);
+            return;
+        }
+
         if (Boolean.TRUE.equals(trade.getTslEnabled())) {
             int lots = resolveCurrentLots(trade);
             Double targetRefPrice = usesSpotForTarget(trade) ? spotLtp : tradedLtp;
@@ -1252,6 +1276,12 @@ public class PriceTriggerService {
         }
 
         return Math.min(step.lotsToBook(), currentLots);
+    }
+
+    private boolean isStagedTargetLeg(TriggeredTradeSetupEntity trade) {
+        return trade != null
+                && trade.getTargetOrderGroupId() != null
+                && trade.getTargetStage() != null;
     }
 
     private void handlePartialBooking(TriggeredTradeSetupEntity trade, double referenceLtp, double tradedLtp, int currentLots) {

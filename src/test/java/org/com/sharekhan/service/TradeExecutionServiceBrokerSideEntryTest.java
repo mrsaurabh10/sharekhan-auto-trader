@@ -152,8 +152,10 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggeredTradeSetupEntity targetTwo = new TriggeredTradeSetupEntity();
         targetTwo.setId(2L); targetTwo.setTargetOrderGroupId(99L); targetTwo.setTargetStage(2);
+        targetTwo.setStatus(TriggeredTradeStatus.EXECUTED);
         TriggeredTradeSetupEntity targetThree = new TriggeredTradeSetupEntity();
         targetThree.setId(3L); targetThree.setTargetOrderGroupId(99L); targetThree.setTargetStage(3);
+        targetThree.setStatus(TriggeredTradeStatus.EXECUTED);
         when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(99L), any()))
                 .thenReturn(List.of(targetTwo, targetThree));
 
@@ -163,6 +165,38 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(targetThree.getStopLoss()).isEqualTo(120.0);
         verify(ctx.triggeredRepo).save(targetTwo);
         verify(ctx.triggeredRepo).save(targetThree);
+    }
+
+    @Test
+    void doesNotAdvanceStagedStopsWhenALegExitsForStopLoss() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity stoppedLeg = new TriggeredTradeSetupEntity();
+        stoppedLeg.setId(1L); stoppedLeg.setTargetOrderGroupId(99L); stoppedLeg.setTargetStage(1);
+        stoppedLeg.setExitReason("STOP_LOSS_HIT");
+
+        ctx.service.advanceStagedTargetStopsAfterTargetExit(stoppedLeg);
+
+        verify(ctx.triggeredRepo, never()).findByTargetOrderGroupIdAndStatusIn(any(), any());
+    }
+
+    @Test
+    void advancesFinalLegStopToFirstTargetWhenSecondTargetFills() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity firstTarget = new TriggeredTradeSetupEntity();
+        firstTarget.setId(1L); firstTarget.setTargetStage(1); firstTarget.setTarget1(140.0);
+        firstTarget.setExitReason("TARGET_HIT"); firstTarget.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+        TriggeredTradeSetupEntity secondTarget = new TriggeredTradeSetupEntity();
+        secondTarget.setId(2L); secondTarget.setTargetOrderGroupId(99L); secondTarget.setTargetStage(2);
+        secondTarget.setTarget1(160.0); secondTarget.setExitReason("TARGET_HIT");
+        TriggeredTradeSetupEntity finalLeg = new TriggeredTradeSetupEntity();
+        finalLeg.setId(3L); finalLeg.setTargetStage(3); finalLeg.setStatus(TriggeredTradeStatus.EXECUTED);
+        when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(99L), any()))
+                .thenReturn(List.of(firstTarget, finalLeg));
+
+        ctx.service.advanceStagedTargetStops(secondTarget);
+
+        assertThat(finalLeg.getStopLoss()).isEqualTo(140.0);
+        verify(ctx.triggeredRepo).save(finalLeg);
     }
 
     @Test
