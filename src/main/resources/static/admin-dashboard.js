@@ -2355,6 +2355,25 @@
     const refreshBtn = document.getElementById('refreshStrategiesBtn');
     const result = document.getElementById('strategyResult');
     const errDiv = document.getElementById('serverError');
+    const templateSelect = document.getElementById('strategyTemplate');
+    const symbolInput = document.getElementById('strategySymbol');
+    const automaticUniverseTemplate = function () {
+      const id = (templateSelect && templateSelect.value ? templateSelect.value : '').trim().toUpperCase();
+      return id === 'FNO_0925_MOVER_ATR_BREAKOUT' || id === 'MARKETAUX_SENTIMENT_SWING_ATR';
+    };
+    const updateSymbolInput = function () {
+      if (!symbolInput) return;
+      const automatic = automaticUniverseTemplate();
+      symbolInput.disabled = automatic;
+      symbolInput.value = automatic ? '' : symbolInput.value;
+      symbolInput.placeholder = automatic
+        ? 'Selected automatically from the F&O news universe'
+        : 'e.g. NIFTY, RELIANCE; use commas/new lines for manual F&O lists';
+    };
+    if (templateSelect) {
+      templateSelect.addEventListener('change', updateSymbolInput);
+      updateSymbolInput();
+    }
     if (refreshBtn) {
       refreshBtn.addEventListener('click', function () {
         loadStrategySubscriptions(window.selectedUserId).catch(function(){});
@@ -2366,17 +2385,17 @@
       if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
       const templateId = (document.getElementById('strategyTemplate') || {}).value || '';
       const symbol = ((document.getElementById('strategySymbol') || {}).value || '').trim().toUpperCase();
-      const fnoMover = templateId.trim().toUpperCase() === 'FNO_0925_MOVER_ATR_BREAKOUT';
+      const automaticUniverse = automaticUniverseTemplate();
       const lotsValue = Number((document.getElementById('strategyLots') || {}).value || '1');
       const intraday = !!(document.getElementById('strategyIntraday') && document.getElementById('strategyIntraday').checked);
       if (!templateId) { if (result) result.innerText = 'Select a strategy template.'; return; }
-      if (!fnoMover && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
+      if (!automaticUniverse && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
       try {
         btn.disabled = true;
         await ensureCsrf();
         const body = {
           templateId,
-          symbol: fnoMover ? 'FNO_UNIVERSE' : symbol,
+          symbol: automaticUniverse ? 'FNO_UNIVERSE' : symbol,
           lots: Number.isFinite(lotsValue) && lotsValue > 0 ? lotsValue : 1,
           intraday,
           userId: window.selectedUserId || null,
