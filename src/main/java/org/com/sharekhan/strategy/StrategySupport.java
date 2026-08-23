@@ -373,8 +373,13 @@ public class StrategySupport {
      * same symbol.  CE and PE remain independent strategies.
      */
     public TriggerTradeRequestEntity findActiveAtrPreviousDaySetup(TriggerRequest trigger) {
+        return findActiveSetup(trigger, AbstractAtrPreviousDayFnoStrategy.SOURCE);
+    }
+
+    /** Finds an active directional setup for a symbol created by one strategy source. */
+    public TriggerTradeRequestEntity findActiveSetup(TriggerRequest trigger, String source) {
         if (trigger == null || trigger.getUserId() == null || !StringUtils.hasText(trigger.getInstrument())
-                || !StringUtils.hasText(trigger.getOptionType())) {
+                || !StringUtils.hasText(trigger.getOptionType()) || !StringUtils.hasText(source)) {
             return null;
         }
         List<TriggerTradeRequestEntity> matches = triggerTradeRequestRepository
@@ -383,7 +388,7 @@ public class StrategySupport {
                         TriggeredTradeStatus.ENTRY_SUBMITTING,
                         TriggeredTradeStatus.TRIGGERED));
         return matches == null ? null : matches.stream()
-                .filter(item -> AbstractAtrPreviousDayFnoStrategy.SOURCE.equalsIgnoreCase(item.getSource()))
+                .filter(item -> source.equalsIgnoreCase(item.getSource()))
                 .filter(item -> trigger.getOptionType().equalsIgnoreCase(item.getOptionType()))
                 .findFirst()
                 .orElse(null);

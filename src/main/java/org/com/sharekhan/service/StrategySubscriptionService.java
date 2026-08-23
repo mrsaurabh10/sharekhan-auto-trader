@@ -11,6 +11,7 @@ import org.com.sharekhan.strategy.AtrPreviousDayFnoCeStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoPeStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimCeStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimPeStrategy;
+import org.com.sharekhan.strategy.MarketauxSentimentSwingAtrStrategy;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -39,7 +40,7 @@ public class StrategySubscriptionService {
     public StrategySubscriptionEntity start(StrategyApplyRequest request) {
         validate(request);
         String templateId = request.getTemplateId().trim().toUpperCase(Locale.ROOT);
-        String symbol = isFnoMoverTemplate(templateId)
+        String symbol = isAutomaticUniverseTemplate(templateId)
                 ? "FNO_UNIVERSE"
                 : request.getSymbol().trim().toUpperCase(Locale.ROOT);
 
@@ -214,7 +215,7 @@ public class StrategySubscriptionService {
         if (!StringUtils.hasText(request.getTemplateId())) {
             throw new IllegalArgumentException("templateId is required");
         }
-        if (!isFnoMoverTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
+        if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
         }
         if (request.getUserId() == null) {
@@ -226,8 +227,13 @@ public class StrategySubscriptionService {
         return Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 
-    private boolean isContinuousFnoTemplate(String templateId) {
+    private boolean isAutomaticUniverseTemplate(String templateId) {
         return isFnoMoverTemplate(templateId)
+                || MarketauxSentimentSwingAtrStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+    }
+
+    private boolean isContinuousFnoTemplate(String templateId) {
+        return isAutomaticUniverseTemplate(templateId)
                 || isManualFnoTemplate(templateId);
     }
 

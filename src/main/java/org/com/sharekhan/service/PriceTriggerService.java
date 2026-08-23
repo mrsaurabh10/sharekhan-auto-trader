@@ -621,12 +621,19 @@ public class PriceTriggerService {
     }
 
     private boolean isEquityMarketOpen(LocalDateTime time) {
-        DayOfWeek day = time.getDayOfWeek();
-        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) {
+        if (!isTradingDay(time)) {
             return false;
         }
         LocalTime localTime = time.toLocalTime();
         return !localTime.isBefore(ENTRY_EVALUATION_START) && !localTime.isAfter(LocalTime.of(15, 30));
+    }
+
+    private boolean isTradingDay(LocalDateTime time) {
+        if (time == null) {
+            return false;
+        }
+        DayOfWeek day = time.getDayOfWeek();
+        return day != DayOfWeek.SATURDAY && day != DayOfWeek.SUNDAY;
     }
 
     private boolean isIntradayEntryWindowOpen(LocalDateTime time) {
@@ -730,6 +737,10 @@ public class PriceTriggerService {
     }
 
     public void monitorOpenTrades(Integer scripCode, double ltp) {
+        if (!isTradingDay(nowIst())) {
+            log.debug("Skipping open-trade monitoring on a non-trading day for scripCode={}", scripCode);
+            return;
+        }
         try {
             log.debug("Invoked monitorOpenTrades for scripCode={} with ltp={}", scripCode, ltp);
             

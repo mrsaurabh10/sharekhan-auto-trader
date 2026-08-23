@@ -91,6 +91,18 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void doesNotMonitorOpenTradesOnWeekend() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 18, 10, 0)).when(timedService).nowIst();
+
+        timedService.monitorOpenTrades(7553, 483.15);
+
+        verify(triggeredRepo, never()).findByScripCodeAndStatusIn(any(), anyList());
+        verify(triggeredRepo, never()).findBySpotScripCodeAndStatusIn(any(), anyList());
+        verify(tradeExecutionService, never()).squareOff(any(), anyDouble(), anyString());
+    }
+
+    @Test
     void doesNotEvaluateOrRecoverEntriesBeforeNineTwenty() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 19, 59)).when(timedService).nowIst();
@@ -750,6 +762,8 @@ class PriceTriggerServiceTest {
 
     @Test
     void stagedCashEquityLegExitsAtItsOwnTargetInsteadOfApplyingGroupPartialBooking() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
         TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
         trade.setId(8079L);
         trade.setScripCode(7553);
@@ -776,7 +790,7 @@ class PriceTriggerServiceTest {
                     return 1;
                 });
 
-        service.monitorOpenTrades(7553, 483.15);
+        timedService.monitorOpenTrades(7553, 483.15);
 
         verify(triggeredRepo).claimIfStatusEquals(8079L, TriggeredTradeStatus.EXECUTED.name(),
                 TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
