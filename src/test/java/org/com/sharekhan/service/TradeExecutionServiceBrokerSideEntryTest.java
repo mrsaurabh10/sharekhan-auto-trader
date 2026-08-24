@@ -222,7 +222,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 77L,
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
                 TriggeredTradeStatus.ENTRY_SUBMITTING.name());
-        verify(ctx.broker).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble());
+        verify(ctx.broker).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), eq(123.45), eq(123.55));
         verify(ctx.eventPublisher).publishEvent(any(OrderPlacedEvent.class));
     }
 
@@ -768,7 +768,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     .active(true)
                     .build()));
             when(brokerServiceFactory.getService(anyString())).thenReturn(broker);
-            when(broker.placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble()))
+            when(broker.placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble(), anyDouble()))
                     .thenReturn(brokerResult);
 
             service = new TradeExecutionService(

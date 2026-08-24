@@ -78,15 +78,16 @@ public class IntradayTradeCloser {
     }
 
     /**
-     * Removes all stale intraday requests, including rows with no creation timestamp.
-     * Requests created after today's 15:30 IST close are preserved for the next day.
-     * Executed trade rows are deliberately retained as the permanent audit trail.
+     * Removes stale same-day requests, including non-intraday requests and rows with no creation timestamp.
+     * Only PLACED_PENDING_CONFIRMATION requests and requests created after today's 15:30 IST close are preserved.
+     * Executed trade setup rows are deliberately retained as the permanent audit trail.
      */
     @Scheduled(cron = "0 30 23 * * MON-FRI", zone = "Asia/Kolkata")
     public void purgeTodayIntradayTradeRequests() {
         LocalDate today = LocalDate.now(MARKET_ZONE);
         LocalDateTime cutoff = today.atTime(MARKET_CLOSE);
-        int deleted = triggerTradeRequestRepository.deleteStaleIntradayRequestsCreatedBefore(cutoff);
-        log.info("🧹 Removed {} stale intraday trade requests created before {} IST", deleted, cutoff);
+        int deleted = triggerTradeRequestRepository.deleteStaleRequestsCreatedBeforeExceptStatus(
+                cutoff, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        log.info("🧹 Removed {} stale trade requests created before {} IST, preserving PLACED_PENDING_CONFIRMATION", deleted, cutoff);
     }
 }

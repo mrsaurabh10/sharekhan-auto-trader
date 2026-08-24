@@ -23,10 +23,11 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     @Transactional
     @Query("""
             delete from TriggerTradeRequestEntity r
-            where r.intraday = true
+            where r.status <> :preservedStatus
               and (r.createdAt is null or r.createdAt < :cutoff)
             """)
-    int deleteStaleIntradayRequestsCreatedBefore(@Param("cutoff") LocalDateTime cutoff);
+    int deleteStaleRequestsCreatedBeforeExceptStatus(@Param("cutoff") LocalDateTime cutoff,
+                                                     @Param("preservedStatus") TriggeredTradeStatus preservedStatus);
 
     List<TriggerTradeRequestEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
 

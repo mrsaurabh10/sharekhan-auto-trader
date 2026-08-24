@@ -127,6 +127,7 @@ public class TradeExecutionService {
     private static final int DEFAULT_ENTRY_WIDE_SPREAD_CONFIRMATIONS = 2;
     private static final int MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX = 2;
     private static final double ENTRY_TICK_SIZE = 0.05d;
+    private static final int DEFAULT_BROKER_TRIGGER_ENTRY_LIMIT_TICKS = 2;
     private static final double[] ENTRY_SPREAD_FRACTIONS = {0.0d, 0.25d, 0.50d, 0.75d, 1.0d};
 
     public static class ModifyExitOrderResult {
@@ -193,6 +194,7 @@ public class TradeExecutionService {
     private static final class EntryChaseState {
         private int modifyAttempts;
         private Double lastPrice;
+        private boolean triggerActivated;
     }
 
     private final ConcurrentMap<Long, EntryChaseState> entryChaseStates = new ConcurrentHashMap<>();
@@ -225,6 +227,13 @@ public class TradeExecutionService {
 
     @Value("${app.trading.entry.max-slippage-percent:2.0}")
     private double entryMaxSlippagePercent;
+
+    /**
+     * A broker stop-limit buy must have a limit above its trigger, otherwise a
+     * fast option move can trigger it and immediately leave it behind the ask.
+     */
+    @Value("${app.trading.entry.broker-trigger-limit-ticks:2}")
+    private int brokerTriggerEntryLimitTicks;
 
     @Value("${app.trading.entry.hard-spread-percent:3.5}")
     private double entryHardSpreadPercent;
@@ -823,12 +832,13 @@ public class TradeExecutionService {
 
         try {
             double entryPrice = normalisePriceToTick(latest.getEntryPrice());
+            double limitPrice = brokerTriggerEntryLimitPrice(entryPrice);
             TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now(), ctx);
-            TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", entryPrice, null);
+            TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", limitPrice, null);
 
-            OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice);
+            OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice, limitPrice);
             if (result != null && result.getAttemptedPrice() == null) {
-                result.setAttemptedPrice(entryPrice);
+                result.setAttemptedPrice(limitPrice);
             }
 
             if (result == null || !result.isSuccess() || !isUsableBrokerOrderId(result.getOrderId())) {
@@ -839,8 +849,8 @@ public class TradeExecutionService {
                         "ENTRY_TRIGGER",
                         pendingTrade,
                         reason,
-                        entryPrice,
-                        result != null ? result.getAttemptedPrice() : entryPrice);
+                        limitPrice,
+                        result != null ? result.getAttemptedPrice() : limitPrice);
                 revertBrokerSideEntryClaim(latest, requestEntity);
                 log.warn("⚠️ Broker-side entry trigger rejected for request {}. Continuing earlier websocket trigger flow. Reason={}",
                         latest.getId(), reason);
@@ -863,10 +873,11 @@ public class TradeExecutionService {
                 sendEntryExecutedNotification(savedTrade);
             } else {
                 publishOrderPlaced(savedTrade);
+                scheduleBrokerTriggerEntryChase(savedTrade);
             }
 
-            log.info("✅ Broker-side entry trigger placed for request {} orderId={} entryPrice={}",
-                    latest.getId(), result.getOrderId(), formatPrice(entryPrice));
+            log.info("✅ Broker-side entry trigger placed for request {} orderId={} triggerPrice={} limitPrice={}",
+                    latest.getId(), result.getOrderId(), formatPrice(entryPrice), formatPrice(limitPrice));
         } catch (Exception e) {
             if (!brokerAccepted) {
                 revertBrokerSideEntryClaim(latest, requestEntity);
@@ -2631,6 +2642,13 @@ public class TradeExecutionService {
         return Math.floor((rawCeiling + 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
     }
 
+    private double brokerTriggerEntryLimitPrice(double triggerPrice) {
+        int ticks = brokerTriggerEntryLimitTicks > 0
+                ? brokerTriggerEntryLimitTicks
+                : DEFAULT_BROKER_TRIGGER_ENTRY_LIMIT_TICKS;
+        return normalisePriceToTick(triggerPrice + ticks * ENTRY_TICK_SIZE);
+    }
+
     private EntryOrderSnapshot fetchEntryOrderSnapshot(TriggeredTradeSetupEntity trade,
                                                        BrokerContext ctx,
                                                        String orderId) {
@@ -2808,27 +2826,32 @@ public class TradeExecutionService {
     private TradeStatus fetchOrderStatus(TriggeredTradeSetupEntity trade,
                                          BrokerContext ctx,
                                          String orderId) {
+        return evaluateOrderFinalStatus(trade, fetchOrderHistory(trade, ctx, orderId));
+    }
+
+    private JSONObject fetchOrderHistory(TriggeredTradeSetupEntity trade,
+                                         BrokerContext ctx,
+                                         String orderId) {
         if (trade == null || ctx == null || orderId == null || orderId.isBlank()) {
-            return TradeStatus.NO_RECORDS;
+            return null;
         }
 
         Broker broker;
         try {
             broker = Broker.fromDisplayName(ctx.getBrokerName());
         } catch (Exception ignore) {
-            return TradeStatus.NO_RECORDS;
+            return null;
         }
 
         try {
             BrokerService brokerService = brokerServiceFactory != null ? brokerServiceFactory.getService(ctx.getBrokerName()) : null;
             if (!(brokerService instanceof OrderStatusBrokerService orderStatusBrokerService)) {
-                return TradeStatus.NO_RECORDS;
+                return null;
             }
-            JSONObject response = orderStatusBrokerService.fetchOrderStatus(trade, ctx, orderId);
-            return evaluateOrderFinalStatus(trade, response);
+            return orderStatusBrokerService.fetchOrderStatus(trade, ctx, orderId);
         } catch (Exception e) {
             log.debug("Order status fetch failed for trade {} order {}: {}", trade.getId(), orderId, e.getMessage());
-            return TradeStatus.NO_RECORDS;
+            return null;
         }
     }
 
@@ -2880,6 +2903,20 @@ public class TradeExecutionService {
     }
 
     private void scheduleEntryOrderChase(TriggeredTradeSetupEntity trade) {
+        scheduleEntryOrderChase(trade, false);
+    }
+
+    /**
+     * Broker-side option entries are stop-limit orders.  Do not modify them
+     * before the broker has activated the trigger; doing so could move the
+     * configured entry condition.  Once activated, chase only within the
+     * configured maximum entry slippage.
+     */
+    private void scheduleBrokerTriggerEntryChase(TriggeredTradeSetupEntity trade) {
+        scheduleEntryOrderChase(trade, true);
+    }
+
+    private void scheduleEntryOrderChase(TriggeredTradeSetupEntity trade, boolean waitForBrokerTrigger) {
         if (trade == null || trade.getId() == null || !isUsableBrokerOrderId(trade.getOrderId())) {
             return;
         }
@@ -2924,7 +2961,8 @@ public class TradeExecutionService {
                     return;
                 }
 
-                TradeStatus status = fetchEntryOrderStatus(latest, ctx, latestOrderId);
+                JSONObject orderHistory = fetchOrderHistory(latest, ctx, latestOrderId);
+                TradeStatus status = evaluateOrderFinalStatus(latest, orderHistory);
                 if (isOrderFilled(status)) {
                     stopEntryOrderChase(tradeId);
                     return;
@@ -2936,8 +2974,27 @@ public class TradeExecutionService {
                 }
 
                 EntryChaseState chaseState = entryChaseStates.computeIfAbsent(tradeId, id -> new EntryChaseState());
-                Double candidatePrice = determineEntryChasePrice(latest, chaseState);
+                if (waitForBrokerTrigger && !chaseState.triggerActivated) {
+                    if (!isBrokerTriggerActivated(orderHistory)) {
+                        return;
+                    }
+                    chaseState.triggerActivated = true;
+                    log.info("🧵 Broker entry trigger activated for trade {} order {}; starting bounded fill chase",
+                            tradeId, latestOrderId);
+                }
+
+                Double candidatePrice = waitForBrokerTrigger
+                        ? determineBrokerTriggeredEntryChasePrice(latest)
+                        : determineEntryChasePrice(latest, chaseState);
                 if (candidatePrice == null || candidatePrice <= 0) {
+                    return;
+                }
+
+                double ceiling = entryPriceCeiling(latest, latest.getEntryPrice());
+                if (candidatePrice > ceiling + 0.000001d) {
+                    cancelTriggeredEntryForManualAction(latest, ctx, modifiableEntryBroker, latestOrderId,
+                            candidatePrice, ceiling);
+                    stopEntryOrderChase(tradeId);
                     return;
                 }
 
@@ -2963,6 +3020,10 @@ public class TradeExecutionService {
                             tradeId, updatedOrderId != null ? updatedOrderId : latestOrderId, formatPrice(candidatePrice));
 
                     if (isOrderPlacementFilled(modifyResult)) {
+                        stopEntryOrderChase(tradeId);
+                    } else if (waitForBrokerTrigger && chaseState.modifyAttempts >= configuredEntryMaxAttempts()) {
+                        cancelTriggeredEntryForManualAction(latest, ctx, modifiableEntryBroker, latestOrderId,
+                                candidatePrice, ceiling);
                         stopEntryOrderChase(tradeId);
                     }
                 } else {
@@ -3026,6 +3087,54 @@ public class TradeExecutionService {
 
         int attemptIndex = Math.min(state.modifyAttempts + 1, MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX);
         return resolveEntryAttemptPrice(trade, diagnostics, attemptIndex, fallbackLtp, true);
+    }
+
+    private Double determineBrokerTriggeredEntryChasePrice(TriggeredTradeSetupEntity trade) {
+        EntryDiagnostics diagnostics = analyseEntry(trade, null);
+        if (!hasFreshEntryBook(diagnostics) || diagnostics.bestAsk() == null) {
+            log.info("🧵 Waiting for a fresh best ask before chasing broker-triggered entry trade {} ({})",
+                    trade.getId(), diagnostics.reason());
+            return null;
+        }
+        return normalisePriceToTick(diagnostics.bestAsk() + ENTRY_TICK_SIZE);
+    }
+
+    private boolean isBrokerTriggerActivated(JSONObject orderHistory) {
+        if (orderHistory == null) {
+            return false;
+        }
+        JSONArray rows = orderHistory.optJSONArray("data");
+        if (rows == null) {
+            return false;
+        }
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) continue;
+            String status = firstNonBlankJsonString(row, "orderStatus", "status").toLowerCase(Locale.ROOT);
+            // Sharekhan reports an untriggered stop order as Trigger Pending and
+            // an activated but unfilled order as Open/Triggered.
+            if (status.contains("triggered") || status.contains("open") || status.contains("partial")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void cancelTriggeredEntryForManualAction(TriggeredTradeSetupEntity trade,
+                                                      BrokerContext ctx,
+                                                      ModifiableEntryBrokerService broker,
+                                                      String orderId,
+                                                      double candidatePrice,
+                                                      double ceiling) {
+        String reason = "ENTRY_MAX_SLIPPAGE_EXCEEDED_CANCEL_REQUESTED";
+        trade.setReason(reason);
+        trade.setComment(String.format(Locale.ROOT,
+                "Broker trigger activated but entry was not filled safely. Cancellation requested; candidate %.2f exceeded ceiling %.2f. Manual action may be required.",
+                candidatePrice, ceiling));
+        triggeredTradeRepo.save(trade);
+        broker.cancelEntryOrder(trade, ctx, orderId);
+        log.warn("🚫 Broker-triggered entry {} for trade {} cancelled for manual action: candidate={} ceiling={}",
+                orderId, trade.getId(), formatPrice(candidatePrice), formatPrice(ceiling));
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {

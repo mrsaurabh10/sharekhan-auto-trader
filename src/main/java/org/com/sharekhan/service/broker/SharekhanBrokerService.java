@@ -36,8 +36,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
     @Override
     public OrderPlacementResult placeTriggerPriceEntryOrder(TriggeredTradeSetupEntity trade,
                                                             BrokerContext context,
-                                                            double entryPrice) {
-        return executeSharekhanOrder(trade, context, entryPrice, "B", "NEW", entryPrice);
+                                                            double triggerPrice,
+                                                            double limitPrice) {
+        return executeSharekhanOrder(trade, context, limitPrice, "B", "NEW", triggerPrice);
     }
 
     @Override

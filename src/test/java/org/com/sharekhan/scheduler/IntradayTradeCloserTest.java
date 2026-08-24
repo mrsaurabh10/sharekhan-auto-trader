@@ -17,10 +17,10 @@ import static org.mockito.Mockito.when;
 class IntradayTradeCloserTest {
 
     @Test
-    void purgeRemovesStaleRequestsAndKeepsPostMarketRequests() {
+    void purgeRemovesStaleRequestsAndKeepsPendingConfirmationsAndPostMarketRequests() {
         TriggerTradeRequestRepository requestRepository = mock(TriggerTradeRequestRepository.class);
-        when(requestRepository.deleteStaleIntradayRequestsCreatedBefore(
-                org.mockito.ArgumentMatchers.any()))
+        when(requestRepository.deleteStaleRequestsCreatedBeforeExceptStatus(
+                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
                 .thenReturn(3);
         IntradayTradeCloser scheduler = new IntradayTradeCloser(
                 mock(TriggeredTradeSetupRepository.class),
@@ -31,7 +31,7 @@ class IntradayTradeCloserTest {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
         scheduler.purgeTodayIntradayTradeRequests();
 
-        verify(requestRepository).deleteStaleIntradayRequestsCreatedBefore(
-                eq(today.atTime(15, 30)));
+        verify(requestRepository).deleteStaleRequestsCreatedBeforeExceptStatus(
+                eq(today.atTime(15, 30)), eq(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION));
     }
 }
