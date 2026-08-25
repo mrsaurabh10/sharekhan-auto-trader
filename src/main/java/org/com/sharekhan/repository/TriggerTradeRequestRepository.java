@@ -12,6 +12,7 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 import java.time.LocalDateTime;
 
 @Repository
@@ -225,6 +226,29 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
                                                          @Param("optionType") String optionType,
                                                          @Param("dayStart") LocalDateTime dayStart,
                                                          @Param("nextDayStart") LocalDateTime nextDayStart);
+
+    /**
+     * A source may emit a repeated call after its prior entry has exited or
+     * been rejected.  For daily-single-entry sources, those terminal rows must
+     * still block another broker submission for the same Sharekhan master
+     * scrip code on the same IST day.
+     */
+    @Query("""
+            SELECT r
+            FROM TriggerTradeRequestEntity r
+            WHERE lower(r.source) = lower(:source)
+              AND r.scripCode = :scripCode
+              AND r.appUserId = :appUserId
+              AND r.createdAt >= :dayStart
+              AND r.createdAt < :nextDayStart
+            ORDER BY r.createdAt DESC
+            """)
+    List<TriggerTradeRequestEntity> findDailySourceInstrumentRequests(
+            @Param("source") String source,
+            @Param("scripCode") Integer scripCode,
+            @Param("appUserId") Long appUserId,
+            @Param("dayStart") LocalDateTime dayStart,
+            @Param("nextDayStart") LocalDateTime nextDayStart);
 
     List<TriggerTradeRequestEntity> findBySymbolAndAppUserIdAndStatusIn(String symbol, Long appUserId, List<TriggeredTradeStatus> statuses);
 

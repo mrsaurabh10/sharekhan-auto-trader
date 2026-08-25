@@ -567,6 +567,14 @@ public class TradeExecutionService {
 
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
+        TriggerTradeRequestEntity sameDaySourceEntry = findDailySingleEntryDuplicate(request, script.getScripCode());
+        if (sameDaySourceEntry != null) {
+            log.warn("Skipping duplicate daily source entry: source={} user={} scripCode={} existingRequest={} existingStatus={}",
+                    request.getSource(), request.getUserId(), script.getScripCode(),
+                    sameDaySourceEntry.getId(), sameDaySourceEntry.getStatus());
+            return sameDaySourceEntry;
+        }
+
         // Logic for Lot Size configuration
         Long appUserId = request.getUserId();
         
@@ -755,6 +763,33 @@ public class TradeExecutionService {
         }
         
         return saved;
+    }
+
+    /**
+     * StockBazaari and Sharekhan calls are daily-single-entry sources.  Their
+     * signal may be repeated after a rejection or exit, but that must never
+     * create another entry for the same user and Sharekhan master scrip code
+     * on that IST day.
+     */
+    private TriggerTradeRequestEntity findDailySingleEntryDuplicate(TriggerRequest request, Integer scripCode) {
+        if (request == null
+                || request.getUserId() == null
+                || request.getSource() == null
+                || request.getSource().isBlank()
+                || scripCode == null
+                || !isDailySingleEntrySource(request.getSource())) {
+            return null;
+        }
+        LocalDate day = LocalDate.now(MARKET_ZONE);
+        List<TriggerTradeRequestEntity> existing = triggerTradeRequestRepository.findDailySourceInstrumentRequests(
+                request.getSource().trim(), scripCode, request.getUserId(),
+                day.atStartOfDay(), day.plusDays(1).atStartOfDay());
+        return existing == null || existing.isEmpty() ? null : existing.get(0);
+    }
+
+    private boolean isDailySingleEntrySource(String source) {
+        return "StockBazaari".equalsIgnoreCase(source)
+                || "Sharekhan".equalsIgnoreCase(source);
     }
 
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {

@@ -227,6 +227,24 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void blocksRepeatedStockBazaariEntryForSameUserAndInstrumentOnSameDay() {
+        TestContext ctx = new TestContext(pending("182038823"));
+        TriggerRequest firstRequest = optionRequest();
+        firstRequest.setSource("StockBazaari");
+        when(ctx.triggerRepo.findDailySourceInstrumentRequests(eq("StockBazaari"), eq(123456), eq(9L), any(), any()))
+                .thenReturn(List.of());
+
+        TriggerTradeRequestEntity first = ctx.service.executeTrade(firstRequest);
+        when(ctx.triggerRepo.findDailySourceInstrumentRequests(eq("StockBazaari"), eq(123456), eq(9L), any(), any()))
+                .thenReturn(List.of(first));
+
+        TriggerTradeRequestEntity repeated = ctx.service.executeTrade(firstRequest);
+
+        assertThat(repeated).isSameAs(first);
+        verify(ctx.broker, times(1)).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble(), anyDouble());
+    }
+
+    @Test
     void rejectedBrokerSideEntryTriggerLeavesRequestPendingForOriginalFlow() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder()
                 .success(false)
