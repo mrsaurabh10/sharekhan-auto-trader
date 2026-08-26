@@ -88,6 +88,12 @@ public class OrderStatusPollingService {
             // Find trades in states where we expect an order to be open/pending
             List<TriggeredTradeSetupEntity> pendingExitOrders = tradeRepo.findByStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
             List<TriggeredTradeSetupEntity> pendingTargetOrders = tradeRepo.findByStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+            // A target hit can claim a staged leg as EXIT_TRIGGERED while its
+            // already-placed broker target order is still awaiting its fill.
+            // Those orders must continue to be reconciled after a restart (and
+            // after an in-memory poll is lost), otherwise later legs never get
+            // their stepped stop loss.
+            List<TriggeredTradeSetupEntity> exitTriggeredOrders = tradeRepo.findByStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
             List<TriggeredTradeSetupEntity> pendingEntryOrders = tradeRepo.findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
             
             int resumedCount = 0;
@@ -100,6 +106,13 @@ public class OrderStatusPollingService {
             }
 
             for (TriggeredTradeSetupEntity trade : pendingTargetOrders) {
+                if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
+                    monitorOrderStatus(trade);
+                    resumedCount++;
+                }
+            }
+
+            for (TriggeredTradeSetupEntity trade : exitTriggeredOrders) {
                 if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
                     monitorOrderStatus(trade);
                     resumedCount++;
@@ -467,9 +480,15 @@ public class OrderStatusPollingService {
 //        }, 2, TimeUnit.MINUTES);
     }
 
-    private boolean isExitOrder(TriggeredTradeSetupEntity trade) {
+    static boolean isExitOrder(TriggeredTradeSetupEntity trade) {
         return trade != null && (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())
-                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(trade.getStatus()));
+                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(trade.getStatus())
+                // PriceTriggerService changes a filled-or-crossed broker target
+                // order to EXIT_TRIGGERED. Keep polling its exitOrderId rather
+                // than accidentally falling back to the already-filled entry
+                // orderId.
+                || (TriggeredTradeStatus.EXIT_TRIGGERED.equals(trade.getStatus())
+                    && trade.getExitOrderId() != null && !trade.getExitOrderId().isBlank()));
     }
 
     void rearmGapFillRequest(TriggeredTradeSetupEntity exitedTrade) {
