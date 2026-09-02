@@ -1127,25 +1127,30 @@ public class PriceTriggerService {
             return OptionalDouble.of(cachedLtp);
         }
         if (shoonyaQuoteService == null) {
-            log.error("Skipping option SL exit for trade {} because Shoonya confirmation is unavailable. cachedLtp={} stopLoss={}",
+            log.warn("Shoonya confirmation is unavailable for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={}",
                     tradeId, cachedLtp, trade.getStopLoss());
-            return OptionalDouble.empty();
+            return OptionalDouble.of(cachedLtp);
         }
 
         try {
             Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
             if (quoteOpt.isEmpty()) {
-                log.warn("Skipping option SL exit for trade {} because Shoonya returned no fresh quote. cachedLtp={} stopLoss={}",
+                log.warn("Shoonya returned no fresh quote for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={}",
                         tradeId, cachedLtp, trade.getStopLoss());
-                return OptionalDouble.empty();
+                return OptionalDouble.of(cachedLtp);
             }
 
             ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            if (!quote.hasConfirmedIdentity()) {
+                log.warn("Shoonya returned a mismatched option quote for SL on trade {}; using Sharekhan websocket LTP. requestedToken={} returnedToken={} cachedLtp={} stopLoss={}",
+                        tradeId, quote.token(), quote.returnedToken(), cachedLtp, trade.getStopLoss());
+                return OptionalDouble.of(cachedLtp);
+            }
             Double freshLtp = quote.referencePrice();
             if (freshLtp == null || !Double.isFinite(freshLtp) || freshLtp <= 0d) {
-                log.warn("Skipping option SL exit for trade {} because Shoonya returned an invalid quote. cachedLtp={} stopLoss={}",
+                log.warn("Shoonya returned an invalid quote for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={}",
                         tradeId, cachedLtp, trade.getStopLoss());
-                return OptionalDouble.empty();
+                return OptionalDouble.of(cachedLtp);
             }
 
             ltpCacheService.updateLtp(trade.getScripCode(), freshLtp);
@@ -1159,8 +1164,9 @@ public class PriceTriggerService {
                     tradeId, cachedLtp, freshLtp, quote.bestBid(), quote.bestAsk(), trade.getStopLoss());
             return OptionalDouble.of(freshLtp);
         } catch (Exception e) {
-            log.warn("Skipping option SL exit for trade {} because Shoonya confirmation failed: {}", tradeId, e.getMessage());
-            return OptionalDouble.empty();
+            log.warn("Shoonya confirmation failed for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={} error={}",
+                    tradeId, cachedLtp, trade.getStopLoss(), e.getMessage());
+            return OptionalDouble.of(cachedLtp);
         }
     }
 
@@ -1925,6 +1931,11 @@ public class PriceTriggerService {
                 return null;
             }
             ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            if (!quote.hasConfirmedIdentity()) {
+                log.warn("Rejected mismatched Shoonya {} quote for trade {} scrip {}: requestedToken={} returnedToken={}",
+                        priceRole, tradeId, script.getScripCode(), quote.token(), quote.returnedToken());
+                return null;
+            }
             Double ltp = quote.referencePrice();
             if (ltp == null || !Double.isFinite(ltp) || ltp <= 0d) {
                 return null;

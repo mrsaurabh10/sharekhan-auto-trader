@@ -148,6 +148,20 @@ public class MStockLtpPollingService {
                     continue;
                 }
                 ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+                // Shoonya can occasionally return a quote for a different instrument than the
+                // one requested (for example, an NSE equity quote for an NFO option token).
+                // Never put that value under the requested scrip code: consumers such as the
+                // intraday closer would otherwise treat a spot price as the option LTP.
+                if (!quote.hasConfirmedIdentity()) {
+                    log.warn("SHOONYA_QUOTE_IDENTITY_MISMATCH | requestedScrip={} | requestedSymbol={} | requestedToken={} | returnedSymbol={} | returnedToken={} | ltp={}; rejecting cache update",
+                            scripCode,
+                            quote.tradingSymbol(),
+                            quote.token(),
+                            quote.returnedTradingSymbol(),
+                            quote.returnedToken(),
+                            quote.referencePrice());
+                    continue;
+                }
                 Double price = quote.referencePrice();
                 if (!isUsablePrice(price)) {
                     continue;

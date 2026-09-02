@@ -30,8 +30,8 @@ public class IntradayTradeCloser {
     private final TradeExecutionService tradeExecutionService;
     private final LtpCacheService ltpCacheService;
 
-    // Run every day at 15:20 IST, which is also the last permitted intraday entry time.
-    @Scheduled(cron = "0 20 15 * * MON-FRI", zone = "Asia/Kolkata")
+    // Square off intraday positions at 15:35 IST. The entry cutoff remains independent.
+    @Scheduled(cron = "0 35 15 * * MON-FRI", zone = "Asia/Kolkata")
     public void closeIntradayTrades() {
         log.info("📆 Running intraday trade closer...");
 
@@ -53,7 +53,7 @@ public class IntradayTradeCloser {
                     ltp = 0.0;
                     //TODO get the ltp from a different service
                 }
-                tradeExecutionService.squareOff(trade, ltp,"Intraday closing at 3:20 PM");
+                tradeExecutionService.squareOff(trade, ltp,"Intraday closing at 3:35 PM");
                 log.info("💼 Closed intraday trade for {}", trade.getSymbol());
             } catch (Exception e) {
                 log.error("❌ Failed to close intraday trade {}: {}", trade.getId(), e.getMessage(), e);

@@ -864,6 +864,29 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void usesSharekhanWebsocketLtpForOptionStopWhenShoonyaQuoteIsUnavailable() {
+        TriggeredTradeSetupEntity trade = optionTrade(5213L, 999998, 20000);
+        trade.setStopLoss(33.8);
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(999998)
+                .exchange("NF")
+                .optionType("CE")
+                .tradingSymbol("AUBANK25AUG26C1060")
+                .build();
+        ShoonyaQuoteService shoonyaQuoteService = mock(ShoonyaQuoteService.class);
+        ReflectionTestUtils.setField(service, "shoonyaQuoteService", shoonyaQuoteService);
+        when(triggeredRepo.findById(5213L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(999998)).thenReturn(option);
+        when(shoonyaQuoteService.getOptionQuote(option)).thenReturn(Optional.empty());
+
+        OptionalDouble confirmed = ReflectionTestUtils.invokeMethod(service,
+                "reconfirmOptionPremiumStopWithShoonya", 5213L, 32.8d);
+
+        assertThat(confirmed).contains(32.8d);
+        verify(ltpCacheService, never()).updateLtp(999998, 32.8d);
+    }
+
+    @Test
     void spotTargetKeepsLongOptionOpenWhenPremiumIsBelowActualEntry() {
         TriggeredTradeSetupEntity trade = optionTrade(5211L, 999999, 20000);
         trade.setUseSpotForTarget(true);
