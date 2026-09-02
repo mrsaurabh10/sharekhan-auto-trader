@@ -882,7 +882,8 @@ class PriceTriggerServiceTest {
         OptionalDouble confirmed = ReflectionTestUtils.invokeMethod(service,
                 "reconfirmOptionPremiumStopWithShoonya", 5213L, 32.8d);
 
-        assertThat(confirmed).contains(32.8d);
+        org.assertj.core.api.Assertions.assertThat(confirmed.isPresent()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(confirmed.getAsDouble()).isEqualTo(32.8d);
         verify(ltpCacheService, never()).updateLtp(999998, 32.8d);
     }
 
