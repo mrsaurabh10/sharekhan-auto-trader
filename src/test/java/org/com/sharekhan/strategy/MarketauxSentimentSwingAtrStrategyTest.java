@@ -32,7 +32,7 @@ class MarketauxSentimentSwingAtrStrategyTest {
     @Test
     void createsSingleThreeAtrTargetForDirectPositiveNewsAfterSwingQualification() {
         when(sentiments.findTop500ByTradingDateOrderByCollectedAtDesc(any())).thenReturn(List.of(
-                sentiment("BLUESTARCO", "Blue Star Ltd", "Blue Star among F&O stocks with a sharp rise", .91, false)));
+                sentiment("BLUESTARCO", "Blue Star Ltd", "Blue Star secures major cooling-system order", .36, false)));
         ScriptMasterEntity spot = ScriptMasterEntity.builder().tradingSymbol("BLUESTARCO").exchange("NC").scripCode(123).build();
         when(support.resolveSpotScript("BLUESTARCO")).thenReturn(spot);
         when(support.mstockAvailabilityFailure(spot)).thenReturn(Optional.empty());

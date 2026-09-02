@@ -14,13 +14,14 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/** News selects the direction; a prior-day swing confirms the spot-price entry. */
+/** A direct corporate catalyst selects direction; a post-news price breakout confirms entry. */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -28,11 +29,19 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
 
     public static final String TEMPLATE_ID = "MARKETAUX_SENTIMENT_SWING_ATR";
     public static final String SOURCE = "marketaux-sentiment-swing-strategy";
-    static final double SENTIMENT_THRESHOLD = 0.80d;
+    static final double SENTIMENT_THRESHOLD = 0.30d;
+    private static final int MAX_NEWS_AGE_MINUTES = 90;
+    private static final LocalTime ENTRY_CUTOFF = LocalTime.of(14, 30);
+    private static final List<String> CATALYST_TERMS = List.of(
+            "order", "contract", "deal", "results", "guidance", "upgrade", "downgrade", "target price",
+            "stake sale", "block deal", "qip", "approval", "approved", "regulatory", "acquisition",
+            "merger", "buyback", "dividend", "wins", "win", "secures", "secure", "launches", "launch",
+            "raises", "raise", "cuts", "cut", "falls", "fall", "drops", "drop", "slips", "slip",
+            "warning", "ban", "recall", "probe", "penalty", "fine", "fraud");
     private static final int DEFAULT_LOTS = 1;
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID, "Marketaux Sentiment Swing ATR",
-            "For F&O stocks with a direct, non-broad Marketaux headline score above +0.80 or below -0.80, monitors a confirmed five-minute swing high/low formed after the news is observed. A breakout buys ATM CE; a breakdown buys ATM PE. Spot stop is 2 ATR and the sole spot target is 3 ATR.",
+            "For F&O stocks with a direct corporate-catalyst headline and Marketaux score at least +/-0.30, confirms a post-news five-minute swing break with 1.5x relative volume. A breakout buys ATM CE; a breakdown buys ATM PE. Spot stop is 2 ATR and the sole spot target is 3 ATR.",
             "AUTO");
 
     private final MarketauxEntitySentimentRepository sentimentRepository;
@@ -44,10 +53,13 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
     @Override
     public StrategyApplyResponse apply(StrategyApplyRequest request) {
         LocalDateTime now = LocalDateTime.now(StrategySupport.MARKET_ZONE);
-        List<Candidate> candidates = candidatesFor(now.toLocalDate());
+        if (now.toLocalTime().isAfter(ENTRY_CUTOFF)) {
+            return support.waiting(METADATA, "FNO_UNIVERSE", "New Marketaux sentiment entries stop after " + ENTRY_CUTOFF + " IST.");
+        }
+        List<Candidate> candidates = candidatesFor(now);
         if (candidates.isEmpty()) {
             return support.waiting(METADATA, "FNO_UNIVERSE",
-                    "No direct, non-broad F&O Marketaux sentiment score is beyond +/- " + SENTIMENT_THRESHOLD + " today.");
+                    "No recent direct F&O corporate-catalyst article has a Marketaux sentiment score beyond +/- " + SENTIMENT_THRESHOLD + ".");
         }
         List<String> waiting = new java.util.ArrayList<>();
         List<Created> created = new java.util.ArrayList<>();
@@ -63,7 +75,7 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
         }
         if (created.isEmpty()) {
             return support.waiting(METADATA, "FNO_UNIVERSE",
-                    "Sentiment candidates are waiting for prior-day swing confirmation: " + String.join("; ", waiting));
+                    "Sentiment candidates are waiting for post-news swing-break and volume confirmation: " + String.join("; ", waiting));
         }
         Created first = created.get(0);
         long newRequests = created.stream().filter(item -> !item.duplicate()).count();
@@ -79,6 +91,10 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
 
     private void createIfQualified(StrategyApplyRequest request, LocalDateTime now, Candidate candidate,
                                    ScriptMasterEntity spot, List<Created> created, List<String> waiting) {
+        if (support.hasEntryForSymbolOn(SOURCE, now.toLocalDate(), request.getUserId(), candidate.symbol())) {
+            waiting.add(candidate.symbol() + ": a Marketaux sentiment entry already occurred today");
+            return;
+        }
         StrategyMetadata directionMetadata = metadataFor(candidate.optionType());
         support.warmUpPreferredFnoFeeds(request, directionMetadata, candidate.symbol(), spot);
         Fno925EntryQualificationService.Qualification qualification = qualificationService.qualify(
@@ -119,10 +135,10 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
         return trigger;
     }
 
-    private List<Candidate> candidatesFor(LocalDate day) {
+    private List<Candidate> candidatesFor(LocalDateTime now) {
         Map<String, Candidate> strongestBySymbol = new LinkedHashMap<>();
-        for (MarketauxEntitySentimentEntity row : sentimentRepository.findTop500ByTradingDateOrderByCollectedAtDesc(day)) {
-            if (!eligible(row)) continue;
+        for (MarketauxEntitySentimentEntity row : sentimentRepository.findTop500ByTradingDateOrderByCollectedAtDesc(now.toLocalDate())) {
+            if (!eligible(row, now)) continue;
             Candidate candidate = new Candidate(row.getEntitySymbol().trim().toUpperCase(Locale.ROOT), row.getSentimentScore(),
                     row.getSentimentScore() > 0d ? "CE" : "PE", row.getCollectedAt());
             strongestBySymbol.merge(candidate.symbol(), candidate,
@@ -132,14 +148,19 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
                 .sorted(Comparator.comparingDouble((Candidate item) -> Math.abs(item.score())).reversed()).toList();
     }
 
-    private boolean eligible(MarketauxEntitySentimentEntity row) {
+    private boolean eligible(MarketauxEntitySentimentEntity row, LocalDateTime now) {
         if (row == null || row.getSentimentScore() == null || !Double.isFinite(row.getSentimentScore())
-                || Math.abs(row.getSentimentScore()) <= SENTIMENT_THRESHOLD || Boolean.TRUE.equals(row.getBroadMarketArticle())
+                || Math.abs(row.getSentimentScore()) < SENTIMENT_THRESHOLD || Boolean.TRUE.equals(row.getBroadMarketArticle())
                 || !StringUtils.hasText(row.getEntitySymbol()) || !StringUtils.hasText(row.getEntityName())
-                || !StringUtils.hasText(row.getArticleTitle())) return false;
+                || !StringUtils.hasText(row.getArticleTitle()) || row.getCollectedAt() == null
+                || row.getCollectedAt().isBefore(now.minusMinutes(MAX_NEWS_AGE_MINUTES)) || row.getCollectedAt().isAfter(now)) return false;
         String name = row.getEntityName().toUpperCase(Locale.ROOT)
                 .replaceAll("\\b(LIMITED|LTD|INCORPORATED|INC)\\b", "").replaceAll("\\s+", " ").trim();
-        return name.length() >= 3 && row.getArticleTitle().toUpperCase(Locale.ROOT).contains(name);
+        String title = row.getArticleTitle().toUpperCase(Locale.ROOT);
+        int nameIndex = title.indexOf(name);
+        boolean nameLeadsHeadline = nameIndex >= 0 && nameIndex <= title.length() * 0.45d;
+        boolean hasCatalyst = CATALYST_TERMS.stream().anyMatch(title::contains);
+        return name.length() >= 3 && nameLeadsHeadline && hasCatalyst;
     }
 
     private StrategyMetadata metadataFor(String optionType) {

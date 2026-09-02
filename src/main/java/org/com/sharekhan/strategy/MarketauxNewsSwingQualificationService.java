@@ -12,6 +12,8 @@ import java.util.List;
 public class MarketauxNewsSwingQualificationService {
 
     private static final int ATR_PERIOD = 75;
+    private static final int RELATIVE_VOLUME_LOOKBACK = 5;
+    private static final double RELATIVE_VOLUME_MULTIPLIER = 1.5d;
     private final StrategySupport support;
 
     public MarketauxNewsSwingQualificationService(StrategySupport support) {
@@ -31,7 +33,7 @@ public class MarketauxNewsSwingQualificationService {
                         .isAfter(newsObservedAt))
                 .filter(candle -> !LocalDateTime.of(candle.date(), candle.time().plusMinutes(StrategySupport.CANDLE_MINUTES)).isAfter(now))
                 .toList();
-        if (newsSession.size() < 5) {
+        if (newsSession.size() < RELATIVE_VOLUME_LOOKBACK + 1) {
             return Fno925EntryQualificationService.Qualification.waiting("waiting for five completed 5-minute candles after the news was observed");
         }
         boolean ce = "CE".equalsIgnoreCase(optionType);
@@ -39,19 +41,28 @@ public class MarketauxNewsSwingQualificationService {
         List<StrategyCandle> pivots = java.util.stream.IntStream.range(2, newsSession.size() - 2)
                 .filter(index -> isSwing(newsSession, index, ce))
                 .mapToObj(newsSession::get)
-                .filter(candle -> ce ? candle.high() > latestClose : candle.low() < latestClose)
+                .filter(candle -> ce ? latestClose > candle.high() : latestClose < candle.low())
                 .toList();
         StrategyCandle selected = pivots.stream()
-                .min(Comparator.comparingDouble(candle -> ce ? candle.high() - latestClose : latestClose - candle.low()))
+                .min(Comparator.comparingDouble(candle -> ce ? latestClose - candle.high() : candle.low() - latestClose))
                 .orElse(null);
         if (selected == null) {
-            return Fno925EntryQualificationService.Qualification.waiting("no unbroken post-news 5-minute swing "
-                    + (ce ? "high" : "low") + " is available yet");
+            return Fno925EntryQualificationService.Qualification.waiting("waiting for a 5-minute close beyond a confirmed post-news swing "
+                    + (ce ? "high" : "low"));
         }
-        double entry = ce ? selected.high() : selected.low();
+        StrategyCandle breakout = newsSession.get(newsSession.size() - 1);
+        List<StrategyCandle> volumeReference = newsSession.subList(newsSession.size() - 1 - RELATIVE_VOLUME_LOOKBACK, newsSession.size() - 1);
+        double averageVolume = volumeReference.stream().filter(StrategyCandle::hasVolume)
+                .mapToLong(candle -> candle.volume()).average().orElse(0d);
+        if (volumeReference.stream().anyMatch(candle -> !candle.hasVolume()) || !breakout.hasVolume()
+                || averageVolume <= 0d || breakout.volume() < averageVolume * RELATIVE_VOLUME_MULTIPLIER) {
+            return Fno925EntryQualificationService.Qualification.waiting("post-news swing break volume is below "
+                    + RELATIVE_VOLUME_MULTIPLIER + "x its prior " + RELATIVE_VOLUME_LOOKBACK + "-candle average");
+        }
+        double entry = breakout.close();
         return Fno925EntryQualificationService.Qualification.qualified(new Fno925EntryQualificationService.Signal(
-                support.roundPrice(entry), 0d, support.roundPrice(atr), selected.high(), selected.low(), selected,
-                ce ? "POST_NEWS_SWING_HIGH_BREAKOUT" : "POST_NEWS_SWING_LOW_BREAKDOWN"));
+                support.roundPrice(entry), 0d, support.roundPrice(atr), selected.high(), selected.low(), breakout,
+                ce ? "POST_NEWS_SWING_HIGH_CLOSE_BREAKOUT_VOLUME" : "POST_NEWS_SWING_LOW_CLOSE_BREAKDOWN_VOLUME"));
     }
 
     private boolean isSwing(List<StrategyCandle> candles, int index, boolean high) {
