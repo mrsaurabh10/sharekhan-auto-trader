@@ -7,6 +7,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
+import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -25,6 +26,10 @@ public class LtpCacheService {
     private final Map<Integer, Double> ltpCache = new ConcurrentHashMap<>();
     // Timestamp of the latest tick, used by read-only monitoring consumers to reject stale prices.
     private final Map<Integer, LocalDateTime> ltpObservedAtCache = new ConcurrentHashMap<>();
+    // Kept separately from the general cache because the latter may be refreshed by backup quote APIs.
+    // Stop-loss fallbacks must never treat an API-polled value as a Sharekhan WebSocket tick.
+    private final Map<Integer, Double> sharekhanWebSocketLtpCache = new ConcurrentHashMap<>();
+    private final Map<Integer, LocalDateTime> sharekhanWebSocketObservedAtCache = new ConcurrentHashMap<>();
     // Stores the first LTP observed after market open for each trading day (IST)
     private final Map<LocalDate, Map<Integer, Double>> openingPriceCache = new ConcurrentHashMap<>();
     private final Map<Integer, MinuteBucket> activeMinuteCandles = new ConcurrentHashMap<>();
@@ -36,6 +41,24 @@ public class LtpCacheService {
      */
     public void updateLtp(int scripCode, double ltp) {
         updateLtpAt(scripCode, ltp, LocalDateTime.now(IST_ZONE));
+    }
+
+    /**
+     * Records a tick received from the Sharekhan WebSocket. It remains available as a
+     * source-specific fallback even if a polling provider subsequently updates the general cache.
+     */
+    public void updateSharekhanWebSocketLtp(int scripCode, double ltp) {
+        updateSharekhanWebSocketLtpAt(scripCode, ltp, LocalDateTime.now(IST_ZONE));
+    }
+
+    void updateSharekhanWebSocketLtpAt(int scripCode, double ltp, LocalDateTime observedAt) {
+        if (Double.isFinite(ltp) && ltp > 0d) {
+            sharekhanWebSocketLtpCache.put(scripCode, ltp);
+            if (observedAt != null) {
+                sharekhanWebSocketObservedAtCache.put(scripCode, observedAt);
+            }
+        }
+        updateLtpAt(scripCode, ltp, observedAt);
     }
 
     void updateLtpAt(int scripCode, double ltp, LocalDateTime observedAt) {
@@ -79,6 +102,15 @@ public class LtpCacheService {
         return ltpObservedAtCache.get(scripCode);
     }
 
+    /** Returns a recent Sharekhan WebSocket tick only; polling-provider values are excluded. */
+    public Double getFreshSharekhanWebSocketLtp(int scripCode, Duration maxAge) {
+        LocalDateTime observedAt = sharekhanWebSocketObservedAtCache.get(scripCode);
+        if (observedAt == null || maxAge == null || observedAt.isBefore(LocalDateTime.now(IST_ZONE).minus(maxAge))) {
+            return null;
+        }
+        return sharekhanWebSocketLtpCache.get(scripCode);
+    }
+
     /**
      * Check if LTP exists for the scripCode
      */
@@ -114,6 +146,8 @@ public class LtpCacheService {
     public void removeLtp(int scripCode) {
         ltpCache.remove(scripCode);
         ltpObservedAtCache.remove(scripCode);
+        sharekhanWebSocketLtpCache.remove(scripCode);
+        sharekhanWebSocketObservedAtCache.remove(scripCode);
     }
 
     /**
@@ -122,6 +156,8 @@ public class LtpCacheService {
     public void clearAll() {
         ltpCache.clear();
         ltpObservedAtCache.clear();
+        sharekhanWebSocketLtpCache.clear();
+        sharekhanWebSocketObservedAtCache.clear();
         openingPriceCache.clear();
         activeMinuteCandles.clear();
         completedMinuteCandles.clear();

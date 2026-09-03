@@ -65,6 +65,7 @@ public class PriceTriggerService {
      * abandoned claim after this grace period.
      */
     private static final Duration EXIT_RECOVERY_GRACE_PERIOD = Duration.ofSeconds(30);
+    private static final Duration SHAREKHAN_WEBSOCKET_STOP_FALLBACK_MAX_AGE = Duration.ofSeconds(15);
     private static final List<TriggeredTradeStatus> MONITORABLE_TRADE_STATUSES = List.of(
             TriggeredTradeStatus.EXECUTED,
             TriggeredTradeStatus.TARGET_ORDER_PLACED,
@@ -1126,31 +1127,29 @@ public class PriceTriggerService {
         if (!isFnoOption(script)) {
             return OptionalDouble.of(cachedLtp);
         }
+        Double sharekhanWebSocketLtp = freshSharekhanWebSocketStopFallback(trade);
         if (shoonyaQuoteService == null) {
-            log.warn("Shoonya confirmation is unavailable for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={}",
-                    tradeId, cachedLtp, trade.getStopLoss());
-            return OptionalDouble.of(cachedLtp);
+            return trustedWebSocketStopFallback(tradeId, cachedLtp, trade.getStopLoss(), sharekhanWebSocketLtp,
+                    "Shoonya confirmation is unavailable");
         }
 
         try {
             Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
             if (quoteOpt.isEmpty()) {
-                log.warn("Shoonya returned no fresh quote for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={}",
-                        tradeId, cachedLtp, trade.getStopLoss());
-                return OptionalDouble.of(cachedLtp);
+                return trustedWebSocketStopFallback(tradeId, cachedLtp, trade.getStopLoss(), sharekhanWebSocketLtp,
+                        "Shoonya returned no fresh quote");
             }
 
             ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
             if (!quote.hasConfirmedIdentity()) {
-                log.warn("Shoonya returned a mismatched option quote for SL on trade {}; using Sharekhan websocket LTP. requestedToken={} returnedToken={} cachedLtp={} stopLoss={}",
-                        tradeId, quote.token(), quote.returnedToken(), cachedLtp, trade.getStopLoss());
-                return OptionalDouble.of(cachedLtp);
+                return trustedWebSocketStopFallback(tradeId, cachedLtp, trade.getStopLoss(), sharekhanWebSocketLtp,
+                        "Shoonya returned a mismatched option quote requestedToken=" + quote.token()
+                                + " returnedToken=" + quote.returnedToken());
             }
             Double freshLtp = quote.referencePrice();
             if (freshLtp == null || !Double.isFinite(freshLtp) || freshLtp <= 0d) {
-                log.warn("Shoonya returned an invalid quote for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={}",
-                        tradeId, cachedLtp, trade.getStopLoss());
-                return OptionalDouble.of(cachedLtp);
+                return trustedWebSocketStopFallback(tradeId, cachedLtp, trade.getStopLoss(), sharekhanWebSocketLtp,
+                        "Shoonya returned an invalid quote");
             }
 
             ltpCacheService.updateLtp(trade.getScripCode(), freshLtp);
@@ -1164,10 +1163,31 @@ public class PriceTriggerService {
                     tradeId, cachedLtp, freshLtp, quote.bestBid(), quote.bestAsk(), trade.getStopLoss());
             return OptionalDouble.of(freshLtp);
         } catch (Exception e) {
-            log.warn("Shoonya confirmation failed for option SL on trade {}; using Sharekhan websocket LTP. cachedLtp={} stopLoss={} error={}",
-                    tradeId, cachedLtp, trade.getStopLoss(), e.getMessage());
-            return OptionalDouble.of(cachedLtp);
+            return trustedWebSocketStopFallback(tradeId, cachedLtp, trade.getStopLoss(), sharekhanWebSocketLtp,
+                    "Shoonya confirmation failed: " + e.getMessage());
         }
+    }
+
+    private Double freshSharekhanWebSocketStopFallback(TriggeredTradeSetupEntity trade) {
+        return trade != null && trade.getScripCode() != null
+                ? ltpCacheService.getFreshSharekhanWebSocketLtp(
+                        trade.getScripCode(), SHAREKHAN_WEBSOCKET_STOP_FALLBACK_MAX_AGE)
+                : null;
+    }
+
+    private OptionalDouble trustedWebSocketStopFallback(Long tradeId,
+                                                         double cachedLtp,
+                                                         Double stopLoss,
+                                                         Double sharekhanWebSocketLtp,
+                                                         String confirmationFailure) {
+        if (sharekhanWebSocketLtp == null || !Double.isFinite(sharekhanWebSocketLtp) || sharekhanWebSocketLtp <= 0d) {
+            log.warn("{} for option SL on trade {}; refusing untrusted cached LTP={} because no fresh Sharekhan websocket tick is available. stopLoss={}",
+                    confirmationFailure, tradeId, cachedLtp, stopLoss);
+            return OptionalDouble.empty();
+        }
+        log.warn("{} for option SL on trade {}; using fresh Sharekhan websocket LTP={} instead of untrusted cached LTP={}. stopLoss={}",
+                confirmationFailure, tradeId, sharekhanWebSocketLtp, cachedLtp, stopLoss);
+        return OptionalDouble.of(sharekhanWebSocketLtp);
     }
 
     private boolean hasNoExitOrderId(TriggeredTradeSetupEntity trade) {

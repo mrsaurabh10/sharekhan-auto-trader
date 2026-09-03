@@ -20,6 +20,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -878,6 +879,7 @@ class PriceTriggerServiceTest {
         when(triggeredRepo.findById(5213L)).thenReturn(Optional.of(trade));
         when(scriptMasterRepository.findByScripCode(999998)).thenReturn(option);
         when(shoonyaQuoteService.getOptionQuote(option)).thenReturn(Optional.empty());
+        when(ltpCacheService.getFreshSharekhanWebSocketLtp(999998, Duration.ofSeconds(15))).thenReturn(32.8);
 
         OptionalDouble confirmed = ReflectionTestUtils.invokeMethod(service,
                 "reconfirmOptionPremiumStopWithShoonya", 5213L, 32.8d);
@@ -885,6 +887,30 @@ class PriceTriggerServiceTest {
         org.assertj.core.api.Assertions.assertThat(confirmed.isPresent()).isTrue();
         org.assertj.core.api.Assertions.assertThat(confirmed.getAsDouble()).isEqualTo(32.8d);
         verify(ltpCacheService, never()).updateLtp(999998, 32.8d);
+    }
+
+    @Test
+    void refusesShoonyaPollCacheForOptionStopWhenConfirmationMismatchesAndWebsocketIsUnavailable() {
+        TriggeredTradeSetupEntity trade = optionTrade(5214L, 122052, 3220);
+        trade.setStopLoss(36.2);
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(122052)
+                .exchange("NF")
+                .optionType("CE")
+                .tradingSymbol("LODHA29SEP26C1240")
+                .build();
+        ShoonyaQuoteService shoonyaQuoteService = mock(ShoonyaQuoteService.class);
+        ReflectionTestUtils.setField(service, "shoonyaQuoteService", shoonyaQuoteService);
+        when(triggeredRepo.findById(5214L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(122052)).thenReturn(option);
+        when(shoonyaQuoteService.getOptionQuote(option)).thenReturn(Optional.of(
+                new ShoonyaQuoteService.LiveQuote("LODHA29SEP26C1240", "122052", "LODHA-EQ", "3220", 1234.3, null, null)));
+        when(ltpCacheService.getFreshSharekhanWebSocketLtp(122052, Duration.ofSeconds(15))).thenReturn(null);
+
+        OptionalDouble confirmed = ReflectionTestUtils.invokeMethod(service,
+                "reconfirmOptionPremiumStopWithShoonya", 5214L, 29.6d);
+
+        org.assertj.core.api.Assertions.assertThat(confirmed.isPresent()).isFalse();
     }
 
     @Test
