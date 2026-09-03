@@ -3146,9 +3146,14 @@ public class TradeExecutionService {
             JSONObject row = rows.optJSONObject(i);
             if (row == null) continue;
             String status = firstNonBlankJsonString(row, "orderStatus", "status").toLowerCase(Locale.ROOT);
+            String requestStatus = firstNonBlankJsonString(row, "requestStatus", "request_status")
+                    .toLowerCase(Locale.ROOT);
             // Sharekhan reports an untriggered stop order as Trigger Pending and
-            // an activated but unfilled order as Open/Triggered.
-            if (status.contains("triggered") || status.contains("open") || status.contains("partial")) {
+            // an activated but unfilled order as Open/Triggered.  Its order-history
+            // response may instead retain orderStatus=Pending and expose activation
+            // only through requestStatus=TRIGGERED.
+            if (status.contains("triggered") || status.contains("open") || status.contains("partial")
+                    || requestStatus.contains("triggered") || requestStatus.contains("open")) {
                 return true;
             }
         }
