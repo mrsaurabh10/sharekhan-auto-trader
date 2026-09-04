@@ -2,6 +2,7 @@ package org.com.sharekhan.dto;
 
 import lombok.Data;
 
+
 @Data
 public class StrategyApplyRequest {
     private String templateId;

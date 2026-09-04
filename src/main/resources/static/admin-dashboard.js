@@ -2357,6 +2357,11 @@
     const errDiv = document.getElementById('serverError');
     const templateSelect = document.getElementById('strategyTemplate');
     const symbolInput = document.getElementById('strategySymbol');
+    const quantitiesInput = document.getElementById('strategySymbolQuantities');
+    const quantitiesRow = document.getElementById('strategySymbolQuantitiesRow');
+    const isSpotBigTradePlus = function () {
+      return String((templateSelect && templateSelect.value) || '').trim().toUpperCase() === 'SPOT_ATR_PDH_BIGTRADEPLUS';
+    };
     const automaticUniverseTemplate = function () {
       const id = (templateSelect && templateSelect.value ? templateSelect.value : '').trim().toUpperCase();
       return id === 'FNO_0925_MOVER_ATR_BREAKOUT' || id === 'MARKETAUX_SENTIMENT_SWING_ATR';
@@ -2364,7 +2369,13 @@
     const updateSymbolInput = function () {
       if (!symbolInput) return;
       const automatic = automaticUniverseTemplate();
+      const btp = isSpotBigTradePlus();
       symbolInput.disabled = automatic;
+      symbolInput.style.display = btp ? 'none' : '';
+      if (quantitiesRow) quantitiesRow.style.display = btp ? '' : 'none';
+      const lotsInput = document.getElementById('strategyLots');
+      if (lotsInput && btp) lotsInput.closest('.form-row').style.display = 'none';
+      else if (lotsInput) lotsInput.closest('.form-row').style.display = '';
       symbolInput.value = automatic ? '' : symbolInput.value;
       symbolInput.placeholder = automatic
         ? 'Selected automatically from the F&O news universe'
@@ -2389,22 +2400,28 @@
       const lotsValue = Number((document.getElementById('strategyLots') || {}).value || '1');
       const intraday = !!(document.getElementById('strategyIntraday') && document.getElementById('strategyIntraday').checked);
       if (!templateId) { if (result) result.innerText = 'Select a strategy template.'; return; }
-      if (!automaticUniverse && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
+      const btp = isSpotBigTradePlus();
+      const rows = btp ? String((quantitiesInput || {}).value || '').split(/[\n,;]+/).map(v => v.trim()).filter(Boolean) : [];
+      if (btp && rows.length === 0) { if (result) result.innerText = 'Enter at least one SYMBOL:QUANTITY row.'; return; }
+      if (!btp && !automaticUniverse && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
       try {
         btn.disabled = true;
         await ensureCsrf();
-        const body = {
-          templateId,
-          symbol: automaticUniverse ? 'FNO_UNIVERSE' : symbol,
-          lots: Number.isFinite(lotsValue) && lotsValue > 0 ? lotsValue : 1,
-          intraday,
-          userId: window.selectedUserId || null,
-          brokerCredentialsId: null,
-          source: 'strategy:' + templateId
-        };
-        if (body.userId) body.brokerCredentialsId = await resolveBrokerForUser(body.userId);
-        const resp = await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify(body) });
-        if (result) result.innerText = 'STARTED: Strategy #' + (resp && resp.id ? resp.id : '-') + ' is running in background.';
+        const brokerCredentialsId = window.selectedUserId ? await resolveBrokerForUser(window.selectedUserId) : null;
+        const configurations = btp ? rows.map(row => {
+          const parts = row.split(':').map(v => v.trim());
+          const quantity = Number(parts[1]);
+          if (parts.length !== 2 || !parts[0] || !Number.isInteger(quantity) || quantity < 3) throw new Error('Use SYMBOL:QUANTITY, with quantity at least 3. Invalid row: ' + row);
+          return { symbol: parts[0].toUpperCase(), lots: quantity };
+        }) : [{ symbol: automaticUniverse ? 'FNO_UNIVERSE' : symbol, lots: Number.isFinite(lotsValue) && lotsValue > 0 ? lotsValue : 1 }];
+        const responses = [];
+        for (const configuration of configurations) {
+          responses.push(await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify({
+            templateId, symbol: configuration.symbol, lots: configuration.lots, intraday,
+            userId: window.selectedUserId || null, brokerCredentialsId, source: 'strategy:' + templateId
+          }) }));
+        }
+        if (result) result.innerText = 'STARTED: ' + responses.length + ' strategy subscription(s) are running in background.';
         await loadStrategySubscriptions(window.selectedUserId);
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);

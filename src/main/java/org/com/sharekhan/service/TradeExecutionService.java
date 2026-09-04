@@ -741,6 +741,7 @@ public class TradeExecutionService {
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
                 .source(request.getSource()) // store source
+                .brokerProductType(request.getBrokerProductType())
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
                 .build();
@@ -931,6 +932,10 @@ public class TradeExecutionService {
                 && TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(requestEntity.getStatus())
                 && requestEntity.getEntryPrice() != null
                 && requestEntity.getEntryPrice() > 0d
+                // A BTP order carries its own BKT entry price.  It must be sent
+                // only after the local price trigger fires; submitting it here
+                // would create an immediate broker-side entry.
+                && !"BIGTRADEPLUS".equalsIgnoreCase(requestEntity.getBrokerProductType())
                 && (hasOptionType(requestEntity.getOptionType()) || isStockBazaariEquity(requestEntity))
                 && !usesSpotForEntry(requestEntity);
     }
@@ -1082,6 +1087,7 @@ public class TradeExecutionService {
         trade.setUseSpotPrice(requestEntity.getUseSpotPrice());
         trade.setSpotScripCode(requestEntity.getSpotScripCode());
         trade.setSource(requestEntity.getSource());
+        trade.setBrokerProductType(requestEntity.getBrokerProductType());
         trade.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
         trade.setGapDayOpen(requestEntity.getGapDayOpen());
         trade.setGapPreviousClose(requestEntity.getGapPreviousClose());
@@ -1761,6 +1767,7 @@ public class TradeExecutionService {
         trade.setUseSpotPrice(request.getUseSpotPrice()); // Store legacy flag
         trade.setSpotScripCode(spotScripCode);
         trade.setSource(request.getSource()); // Copy source
+        trade.setBrokerProductType(request.getBrokerProductType());
         // Set a dummy orderId to indicate manual entry, or leave null?
         // If null, polling service might be confused. Better to set a marker.
         trade.setOrderId("MANUAL-" + System.currentTimeMillis());

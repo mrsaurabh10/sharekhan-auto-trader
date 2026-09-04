@@ -324,7 +324,11 @@ public class TelegramSignalParser implements TradingSignalParser {
         if ("CE".equalsIgnoreCase(optionType)) {
             return stopLoss > target;
         }
-        return "PE".equalsIgnoreCase(optionType) && stopLoss < target;
+        // Telegram option signals express both CE and PE levels as option
+        // premiums. A PE stop below its target is therefore normal (for
+        // example: entry 93, SL 65, target 110), not a reversed spot-price
+        // stop. Keep the explicit user-provided PE stop unchanged.
+        return false;
     }
 
     private boolean containsBreakoutKeyword(String text) {

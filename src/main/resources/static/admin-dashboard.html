@@ -158,6 +158,10 @@
                         <div class="form-row"><label class="inline small" for="strategyLots">Lots</label>
                             <input id="strategyLots" type="number" min="1" value="1">
                         </div>
+                        <div class="form-row grid-span-all" id="strategySymbolQuantitiesRow" style="display:none"><label class="inline small" for="strategySymbolQuantities">Symbols and shares</label>
+                            <textarea id="strategySymbolQuantities" rows="3" placeholder="SBIN:900&#10;RELIANCE:300"></textarea>
+                            <div class="hint">One row per stock: SYMBOL:QUANTITY. Three BIGTRADEPLUS brackets are created for each stock.</div>
+                        </div>
                         <div class="form-row"><label class="inline small" for="strategyIntraday">Intraday</label>
                             <input id="strategyIntraday" type="checkbox" checked aria-label="Strategy Intraday">
                         </div>

@@ -9,6 +9,7 @@ import org.com.sharekhan.repository.StrategySubscriptionRepository;
 import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoCeStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoPeStrategy;
+import org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimCeStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimPeStrategy;
 import org.com.sharekhan.strategy.MarketauxSentimentSwingAtrStrategy;
@@ -241,7 +242,8 @@ public class StrategySubscriptionService {
         return ManualFnoVwapReclaimCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || ManualFnoVwapReclaimPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || AtrPreviousDayFnoCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
-                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
+                || SpotAtrPreviousDayBigTradePlusStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 
     /** New ATR subscriptions should create their pending request immediately instead of waiting for the next poll. */
@@ -254,7 +256,8 @@ public class StrategySubscriptionService {
 
     private boolean isAtrPreviousDayTemplate(String templateId) {
         return AtrPreviousDayFnoCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
-                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
+                || SpotAtrPreviousDayBigTradePlusStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 
     private String normalizeSymbolList(String symbols) {

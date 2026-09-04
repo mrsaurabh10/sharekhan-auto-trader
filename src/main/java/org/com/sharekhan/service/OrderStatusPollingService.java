@@ -245,9 +245,11 @@ public class OrderStatusPollingService {
             LocalTime end = LocalTime.of(23, 30);
             return !time.isBefore(start) && !time.isAfter(end);
         } else {
-            // Equity: 9:15 AM - 3:30 PM
+            // Keep reconciliation alive through the intraday closer's 15:35 exit-order
+            // modifications and the broker's final fill acknowledgement. This is status
+            // polling only; it does not permit new order placement after market close.
             LocalTime start = LocalTime.of(9, 15);
-            LocalTime end = LocalTime.of(15, 30);
+            LocalTime end = LocalTime.of(15, 40);
             return !time.isBefore(start) && !time.isAfter(end);
         }
     }

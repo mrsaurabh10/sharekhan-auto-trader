@@ -854,6 +854,13 @@ public class PriceTriggerService {
                 if (opt.isEmpty()) return 0;
                 TriggeredTradeSetupEntity persisted = opt.get();
 
+                // Sharekhan owns the target and stop-loss child legs of a BTP
+                // bracket.  Local exit processing must not submit a second sell
+                // order when one of those broker-managed legs is filled.
+                if (isBigTradePlus(persisted)) {
+                    return CLAIM_NONE;
+                }
+
                 // Only act if still in EXECUTED or TARGET_ORDER_PLACED
                 TriggeredTradeStatus currentStatus = persisted.getStatus();
                 if (currentStatus == TriggeredTradeStatus.EXIT_TRIGGERED) {
@@ -1099,6 +1106,10 @@ public class PriceTriggerService {
         } catch (Exception e) {
             log.error("❌ Error in handleTradeWithLock for trade {}: {}", tradeId, e.getMessage(), e);
         }
+    }
+
+    private boolean isBigTradePlus(TriggeredTradeSetupEntity trade) {
+        return trade != null && "BIGTRADEPLUS".equalsIgnoreCase(trade.getBrokerProductType());
     }
 
     /**

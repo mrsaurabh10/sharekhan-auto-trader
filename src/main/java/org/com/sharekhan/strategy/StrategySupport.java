@@ -379,7 +379,7 @@ public class StrategySupport {
     /** Finds an active directional setup for a symbol created by one strategy source. */
     public TriggerTradeRequestEntity findActiveSetup(TriggerRequest trigger, String source) {
         if (trigger == null || trigger.getUserId() == null || !StringUtils.hasText(trigger.getInstrument())
-                || !StringUtils.hasText(trigger.getOptionType()) || !StringUtils.hasText(source)) {
+                || !StringUtils.hasText(source)) {
             return null;
         }
         List<TriggerTradeRequestEntity> matches = triggerTradeRequestRepository
@@ -389,7 +389,8 @@ public class StrategySupport {
                         TriggeredTradeStatus.TRIGGERED));
         return matches == null ? null : matches.stream()
                 .filter(item -> source.equalsIgnoreCase(item.getSource()))
-                .filter(item -> trigger.getOptionType().equalsIgnoreCase(item.getOptionType()))
+                .filter(item -> !StringUtils.hasText(trigger.getOptionType())
+                        || trigger.getOptionType().equalsIgnoreCase(item.getOptionType()))
                 .findFirst()
                 .orElse(null);
     }
