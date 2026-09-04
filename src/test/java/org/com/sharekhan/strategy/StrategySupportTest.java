@@ -80,7 +80,7 @@ class StrategySupportTest {
     }
 
     @Test
-    void usesBseEquityFallbackWhenNseInstrumentMasterRowIsMissing() {
+    void usesDirectNseTokenWhenNseInstrumentMasterRowIsMissing() {
         MStockInstrumentResolver resolver = mock(MStockInstrumentResolver.class);
         MStockInstrumentRepository instrumentRepository = mock(MStockInstrumentRepository.class);
         MStockIntradayCandleService intraday = mock(MStockIntradayCandleService.class);
@@ -89,25 +89,15 @@ class StrategySupportTest {
                 mock(SharekhanHistoricalService.class), mock(TradeExecutionService.class),
                 mock(TriggerTradeRequestRepository.class));
         ScriptMasterEntity kotak = spotScript("KOTAKBANK", "NC", 1922);
-        MStockInstrumentEntity bseKotak = MStockInstrumentEntity.builder()
-                .instrumentToken(500247L)
-                .instrumentKey("BSE:KOTAKBANK-A")
-                .tradingSymbol("KOTAKBANK-A")
-                .exchange("BSE")
-                .instrumentType("Equity")
-                .build();
-
         when(resolver.resolveInstrumentKey(kotak)).thenReturn(Optional.of("NSE:KOTAKBANK-EQ"));
         when(instrumentRepository.findByInstrumentKey("NSE:KOTAKBANK-EQ")).thenReturn(Optional.empty());
-        when(instrumentRepository.findByExchangeAndTradingSymbolPattern("BSE", "KOTAKBANK%"))
-                .thenReturn(List.of(bseKotak));
-        when(intraday.getIntradayCandles("BSE", "500247", "5minute")).thenReturn(List.of());
+        when(intraday.getIntradayCandles("NSE", "1922", "5minute")).thenReturn(List.of());
 
         assertThat(support.mstockAvailabilityFailure(kotak)).isEmpty();
         CandleLoad result = support.loadCandles(kotak);
 
-        assertThat(result.reason()).contains("BSE:KOTAKBANK-A");
-        verify(intraday).getIntradayCandles("BSE", "500247", "5minute");
+        assertThat(result.reason()).contains("NSE:KOTAKBANK-EQ");
+        verify(intraday).getIntradayCandles("NSE", "1922", "5minute");
     }
 
     @Test

@@ -57,6 +57,25 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
                                       @Param("dayStart") LocalDateTime dayStart,
                                       @Param("nextDayStart") LocalDateTime nextDayStart);
 
+    @Query("""
+            SELECT t
+            FROM TriggeredTradeSetupEntity t
+            WHERE lower(t.source) = lower(:source)
+              AND lower(t.symbol) = lower(:symbol)
+              AND upper(t.optionType) = upper(:optionType)
+              AND t.appUserId = :appUserId
+              AND t.triggeredAt >= :dayStart
+              AND t.triggeredAt < :nextDayStart
+            ORDER BY t.triggeredAt DESC
+            """)
+    List<TriggeredTradeSetupEntity> findTriggeredForSymbolOptionTypeOnDay(
+            @Param("source") String source,
+            @Param("symbol") String symbol,
+            @Param("optionType") String optionType,
+            @Param("appUserId") Long appUserId,
+            @Param("dayStart") LocalDateTime dayStart,
+            @Param("nextDayStart") LocalDateTime nextDayStart);
+
     List<TriggeredTradeSetupEntity> findByTargetOrderGroupIdAndStatusIn(
             Long targetOrderGroupId, List<TriggeredTradeStatus> statuses);
 

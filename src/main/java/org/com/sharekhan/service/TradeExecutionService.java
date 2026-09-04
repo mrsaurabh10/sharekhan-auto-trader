@@ -86,6 +86,7 @@ public class TradeExecutionService {
             TriggeredTradeStatus.ENTRY_SUBMITTING,
             TriggeredTradeStatus.TRIGGERED);
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final LocalTime INTRADAY_ENTRY_CUTOFF = LocalTime.of(15, 20);
     private static final Map<String, String> INDEX_FUTURE_EXCHANGES = Map.of(
             "NIFTY", "NF",
             "BANKNIFTY", "NF",
@@ -118,11 +119,15 @@ public class TradeExecutionService {
     private static final long DEFAULT_ENTRY_RETRY_DELAY_MS = 2000L;
     private static final double DEFAULT_ENTRY_MAX_SLIPPAGE_PERCENT = 2.0d;
     private static final double ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT = 3.5d;
+    /** The first ten minutes have slightly wider but still executable F&O books. */
+    private static final double ATR_PREVIOUS_DAY_OPENING_MAX_SPREAD_PERCENT = 4.5d;
+    private static final LocalTime ATR_PREVIOUS_DAY_OPENING_SPREAD_CUTOFF = LocalTime.of(9, 30);
     private static final double ATR_PREVIOUS_DAY_MAX_SLIPPAGE_PERCENT = 3.0d;
     private static final double DEFAULT_ENTRY_HARD_SPREAD_PERCENT = 2.5d;
     private static final int DEFAULT_ENTRY_WIDE_SPREAD_CONFIRMATIONS = 2;
     private static final int MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX = 2;
     private static final double ENTRY_TICK_SIZE = 0.05d;
+    private static final int DEFAULT_BROKER_TRIGGER_ENTRY_LIMIT_TICKS = 2;
     private static final double[] ENTRY_SPREAD_FRACTIONS = {0.0d, 0.25d, 0.50d, 0.75d, 1.0d};
 
     public static class ModifyExitOrderResult {
@@ -189,6 +194,7 @@ public class TradeExecutionService {
     private static final class EntryChaseState {
         private int modifyAttempts;
         private Double lastPrice;
+        private boolean triggerActivated;
     }
 
     private final ConcurrentMap<Long, EntryChaseState> entryChaseStates = new ConcurrentHashMap<>();
@@ -221,6 +227,13 @@ public class TradeExecutionService {
 
     @Value("${app.trading.entry.max-slippage-percent:2.0}")
     private double entryMaxSlippagePercent;
+
+    /**
+     * A broker stop-limit buy must have a limit above its trigger, otherwise a
+     * fast option move can trigger it and immediately leave it behind the ask.
+     */
+    @Value("${app.trading.entry.broker-trigger-limit-ticks:2}")
+    private int brokerTriggerEntryLimitTicks;
 
     @Value("${app.trading.entry.hard-spread-percent:3.5}")
     private double entryHardSpreadPercent;
@@ -337,16 +350,44 @@ public class TradeExecutionService {
             Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getOptionQuote(script);
             if (quoteOpt.isEmpty()) return null;
             ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+            if (!quote.hasConfirmedIdentity()) {
+                String details = String.format(Locale.ROOT,
+                        "provider=SHOONYA; requestedSymbol=%s; requestedToken=%s; returnedSymbol=%s; returnedToken=%s; ltp=%s",
+                        quote.tradingSymbol(), quote.token(), quote.returnedTradingSymbol(), quote.returnedToken(),
+                        formatPrice(quote.referencePrice()));
+                log.error("OPTION_QUOTE_IDENTITY_MISMATCH | context={} | scrip={} | {}",
+                        context, script.getScripCode(), details);
+                recordOptionQuoteAudit(script, context, "REJECTED", "OPTION_QUOTE_IDENTITY_MISMATCH", quote, details);
+                return null;
+            }
             double price = quote.referencePrice();
             ltpCacheService.updateLtp(script.getScripCode(), price);
             if (quoteCacheService != null) quoteCacheService.recordQuote(script.getScripCode(), quote.bestBid(), quote.bestAsk(), quote.lastPrice());
             log.info("[{}] Using Shoonya option quote for {} token={}: ltp={} bid={} ask={}", context,
                     quote.tradingSymbol(), quote.token(), quote.lastPrice(), quote.bestBid(), quote.bestAsk());
+            recordOptionQuoteAudit(script, context, "ACCEPTED", "OPTION_QUOTE_IDENTITY_VERIFIED", quote,
+                    String.format(Locale.ROOT, "provider=SHOONYA; requestedSymbol=%s; requestedToken=%s; returnedSymbol=%s; returnedToken=%s",
+                            quote.tradingSymbol(), quote.token(), quote.returnedTradingSymbol(), quote.returnedToken()));
             return price;
         } catch (Exception e) {
             log.warn("[{}] Shoonya option quote failed for scrip {}: {}", context, script.getScripCode(), e.getMessage());
             return null;
         }
+    }
+
+    private void recordOptionQuoteAudit(ScriptMasterEntity script,
+                                        String context,
+                                        String outcome,
+                                        String reason,
+                                        ShoonyaQuoteService.LiveQuote quote,
+                                        String details) {
+        if (tradeAuditService == null || script == null) return;
+        tradeAuditService.record(TradeAuditEventEntity.builder()
+                .source(context).symbol(script.getTradingSymbol()).eventType("OPTION_QUOTE_VALIDATION")
+                .outcome(outcome).reason(reason).optionType(script.getOptionType()).expiry(script.getExpiry())
+                .strikePrice(script.getStrikePrice()).optionLtp(quote != null ? quote.referencePrice() : null)
+                .bestBid(quote != null ? quote.bestBid() : null).bestAsk(quote != null ? quote.bestAsk() : null)
+                .details(details).build());
     }
 
     private Double resolveFreshSharekhanReferencePrice(Integer scripCode, String context) {
@@ -526,6 +567,14 @@ public class TradeExecutionService {
 
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
+        TriggerTradeRequestEntity sameDaySourceEntry = findDailySingleEntryDuplicate(request, script.getScripCode());
+        if (sameDaySourceEntry != null) {
+            log.warn("Skipping duplicate daily source entry: source={} user={} scripCode={} existingRequest={} existingStatus={}",
+                    request.getSource(), request.getUserId(), script.getScripCode(),
+                    sameDaySourceEntry.getId(), sameDaySourceEntry.getStatus());
+            return sameDaySourceEntry;
+        }
+
         // Logic for Lot Size configuration
         Long appUserId = request.getUserId();
         
@@ -679,7 +728,8 @@ public class TradeExecutionService {
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
                 .lots(isNoStrikeExchange ? null : request.getQuantity()) // Equities use a share quantity, not lots
-                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
+                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity(),
+                        request.getTarget2(), request.getTarget3()))
                 .status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
@@ -691,6 +741,7 @@ public class TradeExecutionService {
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
                 .source(request.getSource()) // store source
+                .brokerProductType(request.getBrokerProductType())
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
                 .build();
@@ -715,7 +766,39 @@ public class TradeExecutionService {
         return saved;
     }
 
+    /**
+     * StockBazaari and Sharekhan calls are daily-single-entry sources.  Their
+     * signal may be repeated after a rejection or exit, but that must never
+     * create another entry for the same user and Sharekhan master scrip code
+     * on that IST day.
+     */
+    private TriggerTradeRequestEntity findDailySingleEntryDuplicate(TriggerRequest request, Integer scripCode) {
+        if (request == null
+                || request.getUserId() == null
+                || request.getSource() == null
+                || request.getSource().isBlank()
+                || scripCode == null
+                || !isDailySingleEntrySource(request.getSource())) {
+            return null;
+        }
+        LocalDate day = LocalDate.now(MARKET_ZONE);
+        List<TriggerTradeRequestEntity> existing = triggerTradeRequestRepository.findDailySourceInstrumentRequests(
+                request.getSource().trim(), scripCode, request.getUserId(),
+                day.atStartOfDay(), day.plusDays(1).atStartOfDay());
+        return existing == null || existing.isEmpty() ? null : existing.get(0);
+    }
+
+    private boolean isDailySingleEntrySource(String source) {
+        return "StockBazaari".equalsIgnoreCase(source)
+                || "Sharekhan".equalsIgnoreCase(source);
+    }
+
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {
+        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
+            log.info("Skipping broker-side intraday entry request {} after the {} IST cutoff",
+                    requestEntity.getId(), INTRADAY_ENTRY_CUTOFF);
+            return;
+        }
         if (isStockBazaariEquity(requestEntity) && !isEquityMarketOpen()) {
             log.info("Deferring StockBazaari equity entry request {} until the market opens", requestEntity.getId());
             return;
@@ -785,12 +868,13 @@ public class TradeExecutionService {
 
         try {
             double entryPrice = normalisePriceToTick(latest.getEntryPrice());
+            double limitPrice = brokerTriggerEntryLimitPrice(entryPrice);
             TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now(), ctx);
-            TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", entryPrice, null);
+            TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", limitPrice, null);
 
-            OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice);
+            OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice, limitPrice);
             if (result != null && result.getAttemptedPrice() == null) {
-                result.setAttemptedPrice(entryPrice);
+                result.setAttemptedPrice(limitPrice);
             }
 
             if (result == null || !result.isSuccess() || !isUsableBrokerOrderId(result.getOrderId())) {
@@ -801,8 +885,8 @@ public class TradeExecutionService {
                         "ENTRY_TRIGGER",
                         pendingTrade,
                         reason,
-                        entryPrice,
-                        result != null ? result.getAttemptedPrice() : entryPrice);
+                        limitPrice,
+                        result != null ? result.getAttemptedPrice() : limitPrice);
                 revertBrokerSideEntryClaim(latest, requestEntity);
                 log.warn("⚠️ Broker-side entry trigger rejected for request {}. Continuing earlier websocket trigger flow. Reason={}",
                         latest.getId(), reason);
@@ -825,10 +909,11 @@ public class TradeExecutionService {
                 sendEntryExecutedNotification(savedTrade);
             } else {
                 publishOrderPlaced(savedTrade);
+                scheduleBrokerTriggerEntryChase(savedTrade);
             }
 
-            log.info("✅ Broker-side entry trigger placed for request {} orderId={} entryPrice={}",
-                    latest.getId(), result.getOrderId(), formatPrice(entryPrice));
+            log.info("✅ Broker-side entry trigger placed for request {} orderId={} triggerPrice={} limitPrice={}",
+                    latest.getId(), result.getOrderId(), formatPrice(entryPrice), formatPrice(limitPrice));
         } catch (Exception e) {
             if (!brokerAccepted) {
                 revertBrokerSideEntryClaim(latest, requestEntity);
@@ -847,6 +932,10 @@ public class TradeExecutionService {
                 && TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(requestEntity.getStatus())
                 && requestEntity.getEntryPrice() != null
                 && requestEntity.getEntryPrice() > 0d
+                // A BTP order carries its own BKT entry price.  It must be sent
+                // only after the local price trigger fires; submitting it here
+                // would create an immediate broker-side entry.
+                && !"BIGTRADEPLUS".equalsIgnoreCase(requestEntity.getBrokerProductType())
                 && (hasOptionType(requestEntity.getOptionType()) || isStockBazaariEquity(requestEntity))
                 && !usesSpotForEntry(requestEntity);
     }
@@ -875,6 +964,64 @@ public class TradeExecutionService {
     private boolean isEquityMarketOpen() {
         LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
         return !time.isBefore(LocalTime.of(9, 15)) && !time.isAfter(LocalTime.of(15, 30));
+    }
+
+    /**
+     * Applies to every intraday instrument, not just equities.  The broker-side
+     * trigger path bypasses PriceTriggerService, so it must enforce the same
+     * cutoff itself.
+     */
+    boolean isIntradayEntryWindowOpen() {
+        LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
+        return time.isBefore(INTRADAY_ENTRY_CUTOFF);
+    }
+
+    private boolean isIntradayRequest(TriggerTradeRequestEntity request) {
+        return request != null && Boolean.TRUE.equals(request.getIntraday());
+    }
+
+    /**
+     * Cancels broker-held intraday entry triggers at the cutoff.  These orders
+     * are already at the broker and therefore cannot be stopped by merely
+     * disabling websocket trigger evaluation.
+     */
+    public int cancelPendingIntradayEntryOrdersAtCutoff() {
+        int cancelled = 0;
+        for (TriggeredTradeSetupEntity trade : triggeredTradeRepo
+                .findByIntradayTrueAndStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)) {
+            if (trade.getOrderId() == null || trade.getOrderId().isBlank()) {
+                continue;
+            }
+            try {
+                BrokerContext context = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+                if (context == null || context.getBrokerName() == null) {
+                    log.warn("Cannot cancel cutoff entry order {} for trade {}: broker context unavailable",
+                            trade.getOrderId(), trade.getId());
+                    continue;
+                }
+                BrokerService brokerService = brokerServiceFactory.getService(context.getBrokerName());
+                if (!(brokerService instanceof ModifiableEntryBrokerService modifiableEntryBroker)) {
+                    log.warn("Cannot cancel cutoff entry order {} for trade {}: broker does not support entry cancellation",
+                            trade.getOrderId(), trade.getId());
+                    continue;
+                }
+                modifiableEntryBroker.cancelEntryOrder(trade, context, trade.getOrderId());
+                trade.setStatus(TriggeredTradeStatus.REJECTED);
+                trade.setReason("INTRADAY_ENTRY_CUTOFF");
+                trade.setComment("Open entry order cancelled at the 15:20 IST intraday cutoff.");
+                triggeredTradeRepo.save(trade);
+                syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.REJECTED);
+                cancelled++;
+                log.info("Cancelled pending intraday entry order {} for trade {} at cutoff",
+                        trade.getOrderId(), trade.getId());
+            } catch (Exception e) {
+                // Keep the trade pending when the broker has not confirmed the
+                // cancellation, so status polling can still observe a late fill.
+                log.error("Failed cancelling pending intraday entry order {} for trade {} at cutoff: {}",
+                        trade.getOrderId(), trade.getId(), e.getMessage(), e);
+            }
+        }
+        return cancelled;
     }
 
     private boolean usesSpotForEntry(TriggerTradeRequestEntity requestEntity) {
@@ -921,7 +1068,8 @@ public class TradeExecutionService {
         trade.setSymbol(requestEntity.getSymbol());
         trade.setQuantity(requestEntity.getQuantity());
         trade.setLots(requestEntity.getLots());
-        trade.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots()));
+        trade.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots(),
+                requestEntity.getTarget2(), requestEntity.getTarget3()));
         trade.setInstrumentType(requestEntity.getInstrumentType());
         trade.setStrikePrice(requestEntity.getStrikePrice());
         trade.setOptionType(requestEntity.getOptionType());
@@ -939,6 +1087,7 @@ public class TradeExecutionService {
         trade.setUseSpotPrice(requestEntity.getUseSpotPrice());
         trade.setSpotScripCode(requestEntity.getSpotScripCode());
         trade.setSource(requestEntity.getSource());
+        trade.setBrokerProductType(requestEntity.getBrokerProductType());
         trade.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
         trade.setGapDayOpen(requestEntity.getGapDayOpen());
         trade.setGapPreviousClose(requestEntity.getGapPreviousClose());
@@ -1228,7 +1377,8 @@ public class TradeExecutionService {
                 .trailingSl(request.getTrailingSl())
                 .quantity(finalQuantity)
                 .lots(request.getQuantity())
-                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()))
+                .tslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity(),
+                        request.getTarget2(), request.getTarget3()))
                 .status(TriggeredTradeStatus.TRIGGERED)
                 .createdAt(LocalDateTime.now())
                 .intraday(request.getIntraday())
@@ -1603,7 +1753,8 @@ public class TradeExecutionService {
         trade.setTrailingSl(request.getTrailingSl());
         trade.setQuantity(finalQuantity);
         trade.setLots(request.getQuantity()); // Store the lots
-        trade.setTslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity()));
+        trade.setTslEnabled(resolveTslEnabled(request.getTslEnabled(), request.getSource(), request.getQuantity(),
+                request.getTarget2(), request.getTarget3()));
         trade.setStatus(TriggeredTradeStatus.EXECUTED); // Mark as EXECUTED immediately
         trade.setTriggeredAt(LocalDateTime.now());
         trade.setEntryAt(LocalDateTime.now());
@@ -1616,6 +1767,7 @@ public class TradeExecutionService {
         trade.setUseSpotPrice(request.getUseSpotPrice()); // Store legacy flag
         trade.setSpotScripCode(spotScripCode);
         trade.setSource(request.getSource()); // Copy source
+        trade.setBrokerProductType(request.getBrokerProductType());
         // Set a dummy orderId to indicate manual entry, or leave null?
         // If null, polling service might be confused. Better to set a marker.
         trade.setOrderId("MANUAL-" + System.currentTimeMillis());
@@ -1641,17 +1793,52 @@ public class TradeExecutionService {
         return saved;
     }
 
-    public boolean moveStopLossToCost(Long tradeId) {
-        TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(tradeId).orElse(null);
-        if (tradeSetupEntity == null) return false;
+    public enum CostStopReference {
+        SPOT,
+        PREMIUM
+    }
 
-        Double costPrice = tradeSetupEntity.getActualEntryPrice() != null && tradeSetupEntity.getActualEntryPrice() > 0d
-                ? tradeSetupEntity.getActualEntryPrice()
-                : tradeSetupEntity.getEntryPrice();
-        tradeSetupEntity.setStopLoss(costPrice);
-        tradeSetupEntity.setUseSpotForSl(Boolean.FALSE);
-        triggeredTradeRepo.save(tradeSetupEntity);
-        return true;
+    public enum MoveStopLossToCostResult {
+        UPDATED_SPOT,
+        UPDATED_PREMIUM_BREAK_EVEN,
+        REFERENCE_CHOICE_REQUIRED,
+        INVALID_COST_PRICE,
+        TRADE_NOT_FOUND
+    }
+
+    public MoveStopLossToCostResult moveStopLossToCost(Long tradeId, CostStopReference reference) {
+        TriggeredTradeSetupEntity tradeSetupEntity = triggeredTradeRepo.findById(tradeId).orElse(null);
+        if (tradeSetupEntity == null) return MoveStopLossToCostResult.TRADE_NOT_FOUND;
+
+        boolean spotBased = Boolean.TRUE.equals(tradeSetupEntity.getUseSpotForSl())
+                || (tradeSetupEntity.getUseSpotForSl() == null && Boolean.TRUE.equals(tradeSetupEntity.getUseSpotPrice()));
+        if (!spotBased) {
+            return movePremiumStopLossToBreakEven(tradeSetupEntity);
+        }
+        if (reference == null) return MoveStopLossToCostResult.REFERENCE_CHOICE_REQUIRED;
+
+        if (reference == CostStopReference.SPOT) {
+            Double spotEntry = tradeSetupEntity.getEntryPrice();
+            if (spotEntry == null || spotEntry <= 0d) return MoveStopLossToCostResult.INVALID_COST_PRICE;
+            tradeSetupEntity.setStopLoss(spotEntry);
+            tradeSetupEntity.setUseSpotForSl(Boolean.TRUE);
+            triggeredTradeRepo.save(tradeSetupEntity);
+            return MoveStopLossToCostResult.UPDATED_SPOT;
+        }
+
+        return movePremiumStopLossToBreakEven(tradeSetupEntity);
+    }
+
+    private MoveStopLossToCostResult movePremiumStopLossToBreakEven(TriggeredTradeSetupEntity trade) {
+        // An option price at its entry premium still loses money once the round-trip
+        // brokerage and statutory charges are applied. Set the SL at the smallest
+        // tick-aligned premium that leaves a positive effective P&L instead.
+        Double netProfitableExitPrice = TradeCostCalculator.minimumProfitableExitPrice(trade, ENTRY_TICK_SIZE);
+        if (netProfitableExitPrice == null) return MoveStopLossToCostResult.INVALID_COST_PRICE;
+        trade.setStopLoss(netProfitableExitPrice);
+        trade.setUseSpotForSl(Boolean.FALSE);
+        triggeredTradeRepo.save(trade);
+        return MoveStopLossToCostResult.UPDATED_PREMIUM_BREAK_EVEN;
     }
 
     public TriggeredTradeSetupEntity execute(TriggeredTradeSetupEntity trigger, double ltp) {
@@ -1873,7 +2060,8 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setQuantity(confirmedEntryQuantity);
             triggeredTradeSetupEntity.setLots(resolveExecutedLots(trigger, confirmedEntryQuantity));
             triggeredTradeSetupEntity.setTslEnabled(resolveTslEnabled(
-                    trigger.getTslEnabled(), trigger.getSource(), resolveExecutedLots(trigger, confirmedEntryQuantity)));
+                    trigger.getTslEnabled(), trigger.getSource(), resolveExecutedLots(trigger, confirmedEntryQuantity),
+                    trigger.getTarget2(), trigger.getTarget3()));
             triggeredTradeSetupEntity.setTarget3(trigger.getTarget3());
             triggeredTradeSetupEntity.setInstrumentType(trigger.getInstrumentType());
             triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
@@ -2407,7 +2595,7 @@ public class TradeExecutionService {
 
     private double configuredEntryHardSpreadPercent(TriggeredTradeSetupEntity trigger) {
         if (isAtrPreviousDayStrategy(trigger)) {
-            return ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT;
+            return atrPreviousDaySpreadCap();
         }
         double hardLimit = entryHardSpreadPercent > 0d
                 ? entryHardSpreadPercent
@@ -2416,7 +2604,13 @@ public class TradeExecutionService {
     }
 
     private double maxEntrySpreadPercent(TriggeredTradeSetupEntity trigger) {
-        return isAtrPreviousDayStrategy(trigger) ? ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT : entryMaxSpreadPercent;
+        return isAtrPreviousDayStrategy(trigger) ? atrPreviousDaySpreadCap() : entryMaxSpreadPercent;
+    }
+
+    private double atrPreviousDaySpreadCap() {
+        return LocalTime.now(MARKET_ZONE).isBefore(ATR_PREVIOUS_DAY_OPENING_SPREAD_CUTOFF)
+                ? ATR_PREVIOUS_DAY_OPENING_MAX_SPREAD_PERCENT
+                : ATR_PREVIOUS_DAY_MAX_SPREAD_PERCENT;
     }
 
     private boolean isAtrPreviousDayStrategy(TriggeredTradeSetupEntity trigger) {
@@ -2488,6 +2682,13 @@ public class TradeExecutionService {
     private double entryPriceCeiling(TriggeredTradeSetupEntity trigger, double initialOptionPrice) {
         double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent(trigger) / 100d);
         return Math.floor((rawCeiling + 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
+    }
+
+    private double brokerTriggerEntryLimitPrice(double triggerPrice) {
+        int ticks = brokerTriggerEntryLimitTicks > 0
+                ? brokerTriggerEntryLimitTicks
+                : DEFAULT_BROKER_TRIGGER_ENTRY_LIMIT_TICKS;
+        return normalisePriceToTick(triggerPrice + ticks * ENTRY_TICK_SIZE);
     }
 
     private EntryOrderSnapshot fetchEntryOrderSnapshot(TriggeredTradeSetupEntity trade,
@@ -2667,27 +2868,32 @@ public class TradeExecutionService {
     private TradeStatus fetchOrderStatus(TriggeredTradeSetupEntity trade,
                                          BrokerContext ctx,
                                          String orderId) {
+        return evaluateOrderFinalStatus(trade, fetchOrderHistory(trade, ctx, orderId));
+    }
+
+    private JSONObject fetchOrderHistory(TriggeredTradeSetupEntity trade,
+                                         BrokerContext ctx,
+                                         String orderId) {
         if (trade == null || ctx == null || orderId == null || orderId.isBlank()) {
-            return TradeStatus.NO_RECORDS;
+            return null;
         }
 
         Broker broker;
         try {
             broker = Broker.fromDisplayName(ctx.getBrokerName());
         } catch (Exception ignore) {
-            return TradeStatus.NO_RECORDS;
+            return null;
         }
 
         try {
             BrokerService brokerService = brokerServiceFactory != null ? brokerServiceFactory.getService(ctx.getBrokerName()) : null;
             if (!(brokerService instanceof OrderStatusBrokerService orderStatusBrokerService)) {
-                return TradeStatus.NO_RECORDS;
+                return null;
             }
-            JSONObject response = orderStatusBrokerService.fetchOrderStatus(trade, ctx, orderId);
-            return evaluateOrderFinalStatus(trade, response);
+            return orderStatusBrokerService.fetchOrderStatus(trade, ctx, orderId);
         } catch (Exception e) {
             log.debug("Order status fetch failed for trade {} order {}: {}", trade.getId(), orderId, e.getMessage());
-            return TradeStatus.NO_RECORDS;
+            return null;
         }
     }
 
@@ -2739,6 +2945,20 @@ public class TradeExecutionService {
     }
 
     private void scheduleEntryOrderChase(TriggeredTradeSetupEntity trade) {
+        scheduleEntryOrderChase(trade, false);
+    }
+
+    /**
+     * Broker-side option entries are stop-limit orders.  Do not modify them
+     * before the broker has activated the trigger; doing so could move the
+     * configured entry condition.  Once activated, chase only within the
+     * configured maximum entry slippage.
+     */
+    private void scheduleBrokerTriggerEntryChase(TriggeredTradeSetupEntity trade) {
+        scheduleEntryOrderChase(trade, true);
+    }
+
+    private void scheduleEntryOrderChase(TriggeredTradeSetupEntity trade, boolean waitForBrokerTrigger) {
         if (trade == null || trade.getId() == null || !isUsableBrokerOrderId(trade.getOrderId())) {
             return;
         }
@@ -2783,7 +3003,8 @@ public class TradeExecutionService {
                     return;
                 }
 
-                TradeStatus status = fetchEntryOrderStatus(latest, ctx, latestOrderId);
+                JSONObject orderHistory = fetchOrderHistory(latest, ctx, latestOrderId);
+                TradeStatus status = evaluateOrderFinalStatus(latest, orderHistory);
                 if (isOrderFilled(status)) {
                     stopEntryOrderChase(tradeId);
                     return;
@@ -2795,8 +3016,27 @@ public class TradeExecutionService {
                 }
 
                 EntryChaseState chaseState = entryChaseStates.computeIfAbsent(tradeId, id -> new EntryChaseState());
-                Double candidatePrice = determineEntryChasePrice(latest, chaseState);
+                if (waitForBrokerTrigger && !chaseState.triggerActivated) {
+                    if (!isBrokerTriggerActivated(orderHistory)) {
+                        return;
+                    }
+                    chaseState.triggerActivated = true;
+                    log.info("🧵 Broker entry trigger activated for trade {} order {}; starting bounded fill chase",
+                            tradeId, latestOrderId);
+                }
+
+                Double candidatePrice = waitForBrokerTrigger
+                        ? determineBrokerTriggeredEntryChasePrice(latest)
+                        : determineEntryChasePrice(latest, chaseState);
                 if (candidatePrice == null || candidatePrice <= 0) {
+                    return;
+                }
+
+                double ceiling = entryPriceCeiling(latest, latest.getEntryPrice());
+                if (candidatePrice > ceiling + 0.000001d) {
+                    cancelTriggeredEntryForManualAction(latest, ctx, modifiableEntryBroker, latestOrderId,
+                            candidatePrice, ceiling);
+                    stopEntryOrderChase(tradeId);
                     return;
                 }
 
@@ -2822,6 +3062,10 @@ public class TradeExecutionService {
                             tradeId, updatedOrderId != null ? updatedOrderId : latestOrderId, formatPrice(candidatePrice));
 
                     if (isOrderPlacementFilled(modifyResult)) {
+                        stopEntryOrderChase(tradeId);
+                    } else if (waitForBrokerTrigger && chaseState.modifyAttempts >= configuredEntryMaxAttempts()) {
+                        cancelTriggeredEntryForManualAction(latest, ctx, modifiableEntryBroker, latestOrderId,
+                                candidatePrice, ceiling);
                         stopEntryOrderChase(tradeId);
                     }
                 } else {
@@ -2885,6 +3129,59 @@ public class TradeExecutionService {
 
         int attemptIndex = Math.min(state.modifyAttempts + 1, MANUAL_ENTRY_CHASE_MAX_ATTEMPT_INDEX);
         return resolveEntryAttemptPrice(trade, diagnostics, attemptIndex, fallbackLtp, true);
+    }
+
+    private Double determineBrokerTriggeredEntryChasePrice(TriggeredTradeSetupEntity trade) {
+        EntryDiagnostics diagnostics = analyseEntry(trade, null);
+        if (!hasFreshEntryBook(diagnostics) || diagnostics.bestAsk() == null) {
+            log.info("🧵 Waiting for a fresh best ask before chasing broker-triggered entry trade {} ({})",
+                    trade.getId(), diagnostics.reason());
+            return null;
+        }
+        return normalisePriceToTick(diagnostics.bestAsk() + ENTRY_TICK_SIZE);
+    }
+
+    private boolean isBrokerTriggerActivated(JSONObject orderHistory) {
+        if (orderHistory == null) {
+            return false;
+        }
+        JSONArray rows = orderHistory.optJSONArray("data");
+        if (rows == null) {
+            return false;
+        }
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.optJSONObject(i);
+            if (row == null) continue;
+            String status = firstNonBlankJsonString(row, "orderStatus", "status").toLowerCase(Locale.ROOT);
+            String requestStatus = firstNonBlankJsonString(row, "requestStatus", "request_status")
+                    .toLowerCase(Locale.ROOT);
+            // Sharekhan reports an untriggered stop order as Trigger Pending and
+            // an activated but unfilled order as Open/Triggered.  Its order-history
+            // response may instead retain orderStatus=Pending and expose activation
+            // only through requestStatus=TRIGGERED.
+            if (status.contains("triggered") || status.contains("open") || status.contains("partial")
+                    || requestStatus.contains("triggered") || requestStatus.contains("open")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void cancelTriggeredEntryForManualAction(TriggeredTradeSetupEntity trade,
+                                                      BrokerContext ctx,
+                                                      ModifiableEntryBrokerService broker,
+                                                      String orderId,
+                                                      double candidatePrice,
+                                                      double ceiling) {
+        String reason = "ENTRY_MAX_SLIPPAGE_EXCEEDED_CANCEL_REQUESTED";
+        trade.setReason(reason);
+        trade.setComment(String.format(Locale.ROOT,
+                "Broker trigger activated but entry was not filled safely. Cancellation requested; candidate %.2f exceeded ceiling %.2f. Manual action may be required.",
+                candidatePrice, ceiling));
+        triggeredTradeRepo.save(trade);
+        broker.cancelEntryOrder(trade, ctx, orderId);
+        log.warn("🚫 Broker-triggered entry {} for trade {} cancelled for manual action: candidate={} ceiling={}",
+                orderId, trade.getId(), formatPrice(candidatePrice), formatPrice(ceiling));
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {
@@ -3129,6 +3426,21 @@ public class TradeExecutionService {
         }
 
         return null;
+    }
+
+    private double applySpotTargetExitFloor(TriggeredTradeSetupEntity trade, double candidatePrice, String exitReason) {
+        boolean targetExit = "TARGET_HIT".equalsIgnoreCase(exitReason)
+                || ("EXIT_CHASE".equalsIgnoreCase(exitReason) && "TARGET_HIT".equalsIgnoreCase(trade.getExitReason()));
+        if (!targetExit || !Boolean.TRUE.equals(trade.getUseSpotForTarget())) {
+            return candidatePrice;
+        }
+        Double floor = TradeCostCalculator.minimumProfitableExitPrice(trade, 0.05d);
+        if (floor == null || candidatePrice + 0.000001d >= floor) {
+            return candidatePrice;
+        }
+        log.info("Keeping spot-target exit price for trade {} at net-profitable floor {} instead of {}",
+                trade.getId(), floor, candidatePrice);
+        return floor;
     }
 
     private double resolveEntryAttemptPrice(TriggeredTradeSetupEntity trigger,
@@ -3412,6 +3724,7 @@ public class TradeExecutionService {
         // Keep subsequent polling pinned to the broker that accepted this exit.
         persisted.setBrokerCredentialsId(exitCtx.getBrokerCredentialsId());
 
+        exitPrice = applySpotTargetExitFloor(persisted, exitPrice, exitReason);
         Double safeExitPrice = sanitizeExitPriceCandidate(persisted, exitPrice, "EXIT_PLACE");
         if (safeExitPrice == null) {
             return OrderPlacementResult.builder()
@@ -3497,6 +3810,7 @@ public class TradeExecutionService {
                         charges != null ? charges.effectivePnl() : null);
                 if (updated == 1) {
                     TradeEventLogger.logOrderExecuted("EXIT", persisted, exitPriceVal, result.getStatus());
+                    advanceStagedTargetStopsAfterTargetExit(persisted);
                     rearmGapFillRequestAfterImmediateExit(persisted);
                     try {
                         if (entityManager != null && entityManager.getEntityManagerFactory() != null) {
@@ -4068,17 +4382,23 @@ public class TradeExecutionService {
         if (!isStagedTargetLeg(completedLeg)) {
             return;
         }
-        Double newStop = completedLeg.getTargetStage() == 1
-                ? resolveEntryPriceForPnl(completedLeg)
-                : completedLeg.getTarget1();
+        List<TriggeredTradeSetupEntity> groupLegs = triggeredTradeRepo.findByTargetOrderGroupIdAndStatusIn(
+                completedLeg.getTargetOrderGroupId(), List.of(
+                        TriggeredTradeStatus.EXECUTED,
+                        TriggeredTradeStatus.TARGET_ORDER_PLACED,
+                        TriggeredTradeStatus.EXITED_SUCCESS,
+                        TriggeredTradeStatus.COMPLETED));
+        Double newStop = nextStagedStopLoss(completedLeg, groupLegs);
         if (newStop == null || newStop <= 0d) {
             return;
         }
-        List<TriggeredTradeSetupEntity> openLegs = triggeredTradeRepo.findByTargetOrderGroupIdAndStatusIn(
-                completedLeg.getTargetOrderGroupId(), List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED));
-        for (TriggeredTradeSetupEntity leg : openLegs) {
+        for (TriggeredTradeSetupEntity leg : groupLegs) {
             if (!Objects.equals(leg.getId(), completedLeg.getId())
                     && leg.getTargetStage() != null && leg.getTargetStage() > completedLeg.getTargetStage()) {
+                if (leg.getStatus() != TriggeredTradeStatus.EXECUTED
+                        && leg.getStatus() != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
+                    continue;
+                }
                 leg.setStopLoss(newStop);
                 leg.setUseSpotForSl(false);
                 triggeredTradeRepo.save(leg);
@@ -4086,16 +4406,59 @@ public class TradeExecutionService {
         }
     }
 
+    private Double nextStagedStopLoss(TriggeredTradeSetupEntity completedLeg,
+                                      List<TriggeredTradeSetupEntity> groupLegs) {
+        if (completedLeg.getTargetStage() == 1) {
+            return resolveEntryPriceForPnl(completedLeg);
+        }
+        int previousStage = completedLeg.getTargetStage() - 1;
+        return groupLegs.stream()
+                .filter(leg -> leg.getTargetStage() != null && leg.getTargetStage() == previousStage)
+                .filter(leg -> isTargetExitReason(leg.getExitReason()))
+                .map(TriggeredTradeSetupEntity::getTarget1)
+                .filter(target -> target != null && target > 0d)
+                .findFirst()
+                .orElse(null);
+    }
+
+    /** Advance remaining staged legs only when this leg actually exited at its target. */
+    public void advanceStagedTargetStopsAfterTargetExit(TriggeredTradeSetupEntity completedLeg) {
+        if (completedLeg == null || !isTargetExitReason(completedLeg.getExitReason())) {
+            return;
+        }
+        advanceStagedTargetStops(completedLeg);
+    }
+
+    private boolean isTargetExitReason(String exitReason) {
+        return "TARGET_HIT".equalsIgnoreCase(exitReason)
+                || "TARGET_HIT_PARTIAL".equalsIgnoreCase(exitReason)
+                || "TARGET_HIT_FULL".equalsIgnoreCase(exitReason)
+                || "TARGET_ORDER_AUTO".equalsIgnoreCase(exitReason);
+    }
+
     /**
-     * ATR and StockBazaari calls are staged recommendations: whenever they
-     * carry more than one lot, preserve a runner after each target instead of
-     * closing the entire position at target one.  This is intentionally
-     * source-scoped so a manually submitted multi-lot order still honours the
-     * user's explicit TSL choice.
+     * ATR and StockBazaari calls are staged recommendations whenever they
+     * carry more than one lot. Telegram calls opt into the same behavior only
+     * when they have multiple targets and more than one final lot. This keeps
+     * a manually submitted multi-lot order under the user's explicit control.
      */
-    private boolean resolveTslEnabled(Boolean requestedTslEnabled, String source, Integer lots) {
-        return Boolean.TRUE.equals(requestedTslEnabled)
-                || (lots != null && lots > 1 && isStagedSignalSource(source));
+    private boolean resolveTslEnabled(Boolean requestedTslEnabled, String source, Integer lots,
+                                      Double target2, Double target3) {
+        if (Boolean.TRUE.equals(requestedTslEnabled)) {
+            return true;
+        }
+        if (lots == null || lots <= 1) {
+            return false;
+        }
+        if (isStagedSignalSource(source)) {
+            return true;
+        }
+        return ("telegram".equalsIgnoreCase(source) || "awr".equalsIgnoreCase(source))
+                && hasMultipleTargets(target2, target3);
+    }
+
+    private boolean hasMultipleTargets(Double target2, Double target3) {
+        return (target2 != null && target2 > 0d) || (target3 != null && target3 > 0d);
     }
 
     private boolean isStagedSignalSource(String source) {
@@ -4222,6 +4585,7 @@ public class TradeExecutionService {
             return new ModifyExitOrderResult(false, "No exit order is currently active for this trade.");
         }
 
+        newPrice = applySpotTargetExitFloor(trade, newPrice, exitReason);
         Double safeNewPrice = sanitizeExitPriceCandidate(trade, newPrice, "EXIT_MODIFY_" + (exitReason != null ? exitReason : "UNKNOWN"));
         if (safeNewPrice == null) {
             String msg = String.format("Modify exit order skipped for trade %s due to implausible price %.2f", trade.getId(), newPrice);
@@ -4930,6 +5294,11 @@ public class TradeExecutionService {
 
     public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
                                                             boolean chaseEntryUntilExecuted) {
+        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
+            log.info("Blocking queued intraday entry request {} after the {} IST cutoff",
+                    requestEntity != null ? requestEntity.getId() : null, INTRADAY_ENTRY_CUTOFF);
+            return null;
+        }
         // If the saved request is missing broker credentials, resolve a sensible default
         try {
             if (requestEntity.getBrokerCredentialsId() == null) {
@@ -5031,7 +5400,8 @@ public class TradeExecutionService {
             temp.setQuantity(requestEntity.getQuantity());
         }
         temp.setLots(requestEntity.getLots()); // Pass lots
-        temp.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots()));
+        temp.setTslEnabled(resolveTslEnabled(requestEntity.getTslEnabled(), requestEntity.getSource(), requestEntity.getLots(),
+                requestEntity.getTarget2(), requestEntity.getTarget3()));
         temp.setInstrumentType(requestEntity.getInstrumentType());
         temp.setStrikePrice(requestEntity.getStrikePrice());
         temp.setOptionType(requestEntity.getOptionType());
@@ -5103,11 +5473,21 @@ public class TradeExecutionService {
                 log.warn("[{}] MStock LTP API returned null data for instrument {} (scrip {}).", context, instrumentKey, scripCode);
                 return null;
             }
+            Object returnedToken = payload.get("instrument_token");
+            if (isFnoOption(script) && !matchesRequestedOptionToken(script, returnedToken)) {
+                String details = String.format(Locale.ROOT,
+                        "provider=MSTOCK; requestedScrip=%s; requestedInstrument=%s; returnedInstrumentToken=%s; payload=%s",
+                        script.getScripCode(), instrumentKey, returnedToken, payload);
+                log.error("OPTION_QUOTE_IDENTITY_MISMATCH | context={} | {}", context, details);
+                recordOptionQuoteAudit(script, context, "REJECTED", "OPTION_QUOTE_IDENTITY_MISMATCH", null, details);
+                return null;
+            }
             Object lastPriceObj = payload.get("last_price");
             if (lastPriceObj instanceof Number number) {
                 double fetchedLtp = number.doubleValue();
                 ltpCacheService.updateLtp(scripCode, fetchedLtp);
-                log.info("[{}] Fetched LTP {} via MStock for scrip {} (instrument {}).", context, fetchedLtp, scripCode, instrumentKey);
+                log.info("[{}] Fetched verified LTP {} via MStock for scrip {} (instrument={}, returnedToken={}).",
+                        context, fetchedLtp, scripCode, instrumentKey, returnedToken);
                 return fetchedLtp;
             }
             log.warn("[{}] MStock LTP API returned missing last_price for instrument {} (scrip {}). Payload={}", context, instrumentKey, scripCode, payload);
@@ -5116,6 +5496,13 @@ public class TradeExecutionService {
             log.debug("[{}] MStock fallback stacktrace", context, ex);
         }
         return null;
+    }
+
+    private boolean matchesRequestedOptionToken(ScriptMasterEntity script, Object returnedToken) {
+        if (script == null || script.getScripCode() == null || !(returnedToken instanceof Number number)) {
+            return false;
+        }
+        return number.longValue() == script.getScripCode().longValue();
     }
 
     private String buildEntryLockKey(TriggerTradeRequestEntity request) {

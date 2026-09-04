@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.AuthTokenResult;
 import org.com.sharekhan.auth.BrokerAuthProvider;
 import org.com.sharekhan.auth.BrokerAuthProviderRegistry;
@@ -20,20 +21,43 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 /** Read-only Shoonya client. It intentionally exposes only NorenWClientAPI/GetQuotes. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ShoonyaQuoteService {
     private final ShoonyaProperties properties;
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
     private final ShoonyaInstrumentMasterService instrumentMasterService;
 
-    public record LiveQuote(String tradingSymbol, String token, Double lastPrice, Double bestBid, Double bestAsk) {
+    /**
+     * A quote retains both the identity we requested and the identity echoed by
+     * Shoonya.  Never infer the latter from the request: that would hide an
+     * incorrect token/symbol routing response.
+     */
+    public record LiveQuote(String tradingSymbol,
+                            String token,
+                            String returnedTradingSymbol,
+                            String returnedToken,
+                            Double lastPrice,
+                            Double bestBid,
+                            Double bestAsk) {
+        /** Convenience constructor retained for tests and explicitly trusted callers. */
+        public LiveQuote(String tradingSymbol, String token, Double lastPrice, Double bestBid, Double bestAsk) {
+            this(tradingSymbol, token, tradingSymbol, token, lastPrice, bestBid, bestAsk);
+        }
         public boolean hasUsablePrice() { return usable(lastPrice) || usable(bestAsk) || usable(bestBid); }
         public Double referencePrice() { return usable(lastPrice) ? lastPrice : usable(bestAsk) ? bestAsk : bestBid; }
+        public boolean hasConfirmedIdentity() {
+            return StringUtils.hasText(returnedTradingSymbol)
+                    && StringUtils.hasText(returnedToken)
+                    && tradingSymbol.equalsIgnoreCase(returnedTradingSymbol)
+                    && token.equalsIgnoreCase(returnedToken);
+        }
         private static boolean usable(Double value) { return value != null && Double.isFinite(value) && value > 0d; }
     }
 
@@ -53,8 +77,12 @@ public class ShoonyaQuoteService {
             tokenStoreService.updateToken(Broker.SHOONYA, authenticated.token(), authenticated.expiresIn());
             sessionToken = authenticated.token();
         }
+        String quoteRequestId = UUID.randomUUID().toString();
         JSONObject request = new JSONObject().put("uid", properties.getUid()).put("exch", exchange).put("token", token);
-        return post(request, sessionToken);
+        // This is the wire-request identity, recorded immediately before the HTTP call.
+        // Do not add uid or Authorization to this log.
+        log.info("SHOONYA_QUOTE_REQUEST | requestId={} | exchange={} | token={}", quoteRequestId, exchange, token);
+        return post(request, sessionToken, quoteRequestId);
     }
 
     /** Fetches a current option quote using the persisted Shoonya symbol master mapping. */
@@ -71,6 +99,7 @@ public class ShoonyaQuoteService {
             JSONObject quote = getQuotes(resolved.getExchange(), resolved.getToken(), null);
             if (!"Ok".equalsIgnoreCase(quote.optString("stat"))) return Optional.empty();
             LiveQuote result = new LiveQuote(resolved.getTradingSymbol(), resolved.getToken(),
+                    firstText(quote, "tsym", "trading_symbol"), firstText(quote, "tk", "token"),
                     decimal(quote, "lp"), decimal(quote, "bp1"), decimal(quote, "sp1"));
             return result.hasUsablePrice() ? Optional.of(result) : Optional.empty();
         } catch (Exception e) {
@@ -84,7 +113,15 @@ public class ShoonyaQuoteService {
         catch (NumberFormatException ignored) { return null; }
     }
 
-    private JSONObject post(JSONObject request, String sessionToken) {
+    private static String firstText(JSONObject quote, String... keys) {
+        for (String key : keys) {
+            String value = quote.optString(key, "");
+            if (StringUtils.hasText(value)) return value.trim();
+        }
+        return null;
+    }
+
+    private JSONObject post(JSONObject request, String sessionToken, String quoteRequestId) {
         try {
             HttpURLConnection connection = (HttpURLConnection) URI.create(properties.getApiUrl() + "/GetQuotes").toURL().openConnection();
             connection.setRequestMethod("POST");
@@ -100,9 +137,14 @@ public class ShoonyaQuoteService {
                     status >= 200 && status < 300 ? connection.getInputStream() : connection.getErrorStream(), StandardCharsets.UTF_8))) {
                 String response = reader.lines().collect(Collectors.joining());
                 if (response.isBlank()) throw new IllegalStateException("Shoonya GetQuotes returned HTTP " + status + " with no body");
-                return new JSONObject(response);
+                JSONObject parsed = new JSONObject(response);
+                log.info("SHOONYA_QUOTE_RESPONSE | requestId={} | httpStatus={} | returnedExchange={} | returnedToken={} | returnedSymbol={} | status={} | ltp={}",
+                        quoteRequestId, status, firstText(parsed, "exch", "exchange"), firstText(parsed, "tk", "token"),
+                        firstText(parsed, "tsym", "trading_symbol"), parsed.optString("stat", ""), decimal(parsed, "lp"));
+                return parsed;
             }
         } catch (Exception e) {
+            log.error("SHOONYA_QUOTE_FAILURE | requestId={} | message={}", quoteRequestId, e.getMessage());
             throw new IllegalStateException("Shoonya GetQuotes failed: " + e.getMessage(), e);
         }
     }

@@ -127,10 +127,9 @@ public class TradingMessageService {
                 return;
             }
             TriggerRequest base = mapToTriggerRequest(parsed);
-            // StockBazaari is identified from its message structure. Preserve
-            // that provider source even when Telegram supplies a display name
-            // such as "Stock Bazaari", so its per-user configuration applies.
-            if (source != null && !"StockBazaari".equalsIgnoreCase(String.valueOf(parsed.get("source")))) {
+            // Provider templates identify their own source. Preserve that
+            // identity even when Telegram supplies a channel/display name.
+            if (source != null && !isProviderSource(parsed.get("source"))) {
                 base.setSource(source);
             }
 
@@ -626,6 +625,14 @@ public class TradingMessageService {
         };
     }
 
+    private boolean isProviderSource(Object parsedSource) {
+        if (parsedSource == null) {
+            return false;
+        }
+        String source = parsedSource.toString();
+        return "StockBazaari".equalsIgnoreCase(source) || "awr".equalsIgnoreCase(source);
+    }
+
     /**
      * Applies a per-source lot default only when the signal did not specify a
      * lot count. A user can override the built-in value with the configuration
@@ -824,6 +831,10 @@ public class TradingMessageService {
 
     private TriggerRequest mapToTriggerRequest(Map<String, Object> parsed) {
         TriggerRequest request = new TriggerRequest();
+        Object source = parsed.get("source");
+        if (source != null && !source.toString().isBlank()) {
+            request.setSource(source.toString().trim());
+        }
         //request.setAction((String) parsed.get("action"));
         request.setInstrument((String) parsed.get("symbol"));
         request.setStrikePrice(parseDouble(parsed.get("strike")));

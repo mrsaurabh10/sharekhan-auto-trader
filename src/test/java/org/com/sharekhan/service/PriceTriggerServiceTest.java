@@ -20,6 +20,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -91,6 +92,18 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void doesNotMonitorOpenTradesOnWeekend() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 18, 10, 0)).when(timedService).nowIst();
+
+        timedService.monitorOpenTrades(7553, 483.15);
+
+        verify(triggeredRepo, never()).findByScripCodeAndStatusIn(any(), anyList());
+        verify(triggeredRepo, never()).findBySpotScripCodeAndStatusIn(any(), anyList());
+        verify(tradeExecutionService, never()).squareOff(any(), anyDouble(), anyString());
+    }
+
+    @Test
     void doesNotEvaluateOrRecoverEntriesBeforeNineTwenty() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 9, 19, 59)).when(timedService).nowIst();
@@ -117,6 +130,19 @@ class PriceTriggerServiceTest {
 
         verify(triggerRepo).findByScripCodeAndStatus(20000, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
         verify(triggerRepo).findByStatus(TriggeredTradeStatus.TRIGGERED);
+    }
+
+    @Test
+    void doesNotEvaluateOrRecoverEntriesAtIntradayCutoff() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 15, 20)).when(timedService).nowIst();
+
+        timedService.evaluatePriceTrigger(20000, 100.0);
+        timedService.recoverStaleTriggeredRequests();
+
+        verify(triggerRepo, never()).findByScripCodeAndStatus(any(), any());
+        verify(triggerRepo, never()).findByStatus(TriggeredTradeStatus.TRIGGERED);
+        verify(tradeExecutionService, never()).executeTradeFromEntity(any());
     }
 
     @Test
@@ -433,6 +459,49 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void atrPreviousDaySpotEntryRejectsWhenTarget1WasAlreadyPassed() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 33, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7024L, 640.25, 643.05, 637.45);
+        trigger.setSource("atr-pdh-pdl-strategy");
+        trigger.setOptionType("PE");
+        trigger.setCreatedAt(LocalDateTime.of(2026, 7, 3, 9, 32, 10));
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        stubIntradayCandle(9, 32, 638.0, 638.0, 633.0, 633.0);
+
+        timedService.evaluatePriceTrigger(20000, 633.0);
+
+        verify(triggerRepo).claimIfStatusEquals(7024L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+        verify(tradeExecutionService, never()).executeTradeFromEntity(trigger);
+    }
+
+    @Test
+    void atrPreviousDaySpotEntryRejectsInsideTenPercentOfTarget1Distance() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 9, 33, 1)).when(timedService).nowIst();
+        var trigger = atrTrigger(7025L, 100.0, 95.0, 110.0);
+        trigger.setSource("atr-pdh-pdl-strategy");
+        trigger.setCreatedAt(LocalDateTime.of(2026, 7, 3, 9, 32, 10));
+
+        when(triggerRepo.findByScripCodeAndStatus(eq(999999), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of());
+        when(triggerRepo.findBySpotScripCodeAndStatus(eq(20000), eq(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)))
+                .thenReturn(List.of(trigger));
+        stubIntradayCandle(9, 32, 100.0, 109.0, 100.0, 109.0);
+
+        timedService.evaluatePriceTrigger(20000, 109.0);
+
+        verify(triggerRepo).claimIfStatusEquals(7025L,
+                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.REJECTED.name());
+        verify(tradeExecutionService, never()).executeTradeFromEntity(trigger);
+    }
+
+    @Test
     void dynamicStrategySpotSignalSkipsTheOpeningGapGuard() {
         PriceTriggerService timedService = spy(service);
         doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
@@ -693,6 +762,43 @@ class PriceTriggerServiceTest {
     }
 
     @Test
+    void stagedCashEquityLegExitsAtItsOwnTargetInsteadOfApplyingGroupPartialBooking() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 7, 3, 10, 0)).when(timedService).nowIst();
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setId(8079L);
+        trade.setScripCode(7553);
+        trade.setExchange("NC");
+        trade.setInstrumentType("EQ");
+        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+        trade.setQuantity(35L);
+        trade.setLots(35);
+        trade.setOriginalLots(106);
+        trade.setTargetOrderGroupId(8079L);
+        trade.setTargetStage(1);
+        trade.setTslEnabled(true);
+        trade.setTarget1(472.40);
+        trade.setStopLoss(440.60);
+
+        when(triggeredRepo.findByScripCodeAndStatusIn(eq(7553), anyList())).thenReturn(List.of(trade));
+        when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(7553), anyList())).thenReturn(List.of());
+        when(triggeredRepo.findById(8079L)).thenReturn(Optional.of(trade));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade, 483.15)).thenReturn(true);
+        when(triggeredRepo.claimIfStatusEquals(8079L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT")).thenAnswer(invocation -> {
+                    trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+                    trade.setExitReason("TARGET_HIT");
+                    return 1;
+                });
+
+        timedService.monitorOpenTrades(7553, 483.15);
+
+        verify(triggeredRepo).claimIfStatusEquals(8079L, TriggeredTradeStatus.EXECUTED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "TARGET_HIT");
+        verify(tradeExecutionService).squareOff(trade, 483.15, "TARGET_HIT");
+    }
+
+    @Test
     void monitorOpenTradesDoesNotUseSpotTickAsTradedPriceWhenOptionScripMatchesSpot() {
         TriggeredTradeSetupEntity trade = optionTrade(5209L, 20000, 20000);
         trade.setTarget1(131.2);
@@ -756,6 +862,55 @@ class PriceTriggerServiceTest {
 
         verify(triggeredRepo, never()).claimIfStatusEquals(eq(5212L), anyString(), anyString(), anyString());
         verify(ltpCacheService).updateLtp(999999, 40.95);
+    }
+
+    @Test
+    void usesSharekhanWebsocketLtpForOptionStopWhenShoonyaQuoteIsUnavailable() {
+        TriggeredTradeSetupEntity trade = optionTrade(5213L, 999998, 20000);
+        trade.setStopLoss(33.8);
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(999998)
+                .exchange("NF")
+                .optionType("CE")
+                .tradingSymbol("AUBANK25AUG26C1060")
+                .build();
+        ShoonyaQuoteService shoonyaQuoteService = mock(ShoonyaQuoteService.class);
+        ReflectionTestUtils.setField(service, "shoonyaQuoteService", shoonyaQuoteService);
+        when(triggeredRepo.findById(5213L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(999998)).thenReturn(option);
+        when(shoonyaQuoteService.getOptionQuote(option)).thenReturn(Optional.empty());
+        when(ltpCacheService.getFreshSharekhanWebSocketLtp(999998, Duration.ofSeconds(15))).thenReturn(32.8);
+
+        OptionalDouble confirmed = ReflectionTestUtils.invokeMethod(service,
+                "reconfirmOptionPremiumStopWithShoonya", 5213L, 32.8d);
+
+        org.assertj.core.api.Assertions.assertThat(confirmed.isPresent()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(confirmed.getAsDouble()).isEqualTo(32.8d);
+        verify(ltpCacheService, never()).updateLtp(999998, 32.8d);
+    }
+
+    @Test
+    void refusesShoonyaPollCacheForOptionStopWhenConfirmationMismatchesAndWebsocketIsUnavailable() {
+        TriggeredTradeSetupEntity trade = optionTrade(5214L, 122052, 3220);
+        trade.setStopLoss(36.2);
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(122052)
+                .exchange("NF")
+                .optionType("CE")
+                .tradingSymbol("LODHA29SEP26C1240")
+                .build();
+        ShoonyaQuoteService shoonyaQuoteService = mock(ShoonyaQuoteService.class);
+        ReflectionTestUtils.setField(service, "shoonyaQuoteService", shoonyaQuoteService);
+        when(triggeredRepo.findById(5214L)).thenReturn(Optional.of(trade));
+        when(scriptMasterRepository.findByScripCode(122052)).thenReturn(option);
+        when(shoonyaQuoteService.getOptionQuote(option)).thenReturn(Optional.of(
+                new ShoonyaQuoteService.LiveQuote("LODHA29SEP26C1240", "122052", "LODHA-EQ", "3220", 1234.3, null, null)));
+        when(ltpCacheService.getFreshSharekhanWebSocketLtp(122052, Duration.ofSeconds(15))).thenReturn(null);
+
+        OptionalDouble confirmed = ReflectionTestUtils.invokeMethod(service,
+                "reconfirmOptionPremiumStopWithShoonya", 5214L, 29.6d);
+
+        org.assertj.core.api.Assertions.assertThat(confirmed.isPresent()).isFalse();
     }
 
     @Test

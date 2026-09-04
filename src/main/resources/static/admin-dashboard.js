@@ -141,7 +141,7 @@
   }
 
   function requestChartDateRange(row) {
-    const source = requestValue(row, 'createdAt') || requestValue(row, 'entryAt');
+    const source = requestValue(row, 'createdAt') || requestValue(row, 'triggeredAt') || requestValue(row, 'entryAt');
     const day = source ? new Date(source) : new Date();
     if (Number.isNaN(day.getTime())) return {};
     const format = function (value) { return value.toISOString().slice(0, 10); };
@@ -237,7 +237,7 @@
     return null;
   }
 
-  async function openRequestChart(row) {
+  async function openRequestChart(row, chartLabel) {
     const modal = document.getElementById('tradeChartModal');
     const title = document.getElementById('tradeChartTitle');
     const meta = document.getElementById('tradeChartMeta');
@@ -251,17 +251,18 @@
     const spotScripCode = requestValue(row, 'spotScripCode', 'spot_scrip_code');
     const allLevelsUseSpot = !!row.useSpotForEntry && !!row.useSpotForSl && !!row.useSpotForTarget;
     const scripCode = allLevelsUseSpot && spotScripCode ? spotScripCode : requestScripCode;
-    title.textContent = symbol + ' — Trading Request Chart';
+    const recordLabel = chartLabel || 'Trading Request';
+    title.textContent = symbol + ' — ' + recordLabel + ' Chart';
     meta.textContent = '5-minute candles · ' + (allLevelsUseSpot ? 'Spot · ' : '') + (requestValue(row, 'exchange') || 'exchange unavailable') + (scripCode ? ' · Scrip ' + scripCode : '');
     levels.innerHTML = '';
-    if (!scripCode) { status.textContent = 'This request has no scrip code, so historical candles cannot be resolved.'; return; }
+    if (!scripCode) { status.textContent = 'This ' + recordLabel.toLowerCase() + ' has no scrip code, so historical candles cannot be resolved.'; return; }
     if (!window.LightweightCharts) { status.textContent = 'TradingView Lightweight Charts could not be loaded. Check network access and retry.'; return; }
     try {
       const range = requestChartDateRange(row);
       const loaded = await loadRequestChartCandles(scripCode, range);
       const response = loaded.response;
       const data = loaded.candles;
-      if (!data.length) { status.textContent = 'Historical data was returned without usable OHLC prices for this request.'; return; }
+      if (!data.length) { status.textContent = 'Historical data was returned without usable OHLC prices for this ' + recordLabel.toLowerCase() + '.'; return; }
       canvas.innerHTML = '';
       requestChart = window.LightweightCharts.createChart(canvas, { autoSize: true, width: canvas.clientWidth || 900, height: 460, layout: { background: { color: '#ffffff' }, textColor: '#222' }, grid: { vertLines: { color: '#f0f2f5' }, horzLines: { color: '#f0f2f5' } }, rightPriceScale: { autoScale: true, alignLabels: true, scaleMargins: { top: 0.12, bottom: 0.12 } }, leftPriceScale: { visible: false }, timeScale: { timeVisible: true, secondsVisible: false } });
       const series = requestChart.addSeries(window.LightweightCharts.CandlestickSeries, { upColor: '#16a34a', downColor: '#dc2626', borderVisible: false, wickUpColor: '#16a34a', wickDownColor: '#dc2626', lastValueVisible: false, priceLineVisible: false, priceFormat: { type: 'price', precision: 2, minMove: 0.01 } });
@@ -278,6 +279,9 @@
       addRequestPriceLine(series, labels, 'T1', requestValue(row, 'target1', 't1'), '#16a34a', row.useSpotForTarget ? 'Spot' : 'Option');
       addRequestPriceLine(series, labels, 'T2', requestValue(row, 'target2', 't2'), '#15803d', row.useSpotForTarget ? 'Spot' : 'Option');
       addRequestPriceLine(series, labels, 'T3', requestValue(row, 'target3', 't3'), '#166534', row.useSpotForTarget ? 'Spot' : 'Option');
+      const status = String(requestValue(row, 'status') || '').toUpperCase();
+      const exited = requestValue(row, 'exitedAt') || status === 'EXITED' || status.indexOf('EXITED_') === 0;
+      if (exited) addRequestPriceLine(series, labels, 'Exit', requestValue(row, 'exitPrice', 'exit_price'), '#ea580c', 'Actual');
       levels.innerHTML = labels.join('');
       requestChart.timeScale().fitContent();
       requestChartLiveState = { chart: requestChart, series: series, ltpLine: ltpLine, scripCode: scripCode, allLevelsUseSpot: allLevelsUseSpot };
@@ -1189,7 +1193,7 @@
     const loadSeq = ++requestLoadSeq;
     if (typeof page === 'number') currentRequestPage = page;
     const orderScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="14">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="15">No user selected</td></tr>'; updateRequestPaginationUI(null); return; }
     try {
       const responseData = await fetchJson('/api/orders/requests?userId=' + encodeURIComponent(uid) + '&scope=' + encodeURIComponent(orderScope) + '&page=' + currentRequestPage + '&size=' + requestPageSize);
       if (loadSeq !== requestLoadSeq) return;
@@ -1201,7 +1205,7 @@
           data = responseData;
       }
 
-      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="14">No requests</td></tr>'; updateRequestPaginationUI(pageInfo); return; }
+      if (!Array.isArray(data) || data.length === 0) { tbody.innerHTML = '<tr><td colspan="15">No requests</td></tr>'; updateRequestPaginationUI(pageInfo); return; }
       const seen = new Set(); const uniq = [];
       for (const r of data) { const rid = r && (r.id || r.requestId || r.request_id); if (!rid) { uniq.push(r); continue; } if (seen.has(rid)) continue; seen.add(rid); uniq.push(r); }
 
@@ -1224,6 +1228,7 @@
         const t1 = r.target1 != null ? r.target1 : (r.t1 || '-');
         const qty = r.quantity != null ? r.quantity : (r.qty || '-');
         const status = r.status || r.requestStatus || '-';
+        const createdAt = r.createdAt || r.created_at || null;
 
         // Action cell
         const actionCell = document.createElement('td');
@@ -1268,6 +1273,7 @@
         }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       '<td>' + escapeHtml(formatAnalyticsDateTime(createdAt)) + '</td>' +
                        tradeScopeCellHtml(r) +
                        '<td><button type="button" class="symbol-chart-link" title="Open request chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
@@ -1328,7 +1334,7 @@
         applyLtpMap(map);
       }
       updateRequestPaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== requestLoadSeq) return; console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="14">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
+    } catch (e) { if (loadSeq !== requestLoadSeq) return; console.error('Failed to load requests', e); tbody.innerHTML = '<tr><td colspan="15">Error loading requests</td></tr>'; updateRequestPaginationUI(null); }
   }
 
   function updateRequestPaginationUI(pageInfo) {
@@ -1358,7 +1364,7 @@
 
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
-    if (!uid) { tbody.innerHTML = '<tr><td colspan="16">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    if (!uid) { tbody.innerHTML = '<tr><td colspan="17">No user selected</td></tr>'; updatePaginationUI(null); return; }
     loadExecutionSourcesForUser(uid, tradeScope).catch(function(){});
 
     try {
@@ -1378,7 +1384,7 @@
       }
 
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="16">No executed trades</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="17">No executed trades</td></tr>';
         refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
         updatePaginationUI(pageInfo);
         return;
@@ -1407,6 +1413,7 @@
         const qty = t.quantity != null ? t.quantity : (t.qty || '-');
         const status = t.status || '-';
         const source = t.source || '-';
+        const setupDate = t.triggeredAt || t.triggered_at || t.entryAt || t.entry_at || null;
         const statusUpper = String(status).toUpperCase();
         const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
 
@@ -1421,7 +1428,24 @@
           const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.innerText = 'Edit';
           editBtn.addEventListener('click', function () { openEditModal('Edit Trade ' + id, { entryPrice: t.entryPrice, intraday: t.intraday, tslEnabled: t.tslEnabled, stopLoss: t.stopLoss, target1: t.target1, target2: t.target2, target3: t.target3, quantity: t.quantity, useSpotPrice: t.useSpotPrice, useSpotForEntry: t.useSpotForEntry, useSpotForSl: t.useSpotForSl, useSpotForTarget: t.useSpotForTarget }, async function (payload) { if (Object.keys(payload).length === 0) throw new Error('No changes'); if (window.selectedUserId) payload.userId = window.selectedUserId; await ensureCsrf(); await fetchJson('/api/trades/execution/' + id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); await loadExecutedForUser(uid, getSelectedStatuses()); await loadAnalyticsForUser(uid); }); }); actionCell.appendChild(editBtn);
           const moveBtn = document.createElement('button'); moveBtn.className = 'btn small'; moveBtn.style.marginLeft = '4px'; moveBtn.innerText = 'Move SL to Cost';
-          moveBtn.addEventListener('click', async function () { await ensureCsrf(); try { await fetchJson('/api/trades/move-sl-to-cost/' + id, { method: 'POST' }); setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800); } catch(e) { alert('Failed to move SL to cost: ' + (e && e.message ? e.message : e)); } }); actionCell.appendChild(moveBtn);
+          moveBtn.addEventListener('click', async function () {
+            const spotBasedSl = t.useSpotForSl === true || (t.useSpotForSl == null && t.useSpotPrice === true);
+            let reference = null;
+            if (spotBasedSl) {
+              reference = prompt('Move SL to which cost basis? Enter SPOT for the original spot entry, or PREMIUM for the actual option entry premium.', 'SPOT');
+              if (reference === null) return;
+              reference = String(reference).trim().toUpperCase();
+              if (reference !== 'SPOT' && reference !== 'PREMIUM') { alert('Please choose SPOT or PREMIUM.'); return; }
+              if (reference === 'PREMIUM' && !confirm('Premium break-even includes estimated round-trip charges and can exit immediately if the option premium is already at or below that level. Continue?')) return;
+            }
+            await ensureCsrf();
+            try {
+              const suffix = reference ? '?reference=' + encodeURIComponent(reference) : '';
+              const message = await fetchJson('/api/trades/move-sl-to-cost/' + id + suffix, { method: 'POST' });
+              if (typeof message === 'string') alert(message);
+              setTimeout(function () { try { loadExecutedForUser(uid, getSelectedStatuses()); } catch (e) { } }, 800);
+            } catch(e) { alert('Failed to move SL to cost: ' + (e && e.message ? e.message : e)); }
+          }); actionCell.appendChild(moveBtn);
           const modifyExitBtn = document.createElement('button'); modifyExitBtn.className = 'btn small'; modifyExitBtn.style.marginLeft = '4px'; modifyExitBtn.innerText = 'Modify Exit';
           modifyExitBtn.addEventListener('click', async function () {
             const price = prompt('Enter new exit price for trade ' + id + ':');
@@ -1483,10 +1507,11 @@
         actionCell.appendChild(auditBtn);
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
+                       '<td>' + escapeHtml(formatAnalyticsDateTime(setupDate)) + '</td>' +
                        tradeScopeCellHtml(t) +
                        '<td>' + escapeHtml(String(source)) + '</td>' +
                        '<td>' + escapeHtml(String(status)) + '</td>' +
-                       '<td>' + escapeHtml(String(symbol)) + '</td>' +
+                       '<td><button type="button" class="symbol-chart-link" title="Open trading setup chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(optType || '-')) + '</td>' +
@@ -1495,6 +1520,9 @@
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
                        '<td>' + escapeHtml(String(qty)) + '</td>';
         tr.appendChild(actionCell);
+
+        const chartBtn = tr.querySelector('.symbol-chart-link');
+        if (chartBtn) chartBtn.addEventListener('click', function () { openRequestChart(t, 'Trading Setup'); });
 
         const ltpTd = document.createElement('td'); ltpTd.innerText = '-'; tr.appendChild(ltpTd);
         const spotLtpTd = document.createElement('td'); spotLtpTd.innerText = '-'; tr.appendChild(spotLtpTd);
@@ -1559,7 +1587,7 @@
       }
       refreshDayPnlSummary(uid, tradeScope, true).catch(function(){});
       updatePaginationUI(pageInfo);
-    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="16">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
+    } catch (e) { if (loadSeq !== execLoadSeq) return; console.error('Failed to load executed trades', e); tbody.innerHTML = '<tr><td colspan="17">Error loading executed trades</td></tr>'; updatePaginationUI(null); }
   }
 
   function updatePaginationUI(pageInfo) {
@@ -1609,7 +1637,52 @@
   // --- LTP helpers ---
   let adminWs = null;
   let pollHandle = null;
+  let adminWsReconnectStopped = false;
   let ltpCache = {};
+
+  function stopAdminWsReconnect(reason) {
+    adminWsReconnectStopped = true;
+    if (pollHandle) {
+      clearTimeout(pollHandle);
+      pollHandle = null;
+    }
+    console.warn('admin LTP websocket reconnect stopped: ' + reason);
+  }
+
+  function hasAuthenticatedDashboardSession() {
+    const session = window.currentSession;
+    return !!(session && session.username && session.username !== 'anonymousUser');
+  }
+
+  async function canReconnectAdminWs() {
+    if (adminWsReconnectStopped) return false;
+    try {
+      const response = await fetch('/api/user/me', {
+        credentials: 'include',
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (response.status === 401 || response.status === 403) {
+        window.currentSession = {};
+        window.isAdminSession = false;
+        stopAdminWsReconnect('authentication expired');
+        return false;
+      }
+      // Only an authentication failure disables reconnecting. Other HTTP failures
+      // are treated like transient connectivity problems and keep the retry path.
+      return true;
+    } catch (e) {
+      // A transient network failure should not permanently disable live updates.
+      return true;
+    }
+  }
+
+  function scheduleAdminWsReconnect(delay) {
+    if (adminWsReconnectStopped || pollHandle) return;
+    pollHandle = setTimeout(function() {
+      pollHandle = null;
+      startAdminWs();
+    }, delay);
+  }
 
   async function batchFetchMstockLtp(keys) {
     const out = {};
@@ -1719,13 +1792,18 @@
 
   function startAdminWs() {
     try {
-      if (adminWs && adminWs.readyState === WebSocket.OPEN) return;
+      if (adminWsReconnectStopped || !hasAuthenticatedDashboardSession()) {
+        stopAdminWsReconnect('no authenticated dashboard session');
+        return;
+      }
+      if (adminWs && (adminWs.readyState === WebSocket.OPEN || adminWs.readyState === WebSocket.CONNECTING)) return;
       const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
       const url = proto + location.host + '/ws/ltp';
-      adminWs = new WebSocket(url);
+      const socket = new WebSocket(url);
+      adminWs = socket;
 
-      adminWs.onopen = function() { console.debug('admin LTP ws open'); if (pollHandle) { clearTimeout(pollHandle); pollHandle = null; } };
-      adminWs.onmessage = function(ev) {
+      socket.onopen = function() { console.debug('admin LTP ws open'); if (pollHandle) { clearTimeout(pollHandle); pollHandle = null; } };
+      socket.onmessage = function(ev) {
         try {
           const js = JSON.parse(ev.data);
           if (!js) return;
@@ -1771,9 +1849,15 @@
 
         } catch (e) { console.debug('adminWs parse failed', e); }
       };
-      adminWs.onclose = function() { console.debug('admin LTP ws closed'); adminWs = null; if (!pollHandle) pollHandle = setTimeout(function() { pollHandle = null; startAdminWs(); }, 2000); };
-      adminWs.onerror = function(e) { console.debug('admin LTP ws error', e); if (adminWs) try { adminWs.close(); } catch (ign) {} };
-    } catch (e) { console.debug('startAdminWs failed', e); if (!pollHandle) pollHandle = setTimeout(function() { pollHandle = null; startAdminWs(); }, 3000); }
+      socket.onclose = function() {
+        console.debug('admin LTP ws closed');
+        if (adminWs === socket) adminWs = null;
+        canReconnectAdminWs().then(function(canReconnect) {
+          if (canReconnect) scheduleAdminWsReconnect(2000);
+        });
+      };
+      socket.onerror = function(e) { console.debug('admin LTP ws error', e); try { socket.close(); } catch (ign) {} };
+    } catch (e) { console.debug('startAdminWs failed', e); scheduleAdminWsReconnect(3000); }
   }
 
   // --- Helper functions for instrument/strike/expiry/broker/user loading ---
@@ -2271,6 +2355,36 @@
     const refreshBtn = document.getElementById('refreshStrategiesBtn');
     const result = document.getElementById('strategyResult');
     const errDiv = document.getElementById('serverError');
+    const templateSelect = document.getElementById('strategyTemplate');
+    const symbolInput = document.getElementById('strategySymbol');
+    const quantitiesInput = document.getElementById('strategySymbolQuantities');
+    const quantitiesRow = document.getElementById('strategySymbolQuantitiesRow');
+    const isSpotBigTradePlus = function () {
+      return String((templateSelect && templateSelect.value) || '').trim().toUpperCase() === 'SPOT_ATR_PDH_BIGTRADEPLUS';
+    };
+    const automaticUniverseTemplate = function () {
+      const id = (templateSelect && templateSelect.value ? templateSelect.value : '').trim().toUpperCase();
+      return id === 'FNO_0925_MOVER_ATR_BREAKOUT' || id === 'MARKETAUX_SENTIMENT_SWING_ATR';
+    };
+    const updateSymbolInput = function () {
+      if (!symbolInput) return;
+      const automatic = automaticUniverseTemplate();
+      const btp = isSpotBigTradePlus();
+      symbolInput.disabled = automatic;
+      symbolInput.style.display = btp ? 'none' : '';
+      if (quantitiesRow) quantitiesRow.style.display = btp ? '' : 'none';
+      const lotsInput = document.getElementById('strategyLots');
+      if (lotsInput && btp) lotsInput.closest('.form-row').style.display = 'none';
+      else if (lotsInput) lotsInput.closest('.form-row').style.display = '';
+      symbolInput.value = automatic ? '' : symbolInput.value;
+      symbolInput.placeholder = automatic
+        ? 'Selected automatically from the F&O news universe'
+        : 'e.g. NIFTY, RELIANCE; use commas/new lines for manual F&O lists';
+    };
+    if (templateSelect) {
+      templateSelect.addEventListener('change', updateSymbolInput);
+      updateSymbolInput();
+    }
     if (refreshBtn) {
       refreshBtn.addEventListener('click', function () {
         loadStrategySubscriptions(window.selectedUserId).catch(function(){});
@@ -2282,26 +2396,32 @@
       if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
       const templateId = (document.getElementById('strategyTemplate') || {}).value || '';
       const symbol = ((document.getElementById('strategySymbol') || {}).value || '').trim().toUpperCase();
-      const fnoMover = templateId.trim().toUpperCase() === 'FNO_0925_MOVER_ATR_BREAKOUT';
+      const automaticUniverse = automaticUniverseTemplate();
       const lotsValue = Number((document.getElementById('strategyLots') || {}).value || '1');
       const intraday = !!(document.getElementById('strategyIntraday') && document.getElementById('strategyIntraday').checked);
       if (!templateId) { if (result) result.innerText = 'Select a strategy template.'; return; }
-      if (!fnoMover && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
+      const btp = isSpotBigTradePlus();
+      const rows = btp ? String((quantitiesInput || {}).value || '').split(/[\n,;]+/).map(v => v.trim()).filter(Boolean) : [];
+      if (btp && rows.length === 0) { if (result) result.innerText = 'Enter at least one SYMBOL:QUANTITY row.'; return; }
+      if (!btp && !automaticUniverse && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
       try {
         btn.disabled = true;
         await ensureCsrf();
-        const body = {
-          templateId,
-          symbol: fnoMover ? 'FNO_UNIVERSE' : symbol,
-          lots: Number.isFinite(lotsValue) && lotsValue > 0 ? lotsValue : 1,
-          intraday,
-          userId: window.selectedUserId || null,
-          brokerCredentialsId: null,
-          source: 'strategy:' + templateId
-        };
-        if (body.userId) body.brokerCredentialsId = await resolveBrokerForUser(body.userId);
-        const resp = await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify(body) });
-        if (result) result.innerText = 'STARTED: Strategy #' + (resp && resp.id ? resp.id : '-') + ' is running in background.';
+        const brokerCredentialsId = window.selectedUserId ? await resolveBrokerForUser(window.selectedUserId) : null;
+        const configurations = btp ? rows.map(row => {
+          const parts = row.split(':').map(v => v.trim());
+          const quantity = Number(parts[1]);
+          if (parts.length !== 2 || !parts[0] || !Number.isInteger(quantity) || quantity < 3) throw new Error('Use SYMBOL:QUANTITY, with quantity at least 3. Invalid row: ' + row);
+          return { symbol: parts[0].toUpperCase(), lots: quantity };
+        }) : [{ symbol: automaticUniverse ? 'FNO_UNIVERSE' : symbol, lots: Number.isFinite(lotsValue) && lotsValue > 0 ? lotsValue : 1 }];
+        const responses = [];
+        for (const configuration of configurations) {
+          responses.push(await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify({
+            templateId, symbol: configuration.symbol, lots: configuration.lots, intraday,
+            userId: window.selectedUserId || null, brokerCredentialsId, source: 'strategy:' + templateId
+          }) }));
+        }
+        if (result) result.innerText = 'STARTED: ' + responses.length + ' strategy subscription(s) are running in background.';
         await loadStrategySubscriptions(window.selectedUserId);
       } catch (e) {
         const msg = e && e.message ? e.message : String(e);

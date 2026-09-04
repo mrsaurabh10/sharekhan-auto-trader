@@ -88,6 +88,12 @@ public class OrderStatusPollingService {
             // Find trades in states where we expect an order to be open/pending
             List<TriggeredTradeSetupEntity> pendingExitOrders = tradeRepo.findByStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
             List<TriggeredTradeSetupEntity> pendingTargetOrders = tradeRepo.findByStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+            // A target hit can claim a staged leg as EXIT_TRIGGERED while its
+            // already-placed broker target order is still awaiting its fill.
+            // Those orders must continue to be reconciled after a restart (and
+            // after an in-memory poll is lost), otherwise later legs never get
+            // their stepped stop loss.
+            List<TriggeredTradeSetupEntity> exitTriggeredOrders = tradeRepo.findByStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
             List<TriggeredTradeSetupEntity> pendingEntryOrders = tradeRepo.findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
             
             int resumedCount = 0;
@@ -100,6 +106,13 @@ public class OrderStatusPollingService {
             }
 
             for (TriggeredTradeSetupEntity trade : pendingTargetOrders) {
+                if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
+                    monitorOrderStatus(trade);
+                    resumedCount++;
+                }
+            }
+
+            for (TriggeredTradeSetupEntity trade : exitTriggeredOrders) {
                 if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
                     monitorOrderStatus(trade);
                     resumedCount++;
@@ -232,9 +245,11 @@ public class OrderStatusPollingService {
             LocalTime end = LocalTime.of(23, 30);
             return !time.isBefore(start) && !time.isAfter(end);
         } else {
-            // Equity: 9:15 AM - 3:30 PM
+            // Keep reconciliation alive through the intraday closer's 15:35 exit-order
+            // modifications and the broker's final fill acknowledgement. This is status
+            // polling only; it does not permit new order placement after market close.
             LocalTime start = LocalTime.of(9, 15);
-            LocalTime end = LocalTime.of(15, 30);
+            LocalTime end = LocalTime.of(15, 40);
             return !time.isBefore(start) && !time.isAfter(end);
         }
     }
@@ -324,7 +339,7 @@ public class OrderStatusPollingService {
                         TriggeredTradeSetupEntity executedTrade = reloaded != null ? reloaded : currentTrade;
                         tradeExecutionService.handleEntryOrderExecution(executedTrade);
                     } else {
-                        tradeExecutionService.advanceStagedTargetStops(reloaded != null ? reloaded : currentTrade);
+                        tradeExecutionService.advanceStagedTargetStopsAfterTargetExit(reloaded != null ? reloaded : currentTrade);
                         rearmGapFillRequest(reloaded != null ? reloaded : currentTrade);
                     }
 
@@ -400,7 +415,11 @@ public class OrderStatusPollingService {
                     }
                     // Send telegram for rejection
                     try {
-                        String title = "Order Rejected ❌";
+                        boolean cancelledForManualAction = "ENTRY_MAX_SLIPPAGE_EXCEEDED_CANCEL_REQUESTED"
+                                .equals(currentTrade.getReason());
+                        String title = cancelledForManualAction
+                                ? "Entry Cancelled — Manual Action Needed ⚠️"
+                                : "Order Rejected ❌";
                         StringBuilder body = new StringBuilder();
                         body.append("Instrument: ").append(currentTrade.getSymbol());
                         if (currentTrade.getStrikePrice() != null) body.append(" ").append(currentTrade.getStrikePrice());
@@ -408,6 +427,10 @@ public class OrderStatusPollingService {
                         body.append("\nOrderId: ").append(orderIdToMonitor);
                         body.append("\nStatus: ").append(currentTrade.getStatus());
                         if (currentTrade.getExitReason() != null) body.append("\nReason: ").append(currentTrade.getExitReason());
+                        if (cancelledForManualAction) {
+                            body.append("\nThe broker-triggered entry did not fill within the configured safe slippage limit and was cancelled.");
+                            body.append("\nPlease place it manually only if the current price is still acceptable.");
+                        }
                         telegramNotificationService.sendTradeMessageForUser(currentTrade.getAppUserId(), title, body.toString());
                     } catch (Exception e) {
                         log.warn("Failed sending telegram notification for rejection: {}", e.getMessage());
@@ -459,9 +482,15 @@ public class OrderStatusPollingService {
 //        }, 2, TimeUnit.MINUTES);
     }
 
-    private boolean isExitOrder(TriggeredTradeSetupEntity trade) {
+    static boolean isExitOrder(TriggeredTradeSetupEntity trade) {
         return trade != null && (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(trade.getStatus())
-                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(trade.getStatus()));
+                || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(trade.getStatus())
+                // PriceTriggerService changes a filled-or-crossed broker target
+                // order to EXIT_TRIGGERED. Keep polling its exitOrderId rather
+                // than accidentally falling back to the already-filled entry
+                // orderId.
+                || (TriggeredTradeStatus.EXIT_TRIGGERED.equals(trade.getStatus())
+                    && trade.getExitOrderId() != null && !trade.getExitOrderId().isBlank()));
     }
 
     void rearmGapFillRequest(TriggeredTradeSetupEntity exitedTrade) {

@@ -124,6 +124,26 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void rejectsShoonyaOptionQuoteWhenReturnedIdentityIsNotTheRequestedContract() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(123456).tradingSymbol("AUROPHARMA").exchange("NF")
+                .instrumentType("OI").strikePrice(1560.0).optionType("CE").expiry("25/08/2026").build();
+        when(ctx.scriptRepo.findByScripCode(123456)).thenReturn(option);
+
+        ShoonyaQuoteService shoonya = mock(ShoonyaQuoteService.class);
+        when(shoonya.getOptionQuote(option)).thenReturn(Optional.of(new ShoonyaQuoteService.LiveQuote(
+                "AUROPHARMA25AUG26C1560", "73045", "AUROPHARMA-EQ", "275", 1560.0, 1559.0, 1561.0)));
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+
+        Double price = ReflectionTestUtils.invokeMethod(
+                ctx.service, "resolveEntryReferencePrice", 123456, "executeTriggeredTrade");
+
+        assertThat(price).isNull();
+        verify(ctx.ltpCache, never()).updateLtp(123456, 1560.0);
+    }
+
+    @Test
     void advancesStopsForLaterInitialTargetLegsWhenEarlierTargetFills() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         TriggeredTradeSetupEntity targetOne = new TriggeredTradeSetupEntity();
@@ -132,8 +152,10 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggeredTradeSetupEntity targetTwo = new TriggeredTradeSetupEntity();
         targetTwo.setId(2L); targetTwo.setTargetOrderGroupId(99L); targetTwo.setTargetStage(2);
+        targetTwo.setStatus(TriggeredTradeStatus.EXECUTED);
         TriggeredTradeSetupEntity targetThree = new TriggeredTradeSetupEntity();
         targetThree.setId(3L); targetThree.setTargetOrderGroupId(99L); targetThree.setTargetStage(3);
+        targetThree.setStatus(TriggeredTradeStatus.EXECUTED);
         when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(99L), any()))
                 .thenReturn(List.of(targetTwo, targetThree));
 
@@ -143,6 +165,38 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(targetThree.getStopLoss()).isEqualTo(120.0);
         verify(ctx.triggeredRepo).save(targetTwo);
         verify(ctx.triggeredRepo).save(targetThree);
+    }
+
+    @Test
+    void doesNotAdvanceStagedStopsWhenALegExitsForStopLoss() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity stoppedLeg = new TriggeredTradeSetupEntity();
+        stoppedLeg.setId(1L); stoppedLeg.setTargetOrderGroupId(99L); stoppedLeg.setTargetStage(1);
+        stoppedLeg.setExitReason("STOP_LOSS_HIT");
+
+        ctx.service.advanceStagedTargetStopsAfterTargetExit(stoppedLeg);
+
+        verify(ctx.triggeredRepo, never()).findByTargetOrderGroupIdAndStatusIn(any(), any());
+    }
+
+    @Test
+    void advancesFinalLegStopToFirstTargetWhenSecondTargetFills() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity firstTarget = new TriggeredTradeSetupEntity();
+        firstTarget.setId(1L); firstTarget.setTargetStage(1); firstTarget.setTarget1(140.0);
+        firstTarget.setExitReason("TARGET_HIT"); firstTarget.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+        TriggeredTradeSetupEntity secondTarget = new TriggeredTradeSetupEntity();
+        secondTarget.setId(2L); secondTarget.setTargetOrderGroupId(99L); secondTarget.setTargetStage(2);
+        secondTarget.setTarget1(160.0); secondTarget.setExitReason("TARGET_HIT");
+        TriggeredTradeSetupEntity finalLeg = new TriggeredTradeSetupEntity();
+        finalLeg.setId(3L); finalLeg.setTargetStage(3); finalLeg.setStatus(TriggeredTradeStatus.EXECUTED);
+        when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(99L), any()))
+                .thenReturn(List.of(firstTarget, finalLeg));
+
+        ctx.service.advanceStagedTargetStops(secondTarget);
+
+        assertThat(finalLeg.getStopLoss()).isEqualTo(140.0);
+        verify(ctx.triggeredRepo).save(finalLeg);
     }
 
     @Test
@@ -168,8 +222,26 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 77L,
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
                 TriggeredTradeStatus.ENTRY_SUBMITTING.name());
-        verify(ctx.broker).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble());
+        verify(ctx.broker).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), eq(123.45), eq(123.55));
         verify(ctx.eventPublisher).publishEvent(any(OrderPlacedEvent.class));
+    }
+
+    @Test
+    void blocksRepeatedStockBazaariEntryForSameUserAndInstrumentOnSameDay() {
+        TestContext ctx = new TestContext(pending("182038823"));
+        TriggerRequest firstRequest = optionRequest();
+        firstRequest.setSource("StockBazaari");
+        when(ctx.triggerRepo.findDailySourceInstrumentRequests(eq("StockBazaari"), eq(123456), eq(9L), any(), any()))
+                .thenReturn(List.of());
+
+        TriggerTradeRequestEntity first = ctx.service.executeTrade(firstRequest);
+        when(ctx.triggerRepo.findDailySourceInstrumentRequests(eq("StockBazaari"), eq(123456), eq(9L), any(), any()))
+                .thenReturn(List.of(first));
+
+        TriggerTradeRequestEntity repeated = ctx.service.executeTrade(firstRequest);
+
+        assertThat(repeated).isSameAs(first);
+        verify(ctx.broker, times(1)).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble(), anyDouble());
     }
 
     @Test
@@ -714,7 +786,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     .active(true)
                     .build()));
             when(brokerServiceFactory.getService(anyString())).thenReturn(broker);
-            when(broker.placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble()))
+            when(broker.placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble(), anyDouble()))
                     .thenReturn(brokerResult);
 
             service = new TradeExecutionService(

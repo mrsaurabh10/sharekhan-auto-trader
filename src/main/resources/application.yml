@@ -51,11 +51,54 @@ logging:
 
 # Application specific
 app:
+  database:
+    # PostgreSQL-only branch cutover. When true, SPRING_DATASOURCE_* is the
+    # primary JPA datasource and H2 is not constructed as the application DB.
+    postgres-primary: ${APP_DATABASE_POSTGRES_PRIMARY:false}
+  reference-data:
+    postgres:
+      enabled: ${APP_REFERENCE_DATA_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_REFERENCE_DATA_POSTGRES_BACKFILL_ON_STARTUP:false}
+  configuration:
+    postgres:
+      enabled: ${APP_CONFIGURATION_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_CONFIGURATION_POSTGRES_BACKFILL_ON_STARTUP:false}
+  trading-state:
+    postgres:
+      enabled: ${APP_TRADING_STATE_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_TRADING_STATE_POSTGRES_BACKFILL_ON_STARTUP:false}
+  user-broker:
+    postgres:
+      # Copies users and encrypted broker credentials to PostgreSQL without changing live H2 access.
+      enabled: ${APP_USER_BROKER_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_USER_BROKER_POSTGRES_BACKFILL_ON_STARTUP:false}
+  backtest:
+    postgres:
+      # Disabled until the paired result/event backfill has been validated.
+      enabled: ${APP_BACKTEST_POSTGRES_ENABLED:false}
+      backfill-on-startup: ${APP_BACKTEST_POSTGRES_BACKFILL_ON_STARTUP:false}
+  audit:
+    postgres:
+      # POC only: set APP_AUDIT_POSTGRES_ENABLED=true after PostgreSQL is healthy.
+      # All non-audit persistence continues to use the primary H2 datasource.
+      enabled: ${APP_AUDIT_POSTGRES_ENABLED:false}
+      # Set true for one controlled startup to copy the existing H2 audit history.
+      # The copy is idempotent and preserves IDs; reset it to false after validation.
+      backfill-on-startup: ${APP_AUDIT_POSTGRES_BACKFILL_ON_STARTUP:false}
+      url: ${APP_AUDIT_POSTGRES_URL:jdbc:postgresql://localhost:5432/sharekhan}
+      username: ${APP_AUDIT_POSTGRES_USERNAME:sharekhan_app}
+      password: ${APP_AUDIT_POSTGRES_PASSWORD:}
   monitoring:
     api-token: ${MONITORING_API_TOKEN:}
   scheduler:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
   strategy:
+    atr-prior-day:
+      strict-entry:
+        # Accuracy-first: avoid live-price/one-minute false breakouts.
+        enabled: ${ATR_PRIOR_DAY_STRICT_ENTRY_ENABLED:true}
+        minimum-time: ${ATR_PRIOR_DAY_STRICT_ENTRY_MINIMUM_TIME:09:30}
+        max-vwap-extension-atr: ${ATR_PRIOR_DAY_MAX_VWAP_EXTENSION_ATR:1.25}
     fno-0925-mover:
       # Do not compare a later breakout to the unusually high opening-auction volume.
       orb-volume-multiplier: ${FNO_0925_MOVER_ORB_VOLUME_MULTIPLIER:0.75}
@@ -79,6 +122,17 @@ app:
     # Comma-separated ISO dates, e.g. NSE_HOLIDAYS=2026-01-26,2026-03-03
     nse-holidays: ${NSE_HOLIDAYS:}
     sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
+  marketaux:
+    # Set MARKETAUX_API_TOKEN outside source control. India news is always requested with countries=in.
+    enabled: ${MARKETAUX_ENABLED:true}
+    api-token: ${MARKETAUX_API_TOKEN:}
+    base-url: ${MARKETAUX_BASE_URL:https://api.marketaux.com/v1}
+    connect-timeout-ms: ${MARKETAUX_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${MARKETAUX_READ_TIMEOUT_MS:10000}
+    # 100 requests are placed at even 216-second intervals from 09:20 (inclusive) to 15:20 IST.
+    india-sentiment-collection-enabled: ${MARKETAUX_INDIA_SENTIMENT_COLLECTION_ENABLED:true}
+    india-sentiment-calls-per-day: ${MARKETAUX_INDIA_SENTIMENT_CALLS_PER_DAY:100}
+    india-sentiment-articles-per-call: ${MARKETAUX_INDIA_SENTIMENT_ARTICLES_PER_CALL:50}
   trading:
     order-execution:
       # Exit capacity is intentionally reserved: a target/SL cannot queue behind entries.

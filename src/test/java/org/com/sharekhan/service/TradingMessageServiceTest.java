@@ -100,6 +100,18 @@ class TradingMessageServiceTest {
     }
 
     @Test
+    void mapsAwrSourceSoItsPerUserConfigurationIsUsed() {
+        TradingMessageService service = new TradingMessageService();
+
+        TriggerRequest request = ReflectionTestUtils.invokeMethod(service, "mapToTriggerRequest", Map.of(
+                "symbol", "ASIANPAINT",
+                "source", "awr",
+                "entry", 56.0));
+
+        assertThat(request.getSource()).isEqualTo("awr");
+    }
+
+    @Test
     void canonicalizesLowercaseStockBazaariApiSource() {
         TradingMessageService service = new TradingMessageService();
         TriggerRequest request = stockBazaariEquityRequest();

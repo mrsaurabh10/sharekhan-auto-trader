@@ -37,3 +37,16 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# Local runtime secrets and PostgreSQL backup artifacts
+.env
+*.dump
+*.sql.gz
+/.idea/copilot.data.migration.agent.xml
+/outputs/trade_export/all_trades.csv
+/outputs/trade_export/build_trades_export.mjs
+/outputs/trade_export/node_modules/
+/outputs/trade_export/trades_export_20260609.xlsx
+/outputs/trade_export/~$trades_export_20260609.xlsx
+/outputs/trade_export/node_modules/
+/outputs/trade_export/node_modules/
