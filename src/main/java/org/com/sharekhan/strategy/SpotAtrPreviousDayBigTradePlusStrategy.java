@@ -38,6 +38,15 @@ public class SpotAtrPreviousDayBigTradePlusStrategy implements StrategyEvaluator
             throw new IllegalArgumentException("Quantity must be at least 3 shares so BIGTRADEPLUS can create three legs");
         }
         String symbol = request.getSymbol().trim().toUpperCase();
+        // Unlike the F&O ATR templates, a BTP strategy is one entry attempt per
+        // cash symbol per day. Once any bracket leg has reached the broker, do
+        // not create another three-leg group after it exits or is rejected.
+        if (support.hasEntryForSymbolOn(SOURCE, LocalDateTime.now(StrategySupport.MARKET_ZONE).toLocalDate(),
+                request.getUserId(), symbol)) {
+            return StrategyApplyResponse.builder().status("duplicate")
+                    .message(symbol + ": a BIGTRADEPLUS ATR entry was already submitted today")
+                    .templateId(TEMPLATE_ID).symbol(symbol).direction("BUY").build();
+        }
         ScriptMasterEntity spot = support.resolveSpotScript(symbol);
         var qualification = qualificationService.qualify(spot, "CE", request.getUserId(), LocalDateTime.now(StrategySupport.MARKET_ZONE));
         if (!qualification.qualified()) return support.waiting(metadata(), symbol, qualification.reason());

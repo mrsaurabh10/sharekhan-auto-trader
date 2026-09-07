@@ -242,8 +242,7 @@ public class StrategySubscriptionService {
         return ManualFnoVwapReclaimCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || ManualFnoVwapReclaimPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || AtrPreviousDayFnoCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
-                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
-                || SpotAtrPreviousDayBigTradePlusStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+                || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 
     /** New ATR subscriptions should create their pending request immediately instead of waiting for the next poll. */
