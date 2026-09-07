@@ -1905,6 +1905,7 @@ public class TradeExecutionService {
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
                 rejected.setSource(trigger.getSource());
+                rejected.setBrokerProductType(trigger.getBrokerProductType());
                 try { triggeredTradeRepo.save(rejected); } catch (Exception ignore) { }
                 try {
                     String title = "Order Rejected ❌";
@@ -2009,6 +2010,7 @@ public class TradeExecutionService {
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
                 rejected.setSource(trigger.getSource());
+                rejected.setBrokerProductType(trigger.getBrokerProductType());
                 if (isUsableBrokerOrderId(result.getOrderId())) {
                     rejected.setOrderId(result.getOrderId());
                 }
@@ -2078,6 +2080,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             triggeredTradeSetupEntity.setSource(trigger.getSource());
+            triggeredTradeSetupEntity.setBrokerProductType(trigger.getBrokerProductType());
             triggeredTradeSetupEntity.setGapProtectionEnabled(trigger.getGapProtectionEnabled());
             triggeredTradeSetupEntity.setGapDayOpen(trigger.getGapDayOpen());
             triggeredTradeSetupEntity.setGapPreviousClose(trigger.getGapPreviousClose());
@@ -5414,6 +5417,10 @@ public class TradeExecutionService {
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
         temp.setSource(requestEntity.getSource());
+        // This value decides whether Sharekhan submits the documented BKT
+        // BIGTRADEPLUS payload or the normal INVESTMENT order.  Retain it when
+        // converting a persisted price-trigger request into a broker trade.
+        temp.setBrokerProductType(requestEntity.getBrokerProductType());
         
         temp.setUseSpotForEntry(useSpotForEntry);
         temp.setUseSpotForSl(useSpotForSl);
