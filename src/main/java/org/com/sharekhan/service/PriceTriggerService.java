@@ -123,6 +123,12 @@ public class PriceTriggerService {
                 
                 if (trigger.getEntryPrice() == null) continue;
 
+                // A BTP parent can be pre-armed at Sharekhan only when the
+                // breakout is nearby.  Until then this remains a margin-free
+                // local trigger.  If accepted, its status changes atomically
+                // and this loop will no longer submit a local entry.
+                tradeExecutionService.maybePreArmBigTradePlusEntry(trigger, ltp);
+
                 double tolerance = 1.10;
 
                 if (rejectIfEntryPriceGuardFails(trigger, trigger.getScripCode(), ltp, "option LTP", tolerance, false)) {
@@ -162,6 +168,8 @@ public class PriceTriggerService {
                 }
                 
                 if (trigger.getEntryPrice() == null) continue;
+
+                tradeExecutionService.maybePreArmBigTradePlusEntry(trigger, ltp);
 
                 initializeGapPolicy(trigger);
 

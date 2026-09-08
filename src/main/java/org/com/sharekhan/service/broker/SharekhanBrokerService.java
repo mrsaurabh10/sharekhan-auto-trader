@@ -52,6 +52,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                                                             BrokerContext context,
                                                             double triggerPrice,
                                                             double limitPrice) {
+        if (isBigTradePlus(trade)) {
+            return placeBigTradePlusBracket(trade, context, triggerPrice, limitPrice);
+        }
         return executeSharekhanOrder(trade, context, limitPrice, "B", "NEW", triggerPrice);
     }
 
@@ -175,6 +178,18 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
      * the protective child legs.
      */
     private OrderPlacementResult placeBigTradePlusBracket(TriggeredTradeSetupEntity trade, BrokerContext context) {
+        return placeBigTradePlusBracket(trade, context, null, null);
+    }
+
+    /**
+     * Submit a BTP bracket with an optional broker-side buy stop-limit parent.
+     * A non-null trigger keeps the BTP parent pending until the breakout price
+     * is reached; the target and stop-loss children remain broker-managed.
+     */
+    private OrderPlacementResult placeBigTradePlusBracket(TriggeredTradeSetupEntity trade,
+                                                           BrokerContext context,
+                                                           Double triggerPrice,
+                                                           Double limitPrice) {
         normaliseBigTradePlusPrices(trade);
         String validationError = validateBigTradePlus(trade, context);
         if (validationError != null) {
@@ -189,7 +204,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                 return rejected("Sharekhan access token is unavailable", trade.getEntryPrice());
             }
 
-            JSONObject order = bigTradePlusPayload(trade, context);
+            JSONObject order = bigTradePlusPayload(trade, context, triggerPrice, limitPrice);
             HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.sharekhan.com/skapi/services/orders"))
                     .timeout(Duration.ofSeconds(25))
                     .header("Content-Type", "application/json")
@@ -211,11 +226,11 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                 }
                 return rejected("BTP_REJECTED: " + message, trade.getEntryPrice());
             }
-            log.info("BTP_BRACKET_ACCEPTED | tradeId={} | orderId={} | symbol={} | quantity={} | entry={} | target={} | stopLoss={}",
+            log.info("BTP_BRACKET_ACCEPTED | tradeId={} | orderId={} | symbol={} | quantity={} | entry={} | trigger={} | target={} | stopLoss={}",
                     trade.getId(), orderId, trade.getSymbol(), trade.getQuantity(), trade.getEntryPrice(),
-                    trade.getTarget1(), trade.getStopLoss());
+                    triggerPrice, trade.getTarget1(), trade.getStopLoss());
             return OrderPlacementResult.builder().success(true).orderId(orderId).status("Pending")
-                    .attemptedPrice(trade.getEntryPrice()).build();
+                    .attemptedPrice(limitPrice != null ? limitPrice : trade.getEntryPrice()).build();
         } catch (Exception e) {
             log.warn("BTP bracket placement failed for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
             return rejected("BTP_REQUEST_FAILED: " + e.getMessage(), trade != null ? trade.getEntryPrice() : null);
@@ -223,6 +238,13 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
     }
 
     static JSONObject bigTradePlusPayload(TriggeredTradeSetupEntity trade, BrokerContext context) {
+        return bigTradePlusPayload(trade, context, null, null);
+    }
+
+    static JSONObject bigTradePlusPayload(TriggeredTradeSetupEntity trade,
+                                          BrokerContext context,
+                                          Double triggerPrice,
+                                          Double limitPrice) {
         JSONObject order = new JSONObject();
         order.put("orderId", "");
         order.put("customerId", context.getCustomerId());
@@ -232,8 +254,11 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         order.put("transactionType", "B");
         order.put("quantity", trade.getQuantity());
         order.put("disclosedQty", 0);
-        order.put("triggerPrice", 0);
-        order.put("price", formatOrderPrice(normaliseBigTradePlusPrice(trade.getEntryPrice())));
+        // Sharekhan's documented BTP schema uses a numeric triggerPrice,
+        // while the limit and child prices are strings.
+        order.put("triggerPrice", triggerPrice == null ? 0 : normaliseBigTradePlusPrice(triggerPrice));
+        order.put("price", formatOrderPrice(normaliseBigTradePlusPrice(
+                limitPrice != null ? limitPrice : trade.getEntryPrice())));
         order.put("rmsCode", "ANY");
         order.put("afterHour", "N");
         order.put("orderType", "BKT");

@@ -235,6 +235,13 @@ public class TradeExecutionService {
     @Value("${app.trading.entry.broker-trigger-limit-ticks:2}")
     private int brokerTriggerEntryLimitTicks;
 
+    /**
+     * Only pre-arm a BIGTRADEPLUS bracket when its breakout is nearby.  Until
+     * then it remains a local trigger and consumes no broker margin.
+     */
+    @Value("${app.trading.bigtradeplus.prearm-percent:0.20}")
+    private double bigTradePlusPrearmPercent;
+
     @Value("${app.trading.entry.hard-spread-percent:3.5}")
     private double entryHardSpreadPercent;
 
@@ -794,6 +801,39 @@ public class TradeExecutionService {
     }
 
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {
+        tryPlaceBrokerSideEntryOrder(requestEntity, false);
+    }
+
+    /**
+     * Moves a nearby BTP breakout to Sharekhan as a stop-limit BKT bracket.
+     * The broker only receives it inside the configured pre-arm band, avoiding
+     * margin being blocked by every distant candidate.
+     */
+    public void maybePreArmBigTradePlusEntry(TriggerTradeRequestEntity requestEntity, double referencePrice) {
+        if (!isBigTradePlusRequest(requestEntity)
+                || !Double.isFinite(referencePrice)
+                || referencePrice <= 0d
+                || requestEntity.getEntryPrice() == null
+                || !Double.isFinite(requestEntity.getEntryPrice())
+                || requestEntity.getEntryPrice() <= 0d
+                || referencePrice >= requestEntity.getEntryPrice()) {
+            return;
+        }
+        double prearmPercent = bigTradePlusPrearmPercent;
+        if (!Double.isFinite(prearmPercent) || prearmPercent <= 0d) {
+            return;
+        }
+        double prearmFloor = requestEntity.getEntryPrice() * (1d - prearmPercent / 100d);
+        if (referencePrice < prearmFloor) {
+            return;
+        }
+        log.info("BTP_PREARM_WINDOW | requestId={} | symbol={} | ltp={} | entry={} | band={}%%",
+                requestEntity.getId(), requestEntity.getSymbol(), formatPrice(referencePrice),
+                formatPrice(requestEntity.getEntryPrice()), formatPercent(prearmPercent));
+        tryPlaceBrokerSideEntryOrder(requestEntity, true);
+    }
+
+    private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity, boolean allowBigTradePlus) {
         if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
             log.info("Skipping broker-side intraday entry request {} after the {} IST cutoff",
                     requestEntity.getId(), INTRADAY_ENTRY_CUTOFF);
@@ -803,7 +843,7 @@ public class TradeExecutionService {
             log.info("Deferring StockBazaari equity entry request {} until the market opens", requestEntity.getId());
             return;
         }
-        if (!isBrokerSideEntryTriggerEligible(requestEntity)) {
+        if (!isBrokerSideEntryTriggerEligible(requestEntity, allowBigTradePlus)) {
             return;
         }
 
@@ -832,7 +872,7 @@ public class TradeExecutionService {
         String requestLockKey = buildEntryLockKey(requestEntity);
         try {
             orderPlacementGuard.withLock(requestLockKey, ORDER_LOCK_TIMEOUT, () -> {
-                placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker);
+                placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker, allowBigTradePlus);
                 return null;
             });
         } catch (OrderPlacementGuard.LockAcquisitionException e) {
@@ -847,9 +887,10 @@ public class TradeExecutionService {
 
     private void placeBrokerSideEntryOrderWithClaim(TriggerTradeRequestEntity requestEntity,
                                                     BrokerContext ctx,
-                                                    TriggerPriceEntryBrokerService brokerService) {
+                                                    TriggerPriceEntryBrokerService brokerService,
+                                                    boolean allowBigTradePlus) {
         TriggerTradeRequestEntity latest = triggerTradeRequestRepository.findById(requestEntity.getId()).orElse(requestEntity);
-        if (!isBrokerSideEntryTriggerEligible(latest)) {
+        if (!isBrokerSideEntryTriggerEligible(latest, allowBigTradePlus)) {
             return;
         }
 
@@ -868,7 +909,9 @@ public class TradeExecutionService {
 
         try {
             double entryPrice = normalisePriceToTick(latest.getEntryPrice());
-            double limitPrice = brokerTriggerEntryLimitPrice(entryPrice);
+            double limitPrice = isBigTradePlusRequest(latest)
+                    ? normalisePriceToTick(entryPrice + ENTRY_TICK_SIZE)
+                    : brokerTriggerEntryLimitPrice(entryPrice);
             TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now(), ctx);
             TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", limitPrice, null);
 
@@ -926,18 +969,23 @@ public class TradeExecutionService {
         }
     }
 
-    private boolean isBrokerSideEntryTriggerEligible(TriggerTradeRequestEntity requestEntity) {
+    private boolean isBrokerSideEntryTriggerEligible(TriggerTradeRequestEntity requestEntity,
+                                                      boolean allowBigTradePlus) {
         return requestEntity != null
                 && requestEntity.getId() != null
                 && TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(requestEntity.getStatus())
                 && requestEntity.getEntryPrice() != null
                 && requestEntity.getEntryPrice() > 0d
-                // A BTP order carries its own BKT entry price.  It must be sent
-                // only after the local price trigger fires; submitting it here
-                // would create an immediate broker-side entry.
-                && !"BIGTRADEPLUS".equalsIgnoreCase(requestEntity.getBrokerProductType())
-                && (hasOptionType(requestEntity.getOptionType()) || isStockBazaariEquity(requestEntity))
+                && (allowBigTradePlus || !isBigTradePlusRequest(requestEntity))
+                && (hasOptionType(requestEntity.getOptionType())
+                    || isStockBazaariEquity(requestEntity)
+                    || (allowBigTradePlus && isBigTradePlusRequest(requestEntity)))
                 && !usesSpotForEntry(requestEntity);
+    }
+
+    private boolean isBigTradePlusRequest(TriggerTradeRequestEntity requestEntity) {
+        return requestEntity != null
+                && "BIGTRADEPLUS".equalsIgnoreCase(requestEntity.getBrokerProductType());
     }
 
     /** Called by the market-open scheduler for equity signals received before 09:15 IST. */

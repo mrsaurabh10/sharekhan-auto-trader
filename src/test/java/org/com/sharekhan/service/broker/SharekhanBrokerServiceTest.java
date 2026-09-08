@@ -50,4 +50,26 @@ class SharekhanBrokerServiceTest {
         assertThat(payload.getString("childSlPrice")).isEqualTo("4884.65");
         assertThat(payload.getString("bookProfitPrice")).isEqualTo("4931.20");
     }
+
+    @Test
+    void createsAStopLimitBigTradePlusParentInsideThePrearmWindow() {
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setScripCode(3045);
+        trade.setSymbol("SBIN");
+        trade.setExchange("NC");
+        trade.setQuantity(10L);
+        trade.setEntryPrice(1024d);
+        trade.setTarget1(1025d);
+        trade.setStopLoss(1010d);
+
+        JSONObject payload = SharekhanBrokerService.bigTradePlusPayload(trade,
+                new BrokerContext(12345678L, "test-api-key", "CLIENT", "Sharekhan", 1L),
+                1024d, 1024.05d);
+
+        assertThat(payload.getString("orderType")).isEqualTo("BKT");
+        assertThat(payload.getDouble("triggerPrice")).isEqualTo(1024d);
+        assertThat(payload.getString("price")).isEqualTo("1024.05");
+        assertThat(payload.getString("bookProfitPrice")).isEqualTo("1025.00");
+        assertThat(payload.getString("childSlPrice")).isEqualTo("1010.00");
+    }
 }
