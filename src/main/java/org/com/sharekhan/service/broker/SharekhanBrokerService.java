@@ -19,6 +19,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.util.Set;
 
@@ -26,6 +28,9 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class SharekhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService, OrderStatusBrokerService {
+
+    /** Sharekhan NSE cash BTP prices must be submitted in ₹0.05 increments. */
+    private static final BigDecimal NSE_CASH_TICK_SIZE = new BigDecimal("0.05");
 
     private final TokenStoreService tokenStoreService;
 
@@ -170,6 +175,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
      * the protective child legs.
      */
     private OrderPlacementResult placeBigTradePlusBracket(TriggeredTradeSetupEntity trade, BrokerContext context) {
+        normaliseBigTradePlusPrices(trade);
         String validationError = validateBigTradePlus(trade, context);
         if (validationError != null) {
             return rejected(validationError, trade != null ? trade.getEntryPrice() : null);
@@ -227,7 +233,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         order.put("quantity", trade.getQuantity());
         order.put("disclosedQty", 0);
         order.put("triggerPrice", 0);
-        order.put("price", formatOrderPrice(trade.getEntryPrice()));
+        order.put("price", formatOrderPrice(normaliseBigTradePlusPrice(trade.getEntryPrice())));
         order.put("rmsCode", "ANY");
         order.put("afterHour", "N");
         order.put("orderType", "BKT");
@@ -235,9 +241,31 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         order.put("validity", "GFD");
         order.put("requestType", "NEW");
         order.put("productType", "BIGTRADEPLUS");
-        order.put("bookProfitPrice", formatOrderPrice(trade.getTarget1()));
-        order.put("childSlPrice", formatOrderPrice(trade.getStopLoss()));
+        order.put("bookProfitPrice", formatOrderPrice(normaliseBigTradePlusPrice(trade.getTarget1())));
+        order.put("childSlPrice", formatOrderPrice(normaliseBigTradePlusPrice(trade.getStopLoss())));
         return order;
+    }
+
+    /**
+     * Apply the broker's cash-equity tick at the final boundary, rather than
+     * relying on strategy-specific rounding. ATR calculations legitimately
+     * produce values such as 4884.64 that Sharekhan rejects for a BTP child.
+     */
+    private static void normaliseBigTradePlusPrices(TriggeredTradeSetupEntity trade) {
+        if (trade == null) {
+            return;
+        }
+        if (validPrice(trade.getEntryPrice())) trade.setEntryPrice(normaliseBigTradePlusPrice(trade.getEntryPrice()));
+        if (validPrice(trade.getStopLoss())) trade.setStopLoss(normaliseBigTradePlusPrice(trade.getStopLoss()));
+        if (validPrice(trade.getTarget1())) trade.setTarget1(normaliseBigTradePlusPrice(trade.getTarget1()));
+    }
+
+    private static double normaliseBigTradePlusPrice(Double value) {
+        return BigDecimal.valueOf(value)
+                .divide(NSE_CASH_TICK_SIZE, 0, RoundingMode.HALF_UP)
+                .multiply(NSE_CASH_TICK_SIZE)
+                .setScale(2, RoundingMode.UNNECESSARY)
+                .doubleValue();
     }
 
     private static String formatOrderPrice(Double value) {
@@ -257,7 +285,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         return null;
     }
 
-    private boolean validPrice(Double value) { return value != null && Double.isFinite(value) && value > 0d; }
+    private static boolean validPrice(Double value) { return value != null && Double.isFinite(value) && value > 0d; }
 
     private OrderPlacementResult rejected(String reason, Double attemptedPrice) {
         return OrderPlacementResult.builder().success(false).status("Rejected").attemptedPrice(attemptedPrice).rejectionReason(reason).build();

@@ -31,4 +31,23 @@ class SharekhanBrokerServiceTest {
         assertThat(payload.getString("bookProfitPrice")).isEqualTo("1025.00");
         assertThat(payload.getString("childSlPrice")).isEqualTo("1010.00");
     }
+
+    @Test
+    void normalisesEveryBigTradePlusPriceToTheNseCashTick() {
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setScripCode(3518);
+        trade.setSymbol("TORNTPHARM");
+        trade.setExchange("NC");
+        trade.setQuantity(3L);
+        trade.setEntryPrice(4911.50d);
+        trade.setStopLoss(4884.64d);
+        trade.setTarget1(4931.19d);
+
+        JSONObject payload = SharekhanBrokerService.bigTradePlusPayload(trade,
+                new BrokerContext(12345678L, "test-api-key", "CLIENT", "Sharekhan", 1L));
+
+        assertThat(payload.getString("price")).isEqualTo("4911.50");
+        assertThat(payload.getString("childSlPrice")).isEqualTo("4884.65");
+        assertThat(payload.getString("bookProfitPrice")).isEqualTo("4931.20");
+    }
 }
