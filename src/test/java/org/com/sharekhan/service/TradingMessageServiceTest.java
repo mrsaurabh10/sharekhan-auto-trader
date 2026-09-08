@@ -112,6 +112,38 @@ class TradingMessageServiceTest {
     }
 
     @Test
+    void repairsOptionPremiumTargetAtOrBelowEntryDuringTelegramParsing() {
+        TradingMessageService service = new TradingMessageService();
+
+        TriggerRequest request = ReflectionTestUtils.invokeMethod(service, "mapToTriggerRequest", Map.of(
+                "symbol", "M&M",
+                "optionType", "PE",
+                "entry", 74.0,
+                "stopLoss", 66.0,
+                "target1", 72.0,
+                "target2", 82.0,
+                "target3", 86.0));
+
+        assertThat(request.getTarget1()).isEqualTo(81.40);
+        assertThat(request.getTarget2()).isEqualTo(82.0);
+        assertThat(request.getTarget3()).isEqualTo(86.0);
+    }
+
+    @Test
+    void retainsLowerSpotTargetForPutDuringTelegramParsing() {
+        TradingMessageService service = new TradingMessageService();
+
+        TriggerRequest request = ReflectionTestUtils.invokeMethod(service, "mapToTriggerRequest", Map.of(
+                "symbol", "M&M",
+                "optionType", "PE",
+                "entry", 3150.0,
+                "target1", 3120.0,
+                "useSpotForTarget", true));
+
+        assertThat(request.getTarget1()).isEqualTo(3120.0);
+    }
+
+    @Test
     void canonicalizesLowercaseStockBazaariApiSource() {
         TradingMessageService service = new TradingMessageService();
         TriggerRequest request = stockBazaariEquityRequest();

@@ -68,6 +68,8 @@ public class TradingMessageService {
     private final ConcurrentMap<String, Long> processedMessageIds = new ConcurrentHashMap<>();
     private static final long DEDUPE_TTL_MS = 5 * 60 * 1000L; // keep dedupe keys for 5 minutes
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
+    private static final double INVALID_OPTION_TARGET_FALLBACK_GAIN_PERCENT = 10.0d;
+    private static final double OPTION_PRICE_TICK = 0.05d;
 
     // Covers concurrent webhook deliveries on this application instance. The database check below
     // remains the durable guard across restarts and deployments.
@@ -852,6 +854,7 @@ public class TradingMessageService {
         request.setUseSpotForEntry(parseBoolean(parsed.get("useSpotForEntry")));
         request.setUseSpotForSl(parseBoolean(parsed.get("useSpotForSl")));
         request.setUseSpotForTarget(parseBoolean(parsed.get("useSpotForTarget")));
+        correctInvalidOptionPremiumTargets(request);
         Object action = parsed.get("action");
         if (action != null) {
             request.setAction(action.toString().trim().toUpperCase(Locale.ROOT));
@@ -872,6 +875,56 @@ public class TradingMessageService {
         } catch (Exception ignored){}
         request.setQuantity(q);
         return request;
+    }
+
+    /**
+     * Telegram option calls are long premium trades unless they explicitly use
+     * spot targets. A target at or below entry would already be satisfied and
+     * cause an immediate exit, so repair it while the message is being parsed.
+     */
+    private void correctInvalidOptionPremiumTargets(TriggerRequest request) {
+        if (request == null || !hasOptionLeg(request)
+                || Boolean.TRUE.equals(request.getUseSpotPrice())
+                || Boolean.TRUE.equals(request.getUseSpotForTarget())) {
+            return;
+        }
+
+        Double entry = request.getEntryPrice();
+        if (entry == null || !Double.isFinite(entry) || entry <= 0d) {
+            return;
+        }
+
+        Double[] targets = {request.getTarget1(), request.getTarget2(), request.getTarget3()};
+        Double previous = null;
+        boolean corrected = false;
+        for (int index = 0; index < targets.length; index++) {
+            Double target = targets[index];
+            if (target == null || !Double.isFinite(target) || target <= 0d) {
+                continue;
+            }
+            if (target <= entry || (previous != null && target <= previous)) {
+                double minimum = entry * (1d + INVALID_OPTION_TARGET_FALLBACK_GAIN_PERCENT / 100d);
+                if (previous != null) {
+                    minimum = Math.max(minimum, previous + OPTION_PRICE_TICK);
+                }
+                targets[index] = roundToOptionTick(minimum);
+                corrected = true;
+            }
+            previous = targets[index];
+        }
+
+        if (!corrected) {
+            return;
+        }
+        request.setTarget1(targets[0]);
+        request.setTarget2(targets[1]);
+        request.setTarget3(targets[2]);
+        System.out.println("⚠️ Corrected invalid option-premium target(s) while parsing Telegram signal: "
+                + "entry=" + entry + ", targets=" + Arrays.toString(targets));
+    }
+
+    private double roundToOptionTick(double value) {
+        return Math.round(value / OPTION_PRICE_TICK) * OPTION_PRICE_TICK;
     }
 
     private Double parseDouble(Object val) {

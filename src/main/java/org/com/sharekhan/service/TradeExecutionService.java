@@ -4130,6 +4130,15 @@ public class TradeExecutionService {
             return;
         }
 
+        // BIGTRADEPLUS is a Sharekhan BKT order: its book-profit and
+        // child stop-loss legs were submitted with the entry.  Creating a
+        // second local target sell would duplicate the broker-managed exit.
+        if ("BIGTRADEPLUS".equalsIgnoreCase(trade.getBrokerProductType())) {
+            log.info("Skipping local target order for BIGTRADEPLUS trade {} because Sharekhan manages its bracket exits",
+                    trade.getId());
+            return;
+        }
+
         // Staged option-premium legs are the exception: each one has a single
         // target and must receive its broker target order immediately.
         if ((Boolean.TRUE.equals(trade.getTslEnabled()) && !isStagedTargetLeg(trade))
@@ -5529,6 +5538,15 @@ public class TradeExecutionService {
     private String buildEntryLockKey(TriggeredTradeSetupEntity trade) {
         if (trade == null) {
             return "ENTRY:TRADE:NULL";
+        }
+        // A BIGTRADEPLUS strategy intentionally creates three independent
+        // brackets for the same cash symbol.  While converting each persisted
+        // request into a temporary trade, retain that request's lock identity;
+        // otherwise all three legs collapse onto the generic symbol lock and
+        // two are incorrectly discarded as duplicate entries.
+        if ("BIGTRADEPLUS".equalsIgnoreCase(trade.getBrokerProductType())
+                && trade.getTriggerRequestId() != null) {
+            return "ENTRY:REQ:" + trade.getTriggerRequestId();
         }
         if (trade.getId() != null) {
             return "ENTRY:TRADE:" + trade.getId();
