@@ -11,6 +11,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.util.Set;
 import java.util.Optional;
 
@@ -42,7 +44,8 @@ class MStockLtpPollingServiceTest {
                 priceTriggerService,
                 mock(ScripExecutorManager.class),
                 instrumentResolver,
-                tokenStoreService);
+                tokenStoreService,
+                mock(NseMarketCalendar.class));
         ReflectionTestUtils.setField(service, "sharekhanQuoteStaleMs", 2000L);
 
         QuoteCacheService.QuoteSnapshot quote = QuoteCacheService.QuoteSnapshot.builder()
@@ -78,7 +81,8 @@ class MStockLtpPollingServiceTest {
                 mock(PriceTriggerService.class),
                 executorManager,
                 mock(MStockInstrumentResolver.class),
-                mock(TokenStoreService.class));
+                mock(TokenStoreService.class),
+                mock(NseMarketCalendar.class));
         ShoonyaQuoteService shoonyaQuoteService = mock(ShoonyaQuoteService.class);
         ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
         ReflectionTestUtils.setField(service, "shoonyaQuoteService", shoonyaQuoteService);
@@ -101,5 +105,22 @@ class MStockLtpPollingServiceTest {
         verify(quoteCacheService, never()).recordQuote(eq(68389), any(), any(), any());
         verify(executorManager, never()).submitTriggerTask(eq(68389), any());
         verify(executorManager, never()).submitMonitorTask(eq(68389), any());
+    }
+
+    @Test
+    void onlyPollsDuringTheNseNfoTradingSession() {
+        NseMarketCalendar calendar = mock(NseMarketCalendar.class);
+        MStockLtpPollingService service = new MStockLtpPollingService(
+                mock(WebSocketSubscriptionService.class), mock(MStockLtpService.class), mock(LtpCacheService.class),
+                mock(QuoteCacheService.class), mock(PriceTriggerService.class), mock(ScripExecutorManager.class),
+                mock(MStockInstrumentResolver.class), mock(TokenStoreService.class), calendar);
+        ZoneId ist = ZoneId.of("Asia/Kolkata");
+        ZonedDateTime midnight = ZonedDateTime.of(2026, 9, 9, 0, 22, 0, 0, ist);
+        ZonedDateTime marketHours = ZonedDateTime.of(2026, 9, 9, 9, 15, 0, 0, ist);
+        when(calendar.isTradingDay(midnight.toLocalDate())).thenReturn(true);
+
+        assertThat(service.isNseTradingSessionOpen(midnight)).isFalse();
+        assertThat(service.isNseTradingSessionOpen(marketHours)).isTrue();
+        assertThat(service.isNseTradingSessionOpen(marketHours.withHour(15).withMinute(45))).isFalse();
     }
 }

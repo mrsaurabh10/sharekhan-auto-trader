@@ -9,6 +9,8 @@ import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.entity.TradeAuditEventEntity;
+import org.com.sharekhan.entity.EntryChaseControl;
+import org.com.sharekhan.repository.EntryChaseControlRepository;
 import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.dto.TriggerRequest;
@@ -182,6 +184,17 @@ public class TradeExecutionService {
         t.setDaemon(true);
         return t;
     });
+    @Autowired
+    private EntryChaseControlRepository entryChaseControlRepository;
+    // Stable stripes serialize each trade without blocking unrelated trades or leaking lock entries.
+    private final Object[] entryDecisionLocks = java.util.stream.IntStream.range(0, 64)
+            .mapToObj(i -> new Object()).toArray();
+
+    private Object entryDecisionLock(Long tradeId) {
+        return entryDecisionLocks[Math.floorMod(Objects.hashCode(tradeId), entryDecisionLocks.length)];
+    }
+    private static final String ENTRY_AWAITING_ACTION = "ENTRY_ATTEMPTS_EXHAUSTED_AWAITING_ACTION";
+
     private final ConcurrentMap<Long, ScheduledFuture<?>> entryChaseFutures = new ConcurrentHashMap<>();
 
     private static final class ExitChaseState {
@@ -2201,7 +2214,14 @@ public class TradeExecutionService {
             }
 
             log.info("📌 Live trade saved to DB for scripCode {} at LTP {}", trigger.getScripCode(), ltp);
-            if (chaseEntryUntilExecuted) {
+            if (ENTRY_AWAITING_ACTION.equals(result.getRejectionReason())) {
+                synchronized (entryDecisionLock(triggeredTradeSetupEntity.getId())) {
+                    EntryChaseControl control = newEntryControl(triggeredTradeSetupEntity, false);
+                    control.setAttempts(configuredEntryMaxAttempts());
+                    control.setLastPrice(result.getAttemptedPrice());
+                    pauseEntryChase(triggeredTradeSetupEntity, control, "Maximum entry attempts reached");
+                }
+            } else if (chaseEntryUntilExecuted) {
                 scheduleEntryOrderChase(triggeredTradeSetupEntity);
             }
             if (triggeredTradeSetupEntity.getExitOrderId() != null) {
@@ -2588,8 +2608,7 @@ public class TradeExecutionService {
                         return rejectedEntryResult(orderId, result, "ENTRY_BROKER_REJECTED");
                     }
                     if (attempt == maxAttempts - 1) {
-                        return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
-                                requestedQuantity, entryAttemptsExhaustedReason(maxAttempts), result);
+                        return pendingEntryActionResult(orderId, result);
                     }
 
                     log.info("⏱️ Entry order {} still open after attempt {}. Preparing next price level.", orderId, attempt + 1);
@@ -2617,8 +2636,7 @@ public class TradeExecutionService {
         }
 
         if (!chaseEntryUntilExecuted && orderId != null && !orderId.isBlank()) {
-            return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
-                    requestedQuantity, entryAttemptsExhaustedReason(maxAttempts), lastResult);
+            return pendingEntryActionResult(orderId, lastResult);
         }
 
         log.warn("❌ Entry attempts exhausted for trigger {}. Marking as rejected.", triggerLogId(trigger));
@@ -2627,10 +2645,6 @@ public class TradeExecutionService {
 
     private int configuredEntryMaxAttempts() {
         return entryMaxAttempts > 0 ? entryMaxAttempts : DEFAULT_MAX_ENTRY_ATTEMPTS;
-    }
-
-    private String entryAttemptsExhaustedReason(int attempts) {
-        return "ENTRY_NOT_FILLED_AFTER_" + attempts + "_ATTEMPTS";
     }
 
     private long configuredEntryRetryDelayMillis() {
@@ -3010,6 +3024,12 @@ public class TradeExecutionService {
     }
 
     private void scheduleEntryOrderChase(TriggeredTradeSetupEntity trade, boolean waitForBrokerTrigger) {
+        synchronized (entryDecisionLock(trade == null ? null : trade.getId())) {
+            scheduleEntryOrderChaseLocked(trade, waitForBrokerTrigger);
+        }
+    }
+
+    private void scheduleEntryOrderChaseLocked(TriggeredTradeSetupEntity trade, boolean waitForBrokerTrigger) {
         if (trade == null || trade.getId() == null || !isUsableBrokerOrderId(trade.getOrderId())) {
             return;
         }
@@ -3031,9 +3051,17 @@ public class TradeExecutionService {
 
         long tradeId = trade.getId();
         String orderId = trade.getOrderId();
+        EntryChaseControl control = entryChaseControlRepository.findById(tradeId).orElse(null);
+        if (control == null) {
+            control = newEntryControl(trade, waitForBrokerTrigger);
+            entryChaseControlRepository.save(control);
+        }
+        if (control.getState() != EntryChaseControl.State.RUNNING) return;
         stopEntryOrderChase(tradeId);
 
         EntryChaseState state = new EntryChaseState();
+        state.modifyAttempts = control.getAttempts();
+        state.lastPrice = control.getLastPrice();
         entryChaseStates.put(tradeId, state);
 
         long delayMillis = "OI".equalsIgnoreCase(trade.getInstrumentType() != null ? trade.getInstrumentType().trim() : "")
@@ -3041,92 +3069,100 @@ public class TradeExecutionService {
                 : 2000L;
 
         Runnable task = () -> {
-            try {
-                TriggeredTradeSetupEntity latest = triggeredTradeRepo.findById(tradeId).orElse(null);
-                if (latest == null || !TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(latest.getStatus())) {
-                    stopEntryOrderChase(tradeId);
-                    return;
-                }
-
-                String latestOrderId = latest.getOrderId();
-                if (!isUsableBrokerOrderId(latestOrderId)) {
-                    stopEntryOrderChase(tradeId);
-                    return;
-                }
-
-                JSONObject orderHistory = fetchOrderHistory(latest, ctx, latestOrderId);
-                TradeStatus status = evaluateOrderFinalStatus(latest, orderHistory);
-                if (isOrderFilled(status)) {
-                    stopEntryOrderChase(tradeId);
-                    return;
-                }
-                if (TradeStatus.REJECTED.equals(status)) {
-                    log.warn("🧵 Entry chase stopping for trade {} — order rejected", tradeId);
-                    stopEntryOrderChase(tradeId);
-                    return;
-                }
-
-                EntryChaseState chaseState = entryChaseStates.computeIfAbsent(tradeId, id -> new EntryChaseState());
-                if (waitForBrokerTrigger && !chaseState.triggerActivated) {
-                    if (!isBrokerTriggerActivated(orderHistory)) {
+            synchronized (entryDecisionLock(tradeId)) {
+                try {
+                    EntryChaseControl currentControl = entryChaseControlRepository.findById(tradeId).orElse(null);
+                    if (currentControl == null || currentControl.getState() != EntryChaseControl.State.RUNNING) {
+                        stopEntryOrderChase(tradeId);
                         return;
                     }
-                    chaseState.triggerActivated = true;
-                    log.info("🧵 Broker entry trigger activated for trade {} order {}; starting bounded fill chase",
-                            tradeId, latestOrderId);
-                }
-
-                Double candidatePrice = waitForBrokerTrigger
-                        ? determineBrokerTriggeredEntryChasePrice(latest)
-                        : determineEntryChasePrice(latest, chaseState);
-                if (candidatePrice == null || candidatePrice <= 0) {
-                    return;
-                }
-
-                double ceiling = entryPriceCeiling(latest, latest.getEntryPrice());
-                if (candidatePrice > ceiling + 0.000001d) {
-                    cancelTriggeredEntryForManualAction(latest, ctx, modifiableEntryBroker, latestOrderId,
-                            candidatePrice, ceiling);
-                    stopEntryOrderChase(tradeId);
-                    return;
-                }
-
-                if (chaseState.lastPrice != null && Math.abs(chaseState.lastPrice - candidatePrice) < 0.01) {
-                    return;
-                }
-
-                TradeEventLogger.logOrderAttempt("ENTRY_CHASE", latest, chaseState.modifyAttempts + 1, "MODIFY", candidatePrice, latestOrderId);
-                OrderPlacementResult modifyResult = modifiableEntryBroker.modifyEntryOrder(latest, ctx, latestOrderId, candidatePrice);
-                if (modifyResult != null && modifyResult.getAttemptedPrice() == null) {
-                    modifyResult.setAttemptedPrice(candidatePrice);
-                }
-
-                if (modifyResult != null && modifyResult.isSuccess()) {
-                    String updatedOrderId = modifyResult.getOrderId();
-                    if (isUsableBrokerOrderId(updatedOrderId) && !updatedOrderId.equals(latestOrderId)) {
-                        latest.setOrderId(updatedOrderId);
-                        triggeredTradeRepo.save(latest);
-                    }
-                    chaseState.lastPrice = candidatePrice;
-                    chaseState.modifyAttempts++;
-                    log.info("🧵 Entry chase adjusting trade {} order {} to {}",
-                            tradeId, updatedOrderId != null ? updatedOrderId : latestOrderId, formatPrice(candidatePrice));
-
-                    if (isOrderPlacementFilled(modifyResult)) {
+                    TriggeredTradeSetupEntity latest = triggeredTradeRepo.findById(tradeId).orElse(null);
+                    if (latest == null || !TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.equals(latest.getStatus())) {
                         stopEntryOrderChase(tradeId);
-                    } else if (waitForBrokerTrigger && chaseState.modifyAttempts >= configuredEntryMaxAttempts()) {
-                        cancelTriggeredEntryForManualAction(latest, ctx, modifiableEntryBroker, latestOrderId,
-                                candidatePrice, ceiling);
-                        stopEntryOrderChase(tradeId);
+                        return;
                     }
-                } else {
-                    log.warn("⚠️ Entry chase modify failed for trade {}: {}",
-                            tradeId,
-                            modifyResult != null ? modifyResult.getRejectionReason() : "No response");
-                    stopEntryOrderChase(tradeId);
+
+                    String latestOrderId = latest.getOrderId();
+                    if (!isUsableBrokerOrderId(latestOrderId)) {
+                        stopEntryOrderChase(tradeId);
+                        return;
+                    }
+
+                    JSONObject orderHistory = fetchOrderHistory(latest, ctx, latestOrderId);
+                    TradeStatus status = evaluateOrderFinalStatus(latest, orderHistory);
+                    if (isOrderFilled(status)) {
+                        closeEntryDecision(currentControl);
+                        return;
+                    }
+                    if (TradeStatus.REJECTED.equals(status)) {
+                        closeEntryDecision(currentControl);
+                        return;
+                    }
+                    if (TradeStatus.NO_RECORDS.equals(status)) return;
+
+                    EntryChaseState chaseState = entryChaseStates.computeIfAbsent(tradeId, id -> new EntryChaseState());
+                    if (waitForBrokerTrigger && !chaseState.triggerActivated) {
+                        if (!isBrokerTriggerActivated(orderHistory)) {
+                            return;
+                        }
+                        chaseState.triggerActivated = true;
+                        log.info("🧵 Broker entry trigger activated for trade {} order {}; starting bounded fill chase",
+                                tradeId, latestOrderId);
+                    }
+
+                    if (currentControl.getAttempts() >= configuredEntryMaxAttempts()) {
+                        pauseEntryChase(latest, currentControl, "Maximum entry attempts reached");
+                        return;
+                    }
+                    Double candidatePrice = waitForBrokerTrigger
+                            ? determineBrokerTriggeredEntryChasePrice(latest)
+                            : determineEntryChasePrice(latest, chaseState);
+                    if (candidatePrice == null || candidatePrice <= 0) {
+                        return;
+                    }
+
+                    double ceiling = entryPriceCeiling(latest, latest.getEntryPrice());
+                    if (candidatePrice > ceiling + 0.000001d) {
+                        pauseEntryChase(latest, currentControl, "Automatic entry slippage limit reached");
+                        return;
+                    }
+
+                    TradeEventLogger.logOrderAttempt("ENTRY_CHASE", latest, chaseState.modifyAttempts + 1, "MODIFY", candidatePrice, latestOrderId);
+                    currentControl.setAttempts(currentControl.getAttempts() + 1);
+                    entryChaseControlRepository.save(currentControl); // consume budget before broker I/O
+                    OrderPlacementResult modifyResult = modifiableEntryBroker.modifyEntryOrder(latest, ctx, latestOrderId, candidatePrice);
+                    if (modifyResult != null && modifyResult.getAttemptedPrice() == null) {
+                        modifyResult.setAttemptedPrice(candidatePrice);
+                    }
+
+                    if (modifyResult != null && modifyResult.isSuccess()) {
+                        String updatedOrderId = modifyResult.getOrderId();
+                        if (isUsableBrokerOrderId(updatedOrderId) && !updatedOrderId.equals(latestOrderId)) {
+                            latest.setOrderId(updatedOrderId);
+                            triggeredTradeRepo.save(latest);
+                        }
+                        chaseState.lastPrice = candidatePrice;
+                        chaseState.modifyAttempts = currentControl.getAttempts();
+                        currentControl.setLastPrice(candidatePrice);
+                        currentControl.setOrderId(latest.getOrderId());
+                        entryChaseControlRepository.save(currentControl);
+                        log.info("🧵 Entry chase adjusting trade {} order {} to {}",
+                                tradeId, updatedOrderId != null ? updatedOrderId : latestOrderId, formatPrice(candidatePrice));
+
+                        if (isOrderPlacementFilled(modifyResult)) {
+                            closeEntryDecision(currentControl);
+                        } else if (chaseState.modifyAttempts >= configuredEntryMaxAttempts()) {
+                            pauseEntryChase(latest, currentControl, "Maximum entry attempts reached");
+                        }
+                    } else {
+                        log.warn("⚠️ Entry chase modify failed for trade {}: {}",
+                                tradeId,
+                                modifyResult != null ? modifyResult.getRejectionReason() : "No response");
+                        pauseEntryChase(latest, currentControl, "Entry modification failed; check broker status");
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ Entry chase iteration failed for trade {}: {}", tradeId, e.getMessage());
                 }
-            } catch (Exception e) {
-                log.warn("⚠️ Entry chase iteration failed for trade {}: {}", tradeId, e.getMessage());
             }
         };
 
@@ -3135,13 +3171,216 @@ public class TradeExecutionService {
         log.info("🧵 Entry chase started for trade {} order {}", tradeId, orderId);
     }
 
+    public void reconcileEntryUnderLock(Long tradeId, Runnable reconciliation) {
+        synchronized (entryDecisionLock(tradeId)) {
+            reconciliation.run();
+        }
+    }
+
+    private OrderPlacementResult pendingEntryActionResult(String orderId, OrderPlacementResult prior) {
+        return OrderPlacementResult.builder().success(true).orderId(orderId).status("Pending")
+                .attemptedPrice(prior != null ? prior.getAttemptedPrice() : null)
+                .rejectionReason(ENTRY_AWAITING_ACTION).build();
+    }
+
+    private EntryChaseControl newEntryControl(TriggeredTradeSetupEntity trade, boolean waitForTrigger) {
+        EntryChaseControl control = new EntryChaseControl();
+        control.setTradeId(trade.getId());
+        control.setOrderId(trade.getOrderId());
+        control.setState(EntryChaseControl.State.RUNNING);
+        control.setWaitForBrokerTrigger(waitForTrigger);
+        return control;
+    }
+
+    private void pauseEntryChase(TriggeredTradeSetupEntity trade, EntryChaseControl control, String reason) {
+        stopEntryOrderChase(trade.getId());
+        clearEntryButtons(control);
+        control.setState(EntryChaseControl.State.PAUSED);
+        control.setDecisionToken(UUID.randomUUID().toString().replace("-", "").substring(0, 20));
+        control.setReason(reason);
+        entryChaseControlRepository.save(control);
+        notifyEntryDecision(trade, control);
+    }
+
+    private void clearEntryButtons(EntryChaseControl control) {
+        if (control.getTelegramMessageId() != null) {
+            telegramNotificationService.clearEntryActionButtons(control.getTelegramMessageId());
+            control.setTelegramMessageId(null);
+        }
+    }
+
+    private void notifyEntryDecision(TriggeredTradeSetupEntity trade, EntryChaseControl control) {
+        if (control.getTelegramMessageId() != null) return;
+        BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+        EntryOrderSnapshot snapshot = fetchEntryOrderSnapshot(trade, ctx, trade.getOrderId());
+        if (snapshot.status() == TradeStatus.FULLY_EXECUTED || snapshot.status() == TradeStatus.REJECTED) {
+            closeEntryDecision(control);
+            return;
+        }
+        String remaining = snapshot.status() == TradeStatus.NO_RECORDS ? "awaiting broker confirmation"
+                : String.valueOf(Math.max(0L, (trade.getQuantity() == null ? 0L : trade.getQuantity()) - snapshot.filledQuantity()));
+        String body = "Instrument: " + trade.getSymbol()
+                + (trade.getStrikePrice() == null ? "" : " " + trade.getStrikePrice())
+                + (trade.getOptionType() == null ? "" : " " + trade.getOptionType())
+                + "\nTrade: #" + trade.getId() + " | Order: " + control.getOrderId()
+                + "\n" + control.getReason() + " (attempts: " + control.getAttempts() + ")"
+                + "\nOrder quantity: " + trade.getQuantity() + " | Pending quantity: " + remaining
+                + "\nLast limit price: " + formatPrice(control.getLastPrice())
+                + "\nThe order remains open and may still fill."
+                + "\nRetry: up to " + configuredEntryMaxAttempts() + " more modifications."
+                + "\nMarket: reprice once to the current best ask, even beyond the automatic slippage limit. A fill is not guaranteed."
+                + "\nCancel: cancel the unfilled remainder.";
+        Long messageId = telegramNotificationService.sendEntryActionMessage(trade.getAppUserId(), body,
+                trade.getId() + ":" + control.getDecisionToken());
+        if (messageId != null) {
+            control.setTelegramMessageId(messageId);
+            entryChaseControlRepository.save(control);
+        }
+    }
+
+    /** Called only by the authenticated Telegram callback handler. No replacement orders are placed. */
+    public String handleEntryAction(Long tradeId, String token, String action) {
+        synchronized (entryDecisionLock(tradeId)) {
+            if (!Set.of("retry", "market", "cancel").contains(action)) return "Invalid entry action.";
+            EntryChaseControl control = entryChaseControlRepository.findById(tradeId).orElse(null);
+            if (control == null || control.getState() != EntryChaseControl.State.PAUSED
+                    || token == null || !token.equals(control.getDecisionToken())) {
+                return "This action has expired or was already handled. Use the latest message.";
+            }
+            TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(tradeId).orElse(null);
+            if (trade == null || trade.getStatus() != TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                    || !Objects.equals(control.getOrderId(), trade.getOrderId())) {
+                closeEntryDecision(control);
+                return "The order is no longer awaiting an entry action.";
+            }
+            BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+            if (!isBrokerContextUsable(ctx)
+                    || !(brokerServiceFactory.getService(ctx.getBrokerName()) instanceof ModifiableEntryBrokerService broker)) {
+                return "Broker unavailable. The order remains paused; try again.";
+            }
+            EntryOrderSnapshot snapshot = fetchEntryOrderSnapshot(trade, ctx, trade.getOrderId());
+            if (snapshot.status() == TradeStatus.NO_RECORDS) return "Cannot confirm broker status. No action taken; try again.";
+            if (snapshot.status() != TradeStatus.PENDING) {
+                closeEntryDecision(control);
+                return "The broker reports a completed order. Status polling will reconcile the fill or cancellation.";
+            }
+            if (!"cancel".equals(action) && Boolean.TRUE.equals(trade.getIntraday()) && !isIntradayEntryWindowOpen()) {
+                return "The intraday entry cutoff has passed. You can still cancel the order.";
+            }
+            Double price = null;
+            if ("market".equals(action)) {
+                EntryDiagnostics book = analyseEntry(trade, null);
+                // All supported entry adapters submit BUY LIMIT orders (including PE entries).
+                // Keep the original total quantity: broker modification reprices only the unfilled remainder.
+                if (!hasFreshEntryBook(book) || book.bestAsk() == null
+                        || !Double.isFinite(book.bestAsk()) || book.bestAsk() <= 0d) {
+                    return "No fresh best ask available. No modification sent; try again.";
+                }
+                price = normalisePriceToTick(book.bestAsk());
+            }
+            // Invalidate this generation before broker I/O, including ambiguous timeouts/restarts.
+            control.setState(EntryChaseControl.State.ACTION_PENDING);
+            entryChaseControlRepository.save(control);
+            clearEntryButtons(control);
+            try {
+                if (!"cancel".equals(action) && "ENTRY_USER_CANCEL_REQUESTED".equals(trade.getReason())) {
+                    trade.setReason(null);
+                    triggeredTradeRepo.save(trade);
+                }
+                if ("retry".equals(action)) {
+                    control.setAttempts(0);
+                    control.setLastPrice(null);
+                    control.setState(EntryChaseControl.State.RUNNING);
+                    entryChaseControlRepository.save(control);
+                    scheduleEntryOrderChase(trade, control.isWaitForBrokerTrigger());
+                    return "Retry started for trade #" + tradeId + ": up to " + configuredEntryMaxAttempts() + " modifications.";
+                }
+                if ("cancel".equals(action)) {
+                    // Persist first: on a timeout/restart do not blindly resubmit a cancellation.
+                    control.setState(EntryChaseControl.State.CANCEL_PENDING);
+                    control.setReason("Cancellation requested; waiting for broker confirmation");
+                    entryChaseControlRepository.save(control);
+                    trade.setReason("ENTRY_USER_CANCEL_REQUESTED");
+                    triggeredTradeRepo.save(trade);
+                    broker.cancelEntryOrder(trade, ctx, trade.getOrderId());
+                    return "Cancellation requested for trade #" + tradeId + ". Waiting for broker confirmation; any fills are retained.";
+                }
+                OrderPlacementResult result = broker.modifyEntryOrder(trade, ctx, trade.getOrderId(), price);
+                if (result != null && result.isSuccess()) {
+                    if (isUsableBrokerOrderId(result.getOrderId()) && !result.getOrderId().equals(trade.getOrderId())) {
+                        trade.setOrderId(result.getOrderId());
+                        triggeredTradeRepo.save(trade);
+                        control.setOrderId(result.getOrderId());
+                    }
+                    control.setLastPrice(price);
+                    if (isOrderPlacementFilled(result)) {
+                        closeEntryDecision(control);
+                        return "Broker reports trade #" + tradeId + " filled. Status polling will reconcile execution.";
+                    }
+                    pauseEntryChase(trade, control, "Repriced once to best ask; waiting for fill or your next action");
+                    return "Trade #" + tradeId + " repriced to best ask " + formatPrice(price) + ". Fill confirmation remains with broker polling.";
+                }
+                pauseEntryChase(trade, control, "Best-ask modification not confirmed; check broker status before retrying");
+                return "Modification was not confirmed. The order remains under monitoring; use the new action message.";
+            } catch (RuntimeException e) {
+                pauseEntryChase(trade, control, "Action outcome uncertain; broker status will be checked before another action");
+                log.warn("Entry action {} failed for trade {}: {}", action, tradeId, e.getClass().getSimpleName());
+                return "Action outcome uncertain. Check the latest message; broker status polling continues.";
+            }
+        }
+    }
+
+    private void closeEntryDecision(EntryChaseControl control) {
+        stopEntryOrderChase(control.getTradeId());
+        clearEntryButtons(control);
+        control.setState(EntryChaseControl.State.CLOSED);
+        entryChaseControlRepository.save(control);
+    }
+
+    /** Recover budgets/decisions after restart and retry undelivered Telegram prompts. */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 30000, initialDelay = 30000)
+    public void recoverEntryDecisions() {
+        for (EntryChaseControl control : entryChaseControlRepository.findByStateNot(EntryChaseControl.State.CLOSED)) {
+            synchronized (entryDecisionLock(control.getTradeId())) {
+                // Reload under the same lock as callbacks; the initial list may be stale.
+                control = entryChaseControlRepository.findById(control.getTradeId()).orElse(null);
+                if (control == null || control.getState() == EntryChaseControl.State.CLOSED) continue;
+                try {
+                    TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(control.getTradeId()).orElse(null);
+                    if (trade == null || trade.getStatus() != TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                            || !Objects.equals(trade.getOrderId(), control.getOrderId())) {
+                        closeEntryDecision(control);
+                        continue;
+                    }
+                    if (control.getState() == EntryChaseControl.State.RUNNING) {
+                        if (!isEntryOrderChaseActive(trade.getId())) scheduleEntryOrderChase(trade, control.isWaitForBrokerTrigger());
+                    } else if (control.getState() == EntryChaseControl.State.ACTION_PENDING) {
+                        pauseEntryChase(trade, control, "Action interrupted; broker status will be checked before another action");
+                    } else if (control.getState() == EntryChaseControl.State.CANCEL_PENDING) {
+                        BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+                        EntryOrderSnapshot snapshot = fetchEntryOrderSnapshot(trade, ctx, trade.getOrderId());
+                        if (snapshot.status() == TradeStatus.PENDING) {
+                            pauseEntryChase(trade, control, "Cancellation not yet confirmed; order still open");
+                        } else if (snapshot.status() != TradeStatus.NO_RECORDS) {
+                            closeEntryDecision(control);
+                        }
+                    } else {
+                        notifyEntryDecision(trade, control);
+                    }
+                } catch (RuntimeException e) {
+                    log.warn("Entry decision recovery failed for trade {}: {}", control.getTradeId(), e.getClass().getSimpleName());
+                }
+            }
+        }
+    }
+
     public void stopEntryOrderChase(Long tradeId) {
         if (tradeId == null) {
             return;
         }
         ScheduledFuture<?> future = entryChaseFutures.remove(tradeId);
         if (future != null) {
-            future.cancel(true);
+            future.cancel(false);
             log.info("🧵 Entry chase completed for trade {}", tradeId);
         }
         entryChaseStates.remove(tradeId);
@@ -3216,23 +3455,6 @@ public class TradeExecutionService {
             }
         }
         return false;
-    }
-
-    private void cancelTriggeredEntryForManualAction(TriggeredTradeSetupEntity trade,
-                                                      BrokerContext ctx,
-                                                      ModifiableEntryBrokerService broker,
-                                                      String orderId,
-                                                      double candidatePrice,
-                                                      double ceiling) {
-        String reason = "ENTRY_MAX_SLIPPAGE_EXCEEDED_CANCEL_REQUESTED";
-        trade.setReason(reason);
-        trade.setComment(String.format(Locale.ROOT,
-                "Broker trigger activated but entry was not filled safely. Cancellation requested; candidate %.2f exceeded ceiling %.2f. Manual action may be required.",
-                candidatePrice, ceiling));
-        triggeredTradeRepo.save(trade);
-        broker.cancelEntryOrder(trade, ctx, orderId);
-        log.warn("🚫 Broker-triggered entry {} for trade {} cancelled for manual action: candidate={} ceiling={}",
-                orderId, trade.getId(), formatPrice(candidatePrice), formatPrice(ceiling));
     }
 
     private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {

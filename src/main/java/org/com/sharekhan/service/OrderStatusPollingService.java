@@ -263,7 +263,7 @@ public class OrderStatusPollingService {
             return;
         }
 
-        Runnable pollTask = () -> {
+        Runnable reconciliation = () -> {
             if (!isMarketOpen(trade.getExchange())) {
                 return;
             }
@@ -417,9 +417,9 @@ public class OrderStatusPollingService {
                     try {
                         boolean cancelledForManualAction = "ENTRY_MAX_SLIPPAGE_EXCEEDED_CANCEL_REQUESTED"
                                 .equals(currentTrade.getReason());
-                        String title = cancelledForManualAction
-                                ? "Entry Cancelled — Manual Action Needed ⚠️"
-                                : "Order Rejected ❌";
+                        String title = "ENTRY_USER_CANCEL_REQUESTED".equals(currentTrade.getReason())
+                                ? "Entry Cancellation Confirmed ✅"
+                                : cancelledForManualAction ? "Entry Cancelled — Manual Action Needed ⚠️" : "Order Rejected ❌";
                         StringBuilder body = new StringBuilder();
                         body.append("Instrument: ").append(currentTrade.getSymbol());
                         if (currentTrade.getStrikePrice() != null) body.append(" ").append(currentTrade.getStrikePrice());
@@ -466,6 +466,8 @@ public class OrderStatusPollingService {
                 }
             }
         };
+        Runnable pollTask = trade.getStatus() == TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                ? () -> tradeExecutionService.reconcileEntryUnderLock(trade.getId(), reconciliation) : reconciliation;
         // Poll every 0.5 seconds, up to 2 minutes
         // Use the DB trade id as the key for active polls so we can always cancel the poll
         // even if the broker orderId/exitOrderId changes during the lifecycle.

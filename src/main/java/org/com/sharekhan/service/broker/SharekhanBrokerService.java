@@ -88,6 +88,70 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
     }
 
     @Override
+    public JSONObject fetchDayOrders(BrokerContext context) {
+        try {
+            if (context == null || context.getCustomerId() == null || !StringUtils.hasText(context.getApiKey())) return null;
+            String token = bracketToken(context);
+            if (!StringUtils.hasText(token)) return null;
+            SharekhanConnect client = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), token);
+            return SharekhanConsoleSilencer.call(() -> client.getOrder(context.getCustomerId()));
+        } catch (Exception e) {
+            log.debug("Sharekhan day order book fetch failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String bracketToken(BrokerContext context) {
+        if (context == null || context.getBrokerCredentialsId() == null) return null;
+        var info = tokenStoreService.getTokenInfoForBrokerCredentials(Broker.SHAREKHAN, context.getBrokerCredentialsId());
+        return info != null && java.util.Objects.equals(info.getCustomerId(), context.getCustomerId())
+                ? info.getToken() : null;
+    }
+
+    /** SKAPI support's BKT child MODIFY contract retains the original buy intent. */
+    public boolean modifyBracketStop(BrokerContext context, JSONObject parent, JSONObject child, double stop) {
+        try {
+            String token = bracketToken(context);
+            if (!StringUtils.hasText(token)) return false;
+            JSONObject payload = bracketStopPayload(context, parent, child, stop);
+            HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.sharekhan.com/skapi/services/orders"))
+                    .timeout(Duration.ofSeconds(25)).header("Content-Type", "application/json")
+                    .header("api-key", context.getApiKey()).header("access-token", token)
+                    .POST(HttpRequest.BodyPublishers.ofString(payload.toString())).build();
+            var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            JSONObject body = new JSONObject(response.body());
+            boolean accepted = response.statusCode() == 200 && body.optInt("status") == 200;
+            log.info("BTP child stop modify child={} stop={} accepted={}", child.optString("orderId"), stop, accepted);
+            return accepted;
+        } catch (Exception e) {
+            log.warn("BTP child stop modification failed for child {}", child.optString("orderId"));
+            return false;
+        }
+    }
+
+    static JSONObject bracketStopPayload(BrokerContext context, JSONObject parent, JSONObject child, double stop) {
+        if (!child.optBoolean("childOrder") || !parent.getString("orderId").equals(child.optString("mpCoverOrderId"))
+                || parent.getLong("customerId") != context.getCustomerId()
+                || child.getLong("customerId") != context.getCustomerId()
+                || child.optString("rmsCode").isBlank()) throw new IllegalArgumentException("Invalid BTP child mapping");
+        JSONObject order = new JSONObject();
+        order.put("orderId", child.getString("orderId"));
+        order.put("customerId", context.getCustomerId());
+        order.put("scripCode", parent.getInt("scripCode"));
+        order.put("tradingSymbol", parent.getString("tradingSymbol"));
+        order.put("exchange", "NC"); order.put("transactionType", "B");
+        order.put("quantity", child.getLong("orderQty")); order.put("disclosedQty", 0);
+        order.put("triggerPrice", 0); order.put("price", parent.getString("orderPrice"));
+        order.put("rmsCode", child.getString("rmsCode")); order.put("afterHour", "N");
+        order.put("orderType", "BKT"); order.put("channelUser", context.getClientCode());
+        order.put("validity", "GFD"); order.put("requestType", "MODIFY");
+        order.put("productType", "BIGTRADEPLUS");
+        order.put("bookProfitPrice", parent.getString("bookProfitPrice"));
+        order.put("childSlPrice", formatOrderPrice(normaliseBigTradePlusPrice(stop)));
+        return order;
+    }
+
+    @Override
     public OrderPlacementResult modifyEntryOrder(TriggeredTradeSetupEntity trade,
                                                  BrokerContext context,
                                                  String orderId,

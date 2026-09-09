@@ -9,6 +9,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class SharekhanBrokerServiceTest {
 
+    @Test void modifiesTheChildWithSupportConfirmedBuyIntentAndParentPrices() {
+        var context = new BrokerContext(73196L, "key", "CLIENT", "Sharekhan", 2L);
+        var parent = new JSONObject().put("orderId","P1").put("customerId",73196).put("scripCode",15332)
+                .put("tradingSymbol","NMDC").put("orderPrice","84.85").put("bookProfitPrice","85.55");
+        var child = new JSONObject().put("orderId","C1").put("mpCoverOrderId","P1").put("childOrder",true)
+                .put("customerId",73196).put("orderQty",3).put("rmsCode","SKNSE6");
+        var payload = SharekhanBrokerService.bracketStopPayload(context,parent,child,84.85);
+        assertThat(payload.getString("orderId")).isEqualTo("C1");
+        assertThat(payload.getString("transactionType")).isEqualTo("B");
+        assertThat(payload.getString("productType")).isEqualTo("BIGTRADEPLUS");
+        assertThat(payload.getString("childSlPrice")).isEqualTo("84.85");
+        assertThat(payload.getString("bookProfitPrice")).isEqualTo("85.55");
+        assertThat(payload.getString("rmsCode")).isEqualTo("SKNSE6");
+        assertThat(payload.getInt("triggerPrice")).isZero();
+    }
+
     @Test
     void createsTheDocumentedBigTradePlusBracketPayload() {
         TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
