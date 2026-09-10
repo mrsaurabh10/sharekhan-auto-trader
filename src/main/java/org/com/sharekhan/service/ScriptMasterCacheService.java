@@ -149,8 +149,13 @@ public class ScriptMasterCacheService {
                 .instrumentType(json.optString("instType"))
                 .strikePrice(json.has("strike") ? json.optDouble("strike") : null)
                 .lotSize(json.optInt("lotSize"))
+                .tickSize(readTickSize(json))
                 .expiry(json.optString("expiry", null))
                 .optionType(json.optString("optionType"))
                 .build();
+    }
+    private Double readTickSize(JSONObject json) {
+        double tick = json.optDouble("tickSize", Double.NaN);
+        return Double.isFinite(tick) && tick > 0d ? tick : null;
     }
 }

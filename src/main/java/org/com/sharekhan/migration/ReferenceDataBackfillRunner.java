@@ -37,8 +37,8 @@ public class ReferenceDataBackfillRunner implements ApplicationRunner {
     @Override
     public void run(ApplicationArguments args) {
         copyPages(scripts, "script_master",
-                "scrip_code,trading_symbol,exchange,instrument_type,strike_price,expiry,lot_size,option_type",
-                ":scripCode,:tradingSymbol,:exchange,:instrumentType,:strikePrice,:expiry,:lotSize,:optionType");
+                "scrip_code,trading_symbol,exchange,instrument_type,strike_price,expiry,lot_size,option_type,tick_size",
+                ":scripCode,:tradingSymbol,:exchange,:instrumentType,:strikePrice,:expiry,:lotSize,:optionType,:tickSize");
         copyPages(mstock, "mstock_instrument_master",
                 "instrument_token,instrument_key,trading_symbol,name,exchange,segment,instrument_type,exchange_token,last_price,expiry,strike,tick_size,lot_size,fetched_at",
                 ":instrumentToken,:instrumentKey,:tradingSymbol,:name,:exchange,:segment,:instrumentType,:exchangeToken,:lastPrice,:expiry,:strike,:tickSize,:lotSize,:fetchedAt");

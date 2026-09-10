@@ -2360,7 +2360,7 @@
     const quantitiesInput = document.getElementById('strategySymbolQuantities');
     const quantitiesRow = document.getElementById('strategySymbolQuantitiesRow');
     const isSpotBigTradePlus = function () {
-      return String((templateSelect && templateSelect.value) || '').trim().toUpperCase() === 'SPOT_ATR_PDH_BIGTRADEPLUS';
+      return ['SPOT_ATR_PDH_BIGTRADEPLUS', 'SPOT_ATR_PDL_BIGTRADEPLUS'].includes(String((templateSelect && templateSelect.value) || '').trim().toUpperCase());
     };
     const automaticUniverseTemplate = function () {
       const id = (templateSelect && templateSelect.value ? templateSelect.value : '').trim().toUpperCase();

@@ -27,8 +27,8 @@ public class ScriptCacheStartupLoader {
     @PostConstruct
     public void loadScriptsIfEmpty() {
         try {
-            if (repository.count() == 0) {
-                log.info("📦 DB is empty. Loading script master cache from Sharekhan...");
+            if (repository.count() == 0 || repository.existsByTickSizeIsNull()) {
+                log.info("📦 Loading Sharekhan script master to populate instruments and missing tick sizes...");
                 Map<String, JSONObject> cache = scriptService.getScriptCache("NF");
                 cache = scriptService.getScriptCache("NC");
                 cache = scriptService.getScriptCache("BF");

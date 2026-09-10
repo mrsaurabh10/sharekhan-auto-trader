@@ -247,6 +247,18 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void brokerTriggerIsVisibleToRecoveryUntilBrokerCallReturns() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(false).status("Rejected").build());
+        when(ctx.broker.placeTriggerPriceEntryOrder(any(), any(), anyDouble(), anyDouble()))
+                .thenAnswer(invocation -> {
+                    assertThat(ctx.service.isBrokerTriggerEntryInFlight(77L)).isTrue();
+                    return OrderPlacementResult.builder().success(false).status("Rejected").build();
+                });
+        ctx.service.executeTrade(optionRequest());
+        assertThat(ctx.service.isBrokerTriggerEntryInFlight(77L)).isFalse();
+    }
+
+    @Test
     void rejectedBrokerSideEntryTriggerLeavesRequestPendingForOriginalFlow() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder()
                 .success(false)

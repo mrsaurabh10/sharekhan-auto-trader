@@ -8,6 +8,8 @@ import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.util.SharekhanTickPrices;
+import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.enums.Broker;
 import org.com.sharekhan.util.ShareKhanOrderUtil;
 import org.com.sharekhan.util.SharekhanConsoleSilencer;
@@ -29,10 +31,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class SharekhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService, OrderStatusBrokerService {
 
-    /** Sharekhan NSE cash BTP prices must be submitted in ₹0.05 increments. */
-    private static final BigDecimal NSE_CASH_TICK_SIZE = new BigDecimal("0.05");
-
     private final TokenStoreService tokenStoreService;
+    private final ScriptMasterRepository scriptMasterRepository;
 
     @Override
     public Broker getBroker() {
@@ -76,7 +76,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             if (accessToken == null || context.getApiKey() == null || context.getCustomerId() == null) {
                 return null;
             }
-            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = createClient(context.getApiKey(), accessToken);
             return SharekhanConsoleSilencer.call(() ->
                     sharekhanConnect.orderHistory(trade.getExchange(), context.getCustomerId(), orderId)
             );
@@ -113,7 +113,8 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         try {
             String token = bracketToken(context);
             if (!StringUtils.hasText(token)) return false;
-            JSONObject payload = bracketStopPayload(context, parent, child, stop);
+            JSONObject payload = bracketStopPayload(context, parent, child, stop,
+                    instrumentTickSize(parent.getInt("scripCode"), "NC"));
             HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.sharekhan.com/skapi/services/orders"))
                     .timeout(Duration.ofSeconds(25)).header("Content-Type", "application/json")
                     .header("api-key", context.getApiKey()).header("access-token", token)
@@ -129,7 +130,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         }
     }
 
-    static JSONObject bracketStopPayload(BrokerContext context, JSONObject parent, JSONObject child, double stop) {
+    static JSONObject bracketStopPayload(BrokerContext context, JSONObject parent, JSONObject child, double stop, BigDecimal tickSize) {
         if (!child.optBoolean("childOrder") || !parent.getString("orderId").equals(child.optString("mpCoverOrderId"))
                 || parent.getLong("customerId") != context.getCustomerId()
                 || child.getLong("customerId") != context.getCustomerId()
@@ -139,7 +140,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         order.put("customerId", context.getCustomerId());
         order.put("scripCode", parent.getInt("scripCode"));
         order.put("tradingSymbol", parent.getString("tradingSymbol"));
-        order.put("exchange", "NC"); order.put("transactionType", "B");
+        order.put("exchange", "NC"); order.put("transactionType", parent.optString("buySell").startsWith("S") ? "S" : "B");
         order.put("quantity", child.getLong("orderQty")); order.put("disclosedQty", 0);
         order.put("triggerPrice", 0); order.put("price", parent.getString("orderPrice"));
         order.put("rmsCode", child.getString("rmsCode")); order.put("afterHour", "N");
@@ -147,7 +148,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         order.put("validity", "GFD"); order.put("requestType", "MODIFY");
         order.put("productType", "BIGTRADEPLUS");
         order.put("bookProfitPrice", parent.getString("bookProfitPrice"));
-        order.put("childSlPrice", formatOrderPrice(normaliseBigTradePlusPrice(stop)));
+        order.put("childSlPrice", formatOrderPrice(normaliseBigTradePlusPrice(stop, tickSize)));
         return order;
     }
 
@@ -159,8 +160,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = createClient(context.getApiKey(), accessToken);
 
+            newPrice = normaliseBigTradePlusPrice(newPrice, instrumentTickSize(trade.getScripCode(), trade.getExchange()));
             JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, newPrice, context.getCustomerId(), context.getClientCode());
             String updatedOrderId = orderId;
             String status = "Pending";
@@ -217,7 +219,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = createClient(context.getApiKey(), accessToken);
             ShareKhanOrderUtil.cancelOrder(sharekhanConnect, trade, orderId, context.getCustomerId(), context.getClientCode());
             log.info("🚫 Cancelled entry order {} for trade {}", orderId, trade.getId());
         } catch (com.sharekhan.http.exceptions.SharekhanAPIException e) {
@@ -254,7 +256,17 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                                                            BrokerContext context,
                                                            Double triggerPrice,
                                                            Double limitPrice) {
-        normaliseBigTradePlusPrices(trade);
+        final BigDecimal tickSize;
+        try {
+            tickSize = instrumentTickSize(trade != null ? trade.getScripCode() : null, trade != null ? trade.getExchange() : null);
+            normaliseBigTradePlusPrices(trade, tickSize);
+            if (triggerPrice != null && validPrice(triggerPrice)) {
+                trade.setEntryPrice(alignBigTradePlusTrigger(triggerPrice, tickSize,
+                        org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource())));
+            }
+        } catch (IllegalArgumentException e) {
+            return rejected("BTP_INVALID_TICK_SIZE: " + e.getMessage(), trade != null ? trade.getEntryPrice() : null);
+        }
         String validationError = validateBigTradePlus(trade, context);
         if (validationError != null) {
             return rejected(validationError, trade != null ? trade.getEntryPrice() : null);
@@ -268,7 +280,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                 return rejected("Sharekhan access token is unavailable", trade.getEntryPrice());
             }
 
-            JSONObject order = bigTradePlusPayload(trade, context, triggerPrice, limitPrice);
+            JSONObject order = bigTradePlusPayload(trade, context, triggerPrice, limitPrice, tickSize);
             HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.sharekhan.com/skapi/services/orders"))
                     .timeout(Duration.ofSeconds(25))
                     .header("Content-Type", "application/json")
@@ -288,41 +300,49 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                 if (data != null && StringUtils.hasText(data.optString("errormsg"))) {
                     message = data.optString("errormsg");
                 }
-                return rejected("BTP_REJECTED: " + message, trade.getEntryPrice());
+                return rejected("BTP_REJECTED: " + message, order.getDouble("price"));
             }
             log.info("BTP_BRACKET_ACCEPTED | tradeId={} | orderId={} | symbol={} | quantity={} | entry={} | trigger={} | target={} | stopLoss={}",
                     trade.getId(), orderId, trade.getSymbol(), trade.getQuantity(), trade.getEntryPrice(),
-                    triggerPrice, trade.getTarget1(), trade.getStopLoss());
+                    order.getDouble("triggerPrice"), trade.getTarget1(), trade.getStopLoss());
             return OrderPlacementResult.builder().success(true).orderId(orderId).status("Pending")
-                    .attemptedPrice(limitPrice != null ? limitPrice : trade.getEntryPrice()).build();
+                    .attemptedPrice(order.getDouble("price")).build();
         } catch (Exception e) {
             log.warn("BTP bracket placement failed for trade {}: {}", trade != null ? trade.getId() : null, e.getMessage());
             return rejected("BTP_REQUEST_FAILED: " + e.getMessage(), trade != null ? trade.getEntryPrice() : null);
         }
     }
 
-    static JSONObject bigTradePlusPayload(TriggeredTradeSetupEntity trade, BrokerContext context) {
-        return bigTradePlusPayload(trade, context, null, null);
+    static JSONObject bigTradePlusPayload(TriggeredTradeSetupEntity trade, BrokerContext context, BigDecimal tickSize) {
+        return bigTradePlusPayload(trade, context, null, null, tickSize);
     }
 
     static JSONObject bigTradePlusPayload(TriggeredTradeSetupEntity trade,
                                           BrokerContext context,
                                           Double triggerPrice,
-                                          Double limitPrice) {
+                                          Double limitPrice, BigDecimal tickSize) {
         JSONObject order = new JSONObject();
         order.put("orderId", "");
         order.put("customerId", context.getCustomerId());
         order.put("scripCode", trade.getScripCode());
         order.put("tradingSymbol", trade.getSymbol());
         order.put("exchange", trade.getExchange());
-        order.put("transactionType", "B");
+        order.put("transactionType", org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource()) ? "S" : "B");
         order.put("quantity", trade.getQuantity());
         order.put("disclosedQty", 0);
         // Sharekhan's documented BTP schema uses a numeric triggerPrice,
         // while the limit and child prices are strings.
-        order.put("triggerPrice", triggerPrice == null ? 0 : normaliseBigTradePlusPrice(triggerPrice));
-        order.put("price", formatOrderPrice(normaliseBigTradePlusPrice(
-                limitPrice != null ? limitPrice : trade.getEntryPrice())));
+        boolean sell = org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource());
+        Double alignedTrigger = triggerPrice == null ? null : alignBigTradePlusTrigger(triggerPrice, tickSize, sell);
+        double alignedLimit = normaliseBigTradePlusPrice(
+                limitPrice != null ? limitPrice : trade.getEntryPrice(), tickSize);
+        if (alignedTrigger != null) {
+            double minimumLimit = BigDecimal.valueOf(alignedTrigger)
+                    .add(sell ? tickSize.negate() : tickSize).doubleValue();
+            alignedLimit = sell ? Math.min(alignedLimit, minimumLimit) : Math.max(alignedLimit, minimumLimit);
+        }
+        order.put("triggerPrice", alignedTrigger == null ? 0 : alignedTrigger);
+        order.put("price", formatOrderPrice(alignedLimit));
         order.put("rmsCode", "ANY");
         order.put("afterHour", "N");
         order.put("orderType", "BKT");
@@ -330,31 +350,40 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         order.put("validity", "GFD");
         order.put("requestType", "NEW");
         order.put("productType", "BIGTRADEPLUS");
-        order.put("bookProfitPrice", formatOrderPrice(normaliseBigTradePlusPrice(trade.getTarget1())));
-        order.put("childSlPrice", formatOrderPrice(normaliseBigTradePlusPrice(trade.getStopLoss())));
+        order.put("bookProfitPrice", formatOrderPrice(normaliseBigTradePlusPrice(trade.getTarget1(), tickSize)));
+        order.put("childSlPrice", formatOrderPrice(normaliseBigTradePlusPrice(trade.getStopLoss(), tickSize)));
         return order;
     }
 
     /**
-     * Apply the broker's cash-equity tick at the final boundary, rather than
-     * relying on strategy-specific rounding. ATR calculations legitimately
-     * produce values such as 4884.64 that Sharekhan rejects for a BTP child.
+     * Apply the instrument-master tick to every bracket leg at the broker boundary.
+     * NSE cash ticks vary by instrument; a universal 0.05 tick rejects MAXHEALTH.
      */
-    private static void normaliseBigTradePlusPrices(TriggeredTradeSetupEntity trade) {
+    private static void normaliseBigTradePlusPrices(TriggeredTradeSetupEntity trade, BigDecimal tickSize) {
         if (trade == null) {
             return;
         }
-        if (validPrice(trade.getEntryPrice())) trade.setEntryPrice(normaliseBigTradePlusPrice(trade.getEntryPrice()));
-        if (validPrice(trade.getStopLoss())) trade.setStopLoss(normaliseBigTradePlusPrice(trade.getStopLoss()));
-        if (validPrice(trade.getTarget1())) trade.setTarget1(normaliseBigTradePlusPrice(trade.getTarget1()));
+        if (validPrice(trade.getEntryPrice())) trade.setEntryPrice(normaliseBigTradePlusPrice(trade.getEntryPrice(), tickSize));
+        if (validPrice(trade.getStopLoss())) trade.setStopLoss(normaliseBigTradePlusPrice(trade.getStopLoss(), tickSize));
+        if (validPrice(trade.getTarget1())) trade.setTarget1(normaliseBigTradePlusPrice(trade.getTarget1(), tickSize));
     }
 
-    private static double normaliseBigTradePlusPrice(Double value) {
-        return BigDecimal.valueOf(value)
-                .divide(NSE_CASH_TICK_SIZE, 0, RoundingMode.HALF_UP)
-                .multiply(NSE_CASH_TICK_SIZE)
-                .setScale(2, RoundingMode.UNNECESSARY)
-                .doubleValue();
+    private static double alignBigTradePlusTrigger(double price, BigDecimal tickSize, boolean sell) {
+        return BigDecimal.valueOf(price)
+                .divide(tickSize, 0, sell ? RoundingMode.FLOOR : RoundingMode.CEILING)
+                .multiply(tickSize).doubleValue();
+    }
+
+    private static double normaliseBigTradePlusPrice(Double value, BigDecimal tickSize) {
+        return SharekhanTickPrices.round(value, tickSize);
+    }
+
+    BigDecimal instrumentTickSize(Integer scripCode, String exchange) {
+        return SharekhanTickPrices.tickSize(scriptMasterRepository, scripCode, exchange);
+    }
+
+    SharekhanConnect createClient(String apiKey, String accessToken) {
+        return SharekhanConsoleSilencer.createClient(null, apiKey, accessToken);
     }
 
     private static String formatOrderPrice(Double value) {
@@ -370,7 +399,10 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         if (!"NC".equalsIgnoreCase(trade.getExchange())) return "BTP is currently limited to NSE cash equities";
         if (trade.getScripCode() == null || !StringUtils.hasText(trade.getSymbol()) || trade.getQuantity() == null || trade.getQuantity() <= 0) return "BTP requires a valid cash-equity instrument and quantity";
         if (!validPrice(trade.getEntryPrice()) || !validPrice(trade.getStopLoss()) || !validPrice(trade.getTarget1())) return "BTP requires entry, stop loss, and target 1";
-        if (!(trade.getStopLoss() < trade.getEntryPrice() && trade.getEntryPrice() < trade.getTarget1())) return "BTP buy geometry must be stopLoss < entryPrice < target1";
+        if (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource())) {
+            if (!Boolean.TRUE.equals(trade.getIntraday())) return "BTP cash shorts must be intraday";
+            if (!(trade.getTarget1() < trade.getEntryPrice() && trade.getEntryPrice() < trade.getStopLoss())) return "BTP sell geometry must be target1 < entryPrice < stopLoss";
+        } else if (!(trade.getStopLoss() < trade.getEntryPrice() && trade.getEntryPrice() < trade.getTarget1())) return "BTP buy geometry must be stopLoss < entryPrice < target1";
         return null;
     }
 
@@ -389,8 +421,15 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
-            SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, context.getApiKey(), accessToken);
+            SharekhanConnect sharekhanConnect = createClient(context.getApiKey(), accessToken);
 
+            BigDecimal tickSize = instrumentTickSize(trade.getScripCode(), trade.getExchange());
+            price = normaliseBigTradePlusPrice(price, tickSize);
+            if (triggerPrice != null && triggerPrice > 0d) {
+                boolean sell = "S".equalsIgnoreCase(transactionType);
+                triggerPrice = alignBigTradePlusTrigger(triggerPrice, tickSize, sell);
+                price = sell ? Math.min(price, triggerPrice) : Math.max(price, triggerPrice);
+            }
             OrderParams order = new OrderParams();
             order.customerId = context.getCustomerId();
             order.scripCode = trade.getScripCode();

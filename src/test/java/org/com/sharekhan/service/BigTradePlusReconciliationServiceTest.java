@@ -14,6 +14,20 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class BigTradePlusReconciliationServiceTest {
+
+    @Test void shortProfitUsesBuybackAndMovesStopDownToCost() {
+        var first=trade(1); var second=trade(2);
+        first.setSource("spot-atr-pdl-bigtradeplus"); second.setSource("spot-atr-pdl-bigtradeplus");
+        second.setStopLoss(86d);
+        var p2=parent(2,83.50).put("buySell","SMP");
+        var c2=child(2,false).put("triggerPrice",86d).put("buySell","BMP");
+        service.reconcileReport(context,List.of(first,second),report(parent(1,84d).put("buySell","SMP"),
+                child(1,true).put("execPrice",84d).put("buySell","BMP"),p2,c2));
+        assertThat(first.getPnl()).isEqualTo(2.46);
+        assertThat(first.getStatus()).isEqualTo(TriggeredTradeStatus.EXITED_SUCCESS);
+        verify(broker).modifyBracketStop(context,p2,c2,84.80);
+        assertThat(second.getStopLoss()).isEqualTo(86d);
+    }
     final TriggeredTradeSetupRepository repo = mock(TriggeredTradeSetupRepository.class);
     final SharekhanBrokerService broker = mock(SharekhanBrokerService.class);
     final BigTradePlusReconciliationService service = new BigTradePlusReconciliationService(repo,

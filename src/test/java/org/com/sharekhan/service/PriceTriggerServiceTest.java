@@ -41,6 +41,20 @@ import static org.mockito.Mockito.when;
 
 class PriceTriggerServiceTest {
 
+    @Test void cashShortTriggersOnlyBelowItsEntry() {
+        PriceTriggerService timed = spy(service);
+        doReturn(LocalDateTime.of(2026,9,11,10,0)).when(timed).nowIst();
+        var request = TriggerTradeRequestEntity.builder().id(888L).scripCode(15332).symbol("NMDC")
+                .exchange("NC").source("spot-atr-pdl-bigtradeplus").brokerProductType("BIGTRADEPLUS")
+                .entryPrice(100d).target1(97d).stopLoss(102d).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build();
+        when(triggerRepo.findByScripCodeAndStatus(15332,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)).thenReturn(List.of(request));
+        when(triggerRepo.claimIfStatusEquals(888L,"PLACED_PENDING_CONFIRMATION","ENTRY_SUBMITTING")).thenReturn(1);
+        timed.evaluatePriceTrigger(15332,100.10);
+        verify(tradeExecutionService,never()).executeTradeFromEntity(any());
+        timed.evaluatePriceTrigger(15332,99.95);
+        verify(tradeExecutionService).executeTradeFromEntity(request);
+    }
+
     private final TriggerTradeRequestRepository triggerRepo = mock(TriggerTradeRequestRepository.class);
     private final TriggeredTradeSetupRepository triggeredRepo = mock(TriggeredTradeSetupRepository.class);
     private final TradeExecutionService tradeExecutionService = mock(TradeExecutionService.class);
@@ -143,6 +157,21 @@ class PriceTriggerServiceTest {
         verify(triggerRepo, never()).findByScripCodeAndStatus(any(), any());
         verify(triggerRepo, never()).findByStatus(TriggeredTradeStatus.TRIGGERED);
         verify(tradeExecutionService, never()).executeTradeFromEntity(any());
+    }
+
+    @Test
+    void recoverySkipsAnActiveBrokerTriggerSubmission() {
+        PriceTriggerService timedService = spy(service);
+        doReturn(LocalDateTime.of(2026, 9, 10, 14, 28)).when(timedService).nowIst();
+        TriggerTradeRequestEntity request = manualSpotTrigger(12099L, 1038.74);
+        request.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
+        when(triggerRepo.findByStatus(TriggeredTradeStatus.ENTRY_SUBMITTING)).thenReturn(List.of(request));
+        when(tradeExecutionService.isBrokerTriggerEntryInFlight(12099L)).thenReturn(true);
+
+        timedService.recoverStaleTriggeredRequests();
+
+        verify(triggeredRepo, never()).findByTriggerRequestId(12099L);
+        verify(triggerRepo, never()).claimIfStatusEqualsWithOutcome(anyLong(), anyString(), anyString(), anyString(), anyString());
     }
 
     @Test

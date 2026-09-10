@@ -178,6 +178,12 @@ public class TradeExecutionService {
         t.setDaemon(true);
         return t;
     });
+    private final Set<Long> brokerTriggerEntriesInFlight = ConcurrentHashMap.newKeySet();
+
+    public boolean isBrokerTriggerEntryInFlight(Long requestId) {
+        return requestId != null && brokerTriggerEntriesInFlight.contains(requestId);
+    }
+
     private final ConcurrentMap<Long, ScheduledFuture<?>> exitChaseFutures = new ConcurrentHashMap<>();
     private final ScheduledExecutorService entryChaseScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "entry-chase-scheduler");
@@ -829,7 +835,8 @@ public class TradeExecutionService {
                 || requestEntity.getEntryPrice() == null
                 || !Double.isFinite(requestEntity.getEntryPrice())
                 || requestEntity.getEntryPrice() <= 0d
-                || referencePrice >= requestEntity.getEntryPrice()) {
+                || (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(requestEntity.getSource())
+                    ? referencePrice <= requestEntity.getEntryPrice() : referencePrice >= requestEntity.getEntryPrice())) {
             return;
         }
         double prearmPercent = bigTradePlusPrearmPercent;
@@ -837,7 +844,9 @@ public class TradeExecutionService {
             return;
         }
         double prearmFloor = requestEntity.getEntryPrice() * (1d - prearmPercent / 100d);
-        if (referencePrice < prearmFloor) {
+        if (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(requestEntity.getSource())
+                ? referencePrice > requestEntity.getEntryPrice() * (1d + prearmPercent / 100d)
+                : referencePrice < prearmFloor) {
             return;
         }
         log.info("BTP_PREARM_WINDOW | requestId={} | symbol={} | ltp={} | entry={} | band={}%%",
@@ -876,6 +885,8 @@ public class TradeExecutionService {
         }
 
         BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+        if (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(requestEntity.getSource())
+                && !(brokerService instanceof org.com.sharekhan.service.broker.SharekhanBrokerService)) return;
         if (!(brokerService instanceof TriggerPriceEntryBrokerService triggerPriceEntryBroker)) {
             log.debug("Skipping broker-side entry trigger for request {} because broker service {} does not support trigger-price entries",
                     requestEntity.getId(), brokerService != null ? brokerService.getClass().getSimpleName() : "null");
@@ -885,7 +896,15 @@ public class TradeExecutionService {
         String requestLockKey = buildEntryLockKey(requestEntity);
         try {
             orderPlacementGuard.withLock(requestLockKey, ORDER_LOCK_TIMEOUT, () -> {
-                placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker, allowBigTradePlus);
+                // Register before the database claim: recovery must see ownership throughout the HTTP call.
+                if (!brokerTriggerEntriesInFlight.add(requestEntity.getId())) {
+                    return null;
+                }
+                try {
+                    placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker, allowBigTradePlus);
+                } finally {
+                    brokerTriggerEntriesInFlight.remove(requestEntity.getId());
+                }
                 return null;
             });
         } catch (OrderPlacementGuard.LockAcquisitionException e) {
@@ -921,9 +940,10 @@ public class TradeExecutionService {
         boolean brokerAccepted = false;
 
         try {
-            double entryPrice = normalisePriceToTick(latest.getEntryPrice());
+            double entryPrice = isBigTradePlusRequest(latest)
+                    ? latest.getEntryPrice() : normalisePriceToTick(latest.getEntryPrice());
             double limitPrice = isBigTradePlusRequest(latest)
-                    ? normalisePriceToTick(entryPrice + ENTRY_TICK_SIZE)
+                    ? normalisePriceToTick(entryPrice + (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(latest.getSource()) ? -ENTRY_TICK_SIZE : ENTRY_TICK_SIZE))
                     : brokerTriggerEntryLimitPrice(entryPrice);
             TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now(), ctx);
             TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", limitPrice, null);
@@ -2444,6 +2464,13 @@ public class TradeExecutionService {
                                                        BrokerContext ctx,
                                                        BrokerService brokerService,
                                                        boolean chaseEntryUntilExecuted) {
+        if (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trigger.getSource())) {
+            // BTP cash shorts retain their strategy limit and broker-managed exits.
+            if (!(brokerService instanceof org.com.sharekhan.service.broker.SharekhanBrokerService)) {
+                return OrderPlacementResult.builder().success(false).rejectionReason("BTP shorts require Sharekhan").build();
+            }
+            return brokerService.placeOrder(trigger, ctx, ltp);
+        }
         OrderPlacementResult lastResult = null;
         String orderId = null;
         EntryOrderSnapshot latestSnapshot = new EntryOrderSnapshot(TradeStatus.NO_RECORDS, 0L, 0L, null);
@@ -3030,6 +3057,7 @@ public class TradeExecutionService {
     }
 
     private void scheduleEntryOrderChaseLocked(TriggeredTradeSetupEntity trade, boolean waitForBrokerTrigger) {
+        if (trade != null && org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource())) return;
         if (trade == null || trade.getId() == null || !isUsableBrokerOrderId(trade.getOrderId())) {
             return;
         }
@@ -4948,6 +4976,8 @@ public class TradeExecutionService {
             }
 
             TradeEventLogger.logOrderAttempt("EXIT", trade, 1, "MODIFY", safeNewPrice, trade.getExitOrderId());
+            safeNewPrice = org.com.sharekhan.util.SharekhanTickPrices.round(
+                    scriptMasterRepository, trade.getScripCode(), trade.getExchange(), safeNewPrice);
             com.sharekhan.SharekhanConnect sharekhanConnect = SharekhanConsoleSilencer.createClient(null, ctx.getApiKey(), accessToken);
             JSONObject response = ShareKhanOrderUtil.modifyOrder(sharekhanConnect, trade, safeNewPrice, ctx.getCustomerId(), ctx.getClientCode());
 

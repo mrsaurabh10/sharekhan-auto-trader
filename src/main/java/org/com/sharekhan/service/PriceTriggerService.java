@@ -131,14 +131,16 @@ public class PriceTriggerService {
 
                 double tolerance = 1.10;
 
-                if (rejectIfEntryPriceGuardFails(trigger, trigger.getScripCode(), ltp, "option LTP", tolerance, false)) {
+                boolean cashShort = org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trigger.getSource());
+                if (rejectIfEntryPriceGuardFails(trigger, trigger.getScripCode(), ltp, "option LTP", tolerance, cashShort)) {
                     continue;
                 }
 
-                if (ltp >= trigger.getEntryPrice()) {
+                if (cashShort ? ltp <= trigger.getEntryPrice() : ltp >= trigger.getEntryPrice()) {
                     int claimed = triggerRepo.claimIfStatusEquals(trigger.getId(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name());
                     if (claimed == 1) {
-                        String conditionSummary = String.format("option LTP %.2f >= entry %.2f", ltp, trigger.getEntryPrice());
+                        String conditionSummary = String.format("traded LTP %.2f %s entry %.2f", ltp,
+                                cashShort ? "<=" : ">=", trigger.getEntryPrice());
                         TradeEventLogger.logEntryTriggered(trigger, ltp, "OPTION_LTP", conditionSummary);
                         log.info("🚀 Entry condition met for {} at LTP: {}", trigger.getSymbol(), ltp);
 
@@ -187,7 +189,8 @@ public class PriceTriggerService {
 
                 double entryPrice = trigger.getEntryPrice();
                 double tolerance = 1.006;
-                boolean isPE = "PE".equalsIgnoreCase(trigger.getOptionType());
+                boolean isPE = "PE".equalsIgnoreCase(trigger.getOptionType())
+                        || org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trigger.getSource());
 
                 Integer referenceScrip = trigger.getSpotScripCode() != null ? trigger.getSpotScripCode() : trigger.getScripCode();
                 if (rejectIfEntryPriceGuardFails(trigger, referenceScrip, ltp, "spot LTP", tolerance, isPE)) {
@@ -367,7 +370,8 @@ public class PriceTriggerService {
 
     private void recoverIncompleteEntrySubmissions(TriggeredTradeStatus incompleteStatus) {
         for (TriggerTradeRequestEntity request : triggerRepo.findByStatus(incompleteStatus)) {
-            if (request.getId() == null || orderExecutionDispatcher.isInFlight(
+            if (request.getId() == null || tradeExecutionService.isBrokerTriggerEntryInFlight(request.getId())
+                    || orderExecutionDispatcher.isInFlight(
                     orderExecutionKey("ENTRY:" + request.getId(), request.getBrokerCredentialsId()))) {
                 continue;
             }

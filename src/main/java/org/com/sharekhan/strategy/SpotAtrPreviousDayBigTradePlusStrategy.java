@@ -22,6 +22,10 @@ public class SpotAtrPreviousDayBigTradePlusStrategy implements StrategyEvaluator
     private final StrategySupport support;
     private final AtrPreviousDayBreakoutQualificationService qualificationService;
 
+    protected boolean sellSide() { return false; }
+    protected String source() { return SOURCE; }
+    protected String templateId() { return TEMPLATE_ID; }
+
     public SpotAtrPreviousDayBigTradePlusStrategy(StrategySupport support,
                                                   AtrPreviousDayBreakoutQualificationService qualificationService) {
         this.support = support;
@@ -29,8 +33,9 @@ public class SpotAtrPreviousDayBigTradePlusStrategy implements StrategyEvaluator
     }
 
     @Override public StrategyMetadata metadata() {
-        return new StrategyMetadata(TEMPLATE_ID, "Spot ATR Previous-Day BIGTRADEPLUS",
-                "Long-only NSE cash breakout above prior-day high; creates three BIGTRADEPLUS bracket orders.", "");
+        return new StrategyMetadata(templateId(), sellSide() ? "Spot ATR Previous-Day BIGTRADEPLUS Bearish" : "Spot ATR Previous-Day BIGTRADEPLUS",
+                sellSide() ? "NSE cash breakdown below prior-day low; creates three sell BIGTRADEPLUS brackets."
+                        : "Long-only NSE cash breakout above prior-day high; creates three BIGTRADEPLUS bracket orders.", "");
     }
 
     @Override public StrategyApplyResponse apply(StrategyApplyRequest request) {
@@ -41,20 +46,20 @@ public class SpotAtrPreviousDayBigTradePlusStrategy implements StrategyEvaluator
         // Unlike the F&O ATR templates, a BTP strategy is one entry attempt per
         // cash symbol per day. Once any bracket leg has reached the broker, do
         // not create another three-leg group after it exits or is rejected.
-        if (support.hasEntryForSymbolOn(SOURCE, LocalDateTime.now(StrategySupport.MARKET_ZONE).toLocalDate(),
+        if (support.hasEntryForSymbolOn(source(), LocalDateTime.now(StrategySupport.MARKET_ZONE).toLocalDate(),
                 request.getUserId(), symbol)) {
             return StrategyApplyResponse.builder().status("duplicate")
                     .message(symbol + ": a BIGTRADEPLUS ATR entry was already submitted today")
-                    .templateId(TEMPLATE_ID).symbol(symbol).direction("BUY").build();
+                    .templateId(templateId()).symbol(symbol).direction(sellSide() ? "SELL" : "BUY").build();
         }
         ScriptMasterEntity spot = support.resolveSpotScript(symbol);
-        var qualification = qualificationService.qualify(spot, "CE", request.getUserId(), LocalDateTime.now(StrategySupport.MARKET_ZONE));
+        var qualification = qualificationService.qualify(spot, sellSide() ? "PE" : "CE", request.getUserId(), LocalDateTime.now(StrategySupport.MARKET_ZONE));
         if (!qualification.qualified()) return support.waiting(metadata(), symbol, qualification.reason());
 
         TriggerRequest probe = baseRequest(request, spot, qualification.signal(), 1, TARGET_ATR[0]);
-        TriggerTradeRequestEntity existing = support.findActiveSetup(probe, SOURCE);
+        TriggerTradeRequestEntity existing = support.findActiveSetup(probe, source());
         if (existing != null) return StrategyApplyResponse.builder().status("duplicate")
-                .message(symbol + ": BIGTRADEPLUS ATR setup is already active").templateId(TEMPLATE_ID)
+                .message(symbol + ": BIGTRADEPLUS ATR setup is already active").templateId(templateId())
                 .symbol(symbol).triggerRequest(probe).tradeRequest(existing).build();
 
         List<Integer> quantities = split(request.getLots());
@@ -64,7 +69,7 @@ public class SpotAtrPreviousDayBigTradePlusStrategy implements StrategyEvaluator
         }
         return StrategyApplyResponse.builder().status("triggered")
                 .message(symbol + ": created BIGTRADEPLUS legs with quantities " + quantities)
-                .templateId(TEMPLATE_ID).symbol(symbol).direction("BUY")
+                .templateId(templateId()).symbol(symbol).direction(sellSide() ? "SELL" : "BUY")
                 .breakoutClose(support.roundPrice(qualification.signal().entryPrice()))
                 .triggerRequest(probe).tradeRequest(legs.get(0)).build();
     }
@@ -75,11 +80,12 @@ public class SpotAtrPreviousDayBigTradePlusStrategy implements StrategyEvaluator
         if (!Double.isFinite(atr) || atr <= 0d) throw new IllegalArgumentException("ATR(75) is unavailable for " + spot.getTradingSymbol());
         TriggerRequest trade = new TriggerRequest();
         trade.setInstrument(spot.getTradingSymbol()); trade.setExchange("NC"); trade.setEntryPrice(support.roundPrice(entry));
-        trade.setStopLoss(support.roundPrice(entry - STOP_ATR * atr));
-        trade.setTarget1(support.roundPrice(entry + targetMultiplier * atr));
+        trade.setStopLoss(support.roundPrice(entry + (sellSide() ? 1 : -1) * STOP_ATR * atr));
+        trade.setTarget1(support.roundPrice(entry + (sellSide() ? -1 : 1) * targetMultiplier * atr));
         trade.setQuantity(quantity); trade.setIntraday(request.getIntraday() == null || request.getIntraday());
         trade.setUserId(request.getUserId()); trade.setBrokerCredentialsId(request.getBrokerCredentialsId());
-        trade.setSource(SOURCE); trade.setBrokerProductType("BIGTRADEPLUS");
+        if (sellSide()) trade.setIntraday(true);
+        trade.setSource(source()); trade.setBrokerProductType("BIGTRADEPLUS");
         return trade;
     }
 

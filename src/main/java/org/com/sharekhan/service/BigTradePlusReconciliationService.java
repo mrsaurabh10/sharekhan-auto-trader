@@ -80,6 +80,7 @@ public class BigTradePlusReconciliationService {
                 // Preserve average fill precision: average prices need not lie on an order-price tick.
                 trade.setActualEntryPrice(entry); trade.setExitPrice(exit);
                 trade.setPnl(BigDecimal.valueOf(exit).subtract(BigDecimal.valueOf(entry))
+                        .multiply(BigDecimal.valueOf(org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource()) ? -1 : 1))
                         .multiply(BigDecimal.valueOf(trade.getQuantity())).setScale(2, RoundingMode.HALF_UP).doubleValue());
                 trade.setExitOrderId(child.getString("orderId")); trade.setExitedAt(exited);
                 trade.setExitReason("Book Profit Triggered".equals(child.optString("childTriggered")) ? "TARGET_HIT" : "BROKER_BRACKET_EXIT");
@@ -91,22 +92,25 @@ public class BigTradePlusReconciliationService {
         // Evaluate again on every report, including after restart/rejected modifies; only broker-confirmed stops are persisted.
         for (var leg : local) {
             if (leg.getStatus() != TriggeredTradeStatus.EXECUTED
-                    || !SpotAtrPreviousDayBigTradePlusStrategy.SOURCE.equals(leg.getSource())) continue;
+                    || !(SpotAtrPreviousDayBigTradePlusStrategy.SOURCE.equals(leg.getSource())
+                        || org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(leg.getSource()))) continue;
+            boolean sell = org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(leg.getSource());
             JSONObject parent = parents.get(leg.getOrderId()), child = children.get(leg.getOrderId());
             if (!matches(leg, parent, child) || !"Pending".equalsIgnoreCase(child.optString("orderStatus"))
                     || child.optLong("execQty", -1) != 0 || !"TRACK_INPROCESS".equals(child.optString("trailingStatus"))) continue;
             boolean lowerTargetFilled = local.stream().anyMatch(other -> sameSetup(leg, other)
                     && other.getStatus() == TriggeredTradeStatus.EXITED_SUCCESS && "TARGET_HIT".equals(other.getExitReason())
                     && parents.containsKey(other.getOrderId()) && filled(children.get(other.getOrderId()), other.getQuantity())
-                    && parents.get(other.getOrderId()).optDouble("bookProfitPrice") < parent.optDouble("bookProfitPrice"));
+                    && (sell ? parents.get(other.getOrderId()).optDouble("bookProfitPrice") > parent.optDouble("bookProfitPrice")
+                             : parents.get(other.getOrderId()).optDouble("bookProfitPrice") < parent.optDouble("bookProfitPrice")));
             if (!lowerTargetFilled) continue;
             double entry = parent.optDouble("execPrice");
             if (!positive(entry)) continue;
-            double stop = BigDecimal.valueOf(entry).divide(new BigDecimal("0.05"), 0, RoundingMode.CEILING)
+            double stop = BigDecimal.valueOf(entry).divide(new BigDecimal("0.05"), 0, sell ? RoundingMode.FLOOR : RoundingMode.CEILING)
                     .multiply(new BigDecimal("0.05")).doubleValue();
             double currentStop = child.optDouble("triggerPrice");
-            if (!positive(currentStop) || stop >= parent.optDouble("bookProfitPrice")) continue;
-            if (currentStop >= stop) {
+            if (!positive(currentStop) || (sell ? stop <= parent.optDouble("bookProfitPrice") : stop >= parent.optDouble("bookProfitPrice"))) continue;
+            if (sell ? currentStop <= stop : currentStop >= stop) {
                 if (!Objects.equals(leg.getStopLoss(), currentStop)) { leg.setStopLoss(currentStop); trades.save(leg); }
             } else broker.modifyBracketStop(context, parent, child, stop);
         }

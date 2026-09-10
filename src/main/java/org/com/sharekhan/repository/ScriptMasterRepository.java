@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity, Integer> {
+    boolean existsByTickSizeIsNull();
     Optional<ScriptMasterEntity> findByTradingSymbol(String tradingSymbol);
 
     Optional<ScriptMasterEntity> findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
