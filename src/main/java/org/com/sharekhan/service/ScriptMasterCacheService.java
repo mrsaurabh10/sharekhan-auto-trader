@@ -145,16 +145,21 @@ public class ScriptMasterCacheService {
     public ScriptMasterEntity convertToEntity(JSONObject json, String exchange) throws SharekhanAPIException {
         return ScriptMasterEntity.builder()
                 .scripCode(json.optInt("scripCode"))
-                .tradingSymbol(json.optString("tradingSymbol"))
-                .exchange(exchange)
-                .instrumentType(json.optString("instType"))
+                .tradingSymbol(postgresText(json.optString("tradingSymbol")))
+                .exchange(postgresText(exchange))
+                .instrumentType(postgresText(json.optString("instType")))
                 .strikePrice(json.has("strike") ? json.optDouble("strike") : null)
                 .lotSize(json.optInt("lotSize"))
                 .tickSize(readTickSize(json))
-                .expiry(json.optString("expiry", null))
-                .optionType(json.optString("optionType"))
+                .expiry(postgresText(json.optString("expiry", null)))
+                .optionType(postgresText(json.optString("optionType")))
                 .build();
     }
+    // PostgreSQL text rejects U+0000; Sharekhan BC symbols can contain NUL padding.
+    private String postgresText(String value) {
+        return value == null ? null : value.replace("\0", "");
+    }
+
     private Double readTickSize(JSONObject json) {
         double tick = json.optDouble("tickSize", Double.NaN);
         return Double.isFinite(tick) && tick > 0d ? tick : null;
