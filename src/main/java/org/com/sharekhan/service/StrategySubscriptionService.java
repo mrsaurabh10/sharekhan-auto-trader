@@ -10,6 +10,7 @@ import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoCeStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoPeStrategy;
 import org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusStrategy;
+import org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimCeStrategy;
 import org.com.sharekhan.strategy.ManualFnoVwapReclaimPeStrategy;
 import org.com.sharekhan.strategy.MarketauxSentimentSwingAtrStrategy;
@@ -256,7 +257,8 @@ public class StrategySubscriptionService {
     private boolean isAtrPreviousDayTemplate(String templateId) {
         return AtrPreviousDayFnoCeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || AtrPreviousDayFnoPeStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
-                || SpotAtrPreviousDayBigTradePlusStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+                || SpotAtrPreviousDayBigTradePlusStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)
+                || SpotAtrPreviousDayBigTradePlusSellStrategy.SELL_TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 
     private String normalizeSymbolList(String symbols) {
