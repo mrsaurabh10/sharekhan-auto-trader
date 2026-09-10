@@ -61,6 +61,7 @@ public class ScriptMasterCacheService {
         int responseCode = conn.getResponseCode();
         log.info("HTTP GET to {} returned status {}", urlStr, responseCode);
         if (responseCode != 200) {
+            conn.disconnect();
             throw new SharekhanAPIException("Failed to fetch data, HTTP code: " + responseCode);
         }
 

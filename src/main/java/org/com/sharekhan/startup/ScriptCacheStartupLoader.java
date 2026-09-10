@@ -1,46 +1,69 @@
 package org.com.sharekhan.startup;
 
 import com.sharekhan.http.exceptions.SharekhanAPIException;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.service.ScriptMasterCacheService;
-import org.json.JSONObject;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.context.annotation.Profile;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.Set;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
-@Profile("!test")  // exclude from test profile
+@Profile("!test")
 public class ScriptCacheStartupLoader {
-
+    private static final List<String> EXCHANGES = List.of("NF", "NC", "BF", "BC", "MX");
     private final ScriptMasterCacheService scriptService;
     private final ScriptMasterRepository repository;
+    private final Set<String> pendingExchanges = new LinkedHashSet<>();
+    private boolean ready;
+    private boolean initialized;
 
-    @PostConstruct
-    public void loadScriptsIfEmpty() {
-        try {
-            if (repository.count() == 0 || repository.existsByTickSizeIsNull()) {
-                log.info("📦 Loading Sharekhan script master to populate instruments and missing tick sizes...");
-                Map<String, JSONObject> cache = scriptService.getScriptCache("NF");
-                cache = scriptService.getScriptCache("NC");
-                cache = scriptService.getScriptCache("BF");
-                cache = scriptService.getScriptCache("BC");
-                cache = scriptService.getScriptCache("MX");
-            } else {
-                log.info("✅ Script master already present in DB. Skipping fetch.");
+    @EventListener(ApplicationReadyEvent.class)
+    public synchronized void loadScriptsIfEmpty() {
+        ready = true;
+        refreshPendingExchanges();
+    }
+
+    @Scheduled(fixedDelayString = "${app.script-master.retry-delay-ms:60000}")
+    public synchronized void retryPendingExchanges() {
+        if (ready) refreshPendingExchanges();
+    }
+
+    private void refreshPendingExchanges() {
+        if (!initialized) {
+            try {
+                if (repository.count() == 0 || repository.existsByTickSizeIsNull()) {
+                    pendingExchanges.addAll(EXCHANGES);
+                } else {
+                    // A prior process may have stopped after loading only some exchanges.
+                    List<String> present = repository.findDistinctExchanges();
+                    EXCHANGES.stream().filter(exchange -> present.stream().noneMatch(exchange::equalsIgnoreCase))
+                            .forEach(pendingExchanges::add);
+                }
+                initialized = true;
+            } catch (Exception e) {
+                log.warn("Unable to inspect script master; will retry: {}", e.getMessage());
+                return;
             }
-        } catch (Exception e) {
-            log.error("❌ Failed to load script master cache at startup: {}", e.getMessage(), e);
-        } catch (SharekhanAPIException e) {
-            throw new RuntimeException(e);
+        }
+        for (String exchange : List.copyOf(pendingExchanges)) {
+            try {
+                scriptService.getScriptCache(exchange);
+                pendingExchanges.remove(exchange);
+                log.info("Sharekhan script master loaded for {}", exchange);
+            } catch (Exception | SharekhanAPIException e) {
+                log.warn("Sharekhan script master unavailable for {}; keeping existing rows and retrying later: {}",
+                        exchange, e.getMessage());
+            }
         }
     }
 }
