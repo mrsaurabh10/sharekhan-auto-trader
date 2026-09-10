@@ -64,8 +64,9 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
     @Override
     public OrderPlacementResult placeTriggerPriceEntryOrder(TriggeredTradeSetupEntity trade,
                                                            BrokerContext context,
-                                                           double entryPrice) {
-        return placeMStockOrder(trade, context, entryPrice, "BUY", "SL", entryPrice);
+                                                           double triggerPrice,
+                                                           double limitPrice) {
+        return placeMStockOrder(trade, context, limitPrice, "BUY", "SL", triggerPrice);
     }
 
     @Override

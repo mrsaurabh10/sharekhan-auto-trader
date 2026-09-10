@@ -25,6 +25,7 @@ import org.com.sharekhan.util.CryptoService;
 public class OrderExitService {
 
     private final TokenStoreService tokenStoreService;
+    private final org.com.sharekhan.repository.ScriptMasterRepository scriptMasterRepository;
     private final TriggeredTradeSetupRepository triggeredTradeRepo;
     private final WebSocketSubscriptionService webSocketSubscriptionService;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
@@ -107,7 +108,8 @@ public class OrderExitService {
         exitOrder.quantity = trade.getQuantity().longValue();
         exitOrder.instrumentType = trade.getInstrumentType();
         exitOrder.productType = "INVESTMENT";
-        exitOrder.price = String.valueOf(exitPrice); //0.0 means Market Price
+        exitOrder.price = String.valueOf(org.com.sharekhan.util.SharekhanTickPrices.round(
+                scriptMasterRepository, trade.getScripCode(), trade.getExchange(), exitPrice)); //0.0 means Market Price
         exitOrder.transactionType = "S"; // Assuming original was "B"
         exitOrder.orderType = "NORMAL";
         exitOrder.expiry = trade.getExpiry();

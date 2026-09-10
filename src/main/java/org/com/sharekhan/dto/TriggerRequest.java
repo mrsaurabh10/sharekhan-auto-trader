@@ -48,6 +48,9 @@ public class TriggerRequest {
     // optional source to identify where the request originated
     private String source;
 
+    /** Sharekhan execution product.  BIGTRADEPLUS is currently supported only for cash-equity BKT orders. */
+    private String brokerProductType;
+
     private Boolean quickTrade;
 
     private String action;

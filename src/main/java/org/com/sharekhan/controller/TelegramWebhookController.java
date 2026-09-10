@@ -47,6 +47,13 @@ public class TelegramWebhookController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("invalid secret token");
         }
 
+        // Entry buttons can mutate live orders: they must never use the legacy unauthenticated mode.
+        if (!isSecretEnforced() && body != null
+                && body.get("callback_query") instanceof Map<?, ?> callback
+                && callback.get("data") instanceof String data && data.startsWith("entry:")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("entry actions require webhook secret");
+        }
+
         telegramUpdateHandler.handleUpdate(body);
         return ResponseEntity.ok("ok");
     }

@@ -123,6 +123,22 @@ class TradeExecutionServiceExitPriceValidationTest {
     }
 
     @Test
+    void computesSpotTargetExitFloorAboveBreakevenAndCharges() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .id(8335L)
+                .entryPrice(404.65)
+                .actualEntryPrice(8.55)
+                .quantity(1425L)
+                .lots(1)
+                .useSpotForTarget(true)
+                .build();
+
+        assertThat(TradeCostCalculator.minimumProfitableExitPrice(trade, 0.05d)).isEqualTo(8.60d);
+        assertThat(trade.getExitPrice()).isNull();
+        assertThat(trade.getPnl()).isNull();
+    }
+
+    @Test
     void rejectsPlaceholderBrokerOrderIds() {
         assertThat(service.isUsableBrokerOrderId(null)).isFalse();
         assertThat(service.isUsableBrokerOrderId("")).isFalse();

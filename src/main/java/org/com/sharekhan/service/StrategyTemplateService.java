@@ -6,6 +6,7 @@ import org.com.sharekhan.dto.StrategyTemplateResponse;
 import org.com.sharekhan.strategy.StrategyEvaluator;
 import org.com.sharekhan.strategy.StrategyMetadata;
 import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
+import org.com.sharekhan.strategy.MarketauxSentimentSwingAtrStrategy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -42,7 +43,7 @@ public class StrategyTemplateService {
 
     public StrategyApplyResponse apply(StrategyApplyRequest request) {
         validate(request);
-        if (isFnoMoverTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
+        if (isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             request.setSymbol("FNO_UNIVERSE");
         }
         StrategyEvaluator evaluator = evaluators.get(normalizeTemplateId(request.getTemplateId()));
@@ -59,13 +60,18 @@ public class StrategyTemplateService {
         if (!StringUtils.hasText(request.getTemplateId())) {
             throw new IllegalArgumentException("templateId is required");
         }
-        if (!isFnoMoverTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
+        if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
         }
     }
 
     private boolean isFnoMoverTemplate(String templateId) {
         return Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(normalizeTemplateId(templateId));
+    }
+
+    private boolean isAutomaticUniverseTemplate(String templateId) {
+        return isFnoMoverTemplate(templateId)
+                || MarketauxSentimentSwingAtrStrategy.TEMPLATE_ID.equalsIgnoreCase(normalizeTemplateId(templateId));
     }
 
     private String normalizeTemplateId(String value) {

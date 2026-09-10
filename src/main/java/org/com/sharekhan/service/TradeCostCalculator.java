@@ -36,9 +36,20 @@ public class TradeCostCalculator {
             return null;
         }
 
+        return calculateCharges(trade, entryPrice, trade.getExitPrice(), trade.getPnl());
+    }
+
+    private static TradeCharges calculateCharges(TriggeredTradeSetupEntity trade,
+                                                 double entryPrice,
+                                                 double exitPrice,
+                                                 Double grossPnlOverride) {
+        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0) {
+            return null;
+        }
+
         BigDecimal quantity = BigDecimal.valueOf(trade.getQuantity());
         BigDecimal buyPremium = BigDecimal.valueOf(entryPrice).multiply(quantity);
-        BigDecimal sellPremium = BigDecimal.valueOf(trade.getExitPrice()).multiply(quantity);
+        BigDecimal sellPremium = BigDecimal.valueOf(exitPrice).multiply(quantity);
         BigDecimal turnover = buyPremium.add(sellPremium);
 
         int lots = resolveLots(trade);
@@ -59,8 +70,8 @@ public class TradeCostCalculator {
                 .add(sebiTransactionFees)
                 .add(gst);
 
-        BigDecimal grossPnl = trade.getPnl() != null
-                ? BigDecimal.valueOf(trade.getPnl())
+        BigDecimal grossPnl = grossPnlOverride != null
+                ? BigDecimal.valueOf(grossPnlOverride)
                 : sellPremium.subtract(buyPremium);
         BigDecimal effectivePnl = grossPnl.subtract(total);
 
@@ -75,6 +86,30 @@ public class TradeCostCalculator {
                 money(effectivePnl),
                 exercised
         );
+    }
+
+    /**
+     * Returns the smallest tick-aligned option exit price that is net profitable after estimated
+     * brokerage and statutory charges. A spot target must not close an option at break-even.
+     */
+    public static Double minimumProfitableExitPrice(TriggeredTradeSetupEntity trade, double tickSize) {
+        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0 || tickSize <= 0d) {
+            return null;
+        }
+        Double entryPrice = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+        if (entryPrice == null || entryPrice <= 0d || !Double.isFinite(entryPrice)) {
+            return null;
+        }
+
+        double candidate = Math.ceil((entryPrice + tickSize) / tickSize) * tickSize;
+        for (int attempt = 0; attempt < 10_000; attempt++) {
+            TradeCharges charges = calculateCharges(trade, entryPrice, candidate, null);
+            if (charges != null && charges.effectivePnl() > 0d) {
+                return money(BigDecimal.valueOf(candidate));
+            }
+            candidate += tickSize;
+        }
+        return null;
     }
 
     private static int resolveLots(TriggeredTradeSetupEntity trade) {

@@ -1,6 +1,8 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.BrokerContext;
+import org.com.sharekhan.entity.EntryChaseControl;
+import org.com.sharekhan.repository.EntryChaseControlRepository;
 import org.com.sharekhan.dto.OrderPlacementResult;
 import org.com.sharekhan.dto.TriggerRequest;
 import org.com.sharekhan.cache.LtpCacheService;
@@ -59,13 +61,13 @@ class TradeExecutionServiceBrokerSideEntryTest {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
 
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(
-                ctx.service, "resolveTslEnabled", false, "atr-signal", 2)).isTrue();
+                ctx.service, "resolveTslEnabled", false, "atr-signal", 2, null, null)).isTrue();
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(
-                ctx.service, "resolveTslEnabled", false, "StockBazaari", 3)).isTrue();
+                ctx.service, "resolveTslEnabled", false, "StockBazaari", 3, null, null)).isTrue();
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(
-                ctx.service, "resolveTslEnabled", false, "atr-signal", 1)).isFalse();
+                ctx.service, "resolveTslEnabled", false, "atr-signal", 1, null, null)).isFalse();
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(
-                ctx.service, "resolveTslEnabled", false, "manual", 2)).isFalse();
+                ctx.service, "resolveTslEnabled", false, "manual", 2, null, null)).isFalse();
     }
 
     @Test
@@ -124,6 +126,26 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void rejectsShoonyaOptionQuoteWhenReturnedIdentityIsNotTheRequestedContract() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(123456).tradingSymbol("AUROPHARMA").exchange("NF")
+                .instrumentType("OI").strikePrice(1560.0).optionType("CE").expiry("25/08/2026").build();
+        when(ctx.scriptRepo.findByScripCode(123456)).thenReturn(option);
+
+        ShoonyaQuoteService shoonya = mock(ShoonyaQuoteService.class);
+        when(shoonya.getOptionQuote(option)).thenReturn(Optional.of(new ShoonyaQuoteService.LiveQuote(
+                "AUROPHARMA25AUG26C1560", "73045", "AUROPHARMA-EQ", "275", 1560.0, 1559.0, 1561.0)));
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+
+        Double price = ReflectionTestUtils.invokeMethod(
+                ctx.service, "resolveEntryReferencePrice", 123456, "executeTriggeredTrade");
+
+        assertThat(price).isNull();
+        verify(ctx.ltpCache, never()).updateLtp(123456, 1560.0);
+    }
+
+    @Test
     void advancesStopsForLaterInitialTargetLegsWhenEarlierTargetFills() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         TriggeredTradeSetupEntity targetOne = new TriggeredTradeSetupEntity();
@@ -132,8 +154,10 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggeredTradeSetupEntity targetTwo = new TriggeredTradeSetupEntity();
         targetTwo.setId(2L); targetTwo.setTargetOrderGroupId(99L); targetTwo.setTargetStage(2);
+        targetTwo.setStatus(TriggeredTradeStatus.EXECUTED);
         TriggeredTradeSetupEntity targetThree = new TriggeredTradeSetupEntity();
         targetThree.setId(3L); targetThree.setTargetOrderGroupId(99L); targetThree.setTargetStage(3);
+        targetThree.setStatus(TriggeredTradeStatus.EXECUTED);
         when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(99L), any()))
                 .thenReturn(List.of(targetTwo, targetThree));
 
@@ -143,6 +167,38 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(targetThree.getStopLoss()).isEqualTo(120.0);
         verify(ctx.triggeredRepo).save(targetTwo);
         verify(ctx.triggeredRepo).save(targetThree);
+    }
+
+    @Test
+    void doesNotAdvanceStagedStopsWhenALegExitsForStopLoss() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity stoppedLeg = new TriggeredTradeSetupEntity();
+        stoppedLeg.setId(1L); stoppedLeg.setTargetOrderGroupId(99L); stoppedLeg.setTargetStage(1);
+        stoppedLeg.setExitReason("STOP_LOSS_HIT");
+
+        ctx.service.advanceStagedTargetStopsAfterTargetExit(stoppedLeg);
+
+        verify(ctx.triggeredRepo, never()).findByTargetOrderGroupIdAndStatusIn(any(), any());
+    }
+
+    @Test
+    void advancesFinalLegStopToFirstTargetWhenSecondTargetFills() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TriggeredTradeSetupEntity firstTarget = new TriggeredTradeSetupEntity();
+        firstTarget.setId(1L); firstTarget.setTargetStage(1); firstTarget.setTarget1(140.0);
+        firstTarget.setExitReason("TARGET_HIT"); firstTarget.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+        TriggeredTradeSetupEntity secondTarget = new TriggeredTradeSetupEntity();
+        secondTarget.setId(2L); secondTarget.setTargetOrderGroupId(99L); secondTarget.setTargetStage(2);
+        secondTarget.setTarget1(160.0); secondTarget.setExitReason("TARGET_HIT");
+        TriggeredTradeSetupEntity finalLeg = new TriggeredTradeSetupEntity();
+        finalLeg.setId(3L); finalLeg.setTargetStage(3); finalLeg.setStatus(TriggeredTradeStatus.EXECUTED);
+        when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(99L), any()))
+                .thenReturn(List.of(firstTarget, finalLeg));
+
+        ctx.service.advanceStagedTargetStops(secondTarget);
+
+        assertThat(finalLeg.getStopLoss()).isEqualTo(140.0);
+        verify(ctx.triggeredRepo).save(finalLeg);
     }
 
     @Test
@@ -168,8 +224,38 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 77L,
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
                 TriggeredTradeStatus.ENTRY_SUBMITTING.name());
-        verify(ctx.broker).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble());
+        verify(ctx.broker).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), eq(123.45), eq(123.55));
         verify(ctx.eventPublisher).publishEvent(any(OrderPlacedEvent.class));
+    }
+
+    @Test
+    void blocksRepeatedStockBazaariEntryForSameUserAndInstrumentOnSameDay() {
+        TestContext ctx = new TestContext(pending("182038823"));
+        TriggerRequest firstRequest = optionRequest();
+        firstRequest.setSource("StockBazaari");
+        when(ctx.triggerRepo.findDailySourceInstrumentRequests(eq("StockBazaari"), eq(123456), eq(9L), any(), any()))
+                .thenReturn(List.of());
+
+        TriggerTradeRequestEntity first = ctx.service.executeTrade(firstRequest);
+        when(ctx.triggerRepo.findDailySourceInstrumentRequests(eq("StockBazaari"), eq(123456), eq(9L), any(), any()))
+                .thenReturn(List.of(first));
+
+        TriggerTradeRequestEntity repeated = ctx.service.executeTrade(firstRequest);
+
+        assertThat(repeated).isSameAs(first);
+        verify(ctx.broker, times(1)).placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble(), anyDouble());
+    }
+
+    @Test
+    void brokerTriggerIsVisibleToRecoveryUntilBrokerCallReturns() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(false).status("Rejected").build());
+        when(ctx.broker.placeTriggerPriceEntryOrder(any(), any(), anyDouble(), anyDouble()))
+                .thenAnswer(invocation -> {
+                    assertThat(ctx.service.isBrokerTriggerEntryInFlight(77L)).isTrue();
+                    return OrderPlacementResult.builder().success(false).status("Rejected").build();
+                });
+        ctx.service.executeTrade(optionRequest());
+        assertThat(ctx.service.isBrokerTriggerEntryInFlight(77L)).isFalse();
     }
 
     @Test
@@ -398,7 +484,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
-    void automaticEntryUsesFiveBoundedPriceLevelsThenCancels() {
+    void automaticEntryUsesFiveBoundedPriceLevelsThenPauses() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         configureFiveAttemptPolicy(ctx);
         configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
@@ -411,13 +497,14 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggeredTradeSetupEntity result = ctx.service.executeTradeFromEntity(triggerRequestEntity());
 
-        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
-        assertThat(result.getExitReason()).isEqualTo("ENTRY_NOT_FILLED_AFTER_5_ATTEMPTS");
+        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.PAUSED);
         verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(10.55));
         ArgumentCaptor<Double> prices = ArgumentCaptor.forClass(Double.class);
         verify(ctx.broker, times(4)).modifyEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-5"), prices.capture());
         assertThat(prices.getAllValues()).containsExactly(10.60, 10.60, 10.60, 10.65);
-        verify(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-5"));
+        verify(ctx.broker, never()).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-5"));
+        verify(ctx.telegramNotificationService).sendEntryActionMessage(eq(9L), anyString(), anyString());
     }
 
     @Test
@@ -461,7 +548,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
-    void partialEntryFillIsTrackedAndOnlyRemainderIsCancelled() {
+    void partialEntryFillRemainsOpenWhenAttemptsAreExhausted() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         configureFiveAttemptPolicy(ctx);
         configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
@@ -480,16 +567,16 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggeredTradeSetupEntity result = ctx.service.executeTradeFromEntity(triggerRequestEntity());
 
-        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
-        assertThat(result.getQuantity()).isEqualTo(20L);
-        assertThat(result.getActualEntryPrice()).isEqualTo(10.60);
-        verify(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL"));
-        verify(ctx.telegramNotificationService).sendTradeMessageForUser(
+        assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(result.getQuantity()).isEqualTo(50L);
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.PAUSED);
+        verify(ctx.broker, never()).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL"));
+        verify(ctx.telegramNotificationService, never()).sendTradeMessageForUser(
                 eq(9L), eq("Order Executed ✅"), anyString());
     }
 
     @Test
-    void partialEntryFillRemainsPendingWhileCancellationIsUnconfirmed() {
+    void partialEntryFillKeepsPollingWhileAwaitingUserAction() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         configureFiveAttemptPolicy(ctx);
         configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
@@ -505,7 +592,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         assertThat(result.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
         assertThat(result.getQuantity()).isEqualTo(50L);
-        verify(ctx.broker).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL-PENDING"));
+        verify(ctx.broker, never()).cancelEntryOrder(any(), any(BrokerContext.class), eq("ENTRY-PARTIAL-PENDING"));
         verify(ctx.eventPublisher).publishEvent(any(OrderPlacedEvent.class));
         verify(ctx.telegramNotificationService, never()).sendTradeMessageForUser(
                 eq(9L), eq("Order Executed ✅"), anyString());
@@ -641,6 +728,168 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 .build();
     }
 
+    private TestContext pausedEntry() {
+        TestContext ctx = new TestContext(pending("ACTION-1"));
+        configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, 10.50, 10.60, 10.55);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.broker.placeOrder(any(), any(), anyDouble())).thenReturn(pending("ACTION-1"));
+        when(ctx.broker.modifyEntryOrder(any(), any(), anyString(), anyDouble())).thenReturn(pending("ACTION-1"));
+        when(ctx.broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(orderHistory("Open"));
+        ctx.service.executeTradeFromEntity(triggerRequestEntity());
+        org.mockito.Mockito.clearInvocations(ctx.broker, ctx.telegramNotificationService);
+        return ctx;
+    }
+
+    @Test
+    void bestAskActionUsesExactAskBeyondCeilingAndRejectsDuplicateClick() {
+        TestContext ctx = pausedEntry();
+        configureTightFreshQuote(ctx, 149.9, 150.0, 149.95);
+        String token = ctx.controls.get(88L).getDecisionToken();
+        assertThat(ctx.service.handleEntryAction(88L, token, "market")).contains("150.00");
+        assertThat(ctx.service.handleEntryAction(88L, token, "market")).contains("expired");
+        verify(ctx.broker).modifyEntryOrder(any(), any(), eq("ACTION-1"), eq(150.0));
+        verify(ctx.broker, never()).placeOrder(any(), any(), anyDouble());
+        verify(ctx.broker, never()).cancelEntryOrder(any(), any(), anyString());
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.PAUSED);
+    }
+
+    @Test
+    void retryGetsFiveNewModificationsThenPausesEvenWhenQuoteDoesNotMove() throws Exception {
+        TestContext ctx = pausedEntry();
+        String token = ctx.controls.get(88L).getDecisionToken();
+        assertThat(ctx.service.handleEntryAction(88L, token, "retry")).contains("Retry started");
+        try {
+            assertThat(ctx.controls.get(88L).getAttempts()).isZero();
+            verify(ctx.broker, org.mockito.Mockito.timeout(7000).times(5))
+                    .modifyEntryOrder(any(), any(), eq("ACTION-1"), anyDouble());
+            // Wait for the fifth result to be persisted, not merely for the broker invocation.
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (ctx.controls.get(88L).getState() != EntryChaseControl.State.PAUSED && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.PAUSED);
+            assertThat(ctx.controls.get(88L).getAttempts()).isEqualTo(5);
+            assertThat(ctx.service.isEntryOrderChaseActive(88L)).isFalse();
+            verify(ctx.broker, never()).cancelEntryOrder(any(), any(), anyString());
+        } finally { ctx.service.stopEntryOrderChase(88L); }
+    }
+
+    @Test
+    void staleQuoteDoesNotConsumeUserDecision() {
+        TestContext ctx = pausedEntry();
+        when(ctx.quoteCache.isBookStale(any(), any(Duration.class))).thenReturn(true);
+        String token = ctx.controls.get(88L).getDecisionToken();
+        assertThat(ctx.service.handleEntryAction(88L, token, "market")).contains("No fresh best ask");
+        assertThat(ctx.controls.get(88L).getDecisionToken()).isEqualTo(token);
+        verify(ctx.broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+    }
+
+    @Test
+    void brokerFillBeforeClickMakesActionObsolete() {
+        TestContext ctx = pausedEntry();
+        when(ctx.broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(orderHistory("Fully Executed"));
+        assertThat(ctx.service.handleEntryAction(88L, ctx.controls.get(88L).getDecisionToken(), "cancel"))
+                .contains("completed order");
+        verify(ctx.broker, never()).cancelEntryOrder(any(), any(), anyString());
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CLOSED);
+    }
+
+    @Test
+    void partialFillMarketModificationPreservesOriginalTotalQuantity() {
+        TestContext ctx = pausedEntry();
+        when(ctx.broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(partialOrderHistory("Partially Executed"));
+        ctx.service.handleEntryAction(88L, ctx.controls.get(88L).getDecisionToken(), "market");
+        ArgumentCaptor<TriggeredTradeSetupEntity> trade = ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);
+        verify(ctx.broker).modifyEntryOrder(trade.capture(), any(), eq("ACTION-1"), eq(10.60));
+        assertThat(trade.getValue().getQuantity()).isEqualTo(50L);
+        assertThat(ctx.savedTrade.get().getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+    }
+
+    @Test
+    void cancellationWaitsForBrokerAndOffersFreshActionsIfStillOpen() {
+        TestContext ctx = pausedEntry();
+        String token = ctx.controls.get(88L).getDecisionToken();
+        assertThat(ctx.service.handleEntryAction(88L, token, "cancel")).contains("Waiting for broker confirmation");
+        assertThat(ctx.savedTrade.get().getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CANCEL_PENDING);
+        ctx.service.handleEntryAction(88L, token, "cancel");
+        verify(ctx.broker).cancelEntryOrder(any(), any(), eq("ACTION-1"));
+        ctx.service.recoverEntryDecisions();
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.PAUSED);
+        assertThat(ctx.controls.get(88L).getDecisionToken()).isNotEqualTo(token);
+    }
+
+    @Test
+    void recoveryKeepsPausedStateAndRetriesFailedNotificationWithoutModifyingOrder() {
+        TestContext ctx = pausedEntry();
+        ctx.controls.get(88L).setTelegramMessageId(null);
+        when(ctx.telegramNotificationService.sendEntryActionMessage(any(), anyString(), anyString()))
+                .thenReturn(null, 101L);
+        ctx.service.recoverEntryDecisions();
+        assertThat(ctx.controls.get(88L).getTelegramMessageId()).isNull();
+        ctx.service.recoverEntryDecisions();
+        assertThat(ctx.controls.get(88L).getTelegramMessageId()).isEqualTo(101L);
+        assertThat(ctx.service.isEntryOrderChaseActive(88L)).isFalse();
+        verify(ctx.broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+    }
+
+    @Test
+    void recoveryDoesNotRepeatInterruptedBrokerAction() {
+        TestContext ctx = pausedEntry();
+        ctx.controls.get(88L).setState(EntryChaseControl.State.ACTION_PENDING);
+        ctx.service.recoverEntryDecisions();
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.PAUSED);
+        verify(ctx.broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+    }
+
+    @Test
+    void restartResumesOnlyRemainingAttemptBudget() throws Exception {
+        TestContext ctx = pausedEntry();
+        EntryChaseControl control = ctx.controls.get(88L);
+        control.setState(EntryChaseControl.State.RUNNING);
+        control.setAttempts(4);
+        ctx.service.recoverEntryDecisions();
+        try {
+            verify(ctx.broker, org.mockito.Mockito.timeout(3000)).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (control.getState() != EntryChaseControl.State.PAUSED && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(control.getState()).isEqualTo(EntryChaseControl.State.PAUSED);
+            assertThat(control.getAttempts()).isEqualTo(5);
+            assertThat(ctx.service.isEntryOrderChaseActive(88L)).isFalse();
+        } finally { ctx.service.stopEntryOrderChase(88L); }
+    }
+
+    @Test
+    void brokerTriggeredChasePausesInsteadOfCancellingWhenBudgetIsReached() throws Exception {
+        TestContext ctx = pausedEntry();
+        EntryChaseControl control = ctx.controls.get(88L);
+        control.setState(EntryChaseControl.State.RUNNING);
+        control.setWaitForBrokerTrigger(true);
+        control.setAttempts(4);
+        ctx.service.recoverEntryDecisions();
+        try {
+            verify(ctx.broker, org.mockito.Mockito.timeout(3000)).modifyEntryOrder(any(), any(), eq("ACTION-1"), eq(10.65));
+            long deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2);
+            while (control.getState() != EntryChaseControl.State.PAUSED && System.nanoTime() < deadline) Thread.sleep(10);
+            assertThat(control.getState()).isEqualTo(EntryChaseControl.State.PAUSED);
+            verify(ctx.broker, never()).cancelEntryOrder(any(), any(), anyString());
+        } finally { ctx.service.stopEntryOrderChase(88L); }
+    }
+
+    @Test
+    void concurrentMarketClicksSubmitOnlyOneModification() throws Exception {
+        TestContext ctx = pausedEntry();
+        String token = ctx.controls.get(88L).getDecisionToken();
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.CountDownLatch start = new java.util.concurrent.CountDownLatch(1);
+            var a = pool.submit(() -> { start.await(); return ctx.service.handleEntryAction(88L, token, "market"); });
+            var b = pool.submit(() -> { start.await(); return ctx.service.handleEntryAction(88L, token, "market"); });
+            start.countDown();
+            assertThat(List.of(a.get(), b.get()).stream().filter(result -> result.contains("expired")).count()).isEqualTo(1L);
+        } finally { pool.shutdownNow(); }
+        verify(ctx.broker).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+    }
+
     private static class TestContext {
         private final TriggerTradeRequestRepository triggerRepo = mock(TriggerTradeRequestRepository.class);
         private final TriggeredTradeSetupRepository triggeredRepo = mock(TriggeredTradeSetupRepository.class);
@@ -656,6 +905,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
         private final TelegramNotificationService telegramNotificationService = mock(TelegramNotificationService.class);
         private final AtomicReference<TriggerTradeRequestEntity> savedRequest = new AtomicReference<>();
         private final AtomicReference<TriggeredTradeSetupEntity> savedTrade = new AtomicReference<>();
+        private final EntryChaseControlRepository controlRepo = mock(EntryChaseControlRepository.class);
+        private final Map<Long, EntryChaseControl> controls = new java.util.concurrent.ConcurrentHashMap<>();
         private final TradeExecutionService service;
 
         private TestContext(OrderPlacementResult brokerResult) {
@@ -714,7 +965,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     .active(true)
                     .build()));
             when(brokerServiceFactory.getService(anyString())).thenReturn(broker);
-            when(broker.placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble()))
+            when(broker.placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble(), anyDouble()))
                     .thenReturn(brokerResult);
 
             service = new TradeExecutionService(
@@ -736,6 +987,16 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     null
             );
             ReflectionTestUtils.setField(service, "telegramNotificationService", telegramNotificationService);
+            ReflectionTestUtils.setField(service, "entryChaseControlRepository", controlRepo);
+            when(controlRepo.findById(any())).thenAnswer(i -> Optional.ofNullable(controls.get(i.getArgument(0))));
+            when(controlRepo.save(any())).thenAnswer(i -> {
+                EntryChaseControl control = i.getArgument(0);
+                controls.put(control.getTradeId(), control);
+                return control;
+            });
+            when(controlRepo.findByStateNot(any())).thenAnswer(i -> controls.values().stream()
+                    .filter(c -> c.getState() != i.getArgument(0)).toList());
+            when(telegramNotificationService.sendEntryActionMessage(any(), anyString(), anyString())).thenReturn(100L);
         }
 
         private void useSimulatorBroker() {
