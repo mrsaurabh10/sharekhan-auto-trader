@@ -10,6 +10,32 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class SharekhanBrokerServiceTest {
 
+    @Test void bracketLogsPreserveRejectionAndRedactNestedCredentials() {
+        var raw = new JSONObject().put("status", 400).put("message", "Invalid stop for sensitive-token")
+                .put("orderId", "C1").put("childSlPrice", "1200.70")
+                .put("data", new org.json.JSONArray().put(new JSONObject()
+                        .put("access-token", "sensitive-token").put("api_key", "private-key")
+                        .put("customerId", 73196).put("channelUser", "PRIVATECLIENT")));
+        String safe = SharekhanBrokerService.safeBracketLog(raw.toString(), "sensitive-token");
+        assertThat(safe).contains("400", "Invalid stop", "C1", "1200.70", "[REDACTED]")
+                .doesNotContain("sensitive-token", "private-key", "73196", "PRIVATECLIENT");
+        assertThat(raw.toString()).contains("sensitive-token");
+    }
+
+    @Test void bracketLogsOmitNonJsonAndBoundLargeResponses() {
+        assertThat(SharekhanBrokerService.safeBracketLog("<html>private-key</html>"))
+                .contains("non-JSON response omitted").doesNotContain("private-key");
+        assertThat(SharekhanBrokerService.safeBracketLog(new JSONObject().put("message", "x".repeat(5000)).toString()))
+                .hasSize(4011).endsWith("[truncated]");
+    }
+
+    @Test void bracketLogsRedactEscapedSecretsAndKeepNewlinesEscaped() {
+        String secret = "private\"key\\value";
+        String safe = SharekhanBrokerService.safeBracketLog(new JSONObject()
+                .put("message", "rejected " + secret + "\nnext line").toString(), secret);
+        assertThat(safe).contains("[REDACTED]", "\\n").doesNotContain("private", "\n");
+    }
+
     @Test void createsCashSellBracketBelowEntry() {
         var trade = TriggeredTradeSetupEntity.builder().source("spot-atr-pdl-bigtradeplus")
                 .symbol("SBIN").scripCode(3045).exchange("NC").quantity(9L).intraday(true)

@@ -111,8 +111,16 @@ public class BigTradePlusReconciliationService {
             double currentStop = child.optDouble("triggerPrice");
             if (!positive(currentStop) || (sell ? stop <= parent.optDouble("bookProfitPrice") : stop >= parent.optDouble("bookProfitPrice"))) continue;
             if (sell ? currentStop <= stop : currentStop >= stop) {
-                if (!Objects.equals(leg.getStopLoss(), currentStop)) { leg.setStopLoss(currentStop); trades.save(leg); }
-            } else broker.modifyBracketStop(context, parent, child, stop);
+                if (!Objects.equals(leg.getStopLoss(), currentStop)) {
+                    log.info("BTP sibling stop broker-confirmed trade={} parent={} child={} previousLocalStop={} brokerStop={}",
+                            leg.getId(), leg.getOrderId(), child.optString("orderId"), leg.getStopLoss(), currentStop);
+                    leg.setStopLoss(currentStop); trades.save(leg);
+                }
+            } else {
+                log.info("BTP sibling stop move trade={} parent={} child={} side={} brokerEntry={} currentStop={} requestedStop={} reason=closer-target-filled",
+                        leg.getId(), leg.getOrderId(), child.optString("orderId"), sell ? "SELL" : "BUY", entry, currentStop, stop);
+                broker.modifyBracketStop(context, parent, child, stop);
+            }
         }
     }
 

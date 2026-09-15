@@ -8,6 +8,8 @@ import org.springframework.util.StringUtils;
 
 /** Price alignment using the broker's instrument identity and published tick. */
 public final class SharekhanTickPrices {
+    private static final BigDecimal DEFAULT_OPTION_TICK = new BigDecimal("0.05");
+
     private SharekhanTickPrices() { }
 
     public static BigDecimal tickSize(ScriptMasterRepository repository, Integer scripCode, String exchange) {
@@ -16,10 +18,20 @@ public final class SharekhanTickPrices {
         }
         return repository.findById(scripCode)
                 .filter(script -> exchange.equalsIgnoreCase(script.getExchange()))
-                .map(ScriptMasterEntity::getTickSize)
-                .filter(tick -> Double.isFinite(tick) && tick > 0d)
-                .map(BigDecimal::valueOf)
+                .map(SharekhanTickPrices::publishedOrOptionTick)
                 .orElseThrow(() -> new IllegalArgumentException("No valid Sharekhan tick for " + exchange + ":" + scripCode));
+    }
+
+    private static BigDecimal publishedOrOptionTick(ScriptMasterEntity script) {
+        Double tick = script.getTickSize();
+        if (tick != null && Double.isFinite(tick) && tick > 0d) {
+            return BigDecimal.valueOf(tick);
+        }
+        // Sharekhan can omit ticks for BF options. Only a confirmed option may use this fallback.
+        if ("CE".equalsIgnoreCase(script.getOptionType()) || "PE".equalsIgnoreCase(script.getOptionType())) {
+            return DEFAULT_OPTION_TICK;
+        }
+        return null;
     }
 
     public static double round(double price, BigDecimal tickSize) {

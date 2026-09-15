@@ -110,23 +110,71 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
 
     /** SKAPI support's BKT child MODIFY contract retains the original buy intent. */
     public boolean modifyBracketStop(BrokerContext context, JSONObject parent, JSONObject child, double stop) {
+        long started = System.nanoTime();
         try {
             String token = bracketToken(context);
-            if (!StringUtils.hasText(token)) return false;
+            if (!StringUtils.hasText(token)) {
+                log.warn("BTP child stop modify skipped parent={} child={} reason=missing-scoped-token",
+                        parent.optString("orderId"), child.optString("orderId"));
+                return false;
+            }
             JSONObject payload = bracketStopPayload(context, parent, child, stop,
                     instrumentTickSize(parent.getInt("scripCode"), "NC"));
+            String[] secrets = {token, context.getApiKey(), context.getClientCode(), String.valueOf(context.getCustomerId())};
+            log.info("BTP child stop modify request parent={} child={} currentStop={} requestedStop={} payload={}",
+                    parent.optString("orderId"), child.optString("orderId"), child.opt("triggerPrice"), stop,
+                    safeBracketLog(payload.toString(), secrets));
             HttpRequest request = HttpRequest.newBuilder(URI.create("https://api.sharekhan.com/skapi/services/orders"))
                     .timeout(Duration.ofSeconds(25)).header("Content-Type", "application/json")
                     .header("api-key", context.getApiKey()).header("access-token", token)
                     .POST(HttpRequest.BodyPublishers.ofString(payload.toString())).build();
             var response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
-            JSONObject body = new JSONObject(response.body());
-            boolean accepted = response.statusCode() == 200 && body.optInt("status") == 200;
-            log.info("BTP child stop modify child={} stop={} accepted={}", child.optString("orderId"), stop, accepted);
+            JSONObject body = null;
+            try { body = new JSONObject(response.body()); } catch (org.json.JSONException ignored) { /* Logged safely below. */ }
+            boolean accepted = response.statusCode() == 200 && body != null && body.optInt("status") == 200;
+            log.info("BTP child stop modify parent={} child={} stop={} accepted={} httpStatus={} elapsedMs={} response={}",
+                    parent.optString("orderId"), child.optString("orderId"), stop, accepted, response.statusCode(),
+                    (System.nanoTime() - started) / 1_000_000, safeBracketLog(response.body(), secrets));
             return accepted;
         } catch (Exception e) {
-            log.warn("BTP child stop modification failed for child {}", child.optString("orderId"));
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            // Exception messages/stack traces can contain request credentials; log only the type.
+            log.warn("BTP child stop modification failed parent={} child={} stop={} elapsedMs={} errorType={}",
+                    parent.optString("orderId"), child.optString("orderId"), stop,
+                    (System.nanoTime() - started) / 1_000_000, e.getClass().getSimpleName());
             return false;
+        }
+    }
+
+    static String safeBracketLog(String raw, String... secrets) {
+        if (raw == null) return "[empty response]";
+        final Object json;
+        try { json = new JSONObject(raw); }
+        catch (org.json.JSONException e) { return "[non-JSON response omitted; length=" + raw.length() + "]"; }
+        redactBracketLog(json);
+        String safe = json.toString();
+        for (String secret : secrets) {
+            if (StringUtils.hasText(secret)) {
+                // JSONObject escapes embedded quotes/backslashes in string values.
+                String quoted = JSONObject.quote(secret);
+                safe = safe.replace(quoted.substring(1, quoted.length() - 1), "[REDACTED]");
+            }
+        }
+        return safe.length() > 4000 ? safe.substring(0, 4000) + "[truncated]" : safe;
+    }
+
+    private static void redactBracketLog(Object value) {
+        if (value instanceof JSONObject object) {
+            for (String key : object.keySet()) {
+                String normalized = key.replaceAll("[^a-zA-Z]", "").toLowerCase(java.util.Locale.ROOT);
+                if (normalized.contains("token") || normalized.contains("password") || normalized.contains("secret")
+                        || normalized.contains("apikey") || normalized.contains("authorization")
+                        || normalized.contains("customer") || normalized.contains("client") || normalized.contains("channeluser")) {
+                    object.put(key, "[REDACTED]");
+                } else redactBracketLog(object.opt(key));
+            }
+        } else if (value instanceof org.json.JSONArray array) {
+            for (Object element : array) redactBracketLog(element);
         }
     }
 

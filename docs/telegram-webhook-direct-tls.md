@@ -84,8 +84,12 @@ curl -I https://bot.example.com:8443/telegram/webhook
 ```bash
 curl https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook \
   -d "url=https://bot.example.com:8443/telegram/webhook" \
-  -d "secret_token=<same-secret-configured-in-app>"
+  -d "secret_token=<same-secret-configured-in-app>" \
+  --data-urlencode 'allowed_updates=["message","channel_post","callback_query"]'
 ```
+`callback_query` is required for Retry, Market, Cancel, and Disable StockBazaari buttons.
+Telegram retains the previous update filter when `allowed_updates` is omitted, so always include it when registering the webhook.
+
 Check status:
 ```bash
 curl https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo

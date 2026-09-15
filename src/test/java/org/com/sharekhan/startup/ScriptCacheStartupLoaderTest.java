@@ -7,13 +7,20 @@ import static org.mockito.Mockito.*;
 
 class ScriptCacheStartupLoaderTest {
     @Test
-    void refreshesExistingMasterWhenTickSizesAreMissingWithoutDeletingRows() throws Throwable {
+    void doesNotReloadOnDeploymentsWhenSomeBrokerRowsHaveNoTickSize() throws Throwable {
         var repository = mock(ScriptMasterRepository.class);
         var service = mock(ScriptMasterCacheService.class);
         when(repository.count()).thenReturn(5520L);
         when(repository.existsByTickSizeIsNull()).thenReturn(true);
-        new ScriptCacheStartupLoader(service, repository).loadScriptsIfEmpty();
-        for (String exchange : new String[]{"NF", "NC", "BF", "BC", "MX"}) verify(service).getScriptCache(exchange);
+        when(repository.findDistinctExchanges()).thenReturn(java.util.List.of("NF", "NC", "BF", "BC", "MX"));
+        // Each deployment creates a fresh loader while retaining the same database.
+        for (int deployment = 0; deployment < 2; deployment++) {
+            var loader = new ScriptCacheStartupLoader(service, repository);
+            loader.loadScriptsIfEmpty();
+            loader.retryPendingExchanges();
+        }
+        verifyNoInteractions(service);
+        verify(repository, never()).existsByTickSizeIsNull();
         verify(repository, never()).deleteAll();
         verify(repository, never()).deleteAllInBatch();
     }

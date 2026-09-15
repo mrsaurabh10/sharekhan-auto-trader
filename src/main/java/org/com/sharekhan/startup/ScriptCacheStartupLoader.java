@@ -41,7 +41,9 @@ public class ScriptCacheStartupLoader {
     private void refreshPendingExchanges() {
         if (!initialized) {
             try {
-                if (repository.count() == 0 || repository.existsByTickSizeIsNull()) {
+                // Some broker rows legitimately have no tick (for example CPSE has tickSize=0).
+                // Missing tick values are not evidence that the master needs reimporting.
+                if (repository.count() == 0) {
                     pendingExchanges.addAll(EXCHANGES);
                 } else {
                     // A prior process may have stopped after loading only some exchanges.
@@ -50,6 +52,9 @@ public class ScriptCacheStartupLoader {
                             .forEach(pendingExchanges::add);
                 }
                 initialized = true;
+                if (pendingExchanges.isEmpty()) {
+                    log.info("Sharekhan script master already populated; skipping startup refresh");
+                }
             } catch (Exception e) {
                 log.warn("Unable to inspect script master; will retry: {}", e.getMessage());
                 return;
