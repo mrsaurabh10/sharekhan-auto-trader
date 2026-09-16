@@ -39,14 +39,23 @@ public class TelegramNotificationService {
                                        @Value("${app.telegram.chat-id:}") String chatId) {
         this.botToken = botToken == null ? "" : botToken;
         this.chatId = chatId == null ? "" : chatId;
-        this.restTemplate = new RestTemplate();
+        this.restTemplate = createRestTemplate();
     }
 
     // For tests or direct wiring
     public TelegramNotificationService(String botToken, String chatId, RestTemplate restTemplate) {
         this.botToken = botToken == null ? "" : botToken;
         this.chatId = chatId == null ? "" : chatId;
-        this.restTemplate = restTemplate == null ? new RestTemplate() : restTemplate;
+        this.restTemplate = restTemplate == null ? createRestTemplate() : restTemplate;
+    }
+
+    private static RestTemplate createRestTemplate() {
+        // Telegram outages must not hold an entry decision lock indefinitely.
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(5000);
+        return new RestTemplate(factory);
     }
 
     public void sendTradeMessage(String title, String body) {
@@ -135,6 +144,64 @@ public class TelegramNotificationService {
         } catch (Exception e) {
             log.warn("Failed to send Telegram action message: {}", e.getMessage());
         }
+    }
+
+    /** Returns the message id only when Telegram acknowledged delivery; callers can retry failures. */
+    public Long sendEntryActionMessage(Long appUserId, String body, String token) {
+        if (botToken.isBlank() || chatId.isBlank()) return null;
+        try {
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("chat_id", chatId);
+            payload.put("text", "Entry awaiting your action ⚠️\nUserId: #" + appUserId + "\n" + body);
+            payload.put("reply_markup", Map.of("inline_keyboard", List.of(List.of(
+                    Map.of("text", "Retry", "callback_data", "entry:retry:" + token),
+                    Map.of("text", "Market", "callback_data", "entry:market:" + token),
+                    Map.of("text", "Cancel", "callback_data", "entry:cancel:" + token)))));
+            org.json.JSONObject response = telegramRequest("sendMessage", payload);
+            return response != null && response.optBoolean("ok")
+                    ? response.getJSONObject("result").getLong("message_id") : null;
+        } catch (Exception e) {
+            log.warn("Failed sending entry action message: {}", e.getClass().getSimpleName());
+            return null;
+        }
+    }
+
+    public boolean clearEntryActionButtons(Long messageId) {
+        if (messageId == null) return true;
+        try {
+            org.json.JSONObject response = telegramRequest("editMessageReplyMarkup", Map.of(
+                    "chat_id", chatId, "message_id", messageId,
+                    "reply_markup", Map.of("inline_keyboard", List.of())));
+            return response != null && response.optBoolean("ok");
+        } catch (Exception e) {
+            log.warn("Failed clearing entry buttons: {}", e.getClass().getSimpleName());
+            return false;
+        }
+    }
+
+    /** A private configured chat controls itself; in a shared admin chat only administrators may trade. */
+    public boolean isAuthorizedEntryActor(String senderId) {
+        if (senderId == null || chatId.isBlank()) return false;
+        if (!chatId.startsWith("-")) return chatId.equals(senderId);
+        try {
+            org.json.JSONObject response = telegramRequest("getChatMember", Map.of("chat_id", chatId, "user_id", senderId));
+            if (response == null || !response.optBoolean("ok")) return false;
+            String role = response.getJSONObject("result").optString("status");
+            return "creator".equals(role) || "administrator".equals(role);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private org.json.JSONObject telegramRequest(String method, Map<String, Object> payload) {
+        if (botToken.isBlank() || chatId.isBlank()) return null;
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        ResponseEntity<String> response = restTemplate.postForEntity(
+                "https://api.telegram.org/bot" + botToken + "/" + method,
+                new HttpEntity<>(payload, headers), String.class);
+        return response != null && response.getStatusCode().is2xxSuccessful() && response.getBody() != null
+                ? new org.json.JSONObject(response.getBody()) : null;
     }
 
     public void answerCallbackQuery(String callbackQueryId, String text) {

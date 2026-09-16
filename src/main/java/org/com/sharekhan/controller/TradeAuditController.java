@@ -2,7 +2,7 @@ package org.com.sharekhan.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.entity.TradeAuditEventEntity;
-import org.com.sharekhan.repository.TradeAuditEventRepository;
+import org.com.sharekhan.audit.AuditEventStore;
 import org.com.sharekhan.service.CurrentUserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,7 +16,7 @@ import java.util.List;
 @RequestMapping("/api/trades/audit")
 @RequiredArgsConstructor
 public class TradeAuditController {
-    private final TradeAuditEventRepository repository;
+    private final AuditEventStore auditEventStore;
     private final CurrentUserService currentUserService;
 
     @GetMapping
@@ -25,11 +25,11 @@ public class TradeAuditController {
         Long userId = currentUserService.currentAppUserIdOrNull();
         if (!currentUserService.isAdmin() && userId == null) return ResponseEntity.status(401).build();
         List<TradeAuditEventEntity> events = triggerRequestId != null
-                ? repository.findByTriggerRequestIdOrderByOccurredAtAsc(triggerRequestId)
-                : tradeId != null ? repository.findByTradeIdOrderByOccurredAtAsc(tradeId)
+                ? auditEventStore.findByTriggerRequestId(triggerRequestId)
+                : tradeId != null ? auditEventStore.findByTradeId(tradeId)
                 : currentUserService.isAdmin()
-                        ? repository.findTop200ByOrderByOccurredAtDesc()
-                        : repository.findTop200ByAppUserIdOrderByOccurredAtDesc(userId);
+                        ? auditEventStore.findTop200()
+                        : auditEventStore.findTop200ByAppUserId(userId);
         if (!currentUserService.isAdmin() && events.stream().anyMatch(event -> !userId.equals(event.getAppUserId()))) {
             return ResponseEntity.status(403).build();
         }

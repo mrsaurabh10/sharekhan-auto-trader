@@ -41,6 +41,11 @@ public class TelegramSignalParser implements TradingSignalParser {
             "\\bTRIGGER\\s+PRICE\\s*:\\s*BUY\\s*"
                     + "(?:ABOVE|ABIVE|ABV|ABVE)\\s*([\\d.]+)",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern TSL_KEYWORD_PATTERN = Pattern.compile(
+            "\\b(?:TSL|TRAIL(?:ING)?\\s*(?:SL|STOP(?:\\s*LOSS)?))\\b",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern LOTS_PATTERN = Pattern.compile(
+            "\\b(?:(\\d+)[ \\t]*LOTS?|LOTS?[ \\t]*(\\d+))\\b", Pattern.CASE_INSENSITIVE);
 
     @Override
     public Map<String, Object> parse(String text) {
@@ -178,18 +183,17 @@ public class TelegramSignalParser implements TradingSignalParser {
                 .findFirst()
                 .orElse(null);
         
-        // Parse Lots from dedicated LOTS line
-        Optional<String> lotsLine = lines.stream()
-                .filter(l -> l.toUpperCase().startsWith("LOTS"))
-                .findFirst();
-
         Integer quantity = null;
-        if (lotsLine.isPresent()) {
-            String lotsVal = lotsLine.get();
-            String lotsStr = lotsVal.replaceAll("(?i)^LOTS[\\s:\\-]*", "").trim();
-            Double d = tryParseDouble(lotsStr);
-            if (d != null) {
-                quantity = d.intValue();
+        // Preserve line boundaries here.  Flattening the message makes an SL
+        // value on one line look like '<SL> LOTS' when the next line starts
+        // with LOTS, e.g. 'SL 35\nLOTS 2' incorrectly becomes 35 lots.
+        Matcher lotsMatcher = LOTS_PATTERN.matcher(cleanedText);
+        if (lotsMatcher.find()) {
+            String lotsText = lotsMatcher.group(1) != null ? lotsMatcher.group(1) : lotsMatcher.group(2);
+            try {
+                quantity = Integer.parseInt(lotsText);
+            } catch (NumberFormatException ignored) {
+                // Leave quantity unset so the user's configured lot size applies.
             }
         }
 
@@ -226,6 +230,15 @@ public class TelegramSignalParser implements TradingSignalParser {
         // Set intraday false if "BTST" present anywhere in original message
         boolean intraday = !text.toUpperCase().contains("BTST");
         result.put("intraday", intraday);
+
+        boolean hasMultipleTargets = tryParseDouble(target2) != null || tryParseDouble(target3) != null;
+        boolean tslRequested = TSL_KEYWORD_PATTERN.matcher(normalizedForQuick).find();
+        // Telegram recommendations with multiple targets and lots are staged by default:
+        // book a portion at each target and protect the remaining position.
+        boolean defaultTsl = quantity != null && quantity > 1 && hasMultipleTargets;
+        if (tslRequested || defaultTsl) {
+            result.put("tslEnabled", true);
+        }
         
         // Pass quantity/lots in "quantity" field
         if (quantity != null) {
@@ -311,7 +324,11 @@ public class TelegramSignalParser implements TradingSignalParser {
         if ("CE".equalsIgnoreCase(optionType)) {
             return stopLoss > target;
         }
-        return "PE".equalsIgnoreCase(optionType) && stopLoss < target;
+        // Telegram option signals express both CE and PE levels as option
+        // premiums. A PE stop below its target is therefore normal (for
+        // example: entry 93, SL 65, target 110), not a reversed spot-price
+        // stop. Keep the explicit user-provided PE stop unchanged.
+        return false;
     }
 
     private boolean containsBreakoutKeyword(String text) {

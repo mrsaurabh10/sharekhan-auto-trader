@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.time.ZoneId;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -63,6 +64,16 @@ class LtpCacheServiceTest {
         cache.updateLtpAt(123, 141.0, today.atTime(9, 15, 5));
 
         assertThat(cache.getTodayOpeningPrice(123)).isEqualTo(140.0);
+    }
+
+    @Test
+    void keepsSharekhanWebsocketTickSeparateFromLaterPollingUpdate() {
+        LtpCacheService cache = new LtpCacheService();
+        cache.updateSharekhanWebSocketLtp(123, 40.50);
+        cache.updateLtp(123, 29.60); // e.g. a backup quote-provider poll
+
+        assertThat(cache.getLtp(123)).isEqualTo(29.60);
+        assertThat(cache.getFreshSharekhanWebSocketLtp(123, Duration.ofSeconds(1))).isEqualTo(40.50);
     }
 
 }

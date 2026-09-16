@@ -4,6 +4,11 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.junit.jupiter.api.Test;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -64,5 +69,16 @@ class TradeExecutionServiceRequestStatusSyncTest {
                 org.mockito.ArgumentMatchers.anyLong(),
                 org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void recognizesSharekhanTriggeredRequestStatusWhileOrderRemainsPending() {
+        JSONObject history = new JSONObject().put("data", new JSONArray().put(new JSONObject()
+                .put("orderStatus", "Pending")
+                .put("requestStatus", "TRIGGERED")
+                .put("openQty", 700)
+                .put("execQty", 0)));
+
+        assertThat((Boolean) ReflectionTestUtils.invokeMethod(service, "isBrokerTriggerActivated", history)).isTrue();
     }
 }

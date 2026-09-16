@@ -91,8 +91,19 @@ public class ShoonyaInstrumentMasterService {
 
         String expiry = shoonyaExpiry(script.getExpiry());
         if (!StringUtils.hasText(expiry)) return Optional.empty();
+        // Sharekhan calls BFO index options SENSEX, while Shoonya's BFO master
+        // records their underlying as BSXOPT.  Resolve against the provider's
+        // canonical underlying so a valid SENSEX option can be quoted.
+        String symbol = shoonyaOptionUnderlyingSymbol(exchange, script.getTradingSymbol());
         return repository.findFirstByExchangeIgnoreCaseAndSymbolIgnoreCaseAndExpiryIgnoreCaseAndOptionTypeIgnoreCaseAndStrikePrice(
-                exchange, script.getTradingSymbol().trim(), expiry, script.getOptionType().trim().toUpperCase(Locale.ROOT), script.getStrikePrice());
+                exchange, symbol, expiry, script.getOptionType().trim().toUpperCase(Locale.ROOT), script.getStrikePrice());
+    }
+
+    private String shoonyaOptionUnderlyingSymbol(String exchange, String tradingSymbol) {
+        if ("BFO".equalsIgnoreCase(exchange) && "SENSEX".equalsIgnoreCase(tradingSymbol == null ? "" : tradingSymbol.trim())) {
+            return "BSXOPT";
+        }
+        return tradingSymbol.trim();
     }
 
     /** Resolves either a cash or F&O script from the Sharekhan master to Shoonya. */

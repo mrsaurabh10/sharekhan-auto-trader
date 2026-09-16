@@ -95,6 +95,9 @@ public class TriggeredTradeSetupEntity {
     @Column(name = "source")
     private String source;
 
+    @Column(name = "broker_product_type")
+    private String brokerProductType;
+
     private Boolean gapProtectionEnabled;
     private Double gapDayOpen;
     private Double gapPreviousClose;

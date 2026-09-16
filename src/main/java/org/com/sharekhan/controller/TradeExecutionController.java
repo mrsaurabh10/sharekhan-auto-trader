@@ -66,16 +66,27 @@ public class TradeExecutionController {
     }
 
     @PostMapping("/move-sl-to-cost/{tradeId}")
-    public ResponseEntity<String> moveStopLossToCost(@PathVariable Long tradeId) {
+    public ResponseEntity<String> moveStopLossToCost(@PathVariable Long tradeId,
+                                                      @RequestParam(required = false) String reference) {
         if (!canMutateTrade(tradeId)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Forbidden: trade does not belong to user");
         }
-        boolean updated = tradeExecutionService.moveStopLossToCost(tradeId);
-        if (updated) {
-            return ResponseEntity.ok("Stop Loss moved to cost.");
-        } else {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Failed to update stop loss.");
+        TradeExecutionService.CostStopReference costReference = null;
+        if (reference != null && !reference.isBlank()) {
+            try {
+                costReference = TradeExecutionService.CostStopReference.valueOf(reference.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return ResponseEntity.badRequest().body("reference must be SPOT or PREMIUM");
+            }
         }
+        return switch (tradeExecutionService.moveStopLossToCost(tradeId, costReference)) {
+            case UPDATED_SPOT -> ResponseEntity.ok("Stop Loss moved to spot entry cost.");
+            case UPDATED_PREMIUM_BREAK_EVEN -> ResponseEntity.ok("Stop Loss moved to option premium net break-even (charges included).");
+            case REFERENCE_CHOICE_REQUIRED -> ResponseEntity.badRequest()
+                    .body("Choose whether cost SL should use SPOT or PREMIUM.");
+            case INVALID_COST_PRICE -> ResponseEntity.badRequest().body("A valid entry cost is unavailable for this trade.");
+            case TRADE_NOT_FOUND -> ResponseEntity.status(HttpStatus.NOT_FOUND).body("Trade not found.");
+        };
     }
 
     @PostMapping("/execution/{id}/reset-to-executed")

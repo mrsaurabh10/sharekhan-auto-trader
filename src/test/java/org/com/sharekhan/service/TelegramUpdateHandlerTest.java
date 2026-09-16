@@ -41,6 +41,34 @@ class TelegramUpdateHandlerTest {
         verify(notifications).answerCallbackQuery(eq("callback-1"), contains("not allowed"));
     }
 
+    @Test
+    void dispatchesEntryButtonOnlyForAuthorizedActorAndChat() {
+        TelegramNotificationService notifications = mock(TelegramNotificationService.class);
+        TradeExecutionService execution = mock(TradeExecutionService.class);
+        TelegramUpdateHandler handler = new TelegramUpdateHandler(mock(TradingMessageService.class),
+                mock(UserConfigService.class), notifications, "-100123");
+        org.springframework.test.util.ReflectionTestUtils.setField(handler, "tradeExecutionService", execution);
+        org.mockito.Mockito.when(notifications.isAuthorizedEntryActor("42")).thenReturn(true);
+        org.mockito.Mockito.when(execution.handleEntryAction(88L, "token", "market")).thenReturn("Repriced");
+        handler.handleUpdate(Map.of("callback_query", Map.of("id", "cb", "data", "entry:market:88:token",
+                "from", Map.of("id", 42), "message", Map.of("chat", Map.of("id", "-100123")))));
+        verify(execution).handleEntryAction(88L, "token", "market");
+        verify(notifications).sendTradeMessage(eq("Entry action — trade #88"), eq("Repriced"));
+    }
+
+    @Test
+    void rejectsEntryActionFromUnauthorizedSenderInConfiguredChat() {
+        TelegramNotificationService notifications = mock(TelegramNotificationService.class);
+        TradeExecutionService execution = mock(TradeExecutionService.class);
+        TradingMessageService messages = mock(TradingMessageService.class);
+        TelegramUpdateHandler handler = new TelegramUpdateHandler(messages,
+                mock(UserConfigService.class), notifications, "-100123");
+        org.springframework.test.util.ReflectionTestUtils.setField(handler, "tradeExecutionService", execution);
+        handler.handleUpdate(callbackUpdate("entry:cancel:88:token", "-100123"));
+        org.mockito.Mockito.verifyNoInteractions(execution, messages);
+        verify(notifications).answerCallbackQuery(eq("callback-1"), contains("not allowed"));
+    }
+
     private Map<String, Object> callbackUpdate(String data, String chatId) {
         return Map.of("callback_query", Map.of(
                 "id", "callback-1",

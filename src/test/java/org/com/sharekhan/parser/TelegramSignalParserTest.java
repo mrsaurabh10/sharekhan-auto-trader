@@ -53,7 +53,7 @@ class TelegramSignalParserTest {
         assertEquals("95", result.get("target1"));
         assertEquals("100", result.get("target2"));
         assertEquals("105", result.get("target3"));
-        assertEquals(79.2, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(75.0, (Double) result.get("stopLoss"), 0.01);
         assertNotEquals(true, result.get("quickTrade"));
     }
 
@@ -70,7 +70,7 @@ class TelegramSignalParserTest {
     }
 
     @Test
-    void replacesPeStopLossBelowTargetWithTenPercentOptionStop() {
+    void preservesPeStopLossBelowTargetBecauseLevelsAreOptionPremiums() {
         Map<String, Object> result = parser.parse("""
                 BUY EICHERMOT 7400 PE ABOVE 175
                 TARGET :- 160 / 145
@@ -78,7 +78,23 @@ class TelegramSignalParserTest {
                 """);
 
         assertNotNull(result);
-        assertEquals(157.5, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(144.0, (Double) result.get("stopLoss"), 0.01);
+    }
+
+    @Test
+    void preservesRequestedPeStopLossWhenTargetsAreAboveEntry() {
+        Map<String, Object> result = parser.parse("""
+                BUY PIIND 2500 PE above 93
+                TARGET 110 135 170
+                SL 65
+                LOTS 2
+                """);
+
+        assertNotNull(result);
+        assertEquals("PIIND", result.get("symbol"));
+        assertEquals(93.0, (Double) result.get("entry"), 0.01);
+        assertEquals(65.0, (Double) result.get("stopLoss"), 0.01);
+        assertEquals(2, result.get("quantity"));
     }
 
     @Test
@@ -103,6 +119,61 @@ class TelegramSignalParserTest {
         assertEquals("CE", result.get("optionType"));
         assertEquals(true, result.get("quickTrade"));
         assertEquals(1, result.get("quantity"));
+    }
+
+    @Test
+    void enablesTslWhenTelegramSignalExplicitlyRequestsIt() {
+        Map<String, Object> result = parser.parse("""
+                BUY BAJAJ-AUTO 10100 CE ABOVE 120
+                TARGET :- 130
+                SL :- 110
+                TSL
+                """);
+
+        assertNotNull(result);
+        assertEquals(true, result.get("tslEnabled"));
+    }
+
+    @Test
+    void enablesTslByDefaultForMultipleTargetsAndMultipleLots() {
+        Map<String, Object> result = parser.parse("""
+                BUY BAJAJ-AUTO 10100 CE ABOVE 120
+                TARGET :- 130 / 140 / 150
+                SL :- 110
+                3 LOTS
+                """);
+
+        assertNotNull(result);
+        assertEquals(3, result.get("quantity"));
+        assertEquals(true, result.get("tslEnabled"));
+    }
+
+    @Test
+    void doesNotEnableDefaultTslForOneLot() {
+        Map<String, Object> result = parser.parse("""
+                BUY BAJAJ-AUTO 10100 CE ABOVE 120
+                TARGET :- 130 / 140
+                SL :- 110
+                LOTS 1
+                """);
+
+        assertNotNull(result);
+        assertEquals(1, result.get("quantity"));
+        assertNull(result.get("tslEnabled"));
+    }
+
+    @Test
+    void preservesLotsDirectiveOnLineAfterStopLoss() {
+        Map<String, Object> result = parser.parse("""
+                BUY TATAELXSI 3750 CE above 68
+                TARGET 90
+                SL 35
+                LOTS 2
+                """);
+
+        assertNotNull(result);
+        assertEquals(2, result.get("quantity"));
+        assertEquals(35.0, (Double) result.get("stopLoss"), 0.01);
     }
 
     @Test

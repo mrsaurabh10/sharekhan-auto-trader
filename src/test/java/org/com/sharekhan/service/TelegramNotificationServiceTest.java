@@ -11,43 +11,44 @@ import static org.mockito.Mockito.*;
 
 public class TelegramNotificationServiceTest {
 
-//    @Test
-//    public void testSendTradeMessage_skippedWhenNotConfigured() {
-//        RestTemplate rest = mock(RestTemplate.class);
-//        TelegramNotificationServiceTest svc = new TelegramNotificationService("", "", rest);
-//
-//        svc.sendTradeMessage("Title", "Body");
-//
-//        // RestTemplate should not be invoked
-//        verify(rest, never()).getForEntity(anyString(), eq(String.class));
-//    }
-//
-//    @Test
-//    public void testSendTradeMessage_sendsWhenConfigured_success() {
-//        RestTemplate rest = mock(RestTemplate.class);
-//        ResponseEntity<String> okResp = new ResponseEntity<>("{\"ok\":true}", HttpStatus.OK);
-//        when(rest.getForEntity(anyString(), eq(String.class))).thenReturn(okResp);
-//
-//        TelegramNotificationService svc = new TelegramNotificationService("FAKE_TOKEN", "12345", rest);
-//        svc.sendTradeMessage("T", "M");
-//
-//        ArgumentCaptor<String> cap = ArgumentCaptor.forClass(String.class);
-//        verify(rest, times(1)).getForEntity(cap.capture(), eq(String.class));
-//        String uri = cap.getValue();
-//        assertTrue(uri.contains("sendMessage"));
-//        assertTrue(uri.contains("chat_id=12345"));
-//        assertTrue(uri.contains("T%0AM")); // encoded newline between title and message
-//    }
-//
-//    @Test
-//    public void testSendTradeMessage_handlesNon2xx() {
-//        RestTemplate rest = mock(RestTemplate.class);
-//        ResponseEntity<String> errResp = new ResponseEntity<>("{\"ok\":false}", HttpStatus.BAD_REQUEST);
-//        when(rest.getForEntity(anyString(), eq(String.class))).thenReturn(errResp);
-//
-//        TelegramNotificationService svc = new TelegramNotificationService("FAKE_TOKEN", "12345", rest);
-//        svc.sendTradeMessage("T", "M");
-//
-//        verify(rest, times(1)).getForEntity(anyString(), eq(String.class));
-//    }
+    @Test
+    void entryPromptHasThreeVersionedButtonsAndReturnsAcknowledgedMessageId() {
+        RestTemplate rest = mock(RestTemplate.class);
+        when(rest.postForEntity(anyString(), any(), eq(String.class))).thenReturn(ResponseEntity.ok(
+                "{\"ok\":true,\"result\":{\"message_id\":123}}"));
+        TelegramNotificationService service = new TelegramNotificationService("fake", "12345", rest);
+        assertEquals(123L, service.sendEntryActionMessage(9L, "Order remains open", "88:token"));
+        ArgumentCaptor<org.springframework.http.HttpEntity> payload = ArgumentCaptor.forClass(org.springframework.http.HttpEntity.class);
+        verify(rest).postForEntity(endsWith("/sendMessage"), payload.capture(), eq(String.class));
+        org.json.JSONObject body = new org.json.JSONObject((java.util.Map<?, ?>) payload.getValue().getBody());
+        org.json.JSONArray buttons = body.getJSONObject("reply_markup").getJSONArray("inline_keyboard").getJSONArray(0);
+        assertEquals(3, buttons.length());
+        assertEquals("entry:retry:88:token", buttons.getJSONObject(0).getString("callback_data"));
+        assertEquals("entry:market:88:token", buttons.getJSONObject(1).getString("callback_data"));
+        assertEquals("entry:cancel:88:token", buttons.getJSONObject(2).getString("callback_data"));
+    }
+
+    @Test
+    void telegramFailureLeavesMessageUndeliveredForRecovery() {
+        RestTemplate rest = mock(RestTemplate.class);
+        when(rest.postForEntity(anyString(), any(), eq(String.class)))
+                .thenReturn(ResponseEntity.ok("{\"ok\":false}"));
+        assertNull(new TelegramNotificationService("fake", "12345", rest)
+                .sendEntryActionMessage(9L, "Order", "88:token"));
+    }
+
+    @Test
+    void privateChatAuthorizesOnlyItsOwnerAndGroupRequiresAdmin() {
+        RestTemplate rest = mock(RestTemplate.class);
+        TelegramNotificationService privateChat = new TelegramNotificationService("fake", "12345", rest);
+        assertTrue(privateChat.isAuthorizedEntryActor("12345"));
+        assertFalse(privateChat.isAuthorizedEntryActor("54321"));
+        verifyNoInteractions(rest);
+        TelegramNotificationService group = new TelegramNotificationService("fake", "-12345", rest);
+        when(rest.postForEntity(anyString(), any(), eq(String.class))).thenReturn(
+                ResponseEntity.ok("{\"ok\":true,\"result\":{\"status\":\"member\"}}"),
+                ResponseEntity.ok("{\"ok\":true,\"result\":{\"status\":\"administrator\"}}"));
+        assertFalse(group.isAuthorizedEntryActor("42"));
+        assertTrue(group.isAuthorizedEntryActor("42"));
+    }
 }

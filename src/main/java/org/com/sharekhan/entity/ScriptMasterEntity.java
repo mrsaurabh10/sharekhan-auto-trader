@@ -26,6 +26,8 @@ public class ScriptMasterEntity {
     private Double strikePrice;
     private String expiry;
     private Integer lotSize;
+    @Column(name = "tick_size")
+    private Double tickSize;
     private String optionType;
 
     // NOTE: TriggeredTradeSetupEntity is defined as a standalone entity in

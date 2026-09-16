@@ -1,6 +1,7 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
@@ -14,6 +15,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class OrderStatusPollingServiceGapReentryTest {
 
@@ -67,5 +69,16 @@ class OrderStatusPollingServiceGapReentryTest {
         service.rearmGapFillRequest(trade);
 
         verify(requestRepo, never()).rearmGapFillOnce(82L);
+    }
+
+    @Test
+    void keepsPollingBrokerExitOrderAfterTargetHitClaimsStagedLeg() {
+        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
+                .status(TriggeredTradeStatus.EXIT_TRIGGERED)
+                .orderId("entry-order")
+                .exitOrderId("target-order")
+                .build();
+
+        assertThat(OrderStatusPollingService.isExitOrder(trade)).isTrue();
     }
 }
