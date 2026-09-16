@@ -48,20 +48,32 @@ class SharekhanBrokerServiceTest {
         assertThat(payload.getString("childSlPrice")).isEqualTo("102.00");
     }
 
-    @Test void modifiesTheChildWithSupportConfirmedBuyIntentAndParentPrices() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"B", "S"})
+    void modifiesTheParentWithOriginalDirectionAndParentPrices(String side) {
         var context = new BrokerContext(73196L, "key", "CLIENT", "Sharekhan", 2L);
         var parent = new JSONObject().put("orderId","P1").put("customerId",73196).put("scripCode",15332)
-                .put("tradingSymbol","NMDC").put("orderPrice","84.85").put("bookProfitPrice","85.55");
+                .put("tradingSymbol","NMDC").put("orderPrice","84.85").put("bookProfitPrice", "S".equals(side) ? "83.55" : "85.55")
+                .put("buySell", side);
         var child = new JSONObject().put("orderId","C1").put("mpCoverOrderId","P1").put("childOrder",true)
                 .put("customerId",73196).put("orderQty",3).put("rmsCode","SKNSE6");
         var payload = SharekhanBrokerService.bracketStopPayload(context,parent,child,84.85, new BigDecimal("0.01"));
-        assertThat(payload.getString("orderId")).isEqualTo("C1");
-        assertThat(payload.getString("transactionType")).isEqualTo("B");
+        assertThat(payload.getString("orderId")).isEqualTo("P1").isNotEqualTo(child.getString("orderId"));
+        assertThat(payload.getString("transactionType")).isEqualTo(side);
+        assertThat(payload.getString("requestType")).isEqualTo("MODIFY");
+        assertThat(payload.getString("orderType")).isEqualTo("BKT");
+        assertThat(payload.getString("price")).isEqualTo("84.85");
+        assertThat(payload.getLong("quantity")).isEqualTo(3);
         assertThat(payload.getString("productType")).isEqualTo("BIGTRADEPLUS");
         assertThat(payload.getString("childSlPrice")).isEqualTo("84.85");
-        assertThat(payload.getString("bookProfitPrice")).isEqualTo("85.55");
+        assertThat(payload.getString("bookProfitPrice")).isEqualTo(parent.getString("bookProfitPrice"));
         assertThat(payload.getString("rmsCode")).isEqualTo("SKNSE6");
         assertThat(payload.getInt("triggerPrice")).isZero();
+        assertThat(child.getString("orderId")).isEqualTo("C1");
+        child.put("mpCoverOrderId", "UNRELATED-PARENT");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> SharekhanBrokerService.bracketStopPayload(
+                context, parent, child, 84.85, new BigDecimal("0.01")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessage("Invalid BTP child mapping");
     }
 
     @Test

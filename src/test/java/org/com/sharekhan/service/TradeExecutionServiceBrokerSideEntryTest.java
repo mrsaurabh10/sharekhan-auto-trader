@@ -25,6 +25,8 @@ import org.com.sharekhan.service.broker.TriggerPriceEntryBrokerService;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.mockito.ArgumentCaptor;
@@ -55,6 +57,42 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TradeExecutionServiceBrokerSideEntryTest {
+
+    @ParameterizedTest
+    @CsvSource({
+            "awr, 105, 110", "AWR, 95, 110",
+            "StockBazaari, 105, 110", "stockbazaari, 95, 110",
+            "manual, 105, 115", "manual, 95, 105",
+            "Sharekhan, 105, 110"
+    })
+    void appliesSourceTargetPolicyForImmediateAndConfirmedFills(String source, double fill, double target) {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        for (String method : List.of("applyImmediateEntryExecution", "applyConfirmedEntryPrice")) {
+            TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+            trade.setSource(source);
+            trade.setEntryPrice(100.0);
+            trade.setStopLoss(90.0);
+            trade.setTarget1(110.0);
+            trade.setTarget2(120.0);
+            trade.setTarget3(130.0);
+            trade.setUseSpotForEntry(false);
+
+            if ("applyImmediateEntryExecution".equals(method)) {
+                ReflectionTestUtils.invokeMethod(ctx.service, method, trade,
+                        OrderPlacementResult.builder().success(true).executedPrice(fill).build());
+            } else {
+                ReflectionTestUtils.invokeMethod(ctx.service, method, trade, fill);
+            }
+
+            assertThat(trade.getTarget1()).as(method).isEqualTo(target);
+            assertThat(trade.getTarget2()).as(method).isEqualTo(target + 10);
+            assertThat(trade.getTarget3()).as(method).isEqualTo(target + 20);
+            assertThat(trade.getActualEntryPrice()).isEqualTo(fill);
+            boolean sharekhan = "Sharekhan".equalsIgnoreCase(source);
+            assertThat(trade.getEntryPrice()).isEqualTo(sharekhan ? 100.0 : fill);
+            assertThat(trade.getStopLoss()).isEqualTo(sharekhan ? 90.0 : fill - 10);
+        }
+    }
 
     @Test
     void enablesTslForMultiLotAtrAndStockBazaariSignalsOnly() {
@@ -167,6 +205,82 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(targetThree.getStopLoss()).isEqualTo(120.0);
         verify(ctx.triggeredRepo).save(targetTwo);
         verify(ctx.triggeredRepo).save(targetThree);
+    }
+
+    @Test
+    void repricedBritanniaTargetStillMovesRemainingStopsToCostAfterFill() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker();
+        TriggeredTradeSetupEntity first = new TriggeredTradeSetupEntity();
+        first.setId(9290L);
+        first.setSymbol("BRITANNIA");
+        first.setAppUserId(1L);
+        first.setBrokerCredentialsId(55L);
+        first.setTargetOrderGroupId(9290L);
+        first.setTargetStage(1);
+        first.setActualEntryPrice(85.85);
+        first.setTarget1(93.85);
+        first.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        first.setExitReason("TARGET_ORDER_AUTO");
+        first.setExitOrderId("205600634");
+        when(ctx.triggeredRepo.findById(9290L)).thenReturn(Optional.of(first));
+        TriggeredTradeSetupEntity second = new TriggeredTradeSetupEntity();
+        second.setId(9295L);
+        second.setTargetStage(2);
+        second.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        second.setStopLoss(65.85);
+        TriggeredTradeSetupEntity third = new TriggeredTradeSetupEntity();
+        third.setId(9296L);
+        third.setTargetStage(3);
+        third.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        third.setStopLoss(65.85);
+        when(ctx.triggeredRepo.findByTargetOrderGroupIdAndStatusIn(eq(9290L), any()))
+                .thenReturn(List.of(first, second, third));
+
+        assertThat(ctx.service.modifyExitOrderPrice(9290L, 93.0, "MANUAL_MODIFY").isSuccess()).isTrue();
+        // A second edit must preserve the purpose too, without moving stops before a fill.
+        assertThat(ctx.service.modifyExitOrderPrice(9290L, 93.0, "MANUAL_MODIFY").isSuccess()).isTrue();
+        assertThat(first.getExitReason()).isEqualTo("TARGET_ORDER_AUTO");
+        assertThat(second.getStopLoss()).isEqualTo(65.85);
+        assertThat(third.getStopLoss()).isEqualTo(65.85);
+
+        first.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+        first.setExitPrice(93.0);
+        ctx.service.advanceStagedTargetStopsAfterTargetExit(first);
+
+        assertThat(second.getStopLoss()).isEqualTo(85.85);
+        assertThat(third.getStopLoss()).isEqualTo(85.85);
+        verify(ctx.triggeredRepo).save(second);
+        verify(ctx.triggeredRepo).save(third);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "EXIT_ORDER_PLACED, STOP_LOSS_HIT, MANUAL_MODIFY",
+            "TARGET_ORDER_PLACED, INTRADAY_CLOSE, MANUAL_MODIFY",
+            "TARGET_ORDER_PLACED, TARGET_ORDER_AUTO, INTRADAY_CLOSE"
+    })
+    void nonTargetExitModificationsDoNotAdvanceStagedStops(
+            TriggeredTradeStatus status, String existingReason, String requestedReason) {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker();
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setId(88L);
+        trade.setBrokerCredentialsId(55L);
+        trade.setTargetOrderGroupId(88L);
+        trade.setTargetStage(1);
+        trade.setActualEntryPrice(85.85);
+        trade.setStatus(status);
+        trade.setExitReason(existingReason);
+        trade.setExitOrderId("EXIT-1");
+        ctx.savedTrade.set(trade);
+
+        assertThat(ctx.service.modifyExitOrderPrice(88L, 78.2, requestedReason).isSuccess()).isTrue();
+        assertThat(trade.getExitReason()).isEqualTo(requestedReason);
+        trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+        ctx.service.advanceStagedTargetStopsAfterTargetExit(trade);
+
+        verify(ctx.triggeredRepo, never()).findByTargetOrderGroupIdAndStatusIn(any(), any());
     }
 
     @Test

@@ -566,6 +566,23 @@ public class TradeExecutionService {
         return trigger.getTriggerRequestId() != null ? trigger.getTriggerRequestId() : trigger.getId();
     }
 
+    private void adjustTargetsForEntryPrice(TriggeredTradeSetupEntity trade, double diff) {
+        // These sources publish absolute targets that remain valid regardless of the fill price.
+        if ("awr".equalsIgnoreCase(trade.getSource())
+                || "StockBazaari".equalsIgnoreCase(trade.getSource())) {
+            return;
+        }
+        if (trade.getTarget1() != null) {
+            trade.setTarget1(trade.getTarget1() + diff);
+        }
+        if (trade.getTarget2() != null) {
+            trade.setTarget2(trade.getTarget2() + diff);
+        }
+        if (trade.getTarget3() != null) {
+            trade.setTarget3(trade.getTarget3() + diff);
+        }
+    }
+
     private boolean isSharekhanSource(String source) {
         return "Sharekhan".equalsIgnoreCase(source);
     }
@@ -1197,20 +1214,12 @@ public class TradeExecutionService {
             if (originalEntryPrice != null) {
                 double diff = executedPrice - originalEntryPrice;
                 if (Math.abs(diff) > 0.0001) {
-                    log.info("Adjusting SL and Targets for broker-side entry trade due to immediate execution price difference: {}. OriginalEntry={}, Executed={}",
+                    log.info("Applying entry fill adjustments for broker-side entry trade due to immediate execution price difference: {}. OriginalEntry={}, Executed={}",
                             diff, originalEntryPrice, executedPrice);
                     if (trade.getStopLoss() != null) {
                         trade.setStopLoss(trade.getStopLoss() + diff);
                     }
-                    if (trade.getTarget1() != null) {
-                        trade.setTarget1(trade.getTarget1() + diff);
-                    }
-                    if (trade.getTarget2() != null) {
-                        trade.setTarget2(trade.getTarget2() + diff);
-                    }
-                    if (trade.getTarget3() != null) {
-                        trade.setTarget3(trade.getTarget3() + diff);
-                    }
+                    adjustTargetsForEntryPrice(trade, diff);
                 }
             }
             trade.setEntryPrice(executedPrice);
@@ -2190,20 +2199,12 @@ public class TradeExecutionService {
                         if (originalEntryPrice != null && executedPrice != null) {
                             double diff = executedPrice - originalEntryPrice;
                             if (Math.abs(diff) > 0.0001) {
-                                log.info("Adjusting SL and Targets for trade {} due to immediate execution price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}", 
+                                log.info("Applying entry fill adjustments for trade {} due to immediate execution price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}",
                                     triggeredTradeSetupEntity.getId(), diff, isSpotEntry, originalEntryPrice, executedPrice);
                                 if (triggeredTradeSetupEntity.getStopLoss() != null) {
                                     triggeredTradeSetupEntity.setStopLoss(triggeredTradeSetupEntity.getStopLoss() + diff);
                                 }
-                                if (triggeredTradeSetupEntity.getTarget1() != null) {
-                                    triggeredTradeSetupEntity.setTarget1(triggeredTradeSetupEntity.getTarget1() + diff);
-                                }
-                                if (triggeredTradeSetupEntity.getTarget2() != null) {
-                                    triggeredTradeSetupEntity.setTarget2(triggeredTradeSetupEntity.getTarget2() + diff);
-                                }
-                                if (triggeredTradeSetupEntity.getTarget3() != null) {
-                                    triggeredTradeSetupEntity.setTarget3(triggeredTradeSetupEntity.getTarget3() + diff);
-                                }
+                                adjustTargetsForEntryPrice(triggeredTradeSetupEntity, diff);
                             }
                         }
                         triggeredTradeSetupEntity.setEntryPrice(executedPrice);
@@ -5009,6 +5010,13 @@ public class TradeExecutionService {
     public ModifyExitOrderResult modifyExitOrderPrice(Long tradeId, double newPrice, String reason) {
         TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(tradeId)
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + tradeId));
+        // Repricing an active target does not change its purpose. Its confirmed
+        // fill must still advance the stops on the remaining staged legs.
+        if ("MANUAL_MODIFY".equalsIgnoreCase(reason)
+                && trade.getStatus() == TriggeredTradeStatus.TARGET_ORDER_PLACED
+                && isTargetExitReason(trade.getExitReason())) {
+            reason = trade.getExitReason();
+        }
         return modifyExistingExitOrder(trade, newPrice, reason, trade.getStatus());
     }
 
@@ -5198,20 +5206,12 @@ public class TradeExecutionService {
             if (originalTriggerPrice != null) {
                 double diff = price - originalTriggerPrice;
                 if (Math.abs(diff) > 0.0001) {
-                    log.info("Adjusting SL and Targets for trade {} due to entry price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}",
+                    log.info("Applying entry fill adjustments for trade {} due to entry price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}",
                             tradeSetupEntity.getId(), diff, false, originalTriggerPrice, price);
                     if (tradeSetupEntity.getStopLoss() != null) {
                         tradeSetupEntity.setStopLoss(tradeSetupEntity.getStopLoss() + diff);
                     }
-                    if (tradeSetupEntity.getTarget1() != null) {
-                        tradeSetupEntity.setTarget1(tradeSetupEntity.getTarget1() + diff);
-                    }
-                    if (tradeSetupEntity.getTarget2() != null) {
-                        tradeSetupEntity.setTarget2(tradeSetupEntity.getTarget2() + diff);
-                    }
-                    if (tradeSetupEntity.getTarget3() != null) {
-                        tradeSetupEntity.setTarget3(tradeSetupEntity.getTarget3() + diff);
-                    }
+                    adjustTargetsForEntryPrice(tradeSetupEntity, diff);
                 }
             }
         } else if (sharekhanSource) {

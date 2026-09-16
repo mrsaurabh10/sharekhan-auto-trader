@@ -108,7 +108,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                 ? info.getToken() : null;
     }
 
-    /** SKAPI support's BKT child MODIFY contract retains the original buy intent. */
+    /** SKAPI's corrected BKT MODIFY contract addresses the parent; the child is retained for tracking. */
     public boolean modifyBracketStop(BrokerContext context, JSONObject parent, JSONObject child, double stop) {
         long started = System.nanoTime();
         try {
@@ -184,7 +184,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                 || child.getLong("customerId") != context.getCustomerId()
                 || child.optString("rmsCode").isBlank()) throw new IllegalArgumentException("Invalid BTP child mapping");
         JSONObject order = new JSONObject();
-        order.put("orderId", child.getString("orderId"));
+        order.put("orderId", parent.getString("orderId"));
         order.put("customerId", context.getCustomerId());
         order.put("scripCode", parent.getInt("scripCode"));
         order.put("tradingSymbol", parent.getString("tradingSymbol"));
