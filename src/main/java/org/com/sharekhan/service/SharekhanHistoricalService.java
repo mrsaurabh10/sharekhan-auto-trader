@@ -136,6 +136,15 @@ public class SharekhanHistoricalService {
                                                        String intervalSegment,
                                                        LocalDate from,
                                                        LocalDate to) {
+        return getRecentHistoricalCandles(scripCode, intervalSegment).stream()
+                .filter(candle -> candle.date() != null)
+                .filter(candle -> from == null || !candle.date().isBefore(from))
+                .filter(candle -> to == null || !candle.date().isAfter(to))
+                .toList();
+    }
+
+    /** Sharekhan returns available recent history; dates are filtered locally by callers needing a range. */
+    public List<HistoricalCandle> getRecentHistoricalCandles(Integer scripCode, String intervalSegment) {
         if (scripCode == null) {
             return List.of();
         }
@@ -160,16 +169,20 @@ public class SharekhanHistoricalService {
         }
 
         try {
-            String intervalPath = buildIntervalPath(intervalSegment, from, to);
-            SharekhanConnect client = SharekhanConsoleSilencer.createClient(null, apiKey, accessToken);
-            JSONObject response = SharekhanConsoleSilencer.call(() ->
-                    client.getHistorical(exchange, String.valueOf(scripCode), intervalPath));
+            String intervalPath = StringUtils.hasText(intervalSegment) ? intervalSegment.trim() : DEFAULT_INTERVAL_SEGMENT;
+            JSONObject response = requestHistorical(exchange, String.valueOf(scripCode), intervalPath, apiKey, accessToken);
             return parseHistoricalCandles(response);
         } catch (Exception ex) {
             log.warn("Failed to fetch Sharekhan historical candles for scrip {}: {}", scripCode, ex.getMessage());
             log.debug("Historical candle fetch error", ex);
             return List.of();
         }
+    }
+
+    JSONObject requestHistorical(String exchange, String scripCode, String interval, String apiKey, String accessToken)
+            throws Exception {
+        SharekhanConnect client = SharekhanConsoleSilencer.createClient(null, apiKey, accessToken);
+        return SharekhanConsoleSilencer.call(() -> client.getHistorical(exchange, scripCode, interval));
     }
 
     private OptionalDouble fetchOpenPrice(Integer scripCode, LocalDate targetDate) {

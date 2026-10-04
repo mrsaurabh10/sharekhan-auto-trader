@@ -13,6 +13,7 @@ import org.com.sharekhan.service.TradeExecutionService;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.Optional;
@@ -26,6 +27,30 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class StrategySupportTest {
+
+    @Test
+    void bootstrapsIndicatorHistoryFromSharekhanAndPreservesLocallyCapturedPrices() {
+        MStockIntradayCandleService intraday = mock(MStockIntradayCandleService.class);
+        SharekhanHistoricalService historical = mock(SharekhanHistoricalService.class);
+        StrategyCandleHistoryService history = mock(StrategyCandleHistoryService.class);
+        StrategySupport support = new StrategySupport(mock(ScriptMasterRepository.class), mock(MStockInstrumentResolver.class),
+                mock(MStockInstrumentRepository.class), intraday, historical, mock(TradeExecutionService.class),
+                mock(TriggerTradeRequestRepository.class), history);
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 9, 30);
+        StrategyCandle captured = new StrategyCandle(now.toLocalDate().minusDays(3), LocalTime.of(15, 25), 100, 102, 99, 101, 1000L);
+        when(intraday.getIntradayCandles("NSE", "26000", "5minute")).thenReturn(List.of());
+        when(history.mergeAndSave(eq("NC:20000"), any(), any())).thenReturn(List.of(captured));
+        when(historical.getRecentHistoricalCandles(20000, "5minute")).thenReturn(List.of(
+                new SharekhanHistoricalService.HistoricalCandle(captured.date(), captured.time(), 90, 92, 89, 91)));
+
+        support.loadCompletedIndicatorCandles(spotScript("NIFTY", "NC", 20000), 50, now);
+        org.mockito.ArgumentCaptor<List<StrategyCandle>> incoming = org.mockito.ArgumentCaptor.forClass(List.class);
+        verify(history, org.mockito.Mockito.times(2)).mergeAndSave(eq("NC:20000"), incoming.capture(), eq(now));
+        assertThat(incoming.getAllValues().get(1)).hasSize(2);
+        assertThat(incoming.getAllValues().get(1).get(1)).isEqualTo(captured);
+        support.loadCompletedIndicatorCandles(spotScript("NIFTY", "NC", 20000), 50, now.plusMinutes(1));
+        verify(historical, org.mockito.Mockito.times(1)).getRecentHistoricalCandles(20000, "5minute");
+    }
 
     @Test
     void combinesMStockWithSharekhanHistoryWhenIntradayCandlesAreInsufficient() {
@@ -87,7 +112,7 @@ class StrategySupportTest {
         StrategySupport support = new StrategySupport(
                 mock(ScriptMasterRepository.class), resolver, instrumentRepository, intraday,
                 mock(SharekhanHistoricalService.class), mock(TradeExecutionService.class),
-                mock(TriggerTradeRequestRepository.class));
+                mock(TriggerTradeRequestRepository.class), mock(StrategyCandleHistoryService.class));
         ScriptMasterEntity kotak = spotScript("KOTAKBANK", "NC", 1922);
         when(resolver.resolveInstrumentKey(kotak)).thenReturn(Optional.of("NSE:KOTAKBANK-EQ"));
         when(instrumentRepository.findByInstrumentKey("NSE:KOTAKBANK-EQ")).thenReturn(Optional.empty());
@@ -106,7 +131,7 @@ class StrategySupportTest {
         StrategySupport support = new StrategySupport(
                 repository, mock(MStockInstrumentResolver.class), mock(MStockInstrumentRepository.class),
                 mock(MStockIntradayCandleService.class), mock(SharekhanHistoricalService.class),
-                mock(TradeExecutionService.class), mock(TriggerTradeRequestRepository.class));
+                mock(TradeExecutionService.class), mock(TriggerTradeRequestRepository.class), mock(StrategyCandleHistoryService.class));
         LocalDate tradeDate = LocalDate.of(2026, 7, 27);
         when(repository.findAllOptionExpiriesByTradingSymbolAndOptionType("RELIANCE", "CE"))
                 .thenReturn(List.of(
@@ -126,7 +151,7 @@ class StrategySupportTest {
         TradeExecutionService execution = mock(TradeExecutionService.class);
         StrategySupport support = new StrategySupport(
                 repository, resolver, instrumentRepository, intraday,
-                mock(SharekhanHistoricalService.class), execution, mock(TriggerTradeRequestRepository.class));
+                mock(SharekhanHistoricalService.class), execution, mock(TriggerTradeRequestRepository.class), mock(StrategyCandleHistoryService.class));
         ScriptMasterEntity spot = spotScript("360ONE", "NC", 13061);
         MStockInstrumentEntity instrument = MStockInstrumentEntity.builder()
                 .instrumentToken(13061L).instrumentKey("NSE:360ONE-EQ")
@@ -166,7 +191,7 @@ class StrategySupportTest {
         MStockIntradayCandleService intraday = mock(MStockIntradayCandleService.class);
         TradeExecutionService execution = mock(TradeExecutionService.class);
         StrategySupport support = new StrategySupport(repository, resolver, instrumentRepository, intraday,
-                mock(SharekhanHistoricalService.class), execution, mock(TriggerTradeRequestRepository.class));
+                mock(SharekhanHistoricalService.class), execution, mock(TriggerTradeRequestRepository.class), mock(StrategyCandleHistoryService.class));
         ScriptMasterEntity spot = spotScript("360ONE", "NC", 13061);
         MStockInstrumentEntity instrument = MStockInstrumentEntity.builder().instrumentToken(13061L)
                 .exchangeToken("13061").instrumentKey("NSE:360ONE-EQ").tradingSymbol("360ONE-EQ")
@@ -206,7 +231,7 @@ class StrategySupportTest {
                 mStockIntradayCandleService,
                 sharekhanHistoricalService,
                 mock(TradeExecutionService.class),
-                mock(TriggerTradeRequestRepository.class)
+                mock(TriggerTradeRequestRepository.class), mock(StrategyCandleHistoryService.class)
         );
     }
 

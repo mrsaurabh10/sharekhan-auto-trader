@@ -23,6 +23,7 @@ import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -50,8 +51,12 @@ public class StrategySubscriptionService {
             List<StrategySubscriptionEntity> existing = repository
                     .findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(
                             List.of(ACTIVE, TRIGGERED), templateId, symbol, request.getUserId());
-            if (existing != null && !existing.isEmpty()) {
-                StrategySubscriptionEntity found = existing.get(0);
+            StrategySubscriptionEntity matching = existing == null ? null : existing.stream()
+                    .filter(item -> Objects.equals(item.getBrokerCredentialsId(), request.getBrokerCredentialsId()))
+                    .filter(item -> effectiveSource(item.getSource(), templateId).equalsIgnoreCase(effectiveSource(request.getSource(), templateId)))
+                    .findFirst().orElse(null);
+            if (matching != null) {
+                StrategySubscriptionEntity found = matching;
                 if (!ACTIVE.equalsIgnoreCase(found.getStatus())) {
                     found.setStatus(ACTIVE);
                     found.setLastMessage("Strategy is active and will run daily until cancelled.");
@@ -153,7 +158,7 @@ public class StrategySubscriptionService {
                 .forEach(this::evaluate);
     }
 
-    private void evaluate(StrategySubscriptionEntity subscription) {
+    void evaluate(StrategySubscriptionEntity subscription) {
         try {
             boolean continuousFnoTemplate = isContinuousFnoTemplate(subscription.getTemplateId());
             if (!continuousFnoTemplate && triggeredToday(subscription)) {
@@ -176,16 +181,16 @@ public class StrategySubscriptionService {
             request.setIntraday(subscription.getIntraday());
             request.setUserId(subscription.getAppUserId());
             request.setBrokerCredentialsId(subscription.getBrokerCredentialsId());
-            request.setSource("strategy:" + subscription.getTemplateId());
+            request.setSource(effectiveSource(subscription.getSource(), subscription.getTemplateId()));
 
             StrategyApplyResponse response = strategyTemplateService.apply(request);
             subscription.setLastEvaluatedAt(LocalDateTime.now());
             subscription.setLastEvaluationStatus(response.getStatus());
             subscription.setLastMessage(response.getMessage());
-            if (response.getTradeRequest() != null) {
+            if (response.getTradeRequest() != null && (!"duplicate".equalsIgnoreCase(response.getStatus()) || matchingDailyDuplicate(subscription, response))) {
                 subscription.setGeneratedTradeRequestId(response.getTradeRequest().getId());
             }
-            if (!continuousFnoTemplate && ("triggered".equalsIgnoreCase(response.getStatus()) || "duplicate".equalsIgnoreCase(response.getStatus()))) {
+            if (!continuousFnoTemplate && ("triggered".equalsIgnoreCase(response.getStatus()) || ("duplicate".equalsIgnoreCase(response.getStatus()) && matchingDailyDuplicate(subscription, response)))) {
                 subscription.setStatus(ACTIVE);
                 subscription.setCompletedAt(LocalDateTime.now(MARKET_ZONE));
                 subscription.setLastMessage(response.getMessage() + " Strategy remains active and will reset for the next trading day unless cancelled.");
@@ -227,6 +232,35 @@ public class StrategySubscriptionService {
 
     private boolean isFnoMoverTemplate(String templateId) {
         return Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+    }
+
+    private boolean matchingDailyDuplicate(StrategySubscriptionEntity subscription, StrategyApplyResponse response) {
+        var trade = response.getTradeRequest();
+        return trade != null && trade.getStatus() != null && trade.getCreatedAt() != null
+                && trade.getCreatedAt().toLocalDate().equals(LocalDateTime.now(MARKET_ZONE).toLocalDate())
+                && Objects.equals(subscription.getAppUserId(), trade.getAppUserId())
+                && Objects.equals(subscription.getBrokerCredentialsId(), trade.getBrokerCredentialsId())
+                && subscription.getSymbol().equalsIgnoreCase(trade.getSymbol())
+                && (!subscription.getTemplateId().endsWith("_CE") || "CE".equalsIgnoreCase(trade.getOptionType()))
+                && (!subscription.getTemplateId().endsWith("_PE") || "PE".equalsIgnoreCase(trade.getOptionType()))
+                && trade.getStatus() != org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED
+                && trade.getStatus() != org.com.sharekhan.enums.TriggeredTradeStatus.FAILED
+                && trade.getStatus() != org.com.sharekhan.enums.TriggeredTradeStatus.CANCELLED
+                && expectedTradeSource(subscription).equalsIgnoreCase(trade.getSource());
+    }
+
+    private String expectedTradeSource(StrategySubscriptionEntity subscription) {
+        if (SpotAtrPreviousDayBigTradePlusStrategy.TEMPLATE_ID.equalsIgnoreCase(subscription.getTemplateId())) {
+            return SpotAtrPreviousDayBigTradePlusStrategy.SOURCE;
+        }
+        if (SpotAtrPreviousDayBigTradePlusSellStrategy.SELL_TEMPLATE_ID.equalsIgnoreCase(subscription.getTemplateId())) {
+            return SpotAtrPreviousDayBigTradePlusSellStrategy.SELL_SOURCE;
+        }
+        return effectiveSource(subscription.getSource(), subscription.getTemplateId());
+    }
+
+    private String effectiveSource(String source, String templateId) {
+        return StringUtils.hasText(source) ? source.trim() : "strategy:" + templateId;
     }
 
     private boolean isAutomaticUniverseTemplate(String templateId) {

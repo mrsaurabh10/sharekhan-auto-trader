@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,18 +21,59 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 class AbstractSupertrendRsiEmaAdxStrategyTest {
 
     private final StrategySupport support = mock(StrategySupport.class);
     private final IndicatorService indicatorService = mock(IndicatorService.class);
-    private final SupertrendRsiEmaAdxCeStrategy strategy = new SupertrendRsiEmaAdxCeStrategy(support, indicatorService);
+    private final SupertrendRsiEmaAdxCeStrategy strategy = new SupertrendRsiEmaAdxCeStrategy(support, indicatorService,
+            new SupertrendSignalRules(new org.com.sharekhan.config.SupertrendStrategyProperties()),
+            mock(SupertrendDecisionDiagnostics.class));
+
+    @Test
+    void eligibleMorningSignalExecutesWithPreviousSessionHistory() {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 9, 30);
+        List<StrategyCandle> candles = rollingCandles(now);
+        StrategyCandle latest = candles.get(49);
+        when(support.resolveSpotScript("NIFTY")).thenReturn(spotScript("NIFTY"));
+        when(support.loadCompletedIndicatorCandles(any(), anyInt(), any())).thenReturn(new CandleLoad(candles, true, null));
+        when(indicatorService.minimumCandles()).thenReturn(50);
+        when(indicatorService.computeSnapshot(anyList())).thenReturn(
+                new IndicatorSnapshot(latest, 190, 60, 59, 195, 25, 30, 15));
+        when(support.roundPrice(org.mockito.ArgumentMatchers.anyDouble())).thenAnswer(call -> call.getArgument(0));
+
+        assertThat(strategy.apply(request("NIFTY"), now).getStatus()).isEqualTo("triggered");
+        verify(support).executeTriggeredTrade(any());
+    }
+
+    @Test
+    void staleCachedIntradaySignalCannotTriggerAnEntry() {
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 9, 35);
+        when(support.resolveSpotScript("NIFTY")).thenReturn(spotScript("NIFTY"));
+        when(support.loadCompletedIndicatorCandles(any(), anyInt(), any()))
+                .thenReturn(new CandleLoad(rollingCandles(now), true, "feed unavailable"));
+        when(indicatorService.minimumCandles()).thenReturn(50);
+        when(support.waiting(any(), anyString(), anyString())).thenReturn(StrategyApplyResponse.builder().status("waiting").build());
+
+        assertThat(strategy.apply(request("NIFTY"), now).getStatus()).isEqualTo("waiting");
+        verify(indicatorService, never()).computeSnapshot(anyList());
+        verify(support, never()).executeTriggeredTrade(any());
+    }
+
+    private List<StrategyCandle> rollingCandles(LocalDateTime now) {
+        List<StrategyCandle> candles = new ArrayList<>();
+        for (int i = 0; i < 49; i++) candles.add(candle(now.toLocalDate().minusDays(3), LocalTime.of(9, 15).plusMinutes(i * 5L), 100 + i));
+        candles.add(candle(now.toLocalDate(), LocalTime.of(9, 25), 200));
+        return candles;
+    }
 
     @Test
     void minimumCandleGateUsesRollingHistoryNotOnlyToday() {
-        LocalDate today = LocalDate.now(StrategySupport.MARKET_ZONE);
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 9, 30);
+        LocalDate today = now.toLocalDate();
         LocalDate previousDay = today.minusDays(1);
-        LocalTime completedTime = LocalTime.now(StrategySupport.MARKET_ZONE).minusMinutes(10);
+        LocalTime completedTime = LocalTime.of(9, 25);
 
         List<StrategyCandle> candles = new ArrayList<>();
         for (int i = 0; i < 48; i++) {
@@ -40,12 +82,12 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
         candles.add(candle(today, completedTime, 200));
 
         when(support.resolveSpotScript("NIFTY")).thenReturn(spotScript("NIFTY"));
-        when(support.loadCandlesWithHistoricalFallback(any(), anyInt())).thenReturn(new CandleLoad(candles, false, null));
+        when(support.loadCompletedIndicatorCandles(any(), anyInt(), any())).thenReturn(new CandleLoad(candles, false, null));
         when(indicatorService.minimumCandles()).thenReturn(50);
         when(support.waiting(any(), anyString(), anyString()))
                 .thenReturn(StrategyApplyResponse.builder().status("waiting").build());
 
-        strategy.apply(request("NIFTY"));
+        strategy.apply(request("NIFTY"), now);
 
         ArgumentCaptor<String> messageCaptor = ArgumentCaptor.forClass(String.class);
         verify(support).waiting(any(), anyString(), messageCaptor.capture());
@@ -55,9 +97,10 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
 
     @Test
     void indicatorSnapshotReceivesCompletedRollingCandlesWithTodayAsLatest() {
-        LocalDate today = LocalDate.now(StrategySupport.MARKET_ZONE);
+        LocalDateTime now = LocalDateTime.of(2026, 10, 5, 9, 30);
+        LocalDate today = now.toLocalDate();
         LocalDate previousDay = today.minusDays(1);
-        LocalTime completedTime = LocalTime.now(StrategySupport.MARKET_ZONE).minusMinutes(10);
+        LocalTime completedTime = LocalTime.of(9, 25);
 
         List<StrategyCandle> candles = new ArrayList<>();
         for (int i = 0; i < 49; i++) {
@@ -66,12 +109,12 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
         candles.add(candle(today, completedTime, 200));
 
         when(support.resolveSpotScript("NIFTY")).thenReturn(spotScript("NIFTY"));
-        when(support.loadCandlesWithHistoricalFallback(any(), anyInt())).thenReturn(new CandleLoad(candles, false, null));
+        when(support.loadCompletedIndicatorCandles(any(), anyInt(), any())).thenReturn(new CandleLoad(candles, false, null));
         when(indicatorService.minimumCandles()).thenReturn(50);
         when(indicatorService.computeSnapshot(anyList()))
                 .thenThrow(new IllegalStateException("stop-after-capture"));
 
-        assertThatThrownBy(() -> strategy.apply(request("NIFTY")))
+        assertThatThrownBy(() -> strategy.apply(request("NIFTY"), now))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("stop-after-capture");
 

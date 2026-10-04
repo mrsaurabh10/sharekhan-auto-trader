@@ -93,6 +93,19 @@ app:
   scheduler:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
   strategy:
+    orb:
+      max-signal-delay-seconds: ${ORB_MAX_SIGNAL_DELAY_SECONDS:120}
+      max-spot-age-seconds: ${ORB_MAX_SPOT_AGE_SECONDS:30}
+      max-entry-deviation-risk: ${ORB_MAX_ENTRY_DEVIATION_RISK:0.25}
+    supertrend:
+      ce-rsi-min: ${SUPERTREND_CE_RSI_MIN:50}
+      ce-rsi-max: ${SUPERTREND_CE_RSI_MAX:75}
+      pe-rsi-min: ${SUPERTREND_PE_RSI_MIN:25}
+      pe-rsi-max: ${SUPERTREND_PE_RSI_MAX:50}
+      require-rsi-direction: ${SUPERTREND_REQUIRE_RSI_DIRECTION:false}
+      require-candle-colour: ${SUPERTREND_REQUIRE_CANDLE_COLOUR:true}
+      banknifty-adx-threshold: ${SUPERTREND_BANKNIFTY_ADX_THRESHOLD:18}
+      default-adx-threshold: ${SUPERTREND_DEFAULT_ADX_THRESHOLD:20}
     atr-prior-day:
       strict-entry:
         # Accuracy-first: avoid live-price/one-minute false breakouts.

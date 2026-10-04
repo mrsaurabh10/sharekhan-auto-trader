@@ -64,11 +64,13 @@ public class StrategySupport {
     private final SharekhanHistoricalService sharekhanHistoricalService;
     private final TradeExecutionService tradeExecutionService;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
+    private final StrategyCandleHistoryService candleHistoryService;
     @Autowired
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
     @Autowired(required = false)
     private TradeAuditService tradeAuditService;
     private final ConcurrentHashMap<FnoWarmupKey, FnoOptionContract> warmedFnoOptions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, LocalDateTime> indicatorHistoryAttempts = new ConcurrentHashMap<>();
 
     public StrategyApplyResponse waiting(StrategyMetadata metadata, String symbol, String message) {
         return StrategyApplyResponse.builder()
@@ -192,6 +194,31 @@ public class StrategySupport {
         return new CandleLoad(merged, intradayLoad.hasVolume(), intradayLoad.reason());
     }
 
+    /** Indicator history includes previous sessions and counts only completed five-minute candles. */
+    public CandleLoad loadCompletedIndicatorCandles(ScriptMasterEntity spotScript, int minimumCandles,
+                                                    LocalDateTime now) {
+        CandleLoad intraday = loadCandles(spotScript);
+        String key = spotScript.getExchange().trim().toUpperCase(Locale.ROOT) + ":" + spotScript.getScripCode();
+        List<StrategyCandle> completed = candleHistoryService.mergeAndSave(key, intraday.candles(), now);
+        LocalDateTime previousAttempt = indicatorHistoryAttempts.get(key);
+        if (completed.size() < minimumCandles
+                && (previousAttempt == null || !previousAttempt.plusMinutes(5).isAfter(now))) {
+            indicatorHistoryAttempts.put(key, now);
+            // Sharekhan documents a recent-history endpoint, not a server-side from/to range.
+            List<StrategyCandle> historical = sharekhanHistoricalService
+                    .getRecentHistoricalCandles(spotScript.getScripCode(), "5minute").stream()
+                    .filter(c -> c.date() != null && c.time() != null)
+                    .map(c -> new StrategyCandle(c.date(), c.time(), c.open(), c.high(), c.low(), c.close(), null))
+                    .toList();
+            // Existing locally captured MStock values win over bootstrap history at the same timestamp.
+            List<StrategyCandle> combined = new ArrayList<>(historical);
+            combined.addAll(completed);
+            completed = candleHistoryService.mergeAndSave(key, combined, now);
+        }
+        indicatorHistoryAttempts.entrySet().removeIf(entry -> entry.getValue().toLocalDate().isBefore(now.toLocalDate()));
+        return new CandleLoad(completed, completed.stream().anyMatch(StrategyCandle::hasVolume), intraday.reason());
+    }
+
     public TriggerTradeRequestEntity executeTriggeredTrade(TriggerRequest trigger) {
         return tradeExecutionService.executeTriggeredTrade(trigger);
     }
@@ -234,6 +261,14 @@ public class StrategySupport {
                 .details("entry=" + (trigger != null ? trigger.getEntryPrice() : null)
                         + ", stop=" + (trigger != null ? trigger.getStopLoss() : null))
                 .build());
+    }
+
+    public void warmUpSpotFeed(ScriptMasterEntity spotScript) {
+        try {
+            tradeExecutionService.warmUpSpotLtp(spotScript, "ORB strategy monitoring");
+        } catch (Exception e) {
+            log.warn("Unable to warm ORB spot feed: {}", e.getMessage());
+        }
     }
 
     public void warmUpAtmOptionLtp(StrategyApplyRequest request,
