@@ -171,12 +171,28 @@ public class SharekhanHistoricalService {
         try {
             String intervalPath = StringUtils.hasText(intervalSegment) ? intervalSegment.trim() : DEFAULT_INTERVAL_SEGMENT;
             JSONObject response = requestHistorical(exchange, String.valueOf(scripCode), intervalPath, apiKey, accessToken);
-            return parseHistoricalCandles(response);
+            List<HistoricalCandle> candles = parseHistoricalCandles(response);
+            if ("5minute".equalsIgnoreCase(intervalPath)) {
+                candles = candles.stream().map(this::normalizeFiveMinuteCandle).toList();
+            }
+            log.info("SHAREKHAN_HISTORY | exchange={} scrip={} interval={} parsed={}",
+                    exchange, scripCode, intervalPath, candles.size());
+            return candles;
         } catch (Exception ex) {
             log.warn("Failed to fetch Sharekhan historical candles for scrip {}: {}", scripCode, ex.getMessage());
             log.debug("Historical candle fetch error", ex);
             return List.of();
         }
+    }
+
+    /** Sharekhan can stamp five-minute bars at their last second; strategy candles use interval starts. */
+    private HistoricalCandle normalizeFiveMinuteCandle(HistoricalCandle candle) {
+        LocalTime time = candle.time();
+        if (time != null && time.getMinute() % 5 == 4 && time.getSecond() == 59 && time.getNano() == 0) {
+            LocalTime start = time.plusSeconds(1).minusMinutes(5);
+            return new HistoricalCandle(candle.date(), start, candle.open(), candle.high(), candle.low(), candle.close());
+        }
+        return candle;
     }
 
     JSONObject requestHistorical(String exchange, String scripCode, String interval, String apiKey, String accessToken)

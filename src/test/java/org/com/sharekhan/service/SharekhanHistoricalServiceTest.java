@@ -39,4 +39,31 @@ class SharekhanHistoricalServiceTest {
         assertThat(candles.get(0).close()).isEqualTo(101);
         verify(service).requestHistorical("NC", "20000", "5minute", "test-key", "test-token");
     }
+    @Test
+    void convertsSharekhanFiveMinuteEndStampsToStartsWithoutChangingAlreadyAlignedBars() throws Exception {
+        ScriptMasterRepository scripts = mock(ScriptMasterRepository.class);
+        TokenStoreService tokens = mock(TokenStoreService.class);
+        CryptoService crypto = mock(CryptoService.class);
+        when(scripts.findByScripCode(20000)).thenReturn(ScriptMasterEntity.builder().exchange("NC").scripCode(20000).build());
+        when(tokens.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN)).thenReturn(new TokenStoreService.TokenInfo("test-token", "test-key"));
+        when(crypto.decrypt("test-key")).thenReturn("test-key");
+        SharekhanHistoricalService service = spy(new SharekhanHistoricalService(scripts, tokens, crypto, new SharekhanProperties()));
+        JSONObject response = new JSONObject("""
+                {"status":200,"data":[
+                  {"tradeDate":"01/10/2026","tradeTime":"09:19:59","open":100,"high":102,"low":99,"close":101},
+                  {"tradeDate":"01/10/2026","tradeTime":"09:24:59","open":101,"high":103,"low":100,"close":102},
+                  {"tradeDate":"01/10/2026","tradeTime":"15:15:00","open":102,"high":104,"low":101,"close":103}
+                ]}
+                """);
+        doReturn(response).when(service).requestHistorical("NC", "20000", "5minute", "test-key", "test-token");
+        var candles = service.getRecentHistoricalCandles(20000, "5minute");
+        assertThat(candles).extracting(SharekhanHistoricalService.HistoricalCandle::time)
+                .containsExactly(LocalTime.of(9,15),LocalTime.of(9,20),LocalTime.of(15,15));
+        assertThat(candles).extracting(SharekhanHistoricalService.HistoricalCandle::date)
+                .containsOnly(LocalDate.of(2026,10,1));
+        assertThat(candles.get(0).close()).isEqualTo(101);
+        doReturn(response).when(service).requestHistorical("NC", "20000", "15minute", "test-key", "test-token");
+        assertThat(service.getRecentHistoricalCandles(20000,"15minute").get(0).time()).isEqualTo(LocalTime.of(9,19,59));
+    }
+
 }

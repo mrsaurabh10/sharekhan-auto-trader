@@ -8,6 +8,7 @@ The CE and PE templates require at least **50 completed five-minute candles** fo
 - If fewer than 50 usable candles are available, Sharekhan seeds the cache using `GET /skapi/services/historical/{exchange}/{scripcode}/5minute`. Failed or insufficient bootstrap attempts retry at most every five minutes per instrument.
 - Sharekhan's [historical documentation](https://www.sharekhan.com/trading-api/documentation/historical-api) lists the interval path and separate `tradeDate` / `tradeTime` response fields. It does not document `from` / `to` query parameters. The service now filters requested date ranges locally.
 - Sharekhan's [API FAQ](https://www.sharekhan.com/faq/API) describes seven days of intraday history for F&O. Actual index/scrip coverage still depends on the broker's response and a valid Sharekhan session.
+- Sharekhan five-minute end stamps such as `09:19:59` are normalized to interval starts (`09:15:00`) before cache validation. Already aligned start stamps are preserved.
 - Existing captured MStock candles win over bootstrap candles at matching timestamps. Subsequent MStock responses may correct stored candles.
 - Keep up to 250 completed candles per instrument, from the last 14 calendar days. Fifty is the minimum required to evaluate; 250 is a storage limit, not a new entry requirement.
 - At 15:31 IST on trading days, refresh the full MStock session for active Supertrend subscriptions, including subscriptions that have already traded that day.
