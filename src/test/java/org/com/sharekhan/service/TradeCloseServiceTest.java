@@ -12,6 +12,8 @@ import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Arrays;
+import java.util.ArrayList;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -19,8 +21,61 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class TradeCloseServiceTest {
+
+    @Test
+    void sourceScopedCloseOnlyCancelsAndClosesSharekhanContracts() {
+        TriggerTradeRequestRepository requestRepository = mock(TriggerTradeRequestRepository.class);
+        TriggeredTradeSetupRepository setupRepository = mock(TriggeredTradeSetupRepository.class);
+        TradeExecutionService executionService = mock(TradeExecutionService.class);
+        LtpCacheService ltpCache = mock(LtpCacheService.class);
+        WebSocketSubscriptionHelper subscriptions = mock(WebSocketSubscriptionHelper.class);
+        TradeCloseService service = new TradeCloseService(
+                requestRepository, setupRepository, executionService, ltpCache, subscriptions);
+
+        List<TriggerTradeRequestEntity> requests = new ArrayList<>();
+        List<TriggeredTradeSetupEntity> trades = new ArrayList<>();
+        List<String> sources = Arrays.asList(" shareKHAN ", "strategy:ST_RSI_EMA_ADX_CE",
+                "strategy:ST_RSI_EMA_ADX_PE", "atr-signal", "StockBazaari", "telegram", null,
+                "Sharekhan-other");
+        for (int i = 0; i < sources.size(); i++) {
+            requests.add(TriggerTradeRequestEntity.builder()
+                    .id(100L + i).symbol("NIFTY").exchange("NF").scripCode(40701)
+                    .source(sources.get(i)).optionType("CE").strikePrice(22600.0)
+                    .expiry("06/10/2026").status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                    .build());
+            trades.add(TriggeredTradeSetupEntity.builder()
+                    .id(200L + i).symbol("NIFTY").scripCode(40701)
+                    .source(sources.get(i)).optionType("CE").strikePrice(22600.0)
+                    .expiry("06/10/2026").status(TriggeredTradeStatus.EXECUTED).build());
+        }
+        when(requestRepository.findBySymbolIgnoreCaseAndStatusIn(eq("NIFTY"), anyList()))
+                .thenReturn(requests);
+        when(setupRepository.findBySymbolIgnoreCaseAndStatusIn(eq("NIFTY"), anyList()))
+                .thenReturn(trades);
+        CloseTradesRequest close = new CloseTradesRequest();
+        close.setInstrument("NIFTY");
+        close.setOptionType("CE");
+        close.setStrikePrice(22600.0);
+        close.setExpiry("06/10/2026");
+        close.setSource("Sharekhan");
+        close.setReason("Sharekhan UPDATE notification");
+        close.setPrice(91.9);
+
+        CloseTradesResponse response = service.closeAllByContract(close);
+
+        assertEquals(1, response.getCancelledRequests());
+        assertEquals(1, response.getSquareOffInitiated());
+        assertEquals(0, response.getErrors());
+        verify(requestRepository).findBySymbolIgnoreCaseAndStatusIn(eq("NIFTY"), anyList());
+        verify(requestRepository).delete(requests.get(0));
+        verify(executionService).squareOff(trades.get(0), 91.9,
+                "Sharekhan UPDATE notification", TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        verify(executionService).releaseOptionFeedIfUnused("NF", 40701);
+        verifyNoMoreInteractions(requestRepository, executionService, subscriptions, ltpCache);
+    }
 
     @Test
     void closeAllByContractCancelsPendingRequestsAndSquaresOffOpenTrades() {
@@ -108,7 +163,7 @@ class TradeCloseServiceTest {
         assertEquals(0, response.getSkipped());
 
         verify(requestRepository).delete(request);
-        verify(subscriptionHelper).unsubscribeFromScrip("NF12345");
+        verify(tradeExecutionService).releaseOptionFeedIfUnused("NF", 12345);
         verify(tradeExecutionService).squareOff(executed, 101.5, "Manual contract close: NIFTY CE 25000.0 2026-03-30", TriggeredTradeStatus.EXIT_ORDER_PLACED);
         verify(tradeExecutionService).squareOff(targetOrder, 120.0, "Manual contract close: NIFTY CE 25000.0 2026-03-30", TriggeredTradeStatus.EXIT_ORDER_PLACED);
     }

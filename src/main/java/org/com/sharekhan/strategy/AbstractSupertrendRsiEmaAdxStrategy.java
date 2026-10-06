@@ -168,6 +168,7 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         trigger.setSpotScripCode(spotScript.getScripCode());
         trigger.setUserId(request.getUserId());
         trigger.setBrokerCredentialsId(request.getBrokerCredentialsId());
+        trigger.setTslEnabled(request.getLots() != null && request.getLots() > 1);
         if (request.getLots() != null && request.getLots() > 0) {
             trigger.setQuantity(request.getLots());
             trigger.setLots(request.getLots());

@@ -1,8 +1,11 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TriggerRequest;
+import org.com.sharekhan.dto.CloseTradesRequest;
+import org.com.sharekhan.dto.CloseTradesResponse;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
@@ -14,8 +17,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class TradingMessageServiceTest {
+
+    @Test
+    void sharekhanUpdateAlwaysScopesContractCloseToSharekhanSource() {
+        TradingMessageService service = new TradingMessageService();
+        TradeCloseService closeService = mock(TradeCloseService.class);
+        ReflectionTestUtils.setField(service, "tradeCloseService", closeService);
+        when(closeService.closeAllByContract(any()))
+                .thenReturn(CloseTradesResponse.builder().build());
+
+        service.handleRawMessage("Sharekhan UPDATE NIFTY CE 22600 06/10/2026",
+                "telegram", "update-test");
+        ArgumentCaptor<CloseTradesRequest> captor = ArgumentCaptor.forClass(CloseTradesRequest.class);
+        verify(closeService).closeAllByContract(captor.capture());
+        assertThat(captor.getValue().getSource()).isEqualTo("Sharekhan");
+        assertThat(captor.getValue().getReason()).isEqualTo("Sharekhan UPDATE notification");
+        assertThat(captor.getValue().getStrikePrice()).isEqualTo(22600.0);
+    }
 
     @Test
     void appliesDuplicateProtectionToSharekhanAndStockBazaariSources() {

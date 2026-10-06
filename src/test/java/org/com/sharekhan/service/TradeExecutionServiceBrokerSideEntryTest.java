@@ -95,7 +95,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
-    void enablesTslForMultiLotAtrAndStockBazaariSignalsOnly() {
+    void enablesTslForMultiLotAtrAndStockBazaariSignals() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
 
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(
@@ -106,6 +106,21 @@ class TradeExecutionServiceBrokerSideEntryTest {
                 ctx.service, "resolveTslEnabled", false, "atr-signal", 1, null, null)).isFalse();
         assertThat((Boolean) ReflectionTestUtils.invokeMethod(
                 ctx.service, "resolveTslEnabled", false, "manual", 2, null, null)).isFalse();
+    }
+
+    @Test
+    void supertrendTslUsesResolvedLotsIncludingDefaultsAndPartialFills() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        for (String source : List.of("strategy:ST_RSI_EMA_ADX_CE", "strategy:ST_RSI_EMA_ADX_PE")) {
+            assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                    ctx.service, "resolveTslEnabled", false, source, 3, 120.0, 130.0)).isTrue();
+            assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                    ctx.service, "resolveTslEnabled", null, source, 2, 120.0, 130.0)).isTrue();
+            assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                    ctx.service, "resolveTslEnabled", true, source, 1, 120.0, 130.0)).isFalse();
+            assertThat((Boolean) ReflectionTestUtils.invokeMethod(
+                    ctx.service, "resolveTslEnabled", false, source, null, 120.0, 130.0)).isFalse();
+        }
     }
 
     @Test

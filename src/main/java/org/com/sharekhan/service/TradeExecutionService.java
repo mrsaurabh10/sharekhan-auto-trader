@@ -4752,9 +4752,14 @@ public class TradeExecutionService {
      * carry more than one lot. Telegram calls opt into the same behavior only
      * when they have multiple targets and more than one final lot. This keeps
      * a manually submitted multi-lot order under the user's explicit control.
+     * Supertrend CE/PE automatically enables TSL based on the resolved lot count.
      */
     private boolean resolveTslEnabled(Boolean requestedTslEnabled, String source, Integer lots,
                                       Double target2, Double target3) {
+        if ("strategy:ST_RSI_EMA_ADX_CE".equalsIgnoreCase(source)
+                || "strategy:ST_RSI_EMA_ADX_PE".equalsIgnoreCase(source)) {
+            return lots != null && lots > 1;
+        }
         if (Boolean.TRUE.equals(requestedTslEnabled)) {
             return true;
         }

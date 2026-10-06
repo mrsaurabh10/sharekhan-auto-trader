@@ -9,7 +9,7 @@ public class SupertrendRsiEmaAdxCeStrategy extends AbstractSupertrendRsiEmaAdxSt
         super(support, indicatorService, new StrategyMetadata(
                 "ST_RSI_EMA_ADX_CE",
                 "Supertrend RSI EMA ADX CE",
-                "5-minute CE entry when Supertrend, RSI, 50 EMA, ADX/DI, and candle structure align.",
+                "5-minute CE entry when Supertrend, RSI, 50 EMA, ADX/DI, and candle structure align. TSL enabled for more than one lot.",
                 "CE"), rules, diagnostics);
     }
 }

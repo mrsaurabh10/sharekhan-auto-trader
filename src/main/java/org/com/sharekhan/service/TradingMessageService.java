@@ -224,6 +224,7 @@ public class TradingMessageService {
         CloseTradesRequest closeRequest = closeRequestOpt.get();
         try {
             closeRequest.setReason("Sharekhan UPDATE notification");
+            closeRequest.setSource("Sharekhan");
             CloseTradesResponse response = tradeCloseService.closeAllByContract(closeRequest);
             System.out.println("✅ Sharekhan UPDATE close handled for " + closeRequest.getInstrument() + " response=" + response);
             notifyCloseUpdate(response, uniqueId);

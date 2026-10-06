@@ -767,6 +767,8 @@ class PriceTriggerServiceTest {
     @Test
     void spotTargetIsEvaluatedBeforeFirstCompletedSpotCandleExists() {
         TriggeredTradeSetupEntity trade = optionTrade(7010L, 999999, 20000);
+        trade.setQuantity(65L);
+        trade.setLots(1);
         trade.setOptionType("PE");
         trade.setUseSpotForSl(true);
         trade.setUseSpotForTarget(true);
@@ -847,6 +849,8 @@ class PriceTriggerServiceTest {
     @Test
     void monitorOpenTradesUsesCachedOptionLtpWhenSpotTickTriggersSpotTarget() {
         TriggeredTradeSetupEntity trade = optionTrade(5210L, 999999, 20000);
+        trade.setQuantity(65L);
+        trade.setLots(1);
         trade.setUseSpotForTarget(true);
         trade.setTarget1(23400.0);
 

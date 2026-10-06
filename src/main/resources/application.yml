@@ -136,6 +136,8 @@ app:
       base-break-min-atr: ${FNO_0925_MOVER_BASE_BREAK_MIN_ATR:0.20}
       session-extreme-buffer-atr: ${FNO_0925_MOVER_SESSION_EXTREME_BUFFER_ATR:0.50}
   market-data:
+    daily-history-enabled: ${DAILY_HISTORY_ENABLED:true}
+    daily-history-cron: ${DAILY_HISTORY_CRON:0 0 19 * * *}
     # Comma-separated ISO dates, e.g. NSE_HOLIDAYS=2026-01-26,2026-03-03
     nse-holidays: ${NSE_HOLIDAYS:}
     sharekhan-quote-stale-ms: ${SHAREKHAN_QUOTE_STALE_MS:2000}
