@@ -2754,9 +2754,16 @@ public class TradeExecutionService {
             log.warn("Cannot revalidate spot entry signal for trigger {} because spot LTP is unavailable", triggerLogId(trigger));
             return true;
         }
-        return "PE".equalsIgnoreCase(trigger.getOptionType())
+        boolean valid = "PE".equalsIgnoreCase(trigger.getOptionType())
                 ? spotLtp <= trigger.getEntryPrice()
                 : spotLtp >= trigger.getEntryPrice();
+        if (!valid) {
+            log.warn("ENTRY_SIGNAL_INVALIDATED | trigger={} source={} direction={} currentSpot={} signalClose={} spotObservedAt={} required={}",
+                    triggerLogId(trigger), trigger.getSource(), trigger.getOptionType(), spotLtp,
+                    trigger.getEntryPrice(), ltpCacheService.getObservedAt(trigger.getSpotScripCode()),
+                    "PE".equalsIgnoreCase(trigger.getOptionType()) ? "spot <= signal close" : "spot >= signal close");
+        }
+        return valid;
     }
 
     private boolean usesSpotEntryReference(TriggeredTradeSetupEntity trade) {
@@ -2910,14 +2917,18 @@ public class TradeExecutionService {
         if (quoteCacheService != null && trigger.getScripCode() != null) {
             quote = quoteCacheService.getSnapshot(trigger.getScripCode()).orElse(null);
         }
+        Double spot = trigger.getSpotScripCode() != null ? ltpCacheService.getLtp(trigger.getSpotScripCode()) : null;
         tradeAuditService.record(TradeAuditEventEntity.builder()
                 .appUserId(trigger.getAppUserId()).triggerRequestId(trigger.getTriggerRequestId()).tradeId(trigger.getId())
                 .source(trigger.getSource()).symbol(trigger.getSymbol()).eventType(eventType).outcome("REJECTED")
                 .reason(reason).optionType(trigger.getOptionType()).expiry(trigger.getExpiry()).strikePrice(trigger.getStrikePrice())
+                .spotPrice(spot)
                 .optionLtp(quote != null ? quote.getLastTradedPrice() : null)
                 .bestBid(quote != null ? quote.getBestBid() : null).bestAsk(quote != null ? quote.getBestAsk() : null)
                 .details("orderId=" + orderId + ", attemptedPrice=" + (result != null ? result.getAttemptedPrice() : null)
-                        + ", quoteTime=" + (quote != null ? quote.getLastBookAt() : null))
+                        + ", quoteTime=" + (quote != null ? quote.getLastBookAt() : null)
+                        + ", signalClose=" + trigger.getEntryPrice() + ", spotObservedAt="
+                        + (trigger.getSpotScripCode() != null ? ltpCacheService.getObservedAt(trigger.getSpotScripCode()) : null))
                 .build());
     }
 

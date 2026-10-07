@@ -125,6 +125,18 @@ public class ShoonyaInstrumentMasterService {
             return Optional.empty();
         }
         String tradingSymbol = script.getTradingSymbol().trim();
+        // Index labels differ between the Sharekhan and Shoonya masters.
+        String indexName = tradingSymbol.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        if ("NSE".equals(exchange)) {
+            String indexToken = switch (indexName) {
+                case "NIFTY", "NIFTY50", "NIFTYINDEX" -> "26000";
+                case "BANKNIFTY", "NIFTYBANK" -> "26009";
+                default -> null;
+            };
+            if (indexToken != null) {
+                return repository.findFirstByExchangeIgnoreCaseAndToken(exchange, indexToken);
+            }
+        }
         Optional<ShoonyaInstrumentEntity> exact = repository
                 .findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange, tradingSymbol);
         if (exact.isPresent() || tradingSymbol.toUpperCase(Locale.ROOT).endsWith("-EQ")) {

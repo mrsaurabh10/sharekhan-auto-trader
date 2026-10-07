@@ -80,6 +80,11 @@ public class TradeCloseService {
         Double price = closeRequest != null ? closeRequest.getPrice() : null;
         String reason = closeRequest != null ? closeRequest.getReason() : null;
         String source = closeRequest != null ? closeRequest.getSource() : null;
+        // Legacy HTTP callers may send the notification reason without the source.
+        // Enforce the provider boundary here so no entry point can broaden that close.
+        if (reason != null && "Sharekhan UPDATE notification".equalsIgnoreCase(reason.trim())) {
+            source = "Sharekhan";
+        }
         String normalizedInstrument = normalizeInstrument(rawInstrument);
         if (normalizedInstrument == null) {
             throw new IllegalArgumentException("instrument is required");

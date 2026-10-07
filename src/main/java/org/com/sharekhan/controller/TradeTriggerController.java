@@ -105,7 +105,8 @@ public class TradeTriggerController {
             @RequestParam Double strikePrice,
             @RequestParam String expiry,
             @RequestParam(required = false) Double price,
-            @RequestParam(required = false) String reason) {
+            @RequestParam(required = false) String reason,
+            @RequestParam(required = false) String source) {
 
         if (!authorized(token)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "forbidden", "message", "Invalid or missing X-Admin-Token"));
@@ -119,6 +120,7 @@ public class TradeTriggerController {
             request.setExpiry(expiry);
             request.setPrice(price);
             request.setReason(reason);
+            request.setSource(source);
             return ResponseEntity.ok(tradeCloseService.closeAllByContract(request));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

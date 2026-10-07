@@ -10,6 +10,9 @@ import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionHelper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.List;
 import java.util.Arrays;
@@ -25,8 +28,10 @@ import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 class TradeCloseServiceTest {
 
-    @Test
-    void sourceScopedCloseOnlyCancelsAndClosesSharekhanContracts() {
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(strings = {"Sharekhan", "strategy:ST_RSI_EMA_ADX_PE"})
+    void sharekhanNotificationCannotCloseOtherSourcesWhenSourceIsMissingOrOverridden(String requestedSource) {
         TriggerTradeRequestRepository requestRepository = mock(TriggerTradeRequestRepository.class);
         TriggeredTradeSetupRepository setupRepository = mock(TriggeredTradeSetupRepository.class);
         TradeExecutionService executionService = mock(TradeExecutionService.class);
@@ -60,7 +65,7 @@ class TradeCloseServiceTest {
         close.setOptionType("CE");
         close.setStrikePrice(22600.0);
         close.setExpiry("06/10/2026");
-        close.setSource("Sharekhan");
+        close.setSource(requestedSource);
         close.setReason("Sharekhan UPDATE notification");
         close.setPrice(91.9);
 

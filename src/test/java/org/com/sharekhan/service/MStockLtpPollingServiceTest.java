@@ -25,6 +25,33 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MStockLtpPollingServiceTest {
+    @Test
+    void indexAliasQuoteRefreshesSpotCacheAndDispatchesStopTargetMonitor() {
+        LtpCacheService cache = mock(LtpCacheService.class);
+        QuoteCacheService quotes = mock(QuoteCacheService.class);
+        ScripExecutorManager executors = mock(ScripExecutorManager.class);
+        PriceTriggerService monitor = mock(PriceTriggerService.class);
+        MStockLtpPollingService poller = new MStockLtpPollingService(
+                mock(WebSocketSubscriptionService.class), mock(MStockLtpService.class), cache, quotes,
+                monitor, executors, mock(MStockInstrumentResolver.class), mock(TokenStoreService.class), mock(NseMarketCalendar.class));
+        ShoonyaQuoteService shoonya = mock(ShoonyaQuoteService.class);
+        ScriptMasterRepository scripts = mock(ScriptMasterRepository.class);
+        ReflectionTestUtils.setField(poller, "shoonyaQuoteService", shoonya);
+        ReflectionTestUtils.setField(poller, "scriptMasterRepository", scripts);
+        ReflectionTestUtils.setField(poller, "shoonyaPollMaxActiveScrips", 1);
+        ScriptMasterEntity nifty = ScriptMasterEntity.builder().scripCode(20000).exchange("NC").tradingSymbol("NIFTY").build();
+        when(scripts.findByScripCode(20000)).thenReturn(nifty);
+        when(shoonya.getQuote(nifty)).thenReturn(Optional.of(new ShoonyaQuoteService.LiveQuote(
+                "NIFTY INDEX", "26000", "Nifty 50", "26000", 22600.0, null, null)));
+
+        ReflectionTestUtils.invokeMethod(poller, "refreshActiveQuotesFromShoonya", Set.of("NC20000"));
+
+        verify(cache).updateLtp(20000, 22600.0);
+        org.mockito.ArgumentCaptor<Runnable> callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        verify(executors).submitMonitorTask(eq(20000), callback.capture());
+        callback.getValue().run();
+        verify(monitor).monitorOpenTrades(20000, 22600.0);
+    }
 
     @Test
     void detectsFreshSharekhanQuoteForMStockFallbackGate() {

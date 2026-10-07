@@ -20,6 +20,19 @@ import static org.mockito.Mockito.when;
 
 class ShoonyaInstrumentMasterServiceTest {
     @Test
+    void resolvesNiftyAndBankNiftyByTheirIndexTokensInsteadOfEquityLabels() {
+        ShoonyaInstrumentRepository repository = mock(ShoonyaInstrumentRepository.class);
+        ShoonyaInstrumentMasterService service = new ShoonyaInstrumentMasterService(repository, mock(ShoonyaInstrumentMasterWriter.class));
+        for (String symbol : List.of("NIFTY", "BANKNIFTY")) {
+            String token = symbol.equals("NIFTY") ? "26000" : "26009";
+            ShoonyaInstrumentEntity index = ShoonyaInstrumentEntity.builder().exchange("NSE").token(token)
+                    .tradingSymbol(symbol.equals("NIFTY") ? "NIFTY INDEX" : "NIFTY BANK").build();
+            when(repository.findFirstByExchangeIgnoreCaseAndToken("NSE", token)).thenReturn(java.util.Optional.of(index));
+            ScriptMasterEntity script = ScriptMasterEntity.builder().exchange("NC").tradingSymbol(symbol).optionType("").build();
+            assertThat(service.resolveScript(script)).containsSame(index);
+        }
+    }
+    @Test
     void parsesShoonyaNfoMasterIntoResolvableInstrumentRows() throws Exception {
         String master = "Exchange,Token,LotSize,TickSize,Symbol,TradingSymbol,Expiry,Instrument,OptionType,StrikePrice\n"
                 + "NFO,12345,75,0.05,NIFTY,NIFTY30JUL26C25000,30-JUL-2026,OPTIDX,CE,25000\n";

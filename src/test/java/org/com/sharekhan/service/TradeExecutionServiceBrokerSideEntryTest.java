@@ -57,6 +57,25 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TradeExecutionServiceBrokerSideEntryTest {
+    @Test
+    void entryRejectionAuditPreservesSpotReferenceAndObservedTime() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        TradeAuditService audit = mock(TradeAuditService.class);
+        ReflectionTestUtils.setField(ctx.service, "tradeAuditService", audit);
+        TriggeredTradeSetupEntity trade = new TriggeredTradeSetupEntity();
+        trade.setSpotScripCode(20000);
+        trade.setEntryPrice(22697.9);
+        when(ctx.ltpCache.getLtp(20000)).thenReturn(22657.8);
+        java.time.LocalDateTime observedAt = java.time.LocalDateTime.of(2026, 10, 7, 10, 30);
+        when(ctx.ltpCache.getObservedAt(20000)).thenReturn(observedAt);
+        ReflectionTestUtils.invokeMethod(ctx.service, "auditEntryOutcome", trade,
+                "ENTRY_REJECTED", "ENTRY_SIGNAL_INVALIDATED", null, null);
+        org.mockito.ArgumentCaptor<org.com.sharekhan.entity.TradeAuditEventEntity> event =
+                org.mockito.ArgumentCaptor.forClass(org.com.sharekhan.entity.TradeAuditEventEntity.class);
+        verify(audit).record(event.capture());
+        assertThat(event.getValue().getSpotPrice()).isEqualTo(22657.8);
+        assertThat(event.getValue().getDetails()).contains("signalClose=22697.9", "spotObservedAt=" + observedAt);
+    }
 
     @ParameterizedTest
     @CsvSource({

@@ -53,10 +53,29 @@ public class ShoonyaQuoteService {
         public boolean hasUsablePrice() { return usable(lastPrice) || usable(bestAsk) || usable(bestBid); }
         public Double referencePrice() { return usable(lastPrice) ? lastPrice : usable(bestAsk) ? bestAsk : bestBid; }
         public boolean hasConfirmedIdentity() {
-            return StringUtils.hasText(returnedTradingSymbol)
+            return StringUtils.hasText(tradingSymbol) && StringUtils.hasText(token)
+                    && StringUtils.hasText(returnedTradingSymbol)
                     && StringUtils.hasText(returnedToken)
-                    && tradingSymbol.equalsIgnoreCase(returnedTradingSymbol)
-                    && token.equalsIgnoreCase(returnedToken);
+                    && token.equalsIgnoreCase(returnedToken)
+                    && (tradingSymbol.equalsIgnoreCase(returnedTradingSymbol) || sameIndexIdentity());
+        }
+        private boolean sameIndexIdentity() {
+            // Accept aliases only for known index tokens and matching index names.
+            // An option response must still match the exact requested contract.
+            return switch (token) {
+                case "26000" -> niftyName(tradingSymbol) && niftyName(returnedTradingSymbol);
+                case "26009" -> bankNiftyName(tradingSymbol) && bankNiftyName(returnedTradingSymbol);
+                default -> false;
+            };
+        }
+        private static boolean niftyName(String symbol) {
+            return java.util.Set.of("NIFTY", "NIFTY50", "NIFTYINDEX").contains(normalizeIndexName(symbol));
+        }
+        private static boolean bankNiftyName(String symbol) {
+            return java.util.Set.of("BANKNIFTY", "NIFTYBANK").contains(normalizeIndexName(symbol));
+        }
+        private static String normalizeIndexName(String symbol) {
+            return symbol.toUpperCase(java.util.Locale.ROOT).replaceAll("[^A-Z0-9]", "");
         }
         private static boolean usable(Double value) { return value != null && Double.isFinite(value) && value > 0d; }
     }
