@@ -3,21 +3,55 @@ package org.com.sharekhan.service;
 import org.com.sharekhan.auth.TokenStoreService;
 import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.cache.QuoteCacheService;
+import org.com.sharekhan.entity.ScriptMasterEntity;
+import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.ws.WebSocketSubscriptionService;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.util.Set;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MStockLtpPollingServiceTest {
+    @Test
+    void indexAliasQuoteRefreshesSpotCacheAndDispatchesStopTargetMonitor() {
+        LtpCacheService cache = mock(LtpCacheService.class);
+        QuoteCacheService quotes = mock(QuoteCacheService.class);
+        ScripExecutorManager executors = mock(ScripExecutorManager.class);
+        PriceTriggerService monitor = mock(PriceTriggerService.class);
+        MStockLtpPollingService poller = new MStockLtpPollingService(
+                mock(WebSocketSubscriptionService.class), mock(MStockLtpService.class), cache, quotes,
+                monitor, executors, mock(MStockInstrumentResolver.class), mock(TokenStoreService.class), mock(NseMarketCalendar.class));
+        ShoonyaQuoteService shoonya = mock(ShoonyaQuoteService.class);
+        ScriptMasterRepository scripts = mock(ScriptMasterRepository.class);
+        ReflectionTestUtils.setField(poller, "shoonyaQuoteService", shoonya);
+        ReflectionTestUtils.setField(poller, "scriptMasterRepository", scripts);
+        ReflectionTestUtils.setField(poller, "shoonyaPollMaxActiveScrips", 1);
+        ScriptMasterEntity nifty = ScriptMasterEntity.builder().scripCode(20000).exchange("NC").tradingSymbol("NIFTY").build();
+        when(scripts.findByScripCode(20000)).thenReturn(nifty);
+        when(shoonya.getQuote(nifty)).thenReturn(Optional.of(new ShoonyaQuoteService.LiveQuote(
+                "NIFTY INDEX", "26000", "Nifty 50", "26000", 22600.0, null, null)));
+
+        ReflectionTestUtils.invokeMethod(poller, "refreshActiveQuotesFromShoonya", Set.of("NC20000"));
+
+        verify(cache).updateLtp(20000, 22600.0);
+        org.mockito.ArgumentCaptor<Runnable> callback = org.mockito.ArgumentCaptor.forClass(Runnable.class);
+        verify(executors).submitMonitorTask(eq(20000), callback.capture());
+        callback.getValue().run();
+        verify(monitor).monitorOpenTrades(20000, 22600.0);
+    }
 
     @Test
     void detectsFreshSharekhanQuoteForMStockFallbackGate() {
@@ -37,7 +71,8 @@ class MStockLtpPollingServiceTest {
                 priceTriggerService,
                 mock(ScripExecutorManager.class),
                 instrumentResolver,
-                tokenStoreService);
+                tokenStoreService,
+                mock(NseMarketCalendar.class));
         ReflectionTestUtils.setField(service, "sharekhanQuoteStaleMs", 2000L);
 
         QuoteCacheService.QuoteSnapshot quote = QuoteCacheService.QuoteSnapshot.builder()
@@ -57,5 +92,62 @@ class MStockLtpPollingServiceTest {
         Boolean fresh = ReflectionTestUtils.invokeMethod(service, "hasFreshSharekhanQuote", 123456);
 
         assertThat(fresh).isTrue();
+    }
+
+    @Test
+    void rejectsShoonyaResponseForDifferentTokenWithoutUpdatingOptionLtpCache() {
+        WebSocketSubscriptionService subscriptionService = mock(WebSocketSubscriptionService.class);
+        LtpCacheService ltpCacheService = mock(LtpCacheService.class);
+        QuoteCacheService quoteCacheService = mock(QuoteCacheService.class);
+        ScripExecutorManager executorManager = mock(ScripExecutorManager.class);
+        MStockLtpPollingService service = new MStockLtpPollingService(
+                subscriptionService,
+                mock(MStockLtpService.class),
+                ltpCacheService,
+                quoteCacheService,
+                mock(PriceTriggerService.class),
+                executorManager,
+                mock(MStockInstrumentResolver.class),
+                mock(TokenStoreService.class),
+                mock(NseMarketCalendar.class));
+        ShoonyaQuoteService shoonyaQuoteService = mock(ShoonyaQuoteService.class);
+        ScriptMasterRepository scriptMasterRepository = mock(ScriptMasterRepository.class);
+        ReflectionTestUtils.setField(service, "shoonyaQuoteService", shoonyaQuoteService);
+        ReflectionTestUtils.setField(service, "scriptMasterRepository", scriptMasterRepository);
+        ReflectionTestUtils.setField(service, "shoonyaPollMaxActiveScrips", 1);
+
+        ScriptMasterEntity option = ScriptMasterEntity.builder()
+                .scripCode(68389)
+                .tradingSymbol("DIVISLAB29SEP26C9300")
+                .exchange("NF")
+                .optionType("CE")
+                .build();
+        when(scriptMasterRepository.findByScripCode(68389)).thenReturn(option);
+        when(shoonyaQuoteService.getQuote(option)).thenReturn(Optional.of(new ShoonyaQuoteService.LiveQuote(
+                "DIVISLAB29SEP26C9300", "68389", "DIVISLAB-EQ", "10940", 9279d, null, null)));
+
+        ReflectionTestUtils.invokeMethod(service, "refreshActiveQuotesFromShoonya", Set.of("NF68389"));
+
+        verify(ltpCacheService, never()).updateLtp(68389, 9279d);
+        verify(quoteCacheService, never()).recordQuote(eq(68389), any(), any(), any());
+        verify(executorManager, never()).submitTriggerTask(eq(68389), any());
+        verify(executorManager, never()).submitMonitorTask(eq(68389), any());
+    }
+
+    @Test
+    void onlyPollsDuringTheNseNfoTradingSession() {
+        NseMarketCalendar calendar = mock(NseMarketCalendar.class);
+        MStockLtpPollingService service = new MStockLtpPollingService(
+                mock(WebSocketSubscriptionService.class), mock(MStockLtpService.class), mock(LtpCacheService.class),
+                mock(QuoteCacheService.class), mock(PriceTriggerService.class), mock(ScripExecutorManager.class),
+                mock(MStockInstrumentResolver.class), mock(TokenStoreService.class), calendar);
+        ZoneId ist = ZoneId.of("Asia/Kolkata");
+        ZonedDateTime midnight = ZonedDateTime.of(2026, 9, 9, 0, 22, 0, 0, ist);
+        ZonedDateTime marketHours = ZonedDateTime.of(2026, 9, 9, 9, 15, 0, 0, ist);
+        when(calendar.isTradingDay(midnight.toLocalDate())).thenReturn(true);
+
+        assertThat(service.isNseTradingSessionOpen(midnight)).isFalse();
+        assertThat(service.isNseTradingSessionOpen(marketHours)).isTrue();
+        assertThat(service.isNseTradingSessionOpen(marketHours.withHour(15).withMinute(45))).isFalse();
     }
 }

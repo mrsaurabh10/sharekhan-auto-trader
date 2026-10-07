@@ -1,0 +1,8 @@
+package org.com.sharekhan.migration;
+import lombok.RequiredArgsConstructor;import lombok.extern.slf4j.Slf4j;import org.com.sharekhan.entity.*;import org.com.sharekhan.repository.*;import org.springframework.boot.*;import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;import org.springframework.data.domain.*;import org.springframework.data.repository.PagingAndSortingRepository;import org.springframework.stereotype.Component;import java.util.List;import java.util.function.Consumer;
+@Component @Slf4j @RequiredArgsConstructor @ConditionalOnExpression("'${app.trading-state.postgres.enabled:false}' == 'true' and '${app.trading-state.postgres.backfill-on-startup:false}' == 'true'")
+public class TradingStateBackfillRunner implements ApplicationRunner{
+ private final StrategySubscriptionRepository strategies;private final TriggerTradeRequestRepository requests;private final TriggeredTradeSetupRepository setups;private final PostgresTradingStateStore pg;
+ public void run(ApplicationArguments a){copy(strategies,pg::copyStrategies);copy(requests,pg::copyRequests);copy(setups,pg::copySetups);pg.sync();long s=strategies.count(),r=requests.count(),t=setups.count();if(pg.count("strategy_subscriptions")!=s||pg.count("trigger_trade_requests")!=r||pg.count("triggered_trade_setups")!=t)throw new IllegalStateException("Trading state backfill count mismatch");log.info("PostgreSQL trading-state backfill complete: strategies={} requests={} setups={}",s,r,t);}
+ private <T> void copy(PagingAndSortingRepository<T,Long> repo,Consumer<List<T>> target){Pageable p=PageRequest.of(0,500,Sort.by("id"));for(;;){Page<T>x=repo.findAll(p);target.accept(x.getContent());if(!x.hasNext())return;p=x.nextPageable();}}
+}

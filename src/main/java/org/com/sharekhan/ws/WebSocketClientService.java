@@ -338,7 +338,7 @@ public class WebSocketClientService  {
         if (lv != null) {
             log.debug("LTP tick received - scripCode={}, ltp={}", sc, lv);
             try {
-                ltpCacheService.updateLtp(sc, lv);
+                ltpCacheService.updateSharekhanWebSocketLtp(sc, lv);
             } catch (Exception e) {
                 log.warn("Failed to update LTP cache for {}: {}", sc, e.getMessage());
             }

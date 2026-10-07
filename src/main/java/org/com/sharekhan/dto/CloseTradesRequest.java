@@ -11,4 +11,6 @@ public class CloseTradesRequest {
     private String expiry;
     private Double price;
     private String reason;
+    /** Optional originating signal source; when supplied, only that source is closed. */
+    private String source;
 }

@@ -20,6 +20,10 @@ public class TelegramUpdateHandler {
     private final TelegramNotificationService telegramNotificationService;
     private final String authorizedChatId;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    @org.springframework.context.annotation.Lazy
+    private TradeExecutionService tradeExecutionService;
+
     public TelegramUpdateHandler(TradingMessageService tradingMessageService,
                                  UserConfigService userConfigService,
                                  TelegramNotificationService telegramNotificationService,
@@ -40,7 +44,7 @@ public class TelegramUpdateHandler {
             return;
         }
 
-        if (handleSourceControlCallback(update)) {
+        if (handleEntryCallback(update) || handleSourceControlCallback(update)) {
             return;
         }
 
@@ -66,6 +70,34 @@ public class TelegramUpdateHandler {
         String uniqueId = buildUniqueId(update, message);
 
         tradingMessageService.handleRawMessage(text, sender, uniqueId);
+    }
+
+    private boolean handleEntryCallback(Map<String, Object> update) {
+        if (!(update.get("callback_query") instanceof Map<?, ?> callback)
+                || !(callback.get("data") instanceof String data) || !data.startsWith("entry:")) return false;
+        String callbackId = stringOrNull(callback.get("id"));
+        @SuppressWarnings("unchecked") Map<String, Object> typed = (Map<String, Object>) callback;
+        String sender = callback.get("from") instanceof Map<?, ?> from && from.get("id") != null
+                ? String.valueOf(from.get("id")) : null;
+        if (!isAuthorizedCallbackChat(typed) || !telegramNotificationService.isAuthorizedEntryActor(sender)) {
+            telegramNotificationService.answerCallbackQuery(callbackId, "This action is not allowed for this Telegram user/chat.");
+            return true;
+        }
+        String[] parts = data.split(":", 4);
+        if (parts.length != 4) {
+            telegramNotificationService.answerCallbackQuery(callbackId, "Invalid entry action.");
+            return true;
+        }
+        try {
+            Long tradeId = Long.valueOf(parts[2]);
+            telegramNotificationService.answerCallbackQuery(callbackId, "Checking the order…");
+            String outcome = tradeExecutionService.handleEntryAction(tradeId, parts[3], parts[1]);
+            telegramNotificationService.sendTradeMessage("Entry action — trade #" + tradeId, outcome);
+        } catch (RuntimeException e) {
+            log.warn("Entry callback failed: {}", e.getClass().getSimpleName());
+            telegramNotificationService.answerCallbackQuery(callbackId, "Action could not be completed. Check the latest order message.");
+        }
+        return true;
     }
 
     @SuppressWarnings("unchecked")

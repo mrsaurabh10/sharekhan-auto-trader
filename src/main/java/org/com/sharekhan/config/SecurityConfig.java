@@ -51,6 +51,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/trades/trigger-all", "/api/trades/close-all", "/api/trades/close-all/**").permitAll() // Secure via X-Admin-Token inside the controller
                         .requestMatchers("/api/trades/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/scripts/**", "/api/mstock/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/api/market-news/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/sharekhan/historical/**").permitAll() // Secure via X-Admin-Token inside the controller
                         .requestMatchers("/api/sharekhan/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/api/backtests/**").permitAll() // Secure via X-Admin-Token inside the controller

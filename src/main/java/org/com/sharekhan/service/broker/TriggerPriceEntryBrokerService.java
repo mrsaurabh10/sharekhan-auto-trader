@@ -7,6 +7,7 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 public interface TriggerPriceEntryBrokerService extends BrokerService {
 
     OrderPlacementResult placeTriggerPriceEntryOrder(TriggeredTradeSetupEntity trade,
-                                                     BrokerContext context,
-                                                     double entryPrice);
+                                                      BrokerContext context,
+                                                      double triggerPrice,
+                                                      double limitPrice);
 }

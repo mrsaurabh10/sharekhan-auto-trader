@@ -136,6 +136,15 @@ public class SharekhanHistoricalService {
                                                        String intervalSegment,
                                                        LocalDate from,
                                                        LocalDate to) {
+        return getRecentHistoricalCandles(scripCode, intervalSegment).stream()
+                .filter(candle -> candle.date() != null)
+                .filter(candle -> from == null || !candle.date().isBefore(from))
+                .filter(candle -> to == null || !candle.date().isAfter(to))
+                .toList();
+    }
+
+    /** Sharekhan returns available recent history; dates are filtered locally by callers needing a range. */
+    public List<HistoricalCandle> getRecentHistoricalCandles(Integer scripCode, String intervalSegment) {
         if (scripCode == null) {
             return List.of();
         }
@@ -160,16 +169,36 @@ public class SharekhanHistoricalService {
         }
 
         try {
-            String intervalPath = buildIntervalPath(intervalSegment, from, to);
-            SharekhanConnect client = SharekhanConsoleSilencer.createClient(null, apiKey, accessToken);
-            JSONObject response = SharekhanConsoleSilencer.call(() ->
-                    client.getHistorical(exchange, String.valueOf(scripCode), intervalPath));
-            return parseHistoricalCandles(response);
+            String intervalPath = StringUtils.hasText(intervalSegment) ? intervalSegment.trim() : DEFAULT_INTERVAL_SEGMENT;
+            JSONObject response = requestHistorical(exchange, String.valueOf(scripCode), intervalPath, apiKey, accessToken);
+            List<HistoricalCandle> candles = parseHistoricalCandles(response);
+            if ("5minute".equalsIgnoreCase(intervalPath)) {
+                candles = candles.stream().map(this::normalizeFiveMinuteCandle).toList();
+            }
+            log.info("SHAREKHAN_HISTORY | exchange={} scrip={} interval={} parsed={}",
+                    exchange, scripCode, intervalPath, candles.size());
+            return candles;
         } catch (Exception ex) {
             log.warn("Failed to fetch Sharekhan historical candles for scrip {}: {}", scripCode, ex.getMessage());
             log.debug("Historical candle fetch error", ex);
             return List.of();
         }
+    }
+
+    /** Sharekhan can stamp five-minute bars at their last second; strategy candles use interval starts. */
+    private HistoricalCandle normalizeFiveMinuteCandle(HistoricalCandle candle) {
+        LocalTime time = candle.time();
+        if (time != null && time.getMinute() % 5 == 4 && time.getSecond() == 59 && time.getNano() == 0) {
+            LocalTime start = time.plusSeconds(1).minusMinutes(5);
+            return new HistoricalCandle(candle.date(), start, candle.open(), candle.high(), candle.low(), candle.close());
+        }
+        return candle;
+    }
+
+    JSONObject requestHistorical(String exchange, String scripCode, String interval, String apiKey, String accessToken)
+            throws Exception {
+        SharekhanConnect client = SharekhanConsoleSilencer.createClient(null, apiKey, accessToken);
+        return SharekhanConsoleSilencer.call(() -> client.getHistorical(exchange, scripCode, interval));
     }
 
     private OptionalDouble fetchOpenPrice(Integer scripCode, LocalDate targetDate) {

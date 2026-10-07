@@ -223,6 +223,37 @@ public class MStockIntradayCandleService {
         return resolved;
     }
 
+    /**
+     * Returns only completed five-minute candles available at {@code now}.  The
+     * current five-minute bar is deliberately excluded: using it for a breakout
+     * decision makes an intrabar spike look like a confirmed close.
+     */
+    public List<IntradayCandle> getCompletedFiveMinuteCandles(Integer spotScripCode, LocalDateTime now) {
+        if (spotScripCode == null || now == null) {
+            return List.of();
+        }
+        String instrumentKey = instrumentResolver.resolveInstrumentKey(spotScripCode).orElse(null);
+        if (!StringUtils.hasText(instrumentKey)) {
+            return List.of();
+        }
+        MStockInstrumentEntity instrument = instrumentRepository.findByInstrumentKey(instrumentKey).orElse(null);
+        String keyExchange = instrumentKey.contains(":") ? instrumentKey.substring(0, instrumentKey.indexOf(':')) : null;
+        String exchange = instrument != null && StringUtils.hasText(instrument.getExchange()) ? instrument.getExchange() : keyExchange;
+        String exchangeToken = instrument != null ? instrument.getExchangeToken() : null;
+        if (!StringUtils.hasText(exchangeToken) && isCashExchange(exchange) && spotScripCode > 0) {
+            exchangeToken = spotScripCode.toString();
+        }
+        if (!StringUtils.hasText(exchangeToken)) {
+            return List.of();
+        }
+        LocalTime currentBarStart = now.toLocalTime().withSecond(0).withNano(0)
+                .minusMinutes(now.getMinute() % 5);
+        return getIntradayCandles(exchange, exchangeToken, "5minute").stream()
+                .filter(candle -> candle.date().equals(now.toLocalDate()))
+                .filter(candle -> candle.time().isBefore(currentBarStart))
+                .toList();
+    }
+
     private boolean isCashExchange(String exchange) {
         return "NSE".equalsIgnoreCase(exchange)
                 || "NC".equalsIgnoreCase(exchange)

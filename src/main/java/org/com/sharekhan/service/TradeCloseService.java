@@ -79,6 +79,12 @@ public class TradeCloseService {
                 : closeRequest != null ? closeRequest.getSymbol() : null;
         Double price = closeRequest != null ? closeRequest.getPrice() : null;
         String reason = closeRequest != null ? closeRequest.getReason() : null;
+        String source = closeRequest != null ? closeRequest.getSource() : null;
+        // Legacy HTTP callers may send the notification reason without the source.
+        // Enforce the provider boundary here so no entry point can broaden that close.
+        if (reason != null && "Sharekhan UPDATE notification".equalsIgnoreCase(reason.trim())) {
+            source = "Sharekhan";
+        }
         String normalizedInstrument = normalizeInstrument(rawInstrument);
         if (normalizedInstrument == null) {
             throw new IllegalArgumentException("instrument is required");
@@ -110,7 +116,8 @@ public class TradeCloseService {
         List<TriggerTradeRequestEntity> openRequests =
                 triggerTradeRequestRepository.findBySymbolIgnoreCaseAndStatusIn(normalizedInstrument, OPEN_REQUEST_STATUSES);
         for (TriggerTradeRequestEntity request : openRequests) {
-            if (!matchesContract(request, normalizedOptionType, strikePrice, expiry)) {
+            if (!matchesSource(source, request.getSource())
+                    || !matchesContract(request, normalizedOptionType, strikePrice, expiry)) {
                 continue;
             }
             try {
@@ -129,7 +136,8 @@ public class TradeCloseService {
         List<TriggeredTradeSetupEntity> openTrades =
                 triggeredTradeSetupRepository.findBySymbolIgnoreCaseAndStatusIn(normalizedInstrument, OPEN_EXECUTION_STATUSES);
         for (TriggeredTradeSetupEntity trade : openTrades) {
-            if (!matchesContract(trade, normalizedOptionType, strikePrice, expiry)) {
+            if (!matchesSource(source, trade.getSource())
+                    || !matchesContract(trade, normalizedOptionType, strikePrice, expiry)) {
                 continue;
             }
             try {
@@ -162,6 +170,11 @@ public class TradeCloseService {
                 .errors(errors)
                 .details(details)
                 .build();
+    }
+
+    private boolean matchesSource(String requiredSource, String actualSource) {
+        return requiredSource == null
+                || (actualSource != null && requiredSource.trim().equalsIgnoreCase(actualSource.trim()));
     }
 
     private Double resolveExitPrice(TriggeredTradeSetupEntity trade, Double requestedPrice) {

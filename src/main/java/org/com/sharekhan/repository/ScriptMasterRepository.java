@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 
 public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity, Integer> {
+    boolean existsByTickSizeIsNull();
     Optional<ScriptMasterEntity> findByTradingSymbol(String tradingSymbol);
 
     Optional<ScriptMasterEntity> findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(
@@ -50,6 +51,13 @@ public interface ScriptMasterRepository extends JpaRepository<ScriptMasterEntity
             + "WHERE s.strikePrice IS NOT NULL AND s.expiry IS NOT NULL "
             + "AND UPPER(s.optionType) IN ('CE', 'PE')")
     List<String> findDistinctOptionUnderlyingSymbols();
+
+    /** Stock-only F&O option underlyings. Index options use instrument type OI and are excluded. */
+    @Query("SELECT DISTINCT UPPER(s.tradingSymbol) FROM ScriptMasterEntity s "
+            + "WHERE s.strikePrice IS NOT NULL AND s.expiry IS NOT NULL "
+            + "AND UPPER(s.optionType) IN ('CE', 'PE') AND UPPER(s.instrumentType) = 'OS' "
+            + "AND UPPER(s.exchange) IN ('NF', 'NFO')")
+    List<String> findDistinctOptionStockUnderlyingSymbols();
 
     List<ScriptMasterEntity> findByExchange(String exchange);
 

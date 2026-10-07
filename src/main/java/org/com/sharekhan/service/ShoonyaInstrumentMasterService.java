@@ -91,8 +91,19 @@ public class ShoonyaInstrumentMasterService {
 
         String expiry = shoonyaExpiry(script.getExpiry());
         if (!StringUtils.hasText(expiry)) return Optional.empty();
+        // Sharekhan calls BFO index options SENSEX, while Shoonya's BFO master
+        // records their underlying as BSXOPT.  Resolve against the provider's
+        // canonical underlying so a valid SENSEX option can be quoted.
+        String symbol = shoonyaOptionUnderlyingSymbol(exchange, script.getTradingSymbol());
         return repository.findFirstByExchangeIgnoreCaseAndSymbolIgnoreCaseAndExpiryIgnoreCaseAndOptionTypeIgnoreCaseAndStrikePrice(
-                exchange, script.getTradingSymbol().trim(), expiry, script.getOptionType().trim().toUpperCase(Locale.ROOT), script.getStrikePrice());
+                exchange, symbol, expiry, script.getOptionType().trim().toUpperCase(Locale.ROOT), script.getStrikePrice());
+    }
+
+    private String shoonyaOptionUnderlyingSymbol(String exchange, String tradingSymbol) {
+        if ("BFO".equalsIgnoreCase(exchange) && "SENSEX".equalsIgnoreCase(tradingSymbol == null ? "" : tradingSymbol.trim())) {
+            return "BSXOPT";
+        }
+        return tradingSymbol.trim();
     }
 
     /** Resolves either a cash or F&O script from the Sharekhan master to Shoonya. */
@@ -114,6 +125,18 @@ public class ShoonyaInstrumentMasterService {
             return Optional.empty();
         }
         String tradingSymbol = script.getTradingSymbol().trim();
+        // Index labels differ between the Sharekhan and Shoonya masters.
+        String indexName = tradingSymbol.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        if ("NSE".equals(exchange)) {
+            String indexToken = switch (indexName) {
+                case "NIFTY", "NIFTY50", "NIFTYINDEX" -> "26000";
+                case "BANKNIFTY", "NIFTYBANK" -> "26009";
+                default -> null;
+            };
+            if (indexToken != null) {
+                return repository.findFirstByExchangeIgnoreCaseAndToken(exchange, indexToken);
+            }
+        }
         Optional<ShoonyaInstrumentEntity> exact = repository
                 .findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange, tradingSymbol);
         if (exact.isPresent() || tradingSymbol.toUpperCase(Locale.ROOT).endsWith("-EQ")) {

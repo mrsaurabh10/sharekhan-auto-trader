@@ -26,10 +26,16 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
 
     protected final StrategySupport support;
     private final StrategyMetadata metadata;
+    private final org.com.sharekhan.cache.LtpCacheService prices;
+    private final org.com.sharekhan.config.OrbStrategyProperties properties;
 
-    protected AbstractOrbStrategy(StrategySupport support, StrategyMetadata metadata) {
+    protected AbstractOrbStrategy(StrategySupport support, StrategyMetadata metadata,
+                                  org.com.sharekhan.cache.LtpCacheService prices,
+                                  org.com.sharekhan.config.OrbStrategyProperties properties) {
         this.support = support;
         this.metadata = metadata;
+        this.prices = prices;
+        this.properties = properties;
     }
 
     @Override
@@ -39,14 +45,18 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
 
     @Override
     public StrategyApplyResponse apply(StrategyApplyRequest request) {
+        return apply(request, LocalDateTime.now(StrategySupport.MARKET_ZONE));
+    }
+
+    StrategyApplyResponse apply(StrategyApplyRequest request, LocalDateTime now) {
         String symbol = request.getSymbol().trim().toUpperCase(Locale.ROOT);
         ScriptMasterEntity spotScript = support.resolveSpotScript(symbol);
-        LocalDate today = LocalDate.now(StrategySupport.MARKET_ZONE);
-        LocalDateTime now = LocalDateTime.now(StrategySupport.MARKET_ZONE);
+        LocalDate today = now.toLocalDate();
         if (now.toLocalTime().isBefore(OR_END)) {
             return support.waiting(metadata, symbol, "Waiting for opening range 9:15-9:30 to complete.");
         }
 
+        support.warmUpSpotFeed(spotScript);
         CandleLoad candleLoad = support.loadCandles(spotScript);
         List<StrategyCandle> candles = candleLoad.candles().stream()
                 .filter(c -> today.equals(c.date()))
@@ -99,6 +109,8 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
         List<StrategyCandle> completedBreakoutCandidates = candles.stream()
                 .filter(c -> !c.time().isBefore(OR_END))
                 .filter(c -> !c.time().plusMinutes(StrategySupport.CANDLE_MINUTES).isAfter(now.toLocalTime()))
+                .filter(c -> !LocalDateTime.of(c.date(), c.time()).plusMinutes(StrategySupport.CANDLE_MINUTES)
+                        .isBefore(now.minusSeconds(properties.getMaxSignalDelaySeconds())))
                 .toList();
 
         for (StrategyCandle breakout : completedBreakoutCandidates) {
@@ -135,6 +147,17 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
             }
 
             TriggerRequest trigger = buildTriggerRequest(request, symbol, spotScript, breakout, nextCandle.get());
+            Double spotPrice = prices.getLtp(spotScript.getScripCode());
+            LocalDateTime observedAt = prices.getObservedAt(spotScript.getScripCode());
+            if (spotPrice == null || !Double.isFinite(spotPrice) || spotPrice <= 0 || observedAt == null
+                    || observedAt.isBefore(now.minusSeconds(properties.getMaxSpotAgeSeconds())) || observedAt.isAfter(now)) {
+                return support.waiting(metadata, symbol, "ORB requires a fresh spot quote before entry.");
+            }
+            double risk = Math.abs(trigger.getEntryPrice() - trigger.getStopLoss());
+            boolean stillBeyondRange = "PE".equalsIgnoreCase(metadata.optionType()) ? spotPrice < orl : spotPrice > orh;
+            if (!stillBeyondRange || Math.abs(spotPrice - trigger.getEntryPrice()) > risk * properties.getMaxEntryDeviationRisk()) {
+                return support.waiting(metadata, symbol, "ORB entry skipped: spot price moved outside the permitted entry deviation or back inside the opening range.");
+            }
             TriggerTradeRequestEntity existing = support.findExisting(trigger);
             if (existing != null) {
                 return response("duplicate", "A pending request already exists for this strategy contract.",
@@ -148,7 +171,7 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
 
         return StrategyApplyResponse.builder()
                 .status("waiting")
-                .message("No ORB breakout candle has passed the configured filters yet.")
+                .message("No fresh ORB breakout candle has passed the configured filters yet.")
                 .templateId(metadata.id())
                 .symbol(symbol)
                 .direction(metadata.optionType())

@@ -31,6 +31,7 @@ class WhatsappSignalParserTest {
         assertEquals(13.40, (Double) result.get("target2"), 0.01);
         assertEquals(14.0, (Double) result.get("target3"), 0.01);
         assertEquals(true, result.get("intraday"));
+        assertEquals("awr", result.get("source"));
     }
 
     @Test

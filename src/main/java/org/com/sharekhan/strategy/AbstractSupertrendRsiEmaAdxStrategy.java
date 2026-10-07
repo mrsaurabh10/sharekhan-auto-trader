@@ -9,26 +9,28 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
 abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator {
 
-    private static final double BANKNIFTY_ADX_THRESHOLD = 18.0d;
-    private static final double NIFTY_ADX_THRESHOLD = 20.0d;
-
     protected final StrategySupport support;
     private final IndicatorService indicatorService;
     private final StrategyMetadata metadata;
+    private final SupertrendSignalRules rules;
+    private final SupertrendDecisionDiagnostics diagnostics;
 
     protected AbstractSupertrendRsiEmaAdxStrategy(StrategySupport support,
                                                   IndicatorService indicatorService,
-                                                  StrategyMetadata metadata) {
+                                                  StrategyMetadata metadata,
+                                                  SupertrendSignalRules rules,
+                                                  SupertrendDecisionDiagnostics diagnostics) {
         this.support = support;
         this.indicatorService = indicatorService;
         this.metadata = metadata;
+        this.rules = rules;
+        this.diagnostics = diagnostics;
     }
 
     @Override
@@ -38,12 +40,15 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
 
     @Override
     public StrategyApplyResponse apply(StrategyApplyRequest request) {
+        return apply(request, LocalDateTime.now(StrategySupport.MARKET_ZONE));
+    }
+
+    StrategyApplyResponse apply(StrategyApplyRequest request, LocalDateTime now) {
         String symbol = request.getSymbol().trim().toUpperCase(Locale.ROOT);
         ScriptMasterEntity spotScript = support.resolveSpotScript(symbol);
-        LocalDate today = LocalDate.now(StrategySupport.MARKET_ZONE);
-        LocalDateTime now = LocalDateTime.now(StrategySupport.MARKET_ZONE);
+        LocalDate today = now.toLocalDate();
         int requiredCandles = Math.max(50, indicatorService.minimumCandles());
-        CandleLoad candleLoad = support.loadCandlesWithHistoricalFallback(spotScript, requiredCandles);
+        CandleLoad candleLoad = support.loadCompletedIndicatorCandles(spotScript, requiredCandles, now);
         List<StrategyCandle> completedCandles = candleLoad.candles().stream()
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
                 .filter(c -> isCompleted(c, today, now))
@@ -65,9 +70,16 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
                     + ". Today's completed candles: " + completedToday.size() + ".");
         }
 
+        StrategyCandle latest = completedToday.get(completedToday.size() - 1);
+        if (!LocalDateTime.of(latest.date(), latest.time()).plusMinutes(2L * StrategySupport.CANDLE_MINUTES).isAfter(now)) {
+            return support.waiting(metadata, symbol, "Waiting for a fresh completed five-minute candle; latest candle starts at "
+                    + latest.time() + ". Cached history is available, but today's feed has not advanced.");
+        }
+
         IndicatorSnapshot indicator = indicatorService.computeSnapshot(completedCandles);
         StrategyCandle signal = indicator.candle();
-        DirectionalSignal signalResult = evaluateDirectionalSignal(symbol, signal, indicator);
+        SupertrendSignalRules.Result signalResult = rules.evaluate(support.normalizeSymbolKey(symbol), metadata.optionType(), indicator);
+        diagnostics.record(request, metadata, symbol, indicator, signalResult);
         if (!signalResult.passed()) {
             return StrategyApplyResponse.builder()
                     .status("waiting")
@@ -115,43 +127,6 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
                 .build();
     }
 
-    private DirectionalSignal evaluateDirectionalSignal(String symbol,
-                                                        StrategyCandle candle,
-                                                        IndicatorSnapshot indicator) {
-        boolean ce = "CE".equalsIgnoreCase(metadata.optionType());
-        List<String> failures = new ArrayList<>();
-        if (ce) {
-            if (!(candle.close() > indicator.supertrend())) failures.add("close <= Supertrend");
-            if (!inRange(indicator.rsi(), 45.0d, 65.0d)) failures.add("RSI not in 45-65");
-            if (!(indicator.rsi() > indicator.previousRsi())) failures.add("RSI is not trending up");
-            if (!(candle.close() > indicator.ema50())) failures.add("close <= 50 EMA");
-            if (!(indicator.adx() > adxThreshold(symbol))) failures.add("ADX below threshold");
-            if (!(indicator.plusDi() > indicator.minusDi())) failures.add("+DI <= -DI");
-            if (!(candle.close() > candle.open())) failures.add("entry candle is not green");
-        } else {
-            if (!(candle.close() < indicator.supertrend())) failures.add("close >= Supertrend");
-            if (!inRange(indicator.rsi(), 35.0d, 55.0d)) failures.add("RSI not in 35-55");
-            if (!(indicator.rsi() < indicator.previousRsi())) failures.add("RSI is not declining");
-            if (!(candle.close() < indicator.ema50())) failures.add("close >= 50 EMA");
-            if (!(indicator.adx() > adxThreshold(symbol))) failures.add("ADX below threshold");
-            if (!(indicator.minusDi() > indicator.plusDi())) failures.add("-DI <= +DI");
-            if (!(candle.close() < candle.open())) failures.add("entry candle is not red");
-        }
-
-        if (failures.isEmpty()) {
-            return new DirectionalSignal(true, "All conditions passed.");
-        }
-        return new DirectionalSignal(false, String.join("; ", failures)
-                + ". Values: close=" + support.roundPrice(candle.close())
-                + ", ST=" + support.roundPrice(indicator.supertrend())
-                + ", RSI=" + support.roundPrice(indicator.rsi())
-                + ", prevRSI=" + support.roundPrice(indicator.previousRsi())
-                + ", EMA50=" + support.roundPrice(indicator.ema50())
-                + ", ADX=" + support.roundPrice(indicator.adx())
-                + ", +DI=" + support.roundPrice(indicator.plusDi())
-                + ", -DI=" + support.roundPrice(indicator.minusDi()) + ".");
-    }
-
     private TriggerRequest buildTriggerRequest(StrategyApplyRequest request,
                                                String symbol,
                                                ScriptMasterEntity spotScript,
@@ -193,23 +168,12 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         trigger.setSpotScripCode(spotScript.getScripCode());
         trigger.setUserId(request.getUserId());
         trigger.setBrokerCredentialsId(request.getBrokerCredentialsId());
+        trigger.setTslEnabled(request.getLots() != null && request.getLots() > 1);
         if (request.getLots() != null && request.getLots() > 0) {
             trigger.setQuantity(request.getLots());
             trigger.setLots(request.getLots());
         }
         return trigger;
-    }
-
-    private boolean inRange(double value, double minInclusive, double maxInclusive) {
-        return Double.isFinite(value) && value >= minInclusive && value <= maxInclusive;
-    }
-
-    private double adxThreshold(String symbol) {
-        String normalized = support.normalizeSymbolKey(symbol);
-        if ("BANKNIFTY".equals(normalized) || "NIFTYBANK".equals(normalized)) {
-            return BANKNIFTY_ADX_THRESHOLD;
-        }
-        return NIFTY_ADX_THRESHOLD;
     }
 
     private boolean isCompleted(StrategyCandle candle, LocalDate today, LocalDateTime now) {
@@ -222,6 +186,4 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         return !candle.time().plusMinutes(StrategySupport.CANDLE_MINUTES).isAfter(now.toLocalTime());
     }
 
-    private record DirectionalSignal(boolean passed, String reason) {
-    }
 }

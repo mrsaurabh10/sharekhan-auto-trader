@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.Optional;
 
 public interface ShoonyaInstrumentRepository extends JpaRepository<ShoonyaInstrumentEntity, Long> {
+    Optional<ShoonyaInstrumentEntity> findFirstByExchangeIgnoreCaseAndToken(String exchange, String token);
     Optional<ShoonyaInstrumentEntity> findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(String exchange, String tradingSymbol);
     Optional<ShoonyaInstrumentEntity> findFirstByExchangeIgnoreCaseAndSymbolIgnoreCaseAndExpiryIgnoreCaseAndOptionTypeIgnoreCaseAndStrikePrice(
             String exchange, String symbol, String expiry, String optionType, Double strikePrice);

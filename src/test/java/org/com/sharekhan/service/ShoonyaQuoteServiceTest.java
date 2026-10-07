@@ -19,6 +19,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
 
 class ShoonyaQuoteServiceTest {
+    @Test
+    void acceptsIndexLabelAliasesOnlyWithTheCorrectIndexToken() {
+        assertThat(new ShoonyaQuoteService.LiveQuote("NIFTY INDEX", "26000", "Nifty 50", "26000", 22600.0, null, null)
+                .hasConfirmedIdentity()).isTrue();
+        assertThat(new ShoonyaQuoteService.LiveQuote("NIFTY BANK", "26009", "BankNifty", "26009", 50000.0, null, null)
+                .hasConfirmedIdentity()).isTrue();
+        assertThat(new ShoonyaQuoteService.LiveQuote("NIFTY INDEX", "26000", "Nifty 50", "26009", 22600.0, null, null)
+                .hasConfirmedIdentity()).isFalse();
+        assertThat(new ShoonyaQuoteService.LiveQuote("NIFTY INDEX", "26000", "NIFTY BANK", "26000", 22600.0, null, null)
+                .hasConfirmedIdentity()).isFalse();
+        assertThat(new ShoonyaQuoteService.LiveQuote("NIFTY13OCT26P22600", "44617", "Nifty 50", "26000", 22600.0, null, null)
+                .hasConfirmedIdentity()).isFalse();
+        assertThat(new ShoonyaQuoteService.LiveQuote("NIFTY13OCT26P22600", "26000", "Nifty 50", "26000", 22600.0, null, null)
+                .hasConfirmedIdentity()).isFalse();
+    }
     private HttpServer server;
 
     @AfterEach

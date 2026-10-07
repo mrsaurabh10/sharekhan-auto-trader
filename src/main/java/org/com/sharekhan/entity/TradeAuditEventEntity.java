@@ -49,6 +49,6 @@ public class TradeAuditEventEntity {
     private Double optionLtp;
     private Double bestBid;
     private Double bestAsk;
-    @Lob
+    @Column(columnDefinition = "TEXT")
     private String details;
 }

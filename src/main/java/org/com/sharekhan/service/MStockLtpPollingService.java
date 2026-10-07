@@ -43,6 +43,7 @@ public class MStockLtpPollingService {
     private final ScripExecutorManager scripExecutorManager;
     private final MStockInstrumentResolver instrumentResolver;
     private final TokenStoreService tokenStoreService;
+    private final NseMarketCalendar nseMarketCalendar;
 
     @Autowired(required = false)
     private ShoonyaQuoteService shoonyaQuoteService;
@@ -50,7 +51,9 @@ public class MStockLtpPollingService {
     private ScriptMasterRepository scriptMasterRepository;
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
-    private static final LocalTime MARKET_CLOSE_TIME = LocalTime.of(15, 30);
+    private static final LocalTime MARKET_OPEN_TIME = LocalTime.of(9, 15);
+    // Keep quote polling through the post-close buffer, then stop all market-data refreshes.
+    private static final LocalTime MARKET_CLOSE_TIME = LocalTime.of(15, 45);
     private static final long MAX_TRANSIENT_BACKOFF_MS = 60_000L;
 
     private final Map<Integer, String> scripCodeToMStockKeyCache = new ConcurrentHashMap<>();
@@ -78,10 +81,9 @@ public class MStockLtpPollingService {
     public void pollMStockLtp() {
         try {
             ZonedDateTime now = ZonedDateTime.now(MARKET_ZONE);
-            LocalTime currentTime = now.toLocalTime();
-            if (!currentTime.isBefore(MARKET_CLOSE_TIME)) {
+            if (!isNseTradingSessionOpen(now)) {
                 if (afterHoursLogged.compareAndSet(false, true)) {
-                    log.info("Skipping MStock LTP polling after market close ({} IST)", currentTime);
+                    log.info("Skipping Shoonya LTP polling outside the NSE/NFO session ({} IST)", now.toLocalDateTime());
                 }
                 return;
             } else {
@@ -98,6 +100,14 @@ public class MStockLtpPollingService {
             log.warn("Error during Shoonya LTP polling: {}", e.getMessage());
             log.debug("Shoonya LTP polling error trace", e);
         }
+    }
+
+    boolean isNseTradingSessionOpen(ZonedDateTime time) {
+        if (time == null || !nseMarketCalendar.isTradingDay(time.toLocalDate())) {
+            return false;
+        }
+        LocalTime currentTime = time.toLocalTime();
+        return !currentTime.isBefore(MARKET_OPEN_TIME) && currentTime.isBefore(MARKET_CLOSE_TIME);
     }
 
     private boolean hasMStockToken() {
@@ -147,6 +157,20 @@ public class MStockLtpPollingService {
                     continue;
                 }
                 ShoonyaQuoteService.LiveQuote quote = quoteOpt.get();
+                // Shoonya can occasionally return a quote for a different instrument than the
+                // one requested (for example, an NSE equity quote for an NFO option token).
+                // Never put that value under the requested scrip code: consumers such as the
+                // intraday closer would otherwise treat a spot price as the option LTP.
+                if (!quote.hasConfirmedIdentity()) {
+                    log.warn("SHOONYA_QUOTE_IDENTITY_MISMATCH | requestedScrip={} | requestedSymbol={} | requestedToken={} | returnedSymbol={} | returnedToken={} | ltp={}; rejecting cache update",
+                            scripCode,
+                            quote.tradingSymbol(),
+                            quote.token(),
+                            quote.returnedTradingSymbol(),
+                            quote.returnedToken(),
+                            quote.referencePrice());
+                    continue;
+                }
                 Double price = quote.referencePrice();
                 if (!isUsablePrice(price)) {
                     continue;

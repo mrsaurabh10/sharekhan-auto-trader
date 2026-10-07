@@ -1,8 +1,11 @@
 package org.com.sharekhan.service;
 
 import org.com.sharekhan.dto.TriggerRequest;
+import org.com.sharekhan.dto.CloseTradesRequest;
+import org.com.sharekhan.dto.CloseTradesResponse;
 import org.com.sharekhan.repository.TriggerTradeRequestRepository;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
@@ -14,8 +17,26 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.any;
 
 class TradingMessageServiceTest {
+
+    @Test
+    void sharekhanUpdateAlwaysScopesContractCloseToSharekhanSource() {
+        TradingMessageService service = new TradingMessageService();
+        TradeCloseService closeService = mock(TradeCloseService.class);
+        ReflectionTestUtils.setField(service, "tradeCloseService", closeService);
+        when(closeService.closeAllByContract(any()))
+                .thenReturn(CloseTradesResponse.builder().build());
+
+        service.handleRawMessage("Sharekhan UPDATE NIFTY CE 22600 06/10/2026",
+                "telegram", "update-test");
+        ArgumentCaptor<CloseTradesRequest> captor = ArgumentCaptor.forClass(CloseTradesRequest.class);
+        verify(closeService).closeAllByContract(captor.capture());
+        assertThat(captor.getValue().getSource()).isEqualTo("Sharekhan");
+        assertThat(captor.getValue().getReason()).isEqualTo("Sharekhan UPDATE notification");
+        assertThat(captor.getValue().getStrikePrice()).isEqualTo(22600.0);
+    }
 
     @Test
     void appliesDuplicateProtectionToSharekhanAndStockBazaariSources() {
@@ -97,6 +118,50 @@ class TradingMessageServiceTest {
 
         assertThat(request.getIntraday()).isFalse();
         assertThat(request.getTslEnabled()).isTrue();
+    }
+
+    @Test
+    void mapsAwrSourceSoItsPerUserConfigurationIsUsed() {
+        TradingMessageService service = new TradingMessageService();
+
+        TriggerRequest request = ReflectionTestUtils.invokeMethod(service, "mapToTriggerRequest", Map.of(
+                "symbol", "ASIANPAINT",
+                "source", "awr",
+                "entry", 56.0));
+
+        assertThat(request.getSource()).isEqualTo("awr");
+    }
+
+    @Test
+    void repairsOptionPremiumTargetAtOrBelowEntryDuringTelegramParsing() {
+        TradingMessageService service = new TradingMessageService();
+
+        TriggerRequest request = ReflectionTestUtils.invokeMethod(service, "mapToTriggerRequest", Map.of(
+                "symbol", "M&M",
+                "optionType", "PE",
+                "entry", 74.0,
+                "stopLoss", 66.0,
+                "target1", 72.0,
+                "target2", 82.0,
+                "target3", 86.0));
+
+        assertThat(request.getTarget1()).isEqualTo(81.40);
+        assertThat(request.getTarget2()).isEqualTo(82.0);
+        assertThat(request.getTarget3()).isEqualTo(86.0);
+    }
+
+    @Test
+    void retainsLowerSpotTargetForPutDuringTelegramParsing() {
+        TradingMessageService service = new TradingMessageService();
+
+        TriggerRequest request = ReflectionTestUtils.invokeMethod(service, "mapToTriggerRequest", Map.of(
+                "symbol", "M&M",
+                "optionType", "PE",
+                "entry", 3150.0,
+                "target1", 3120.0,
+                "useSpotForTarget", true));
+
+        assertThat(request.getTarget1()).isEqualTo(3120.0);
     }
 
     @Test
