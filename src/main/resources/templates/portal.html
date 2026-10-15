@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoTrader · Your trading workspace</title>
+<link rel="stylesheet" href="/portal/portal.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="shell">
+<aside class="sidebar">
+<a class="brand" href="/dashboard">
+<span class="brand-mark">↗</span> AutoTrader</a>
+<nav aria-label="Main navigation">
+<button data-view="overview" aria-current="page">
+<span class="nav-icon">▦</span>Overview</button>
+<button data-view="brokers">
+<span class="nav-icon">⇄</span>Brokers</button>
+<button data-view="strategies">
+<span class="nav-icon">◇</span>Strategies</button>
+<button data-view="orders">
+<span class="nav-icon">≡</span>Orders</button>
+<button data-view="analytics">
+<span class="nav-icon">▥</span>Analytics</button>
+<button data-view="settings">
+<span class="nav-icon">⚙</span>Settings</button>
+</nav>
+<div class="sidebar-bottom">
+<span class="badge">SHAREKHAN SUPPORTED</span>
+<p>Your account. Your decisions.<br>Enable trading when you’re ready.</p>
+<a href="/admin/dashboard" id="adminLink" hidden>Admin workspace ↗</a>
+</div>
+</aside>
+<div class="workspace">
+<header class="topbar">
+<div>
+<span class="eyebrow">TRADING WORKSPACE</span>
+<div class="section-note" style="margin:3px 0 0">A clear view of your next move</div>
+</div>
+<div class="identity">
+<span class="avatar" id="avatar">A</span>
+<span id="identity" class="account-menu">Loading account…</span>
+<form action="/logout" method="post">
+<input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+<button class="text-button" type="submit">Sign out</button>
+</form>
+</div>
+</header>
+<main class="page" id="main" tabindex="-1">
+<div id="previewBanner" class="notice" hidden>UX preview · Sample data only. No broker connections or real orders are submitted.</div>
+<div id="message" class="notice" role="status" aria-live="polite" hidden>
+</div>
+<section id="view-overview">
+<div class="page-heading">
+<div>
+<div class="eyebrow">YOUR WORKSPACE AT A GLANCE</div>
+<h1 id="welcome">Welcome to AutoTrader</h1>
+<p>Everything you need for a considered trading day.</p>
+</div>
+<button class="primary" data-goto="orders">+ Create order</button>
+</div>
+<div class="grid stats">
+<div class="card">
+<div class="stat-label">Connected brokers</div>
+<div class="stat-value" id="brokerCount">—</div>
+<span class="badge" id="brokerStatus">Loading</span>
+</div>
+<div class="card">
+<div class="stat-label">Active strategies</div>
+<div class="stat-value" id="strategyCount">—</div>
+<small>Subscriptions you control</small>
+</div>
+<div class="card">
+<div class="stat-label">Recent order requests</div>
+<div class="stat-value" id="orderCount">—</div>
+<small>Latest activity in your account</small>
+</div>
+</div>
+<div class="grid two-columns">
+<div class="card">
+<div class="row">
+<h2>Your next steps</h2>
+<span class="badge" id="progress">Getting started</span>
+</div>
+<p class="muted">A few steps to make this workspace yours.</p>
+<div id="onboardingSteps">
+</div>
+</div>
+<div class="card">
+<div class="eyebrow">BUILD YOUR WORKFLOW</div>
+<h2 class="section-gap">Start with a strategy</h2>
+<p class="muted">Explore available strategies, choose your instruments and lot size, and review before activating a subscription.</p>
+<div class="product-note">
+<small>Activating a strategy may generate live orders when its conditions are met. You can cancel future evaluations at any time.</small>
+</div>
+<button class="secondary section-gap" data-goto="strategies">Explore strategies →</button>
+</div>
+</div>
+<div class="card section-gap">
+<div class="row">
+<h2>Recent orders</h2>
+<button class="text-button" data-goto="orders">View orders →</button>
+</div>
+<div id="recentOrders" class="table-wrap">
+<div class="loading">Loading your activity…</div>
+</div>
+</div>
+</section>
+<section id="view-brokers" hidden>
+<div class="page-heading">
+<div>
+<div class="eyebrow">BROKER CONNECTIONS</div>
+<h1>Connect your trading account</h1>
+<p>Manage credentials, connection status, and trading permissions.</p>
+</div>
+</div>
+<div class="grid two-columns">
+<div>
+<div id="brokerAccounts" class="grid">
+</div>
+<div class="card section-gap">
+<div class="connection-icon">S</div>
+<div class="row">
+<h2>Sharekhan</h2>
+<span class="badge good">SUPPORTED</span>
+</div>
+<p class="muted">Connect an existing Sharekhan account. More brokers will be added after their integrations are implemented and tested.</p>
+<button class="secondary" id="showBrokerForm">+ Add Sharekhan account</button>
+</div>
+</div>
+<div class="card" id="brokerFormCard">
+<h2 id="brokerFormTitle">Add your Sharekhan account</h2>
+<p class="muted">Credentials are encrypted. Saved passwords and secrets are never displayed.</p>
+<form id="brokerForm" class="form-grid">
+<input type="hidden" name="id">
+<label class="full">Client code<input name="clientCode" required autocomplete="off">
+</label>
+<label>Customer ID<input name="customerId" type="number" min="1" step="1" required>
+</label>
+<label>API key<input name="apiKey" type="password" required autocomplete="off">
+</label>
+<label>Broker password<input name="brokerPassword" type="password" required autocomplete="new-password">
+</label>
+<label>TOTP secret<input name="totpSecret" type="password" required autocomplete="off">
+</label>
+<label class="full">API secret key<input name="secretKey" type="password" required autocomplete="off">
+</label>
+<small class="full">Saving credentials does not enable trading. Verify the connection, then explicitly enable trading.</small>
+<button class="primary full" type="submit">Save credentials</button>
+</form>
+</div>
+</div>
+</section>
+<section id="view-strategies" hidden>
+<div class="page-heading">
+<div>
+<div class="eyebrow">STRATEGY WORKSPACE</div>
+<h1>Find your next strategy</h1>
+<p>Explore the catalog and manage your subscriptions.</p>
+</div>
+</div>
+<div id="strategyGate" class="notice" hidden>Connect a broker and enable trading before subscribing. <button class="text-button" data-goto="brokers">Go to brokers →</button>
+</div>
+<div id="strategyCatalog" class="grid strategy-list">
+</div>
+<div class="card section-gap">
+<h2>Your subscriptions</h2>
+<p class="muted">Cancel stops future strategy evaluations. Existing orders and positions must be managed separately.</p>
+<div id="subscriptions" class="table-wrap">
+</div>
+</div>
+</section>
+<section id="view-orders" hidden>
+<div class="page-heading">
+<div>
+<div class="eyebrow">ORDER MANAGEMENT</div>
+<h1>Every order, in focus</h1>
+<p>Create a price-triggered order and track its progress.</p>
+</div>
+<button class="secondary" id="refreshOrders">↻ Refresh orders</button>
+</div>
+<div class="card">
+<h2>Create an order</h2>
+<p class="muted">Review the broker, instrument, quantity, and prices before submitting.</p>
+<form id="orderForm" class="form-grid">
+<label>Broker account<select name="brokerCredentialsId" id="orderBroker" required>
+</select>
+</label>
+<label>Exchange<select name="exchange" id="orderExchange" required>
+<option value="NC">NSE Cash (NC)</option>
+<option value="BC">BSE Cash (BC)</option>
+<option value="NF">NSE F&amp;O (NF)</option>
+<option value="BF">BSE F&amp;O (BF)</option>
+</select>
+</label>
+<label class="full">Instrument<input name="instrument" list="instrumentOptions" id="orderInstrument" required autocomplete="off" placeholder="Search an instrument">
+<datalist id="instrumentOptions">
+</datalist>
+</label>
+<label id="optionTypeField" hidden>Contract type<select name="optionType">
+<option value="CE">Call (CE)</option>
+<option value="PE">Put (PE)</option>
+</select>
+</label>
+<label id="strikeField" hidden>Strike<select name="strikePrice" id="orderStrike">
+</select>
+</label>
+<label id="expiryField" hidden>Expiry<select name="expiry" id="orderExpiry">
+</select>
+</label>
+<label>
+<span id="quantityLabel">Quantity (shares)</span>
+<input name="quantity" type="number" min="1" max="1000" value="1" step="1" required>
+</label>
+<label>Entry price (₹)<input name="entryPrice" type="number" min="0.01" step="0.01" required>
+</label>
+<label>Stop-loss (₹)<input name="stopLoss" type="number" min="0.01" step="0.01" required>
+</label>
+<label>Target 1 (₹)<input name="target1" type="number" min="0.01" step="0.01">
+</label>
+<label>Target 2 (₹, optional)<input name="target2" type="number" min="0.01" step="0.01">
+</label>
+<label>Target 3 (₹, optional)<input name="target3" type="number" min="0.01" step="0.01">
+</label>
+<label class="check">
+<input name="intraday" type="checkbox" checked>Intraday order</label>
+<div class="full actions">
+<button class="primary" type="submit">Review order →</button>
+<small id="orderGate">
+</small>
+</div>
+</form>
+</div>
+<div class="card section-gap">
+<h2>Order requests</h2>
+<div id="orderRequests" class="table-wrap">
+</div>
+<div class="actions">
+<button id="previousRequests" class="secondary">← Previous</button>
+<span id="requestPage" class="muted">
+</span>
+<button id="nextRequests" class="secondary">Next →</button>
+</div>
+</div>
+<div class="card section-gap">
+<h2>Executions &amp; positions</h2>
+<form id="executionFilters" class="analytics-filters">
+<label>Status<select name="status">
+<option value="">All statuses</option>
+<option value="EXECUTED">Executed</option>
+<option value="TARGET_ORDER_PLACED">Target order placed</option>
+<option value="EXIT_ORDER_PLACED">Exit order placed</option>
+<option value="EXITED_SUCCESS">Exited</option>
+<option value="REJECTED">Rejected</option>
+<option value="FAILED">Failed</option>
+</select>
+</label>
+<label>Source<input name="source" placeholder="All sources">
+</label>
+<button class="secondary" type="submit">Apply filter</button>
+</form>
+<div id="executions" class="table-wrap">
+</div>
+<div class="actions">
+<button id="previousExecutions" class="secondary">← Previous</button>
+<span id="executionPage" class="muted">
+</span>
+<button id="nextExecutions" class="secondary">Next →</button>
+</div>
+</div>
+</section>
+<section id="view-analytics" hidden>
+<div class="page-heading">
+<div>
+<div class="eyebrow">PERFORMANCE ANALYTICS</div>
+<h1>Understand your trading activity</h1>
+<p>Review realized results, costs, and performance across instruments.</p>
+</div>
+</div>
+<div class="card">
+<form id="analyticsForm" class="analytics-filters">
+<label>From<input type="date" name="from">
+</label>
+<label>To<input type="date" name="to">
+</label>
+<label>Instrument<input name="symbol" placeholder="All instruments">
+</label>
+<label>Source<select name="source" id="analyticsSource">
+<option value="">All sources</option>
+</select>
+</label>
+<label>Broker<select name="brokerCredentialsId" id="analyticsBroker">
+<option value="">All my brokers</option>
+</select>
+</label>
+<button class="primary" type="submit">Apply filters</button>
+</form>
+</div>
+<div id="analyticsSummary" class="grid analytics-stats section-gap">
+</div>
+<div class="card section-gap">
+<div class="row">
+<h2>Realized P&amp;L over time</h2>
+<span class="badge">CLOSED TRADES</span>
+</div>
+<p class="muted">Cumulative realized P&amp;L for the selected period, before trading costs.</p>
+<div id="equityChart" class="equity-chart">
+</div>
+</div>
+<div class="grid two-columns section-gap">
+<div class="card">
+<h2>Performance by instrument</h2>
+<div id="symbolAnalytics" class="table-wrap">
+</div>
+</div>
+<div class="card">
+<h2>Daily performance</h2>
+<div id="dayAnalytics" class="table-wrap">
+</div>
+</div>
+</div>
+<div class="card section-gap">
+<h2>Recent closed trades</h2>
+<div id="closedTrades" class="table-wrap">
+</div>
+<p class="section-note">Results reflect recorded executions. They may differ from your broker statement while fills and charges are being reconciled.</p>
+</div>
+</section>
+<section id="view-settings" hidden>
+<div class="page-heading">
+<div>
+<div class="eyebrow">ACCOUNT SETTINGS</div>
+<h1>Keep your account secure</h1>
+<p>Update your password and review your account details.</p>
+</div>
+</div>
+<div class="grid two-columns">
+<div class="card">
+<h2>Change password</h2>
+<form id="passwordForm" class="grid">
+<label>Current password<input name="currentPassword" type="password" autocomplete="current-password" required>
+</label>
+<label>New password<input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="72" required>
+<small>At least 12 characters.</small>
+</label>
+<button type="submit" class="primary">Update password</button>
+</form>
+</div>
+<div class="card">
+<h2>Your account</h2>
+<p id="profileEmail" class="muted">
+</p>
+<span class="badge good">SIGNED IN</span>
+<p class="section-note">Broker credentials are managed separately in Brokers. Disabling new trading does not close existing positions.</p>
+</div>
+</div>
+</section>
+<footer class="section-note section-gap">AutoTrader · Trading involves risk. Review all live trading actions carefully.</footer>
+</main>
+</div>
+</div>
+<dialog id="strategyDialog" aria-labelledby="strategyDialogTitle">
+<h2 id="strategyDialogTitle">Subscribe to strategy</h2>
+<p class="muted" id="strategyDialogDescription">
+</p>
+<form id="subscriptionForm" class="grid">
+<input type="hidden" name="templateId">
+<label>Broker account<select name="brokerCredentialsId" id="strategyBroker" required>
+</select>
+</label>
+<label>Instrument or symbol list<input name="symbol" placeholder="e.g. NIFTY" required>
+<small>Automatic-universe strategies select their own instruments; leave FNO_UNIVERSE for these.</small>
+</label>
+<label>Quantity (lots)<input name="lots" type="number" min="1" max="1000" step="1" value="1" required>
+</label>
+<label class="check">
+<input name="intraday" type="checkbox" checked>Intraday</label>
+<label class="check">
+<input type="checkbox" name="consent" required>I understand this subscription may generate live orders immediately and on future trading days.</label>
+<div class="actions">
+<button type="button" class="secondary" data-close>Cancel</button>
+<button class="primary" type="submit">Activate subscription</button>
+</div>
+</form>
+</dialog>
+<dialog id="reviewDialog" aria-labelledby="reviewTitle">
+<h2 id="reviewTitle">Review your order</h2>
+<p class="muted">This request can place a live broker order when its entry conditions are met.</p>
+<dl class="review-list" id="orderSummary">
+</dl>
+<form id="confirmOrder">
+<label class="check">
+<input type="checkbox" required>I have reviewed these details and authorize this order.</label>
+<div class="actions">
+<button type="button" class="secondary" data-close>Go back</button>
+<button class="primary" type="submit">Submit order</button>
+</div>
+</form>
+</dialog>
+<dialog id="actionDialog" aria-labelledby="actionTitle">
+<h2 id="actionTitle">Confirm action</h2>
+<p id="actionDescription" class="muted">
+</p>
+<form method="dialog">
+<div class="actions">
+<button value="cancel" class="secondary">Go back</button>
+<button value="confirm" class="primary">Confirm</button>
+</div>
+</form>
+</dialog>
+<script src="/portal/portal.js" defer>
+</script>
+</body>
+</html>

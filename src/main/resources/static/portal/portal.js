@@ -1,0 +1,223 @@
+'use strict';
+(async function () {
+  const $ = selector => document.querySelector(selector);
+  const state = {brokers: [], templates: [], subscriptions: [], requests: [], executions: [], requestPage: 0, executionPage: 0};
+  let pendingOrder;
+  function confirmAction(message) {
+    const dialog=$('#actionDialog');$('#actionDescription').textContent=message;dialog.returnValue='cancel';
+    return new Promise(resolve=>{dialog.addEventListener('close',()=>resolve(dialog.returnValue==='confirm'),{once:true});dialog.showModal();});
+  }
+  function node(tag, text, className) { const el = document.createElement(tag); if (text != null) el.textContent = text; if (className) el.className = className; return el; }
+  function notify(text, error = false) { const el = $('#message'); el.textContent = text; el.hidden = false; el.className = 'notice ' + (error ? 'error' : 'success'); el.scrollIntoView({behavior: 'smooth', block:'nearest'}); }
+  async function api(url, method = 'GET', body) {
+    const headers = {Accept: 'application/json'};
+    if (method !== 'GET') { const csrf = await api('/api/auth/csrf-token'); headers[csrf.header] = csrf.token; headers['Content-Type'] = 'application/json'; }
+    const response = await fetch(url, {method, credentials: 'same-origin', headers, body:body == null ? undefined : JSON.stringify(body)});
+    const raw = await response.text(); let result; try { result = JSON.parse(raw); } catch { result = raw; }
+    if (response.status === 401) { location.assign('/login'); throw new Error('Your session expired. Please sign in.'); }
+    if (!response.ok) throw new Error(typeof result === 'string' ? (result.startsWith('<') ? 'Unable to complete this request. Refresh and try again.' : result) : result.message || result.error || 'Request failed');
+    return result;
+  }
+  async function busy(button, action) { button.disabled = true; try { await action(); } catch (error) { notify(error.message, true); } finally { button.disabled = false; } }
+  function button(text, action, style = 'secondary') { const el = node('button', text, style); el.type = 'button'; el.addEventListener('click', () => busy(el, action)); return el; }
+  function badge(text, good = false) { return node('span', text, 'badge' + (good ? ' good' : '')); }
+  function view(name) {
+    if (!['overview', 'brokers', 'strategies', 'orders', 'analytics', 'settings'].includes(name)) name = 'overview';
+    for (const el of document.querySelectorAll('[id^="view-"]')) el.hidden = el.id !== 'view-' + name;
+    for (const el of document.querySelectorAll('[data-view]')) { if (el.dataset.view === name) el.setAttribute('aria-current','page'); else el.removeAttribute('aria-current'); }
+    history.replaceState(null, '', '#'+name); $('#main').focus({preventScroll:true});
+    if (name === 'analytics') loadAnalytics().catch(e => notify(e.message, true));
+    if (name === 'orders') loadInstruments().catch(e => notify(e.message, true));
+  }
+  document.querySelectorAll('[data-view],[data-goto]').forEach(el => el.addEventListener('click', () => view(el.dataset.view || el.dataset.goto)));
+  document.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => el.closest('dialog').close()));
+  function table(container, columns, rows, action) {
+    container.replaceChildren(); container.tabIndex=0; container.setAttribute("role","region"); container.setAttribute("aria-label",container.id.replaceAll(/([A-Z])/g," $1")+" table");
+    if (!rows.length) { container.append(node('div', 'Nothing here yet. Your activity will appear here.', 'empty')); return; }
+    const t = node('table'); const head = node('thead'); const hr = node('tr');
+    columns.forEach(c => hr.append(node('th', c[0]))); if (action) hr.append(node('th', 'Actions')); head.append(hr); t.append(head);
+    const body = node('tbody');
+    rows.forEach(row => { const tr = node('tr'); columns.forEach(c => { const td = node('td'); const value = typeof c[1] === 'function' ? c[1](row) : row[c[1]]; if (value instanceof Node) td.append(value); else td.textContent = value == null ? '—' : String(value); tr.append(td); }); if (action) { const td = node('td'); action(row, td); tr.append(td); } body.append(tr); });
+    t.append(body); container.append(t);
+  }
+  const orderColumns = [['Instrument', 'symbol'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => badge(row.status || 'PENDING')], ['Source', 'source']];
+  function readyBrokers() { return state.brokers.filter(b => b.connected && b.active && b.tradingEnabled); }
+  function brokerLabel(b) { return b.brokerName + ' · ' + (b.clientCode || 'Account ' + b.id); }
+  function refreshSelectors() {
+    for (const selector of ['#orderBroker', '#strategyBroker']) {
+      const el = $(selector), previous = el.value; el.replaceChildren();
+      el.append(new Option(readyBrokers().length ? 'Choose a broker account' : 'Connect a broker and enable trading first', ''));
+      readyBrokers().forEach(b => el.append(new Option(brokerLabel(b), b.id))); el.value = previous;
+    }
+    const ab=$('#analyticsBroker'); const selected=ab.value; ab.replaceChildren(new Option('All my brokers',''), ...state.brokers.map(b=>new Option(brokerLabel(b),b.id))); ab.value=selected;
+    $('#strategyGate').hidden = readyBrokers().length > 0;
+    $('#orderForm button[type=submit]').disabled = !readyBrokers().length;
+    $('#orderGate').textContent = readyBrokers().length ? '' : 'Connect a broker and enable trading in Brokers to continue.';
+  }
+  function renderOverview() {
+    const status=state.onboarding;
+    $('#brokerCount').textContent=status ? status.connectedBrokers : '—';
+    $('#strategyCount').textContent=status ? status.activeStrategies : '—';
+    $('#orderCount').textContent=status ? status.orderRequests : '—';
+    $('#brokerStatus').textContent=status ? (status.connectedBrokers ? 'CONNECTION VERIFIED':'SETUP NEEDED') : 'Loading';
+    $('#brokerStatus').className='badge '+(status && status.connectedBrokers ? 'good':'warn');
+    const details={ACCOUNT:'You’re signed in to your personal workspace.',BROKER:'Add your Sharekhan credentials and verify the connection.',TRADING:'Explicitly enable new trading for your connected account.',WORKFLOW:'Subscribe to a strategy or review your first order.'};
+    const steps=status ? status.steps : [];
+    $('#progress').textContent=status ? steps.filter(s=>s.complete).length+' of '+steps.length+' complete':'Loading progress';
+    $('#onboardingSteps').replaceChildren();
+    steps.forEach((s,i)=>{const row=node('div',null,'step'+(s.complete?' done':''));row.append(node('span',s.complete?'✓':i+1,'step-number'));const body=node('div');body.append(node('strong',s.title),node('p',details[s.id] || ''));if(!s.complete)body.append(button('Continue →',async()=>view(s.destination),'text-button'));row.append(body);$('#onboardingSteps').append(row);});
+    table($('#recentOrders'), orderColumns, state.requests.slice(0,5)); refreshSelectors();
+  }
+  function renderBrokers() {
+    const list = $('#brokerAccounts'); list.replaceChildren();
+    if (!state.brokers.length) list.append(node('div', 'No broker connected yet. Add your Sharekhan account to get started.', 'empty'));
+    state.brokers.forEach(b => {
+      const card = node('article', null, 'card'); const title = node('div',null,'row'); title.append(node('h2', brokerLabel(b)), badge(b.connected ? 'CONNECTED' : 'NOT CONNECTED', b.connected)); card.append(title);
+      card.append(node('p', b.connected ? 'Session verified until ' + new Date(b.verifiedUntil).toLocaleString('en-IN') : 'Credentials saved. Verify your connection to continue.', 'muted'));
+      card.append(badge(b.tradingEnabled ? 'NEW TRADING ENABLED' : 'NEW TRADING DISABLED', b.tradingEnabled));
+      const actions = node('div',null,'actions');
+      actions.append(button(b.connected ? 'Reconnect' : 'Verify connection', async () => {
+        const result = await api('/api/user/brokers/'+b.id+'/connect','POST',{}); notify(result.message); await loadBrokers();
+      }));
+      actions.append(button(b.tradingEnabled ? 'Disable new trading' : 'Enable trading', async () => {
+        if (!b.tradingEnabled && !await confirmAction('Enable live trading for this broker account? Orders and strategy subscriptions can then submit broker orders.')) return;
+        await api('/api/user/brokers/'+b.id+'/trading','POST',{enabled:!b.tradingEnabled}); notify(b.tradingEnabled ? 'New trading disabled. Existing positions remain open.' : 'Trading enabled.'); await loadBrokers();
+      }, b.tradingEnabled ? 'secondary' : 'primary'));
+      actions.append(button('Edit credentials', async () => {
+        const f = $('#brokerForm'); f.reset(); f.elements.id.value = b.id;
+        for (const input of f.querySelectorAll('input:not([type=hidden])')) input.required = false;
+        $('#brokerFormTitle').textContent = 'Update credentials · ' + brokerLabel(b);
+        $('#brokerFormCard').scrollIntoView({behavior:'smooth'}); f.elements.clientCode.focus();
+        notify('Leave fields blank to keep saved values. Updating credentials requires no active subscriptions, pending orders, or open positions.');
+      }));
+      actions.append(button('Disconnect', async () => {
+        if (!await confirmAction('Disconnect this broker? Cancel active subscriptions and pending orders, and close open positions first.')) return;
+        const result = await api('/api/user/brokers/'+b.id+'/disconnect','POST',{}); notify(result.message); await loadBrokers();
+      },'text-button')); card.append(actions); list.append(card);
+    });
+  }
+  async function loadOnboarding() { state.onboarding=await api('/api/user/onboarding'); renderOverview(); }
+  async function loadBrokers() { state.brokers = await api('/api/user/brokers'); renderBrokers(); await loadOnboarding(); }
+  $('#showBrokerForm').addEventListener('click', () => {
+    const f = $('#brokerForm'); f.reset(); f.elements.id.value = '';
+    for (const name of ['customerId','clientCode','apiKey','brokerPassword','totpSecret','secretKey']) f.elements[name].required = true;
+    $('#brokerFormTitle').textContent = 'Add your Sharekhan account'; f.elements.clientCode.focus();
+  });
+  $('#brokerForm').addEventListener('submit', event => { event.preventDefault(); const f=event.target; busy(f.querySelector('button'),async () => {
+    const body = Object.fromEntries([...new FormData(f)].filter(([key,value]) => key !== 'id' && value !== '')); body.brokerName = 'Sharekhan';
+    const id = f.elements.id.value; await api('/api/user/brokers'+(id ? '/'+id : ''),id ? 'PUT':'POST',body);
+    f.reset(); f.elements.id.value=''; notify('Credentials saved. Verify the broker connection next.'); await loadBrokers();
+  }); });
+  function renderStrategies() {
+    $('#strategyCatalog').replaceChildren();
+    if (!state.templates.length) $('#strategyCatalog').append(node('div','No strategies are currently available.','empty'));
+    state.templates.forEach(template => {
+      const card = node('article',null,'card'); card.append(node('div','STRATEGY','eyebrow'),node('h2',template.name),node('p',template.description));
+      const el = button('Configure subscription →',async () => {
+        const f = $('#subscriptionForm'); f.reset(); f.elements.templateId.value=template.id;
+        f.elements.symbol.value = /FNO_0925|MARKETAUX/.test(template.id) ? 'FNO_UNIVERSE' : '';
+        $('#strategyDialogTitle').textContent=template.name; $('#strategyDialogDescription').textContent=template.description;
+        $('#strategyDialog').showModal();
+      }); el.disabled=!readyBrokers().length; card.append(el); $('#strategyCatalog').append(card);
+    });
+    table($('#subscriptions'),[['Strategy','templateId'],['Instruments','symbol'],['Lots','lots'],['Status',r=>badge(r.status,['ACTIVE','TRIGGERED'].includes(r.status))],['Latest update','lastMessage']],state.subscriptions,(row,td)=>{
+      if (row.status !== 'CANCELLED') td.append(button('Cancel',async()=>{
+        if (!await confirmAction('Cancel future evaluations for this subscription? Existing orders and positions remain open.')) return;
+        await api('/api/strategies/subscriptions/'+row.id+'/cancel','POST',{}); await loadStrategies(); notify('Subscription cancelled. Existing orders and positions remain open.');
+      }));
+    });
+  }
+  async function loadStrategies() { state.subscriptions=await api('/api/strategies/subscriptions'); renderStrategies(); await loadOnboarding(); }
+  $('#subscriptionForm').addEventListener('submit',event=>{event.preventDefault(); const f=event.target; busy(f.querySelector('button[type=submit]'),async()=>{
+    const body=Object.fromEntries(new FormData(f)); delete body.consent; body.brokerCredentialsId=Number(body.brokerCredentialsId); body.lots=Number(body.lots); body.intraday=f.elements.intraday.checked;
+    await api('/api/strategies/start','POST',body); $('#strategyDialog').close(); notify('Strategy subscription activated.'); await loadStrategies(); await loadOrders();
+  });});
+  async function loadOrders() {
+    const [requests,executions]=await Promise.all([api('/api/orders/requests?page='+state.requestPage+'&size=10'),api('/api/orders/executed?page='+state.executionPage+'&size=10&'+new URLSearchParams([...new FormData($('#executionFilters'))].filter(([,v])=>v!=='')))]);
+    state.requests=requests.content || requests; state.executions=executions.content || executions; state.requestTotal=requests.totalElements;
+    table($('#orderRequests'),orderColumns,state.requests,(row,td)=>td.append(button('Cancel request',async()=>{
+      if (!await confirmAction('Cancel this order request?')) return;
+      await api('/api/trades/cancel-request/'+row.id,'POST',{}); notify('Request cancelled.'); await loadOrders();
+    })));
+    table($('#executions'),[['Instrument','symbol'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Gross P&L',r=>money(r.pnl)],['Costs',r=>money(r.totalTradeCost)],['Net P&L',r=>money(r.effectivePnl)],['Status',r=>badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
+      if (['EXECUTED','TARGET_ORDER_PLACED'].includes(row.status)) td.append(button('Close position',async()=>{
+        if (!await confirmAction('Submit a live square-off order for this position?')) return;
+        await api('/api/trades/square-off/'+row.id,'POST',{}); notify('Square-off requested. Check broker execution status.'); await loadOrders();
+      }));
+    });
+    $('#requestPage').textContent='Page '+(state.requestPage+1); $('#executionPage').textContent='Page '+(state.executionPage+1);
+    $('#previousRequests').disabled=state.requestPage===0; $('#nextRequests').disabled=requests.last == null ? state.requests.length<10 : requests.last;
+    $('#previousExecutions').disabled=state.executionPage===0; $('#nextExecutions').disabled=executions.last == null ? state.executions.length<10 : executions.last;
+    await loadOnboarding();
+  }
+  $('#executionFilters').addEventListener('submit',event=>{event.preventDefault();state.executionPage=0;busy(event.target.querySelector('button'),loadOrders);});
+  $('#refreshOrders').addEventListener('click',event=>busy(event.target,loadOrders));
+  for (const [id,key,delta] of [['previousRequests','requestPage',-1],['nextRequests','requestPage',1],['previousExecutions','executionPage',-1],['nextExecutions','executionPage',1]]) $('#'+id).addEventListener('click',event=>busy(event.target,async()=>{state[key]=Math.max(0,state[key]+delta);await loadOrders();}));
+  const query = object => new URLSearchParams(object).toString();
+  async function loadInstruments() {
+    const exchange=$('#orderExchange').value, derivatives=!['NC','BC'].includes(exchange);
+    for (const id of ['optionTypeField','strikeField','expiryField']) $('#'+id).hidden=!derivatives;
+    $('#quantityLabel').textContent=derivatives?'Quantity (lots)':'Quantity (shares)';
+    $('#orderStrike').required=derivatives; $('#orderExpiry').required=derivatives;
+    const data=await api('/api/scripts/instruments/'+encodeURIComponent(exchange));
+    $('#instrumentOptions').replaceChildren(...data.instruments.map(item=>new Option(item,item)));
+  }
+  async function loadStrikes() {
+    const f=$('#orderForm'); if (['NC','BC'].includes(f.elements.exchange.value)) return;
+    $('#orderStrike').replaceChildren(new Option('Choose strike','')); $('#orderExpiry').replaceChildren(new Option('Choose expiry',''));
+    const data=await api('/api/scripts/strikes?'+query({exchange:f.elements.exchange.value,instrument:f.elements.instrument.value}));
+    data.strikes.forEach(v=>$('#orderStrike').append(new Option(v,v)));
+  }
+  $('#orderExchange').addEventListener('change',()=>{ $('#orderInstrument').value=''; loadInstruments().catch(e=>notify(e.message,true)); });
+  $('#orderInstrument').addEventListener('change',()=>loadStrikes().catch(e=>notify(e.message,true)));
+  $('#orderStrike').addEventListener('change',()=>{ const f=$('#orderForm'); api('/api/scripts/expiries?'+query({exchange:f.elements.exchange.value,instrument:f.elements.instrument.value,strikePrice:f.elements.strikePrice.value})).then(data=>{ $('#orderExpiry').replaceChildren(new Option('Choose expiry',''),...data.expiries.map(v=>new Option(v,v))); }).catch(e=>notify(e.message,true)); });
+  $('#orderForm').addEventListener('submit', event=>{
+    event.preventDefault(); const f=event.target; const body=Object.fromEntries(new FormData(f));
+    for (const key of ['brokerCredentialsId','quantity','entryPrice','stopLoss','target1','target2','target3','strikePrice']) body[key]=body[key] ? Number(body[key]) : null;
+    if (['NC','BC'].includes(body.exchange)) { body.strikePrice=null; body.optionType=null; body.expiry=null; }
+    body.intraday=f.elements.intraday.checked; body.action='BUY';
+    pendingOrder=body; $('#orderSummary').replaceChildren();
+    for (const [label,value] of [['Broker',f.elements.brokerCredentialsId.selectedOptions[0].textContent],['Instrument',body.instrument],['Exchange',body.exchange],['Contract',body.optionType],['Strike',body.strikePrice],['Expiry',body.expiry],[body.optionType ? 'Lots' : 'Shares',body.quantity],['Entry ₹',body.entryPrice],['Stop-loss ₹',body.stopLoss],['Target 1 ₹',body.target1],['Target 2 ₹',body.target2],['Target 3 ₹',body.target3],['Product',body.intraday?'Intraday':'Delivery']]) if(value!=null) $('#orderSummary').append(node('dt',label),node('dd',value));
+    $('#confirmOrder').reset(); $('#reviewDialog').showModal();
+  });
+  $('#confirmOrder').addEventListener('submit',event=>{event.preventDefault(); busy(event.target.querySelector('button[type=submit]'),async()=>{
+    const result=await api('/api/trades/trigger-on-price','POST',pendingOrder); pendingOrder=null; $('#reviewDialog').close();
+    notify('Order request #'+result.id+' submitted. Status: '+result.status+'.'); state.requestPage=0; await loadOrders();
+  });});
+  $('#passwordForm').addEventListener('submit',event=>{event.preventDefault(); const f=event.target; busy(f.querySelector('button'),async()=>{await api('/api/user/password','POST',Object.fromEntries(new FormData(f))); f.reset(); location.assign('/login?passwordUpdated');});});
+  const money = value => value == null ? '—' : new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2}).format(value);
+  async function loadAnalytics() {
+    const params=new URLSearchParams([...new FormData($('#analyticsForm'))].filter(([,v])=>v!==''));
+    const data=await api('/api/analytics/trades?'+params.toString());
+    const summary=data.summary || {}; const cards=$('#analyticsSummary');cards.replaceChildren();
+    for (const [label,value,financial] of [['Net realized P&L',summary.effectiveRealizedPnl,true],['Gross realized P&L',summary.realizedPnl,true],['Trading costs',summary.totalTradeCost,true],['Closed trades',summary.totalClosedTrades,false],['Win rate',summary.winRate == null ? '—' : summary.winRate.toFixed(1)+'%',false],['Open positions',summary.openTrades,false]]) {
+      const card=node('div',null,'card');card.append(node('div',label,'stat-label'));
+      const amount=node('div',financial ? money(value) : value == null ? '—' : value,'stat-value');
+      if (financial && label!=='Trading costs' && value != null) amount.classList.add(value>=0?'positive':'negative');
+      card.append(amount);cards.append(card);
+    }
+    table($('#symbolAnalytics'),[['Instrument','symbol'],['Closed trades','closedCount'],['Gross P&L',r=>money(r.realizedPnl)],['Win rate',r=>r.winRate == null ? '—':r.winRate.toFixed(1)+'%']],data.bySymbol || []);
+    table($('#dayAnalytics'),[['Date','date'],['Closed trades','closedCount'],['Gross P&L',r=>money(r.realizedPnl)],['Cumulative',r=>money(r.cumulativeRealizedPnl)]],data.byDay || []);
+    table($('#closedTrades'),[['Instrument','symbol'],['Quantity','quantity'],['Entry',r=>money(r.entryPrice)],['Exit',r=>money(r.exitPrice)],['Gross P&L',r=>money(r.pnl)],['Exit reason','exitReason']],data.recentClosedTrades || []);
+    const chart=$('#equityChart');chart.replaceChildren();const days=data.byDay || [];
+    if(!days.length) chart.append(node('div','No closed trades in this period. Adjust your filters to view performance.','empty'));
+    else {
+      const svgNs='http://www.w3.org/2000/svg';const svg=document.createElementNS(svgNs,'svg');svg.setAttribute('viewBox','0 0 1000 280');svg.setAttribute('role','img');svg.setAttribute('aria-label','Cumulative realized profit and loss from '+days[0].date+' to '+days[days.length-1].date);
+      const values=days.map(d=>Number(d.cumulativeRealizedPnl)||0), low=Math.min(0,...values), high=Math.max(0,...values), range=high-low||1;
+      const x=i=>70+i*890/Math.max(1,values.length-1), y=v=>230-(v-low)*190/range;
+      for(let i=0;i<=4;i++){const value=low+range*i/4;const line=document.createElementNS(svgNs,'line');for(const [k,v] of Object.entries({x1:70,x2:960,y1:y(value),y2:y(value),stroke:'#e0e6ef'}))line.setAttribute(k,v);svg.append(line);const text=document.createElementNS(svgNs,'text');text.setAttribute('x','3');text.setAttribute('y',y(value)+4);text.setAttribute('fill','#66748b');text.setAttribute('font-size','11');text.textContent=Math.round(value).toLocaleString('en-IN');svg.append(text);}
+      const path=document.createElementNS(svgNs,'polyline');path.setAttribute('points',values.map((v,i)=>x(i)+','+y(v)).join(' '));path.setAttribute('fill','none');path.setAttribute('stroke','#254de6');path.setAttribute('stroke-width','3');svg.append(path);
+      for(const i of [...new Set([0,values.length-1])]){const dot=document.createElementNS(svgNs,'circle');dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(values[i]));dot.setAttribute('r','4');dot.setAttribute('fill','#254de6');svg.append(dot);const label=document.createElementNS(svgNs,'text');label.setAttribute('x',x(i));label.setAttribute('y','266');label.setAttribute('text-anchor',i===0?'start':'end');label.setAttribute('fill','#66748b');label.setAttribute('font-size','12');label.textContent=days[i].date;svg.append(label);}
+      chart.append(svg);
+    }
+  }
+  $('#analyticsForm').addEventListener('submit',event=>{event.preventDefault();busy(event.target.querySelector('button'),loadAnalytics);});
+  try {
+    const me=await api('/api/user/me'); const name=me.displayName || me.username;
+    $('#identity').textContent=name; $('#avatar').textContent=name.slice(0,1).toUpperCase(); $('#welcome').textContent='Welcome, '+name.split(' ')[0]; $('#profileEmail').textContent=me.email || me.username;
+    $('#adminLink').hidden=!me.admin;
+    state.templates=await api('/api/strategies/templates');
+    const sources=await api('/api/analytics/sources'); (Array.isArray(sources)?sources:[]).forEach(v=>$('#analyticsSource').append(new Option(v,v)));
+    await Promise.all([loadBrokers(),loadStrategies(),loadOrders()]); renderStrategies(); view(location.hash.slice(1));
+  } catch(error) { notify(error.message,true); }
+})();

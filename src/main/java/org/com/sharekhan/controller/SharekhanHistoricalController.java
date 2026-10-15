@@ -134,7 +134,7 @@ public class SharekhanHistoricalController {
             return true;
         }
         if (!StringUtils.hasText(adminToken)) {
-            return true;
+            return false;
         }
         return adminToken.equals(headerToken);
     }

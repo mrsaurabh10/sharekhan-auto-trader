@@ -3,7 +3,6 @@ package org.com.sharekhan.config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -39,28 +38,29 @@ public class SecurityConfig {
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
                 .authorizeHttpRequests(auth -> auth
-                        // allow H2 console and static resources publicly
-                        .requestMatchers("/h2-console/**").permitAll()
-                        .requestMatchers("/login", "/admin/login", "/css/**", "/js/**", "/images/**").permitAll()
-                        .requestMatchers("/admin-dashboard.html", "/dashboard").hasAnyRole("ADMIN", "USER")
-                        // admin endpoints require ROLE_ADMIN
-                        .requestMatchers("/admin/**").hasRole("ADMIN")
-                        .requestMatchers("/api/user/**").hasAnyRole("ADMIN", "USER")
-                        .requestMatchers("/api/orders/**", "/api/analytics/**").hasAnyRole("ADMIN", "USER")
-                        .requestMatchers("/api/auth/**").permitAll() // keep token endpoints accessible via admin UI via login
-                        .requestMatchers("/api/trades/trigger-all", "/api/trades/close-all", "/api/trades/close-all/**").permitAll() // Secure via X-Admin-Token inside the controller
-                        .requestMatchers("/api/trades/**").hasAnyRole("ADMIN", "USER")
-                        .requestMatchers("/api/scripts/**", "/api/mstock/**").hasAnyRole("ADMIN", "USER")
-                        .requestMatchers("/api/market-news/**").hasAnyRole("ADMIN", "USER")
-                        .requestMatchers("/api/sharekhan/historical/**").permitAll() // Secure via X-Admin-Token inside the controller
-                        .requestMatchers("/api/sharekhan/**").hasAnyRole("ADMIN", "USER")
-                        .requestMatchers("/api/backtests/**").permitAll() // Secure via X-Admin-Token inside the controller
-                        .requestMatchers("/internal/monitoring/**").permitAll() // Secured by X-Monitoring-Token in the controller
-                        .requestMatchers("/ws/**").hasAnyRole("ADMIN", "USER")
-                        .anyRequest().permitAll()
+                        .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll()
+                        .requestMatchers("/", "/login", "/account", "/portal/**", "/error", "/api/account/**", "/api/auth/csrf-token").permitAll()
+                        .requestMatchers("/admin/login", "/css/**", "/js/**", "/images/**").permitAll()
+                        .requestMatchers("/h2-console/**").denyAll()
+                        .requestMatchers("/api/trades/trigger-all", "/api/trades/close-all", "/api/trades/close-all/**",
+                            "/api/backtests/**", "/api/sharekhan/historical/**").permitAll()
+                        .requestMatchers("/api/auth/**").hasRole("ADMIN")
+                        .requestMatchers("/admin/**", "/api/trades/force-close/**", "/api/trades/trigger-stock-atr-all", "/api/trades/manual-execute").hasRole("ADMIN")
+                        .requestMatchers("/dashboard", "/api/user/**", "/api/brokers/**", "/api/strategies/**",
+                            "/api/orders/**", "/api/analytics/**", "/api/trades/**", "/api/scripts/**",
+                            "/api/market-news/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/internal/monitoring/**", "/telegram/webhook").permitAll()
+                        .anyRequest().hasRole("ADMIN")
                 )
                 .userDetailsService(adminUserDetailsService)
-                .httpBasic(Customizer.withDefaults())
+                .httpBasic(org.springframework.security.config.Customizer.withDefaults())
+                // Browser sessions keep unverified accounts out of authenticated APIs.
+                .addFilterBefore(new org.com.sharekhan.onboarding.AccountRateLimitFilter(),
+                    org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
+                .exceptionHandling(errors -> errors.defaultAuthenticationEntryPointFor(
+                    (req, res, ex) -> { res.setStatus(401); res.setContentType("application/json"); res.getWriter().write("{\"message\":\"Please sign in again\"}"); },
+                    new AntPathRequestMatcher("/api/**")))
+                .sessionManagement(session -> session.maximumSessions(-1).sessionRegistry(sessionRegistry()))
                 .formLogin(form -> form
                         .loginPage("/login")
                         .loginProcessingUrl("/login")
@@ -68,13 +68,14 @@ public class SecurityConfig {
                         .permitAll()
                 )
                 .logout(logout -> logout
-                        // allow logout via GET for the admin UI convenience (also works with POST)
-                        .logoutRequestMatcher(new AntPathRequestMatcher("/logout", "GET"))
+                        // Logout uses POST with CSRF protection.
+                        .logoutUrl("/logout")
                         .logoutSuccessUrl("/login?logout")
                         .permitAll()
                 )
-                // disable frameOptions so H2 console can render in a frame
-                .headers(headers -> headers.frameOptions(frame -> frame.disable()))
+                // Prevent embedding the trading workspace on another origin.
+                .headers(headers -> headers.frameOptions(frame -> frame.sameOrigin())
+                    .referrerPolicy(ref -> ref.policy(org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
                 ;
 
         // Exclude H2 console from CSRF protection to allow console POST actions
@@ -90,6 +91,14 @@ public class SecurityConfig {
         return http.build();
     }
 
+    @Bean
+    public org.springframework.security.core.session.SessionRegistry sessionRegistry() {
+        return new org.springframework.security.core.session.SessionRegistryImpl();
+    }
+    @Bean
+    public org.springframework.security.web.session.HttpSessionEventPublisher httpSessionEventPublisher() {
+        return new org.springframework.security.web.session.HttpSessionEventPublisher();
+    }
     @Bean
     public AuthenticationSuccessHandler roleAwareSuccessHandler() {
         return (request, response, authentication) -> {

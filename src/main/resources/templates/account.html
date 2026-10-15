@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoTrader · Your trading workspace</title>
+<link rel="stylesheet" href="/portal/portal.css">
+</head>
+<body>
+<main class="auth-layout">
+<aside class="auth-story">
+<div class="brand">
+<span class="brand-mark">↗</span> AutoTrader</div>
+<div>
+<div class="eyebrow">YOUR STRATEGY. YOUR CONTROL.</div>
+<h1>A clearer way<br>to trade.</h1>
+<p>Connect your broker, follow your strategies, and manage every order from one focused workspace.</p>
+<div class="story-lines" aria-hidden="true">
+<span style="height:30%">
+</span>
+<span style="height:45%">
+</span>
+<span style="height:39%">
+</span>
+<span style="height:63%">
+</span>
+<span style="height:55%">
+</span>
+<span style="height:78%">
+</span>
+<span style="height:72%">
+</span>
+<span style="height:100%">
+</span>
+</div>
+<p>01 &nbsp; Create your account<br>02 &nbsp; Connect Sharekhan<br>03 &nbsp; Build your trading workflow</p>
+</div>
+<small>Trading involves risk. You control when trading is enabled.</small>
+</aside>
+<section class="auth-main">
+<div class="eyebrow">GET STARTED</div>
+<h1 id="accountTitle">Create your account</h1>
+<p class="muted" id="accountDescription">Start with your account. Connect your broker when you’re ready.</p>
+<div id="accountMessage" class="notice" role="status" aria-live="polite" hidden>
+</div>
+<form id="accountForm">
+<label id="nameLabel">Full name<input name="displayName" autocomplete="name" maxlength="100" required>
+</label>
+<label id="emailLabel">Email address<input type="email" name="email" autocomplete="email" maxlength="254" required>
+</label>
+<label id="passwordLabel">Password<input type="password" name="password" autocomplete="new-password" minlength="12" maxlength="72" required>
+<small>At least 12 characters. Use a unique password.</small>
+</label>
+<button type="submit" class="primary" id="accountSubmit">Create account →</button>
+</form>
+<div class="auth-links">
+<a href="/login">Back to sign in</a>
+<a href="/account?mode=resend">Resend verification email</a>
+</div>
+</section>
+</main>
+<script src="/portal/account.js" defer>
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+.git
+.env
+.env.*
+!.env.example
+target
+outputs
+logs
+dumps
+heap-dumps
+jardata
+*.log
+app.jar
+data

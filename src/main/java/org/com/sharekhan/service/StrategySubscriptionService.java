@@ -39,6 +39,7 @@ public class StrategySubscriptionService {
     private final StrategySubscriptionRepository repository;
     private final StrategyTemplateService strategyTemplateService;
     private final NseMarketCalendar nseMarketCalendar;
+    private final org.com.sharekhan.onboarding.StrategyEnrollmentService enrollment;
 
     public StrategySubscriptionEntity start(StrategyApplyRequest request) {
         validate(request);
@@ -47,38 +48,8 @@ public class StrategySubscriptionService {
                 ? "FNO_UNIVERSE"
                 : request.getSymbol().trim().toUpperCase(Locale.ROOT);
 
-        if (request.getUserId() != null) {
-            List<StrategySubscriptionEntity> existing = repository
-                    .findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(
-                            List.of(ACTIVE, TRIGGERED), templateId, symbol, request.getUserId());
-            StrategySubscriptionEntity matching = existing == null ? null : existing.stream()
-                    .filter(item -> Objects.equals(item.getBrokerCredentialsId(), request.getBrokerCredentialsId()))
-                    .filter(item -> effectiveSource(item.getSource(), templateId).equalsIgnoreCase(effectiveSource(request.getSource(), templateId)))
-                    .findFirst().orElse(null);
-            if (matching != null) {
-                StrategySubscriptionEntity found = matching;
-                if (!ACTIVE.equalsIgnoreCase(found.getStatus())) {
-                    found.setStatus(ACTIVE);
-                    found.setLastMessage("Strategy is active and will run daily until cancelled.");
-                    found = repository.save(found);
-                }
-                evaluateImmediatelyIfEligible(found);
-                return found;
-            }
-        }
-
-        StrategySubscriptionEntity entity = StrategySubscriptionEntity.builder()
-                .templateId(templateId)
-                .symbol(symbol)
-                .lots(request.getLots())
-                .intraday(request.getIntraday() != null ? request.getIntraday() : true)
-                .appUserId(request.getUserId())
-                .brokerCredentialsId(request.getBrokerCredentialsId())
-                .source(StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + templateId)
-                .status(ACTIVE)
-                .lastMessage("Strategy started and waiting for confirmation.")
-                .build();
-        StrategySubscriptionEntity saved = repository.save(entity);
+        String source = StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + templateId;
+        StrategySubscriptionEntity saved = enrollment.enroll(request, templateId, symbol, source);
         evaluateImmediatelyIfEligible(saved);
         return saved;
     }
@@ -221,6 +192,16 @@ public class StrategySubscriptionService {
         }
         if (!StringUtils.hasText(request.getTemplateId())) {
             throw new IllegalArgumentException("templateId is required");
+        }
+        if (!strategyTemplateService.supports(request.getTemplateId())) {
+            throw new IllegalArgumentException("Unknown strategy template");
+        }
+        if (request.getLots() == null) request.setLots(1);
+        if (request.getLots() < 1 || request.getLots() > 1000) {
+            throw new IllegalArgumentException("Choose between 1 and 1000 lots");
+        }
+        if (request.getSymbol() != null && request.getSymbol().length() > 255) {
+            throw new IllegalArgumentException("Instrument list is too long (maximum 255 characters)");
         }
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");

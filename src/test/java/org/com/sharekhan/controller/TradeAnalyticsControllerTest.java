@@ -73,7 +73,8 @@ class TradeAnalyticsControllerTest {
                 eq("NIFTY"),
                 eq("telegram"),
                 eq(11L),
-                eq(true)
+                eq(true),
+                eq("own")
         )).thenReturn(response);
 
         mockMvc.perform(get("/api/analytics/trades")
@@ -124,7 +125,7 @@ class TradeAnalyticsControllerTest {
                 .aiNarrative("Gemini says size down losing symbols.")
                 .build();
 
-        when(service.getTradeAnalytics(eq(7L), eq(null), eq(null), eq(null), eq(null), eq(null), eq(null)))
+        when(service.getTradeAnalytics(eq(7L), eq(null), eq(null), eq(null), eq(null), eq(null), eq(null), eq("own")))
                 .thenReturn(response);
         when(geminiTradeInsightService.addNarrative(response)).thenReturn(responseWithAi);
 

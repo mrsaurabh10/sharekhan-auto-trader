@@ -22,12 +22,14 @@ public class AdminUserDetailsService implements UserDetailsService {
 
     private final AdminUserRepository adminUserRepository;
     private final AppUserRepository appUserRepository;
+    private final org.com.sharekhan.onboarding.AccountProfileRepository accountProfiles;
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
         return adminUserRepository.findByUsername(username)
                 .map(this::adminDetails)
                 .or(() -> appUserRepository.findByUsername(username)
+                        .or(() -> appUserRepository.findByUsername(username.trim().toLowerCase(java.util.Locale.ROOT)))
                         .filter(u -> u.getPassword() != null && !u.getPassword().isBlank())
                         .map(this::appUserDetails))
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
@@ -48,6 +50,7 @@ public class AdminUserDetailsService implements UserDetailsService {
     private UserDetails appUserDetails(AppUser u) {
         return org.springframework.security.core.userdetails.User.withUsername(u.getUsername())
                 .password(u.getPassword())
+                .disabled(accountProfiles.findById(u.getId()).map(p -> p.getVerifiedAt() == null).orElse(false))
                 .authorities("ROLE_USER")
                 .build();
     }

@@ -603,6 +603,7 @@ public class TradeExecutionService {
                                                    boolean requireQuantity,
                                                    boolean attemptBrokerSideEntryOrder) {
 
+        if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(request.getUserId(), request.getBrokerCredentialsId());
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
         normalizeCashEquityExchange(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
@@ -873,6 +874,13 @@ public class TradeExecutionService {
     }
 
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity, boolean allowBigTradePlus) {
+        if (onboardingAccess != null) {
+            try { onboardingAccess.requireOnboardedReady(requestEntity.getAppUserId(), requestEntity.getBrokerCredentialsId()); }
+            catch (org.springframework.web.server.ResponseStatusException | org.springframework.security.access.AccessDeniedException ex) {
+                log.info("Skipping entry request {} because its broker is not enabled and connected", requestEntity.getId());
+                return;
+            }
+        }
         if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
             log.info("Skipping broker-side intraday entry request {} after the {} IST cutoff",
                     requestEntity.getId(), INTRADAY_ENTRY_CUTOFF);
@@ -2055,6 +2063,7 @@ public class TradeExecutionService {
 //                }
 //            }
 
+            if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(trigger.getAppUserId(), trigger.getBrokerCredentialsId());
             BrokerContext ctx = resolveBrokerContext(trigger.getBrokerCredentialsId(), trigger.getAppUserId());
             if (!isBrokerContextUsable(ctx)) {
                 throw new IllegalStateException("No active broker configured for this user");
@@ -5622,6 +5631,7 @@ public class TradeExecutionService {
 
     public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
                                                             boolean chaseEntryUntilExecuted) {
+        if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(requestEntity.getAppUserId(), requestEntity.getBrokerCredentialsId());
         if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
             log.info("Blocking queued intraday entry request {} after the {} IST cutoff",
                     requestEntity != null ? requestEntity.getId() : null, INTRADAY_ENTRY_CUTOFF);
@@ -5639,7 +5649,7 @@ public class TradeExecutionService {
                         resolved = chosen.getId();
                     }
                 }
-                if (resolved == null) {
+                if (resolved == null && uid == null) {
                     try {
                         List<BrokerCredentialsEntity> all = brokerCredentialsRepository.findAll();
                         BrokerCredentialsEntity chosen = choosePreferredBrokerCredential(all);
@@ -5913,16 +5923,21 @@ public class TradeExecutionService {
     }
 
     // ---------------- Broker context resolution ----------------
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.onboarding.UserTradingAccess onboardingAccess;
+
     private BrokerContext resolveBrokerContext(Long brokerCredentialsId, Long appUserId) {
         try {
             org.com.sharekhan.entity.BrokerCredentialsEntity chosen = null;
             if (brokerCredentialsId != null) {
                 chosen = brokerCredentialsRepository.findById(brokerCredentialsId).orElse(null);
             }
+            if (brokerCredentialsId != null && (chosen == null || (appUserId != null && !appUserId.equals(chosen.getAppUserId())))) return null;
             if (chosen == null && appUserId != null) {
                 java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> list = brokerCredentialsRepository.findByAppUserId(appUserId);
                 chosen = choosePreferredBrokerCredential(list);
             }
+            if (chosen == null && appUserId != null) return null;
             if (chosen == null) {
                 java.util.List<org.com.sharekhan.entity.BrokerCredentialsEntity> all = brokerCredentialsRepository.findAll();
                 chosen = choosePreferredBrokerCredential(all);

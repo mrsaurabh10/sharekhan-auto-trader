@@ -25,7 +25,7 @@ public class AuthController {
     private String adminToken;
 
     private boolean authorized(String headerToken) {
-        if (adminToken == null || adminToken.isBlank()) return true; // no admin token configured -> allow
+        if (adminToken == null || adminToken.isBlank()) return false; // No configured token means no header-authorized access.
         return adminToken.equals(headerToken);
     }
 

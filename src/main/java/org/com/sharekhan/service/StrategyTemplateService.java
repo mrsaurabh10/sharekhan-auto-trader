@@ -29,6 +29,10 @@ public class StrategyTemplateService {
                         Function.identity()));
     }
 
+    public boolean supports(String templateId) {
+        return templateId != null && evaluators.containsKey(normalizeTemplateId(templateId));
+    }
+
     public List<StrategyTemplateResponse> listTemplates() {
         return evaluators.values().stream()
                 .map(StrategyEvaluator::metadata)

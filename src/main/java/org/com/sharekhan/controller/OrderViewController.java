@@ -68,7 +68,7 @@ public class OrderViewController {
                                          @RequestParam(name = "scope", defaultValue = "own") String scope,
                                          @RequestParam(defaultValue = "0") int page,
                                          @RequestParam(defaultValue = "10") int size) {
-        Pageable pageable = PageRequest.of(page, size, Sort.by(
+        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100), Sort.by(
                 Sort.Order.desc("entryAt").nullsLast(),
                 Sort.Order.desc("id")));
         Long scopedUserId = currentUserService.scopedUserId(userId);
@@ -118,6 +118,7 @@ public class OrderViewController {
     }
 
     private String normalizeOrderScopeForSession(String scope) {
+        if (!currentUserService.isAdmin()) return "own";
         String normalized = scope == null || scope.isBlank() ? "own" : scope.trim().toLowerCase();
         if (currentUserService.isAdmin() && "own".equals(normalized)) {
             return "user";

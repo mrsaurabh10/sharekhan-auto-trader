@@ -1,0 +1,24 @@
+const demoBroker={id:1,brokerName:'Sharekhan',clientCode:'•••• 8214',active:true,connected:true,tradingEnabled:true,verifiedUntil:'2026-10-15T10:30:00Z'};
+const demoTemplates=[{id:'ORB_915_930_CE',name:'Opening Range Breakout · Call',description:'Follow a breakout above the opening range with a defined stop-loss and target. Configure your index and lot size before subscribing.'},{id:'SUPERTREND_RSI_EMA_ADX_CE',name:'Supertrend Momentum · Call',description:'A trend-following setup that combines Supertrend, RSI, EMA, and ADX confirmation to identify potential entries.'},{id:'FNO_0925_MOVER',name:'F&O Morning Movers',description:'Evaluate the F&O universe for qualifying morning movers and manage entries with ATR-based levels.'}];
+let demoSubscriptions=[{id:21,templateId:'ORB_915_930_CE',symbol:'NIFTY',lots:1,status:'ACTIVE',lastMessage:'Waiting for entry confirmation.'}];
+let demoOrders=[{id:1042,symbol:'RELIANCE',lots:1,quantity:1,entryPrice:2850,stopLoss:2800,target1:2950,status:'PENDING',source:'user-ui'},{id:1041,symbol:'NIFTY 25000 CE',lots:1,quantity:75,entryPrice:182.5,stopLoss:160,target1:220,status:'TRIGGERED',source:'strategy:ORB_915_930_CE'}];
+window.fetch=async(url,options={})=>{
+ await new Promise(r=>setTimeout(r,100));const p=String(url).split('?')[0]; let data={};
+ if(p==='/api/user/me')data={id:7,username:'alex@example.test',displayName:'Alex Morgan',email:'alex@example.test',emailVerified:true,admin:false};
+ else if(p==='/api/user/onboarding')data={accountReady:true,connectedBrokers:1,tradingReadyBrokers:1,activeStrategies:1,orderRequests:2,nextStep:'COMPLETE',steps:[['ACCOUNT','Your account is ready','settings'],['BROKER','Connect your broker','brokers'],['TRADING','Choose when to enable trading','brokers'],['WORKFLOW','Create your trading workflow','strategies']].map(([id,title,destination])=>({id,title,destination,complete:true}))};
+ else if(p==='/api/auth/csrf-token')data={header:'X-CSRF-TOKEN',token:'preview-only'};
+ else if(p==='/api/user/brokers')data=[demoBroker];
+ else if(p==='/api/analytics/sources')data=['user-ui','strategy:ORB_915_930_CE'];
+ else if(p==='/api/analytics/trades')data={summary:{effectiveRealizedPnl:12480,realizedPnl:13250,totalTradeCost:770,totalClosedTrades:12,winRate:66.7,openTrades:2},bySymbol:[{symbol:'NIFTY',closedCount:8,realizedPnl:10250,winRate:75},{symbol:'RELIANCE',closedCount:4,realizedPnl:3000,winRate:50}],byDay:[{date:'2026-10-08',closedCount:2,realizedPnl:2500,cumulativeRealizedPnl:2500},{date:'2026-10-09',closedCount:3,realizedPnl:-1500,cumulativeRealizedPnl:1000},{date:'2026-10-12',closedCount:2,realizedPnl:4250,cumulativeRealizedPnl:5250},{date:'2026-10-13',closedCount:2,realizedPnl:3000,cumulativeRealizedPnl:8250},{date:'2026-10-14',closedCount:3,realizedPnl:5000,cumulativeRealizedPnl:13250}],recentClosedTrades:[]};
+ else if(p==='/api/strategies/templates')data=demoTemplates;
+ else if(p==='/api/strategies/subscriptions')data=demoSubscriptions;
+ else if(p==='/api/orders/requests')data={content:demoOrders,totalElements:demoOrders.length,last:true};
+ else if(p==='/api/orders/executed')data={content:[{id:1035,symbol:'NIFTY 25000 CE',exchange:'NF',quantity:75,entryPrice:182.5,actualEntryPrice:182.5,stopLoss:160,target1:220,status:'EXECUTED',orderId:'DEMO-1035',pnl:1500,totalTradeCost:75,effectivePnl:1425}],last:true};
+ else if(p.includes('/instruments/'))data={instruments:['RELIANCE','TCS','INFY','NIFTY','BANKNIFTY']};
+ else if(p==='/api/scripts/strikes')data={strikes:['24500','25000','25500']};
+ else if(p==='/api/scripts/expiries')data={expiries:['29/10/2026','26/11/2026']};
+ else if(p==='/api/account/availability')data={enabled:true};
+ else if(options.method==='POST'||options.method==='PUT')data={message:'Preview only. No changes were saved.',id:1043,status:'PREVIEW'};
+ const text=JSON.stringify(data);return {ok:true,status:200,text:async()=>text,json:async()=>data};
+};
+document.querySelector('#previewBanner').hidden=false;

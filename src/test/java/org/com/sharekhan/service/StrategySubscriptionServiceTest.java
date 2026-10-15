@@ -18,8 +18,9 @@ class StrategySubscriptionServiceTest {
     void preparesBothBtpDirectionsImmediatelyAndReevaluatesExistingUnevaluatedRuns(String template) {
         var repo=mock(StrategySubscriptionRepository.class);
         var evaluator=mock(StrategyTemplateService.class);
+        when(evaluator.supports(anyString())).thenReturn(true);
         var calendar=mock(NseMarketCalendar.class);
-        var service=new StrategySubscriptionService(repo,evaluator,calendar);
+        var service=new StrategySubscriptionService(repo,evaluator,calendar,enrollment(repo));
         when(repo.save(any())).thenAnswer(call -> call.getArgument(0));
         var pending=new TriggerTradeRequestEntity(); pending.setId(123L);
         when(evaluator.apply(any())).thenReturn(StrategyApplyResponse.builder().status("triggered")
@@ -43,7 +44,8 @@ class StrategySubscriptionServiceTest {
     void unrelatedDuplicatesDoNotCompleteTheDayButMatchingCurrentDayRequestDoes() {
         var repo=mock(StrategySubscriptionRepository.class);
         var evaluator=mock(StrategyTemplateService.class);
-        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class));
+        when(evaluator.supports(anyString())).thenReturn(true);
+        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));
         var subscription=StrategySubscriptionEntity.builder().templateId("ST_RSI_EMA_ADX_CE").symbol("NIFTY")
                 .appUserId(1L).brokerCredentialsId(2L).status("ACTIVE").build();
         var duplicate=TriggerTradeRequestEntity.builder().id(123L).symbol("NIFTY").appUserId(1L)
@@ -70,7 +72,9 @@ class StrategySubscriptionServiceTest {
     @org.junit.jupiter.api.Test
     void startingTheSameTemplateForAnotherBrokerCreatesAnotherSubscription() {
         var repo=mock(StrategySubscriptionRepository.class);
-        var service=new StrategySubscriptionService(repo,mock(StrategyTemplateService.class),mock(NseMarketCalendar.class));
+        var evaluator=mock(StrategyTemplateService.class);
+        when(evaluator.supports(anyString())).thenReturn(true);
+        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));
         var existing=StrategySubscriptionEntity.builder().templateId("ST_RSI_EMA_ADX_CE").symbol("NIFTY")
                 .appUserId(1L).brokerCredentialsId(2L).status("ACTIVE").build();
         when(repo.findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(anyList(),anyString(),anyString(),anyLong()))
@@ -83,4 +87,9 @@ class StrategySubscriptionServiceTest {
         assertThat(created.getBrokerCredentialsId()).isEqualTo(3L);
     }
 
+    private org.com.sharekhan.onboarding.StrategyEnrollmentService enrollment(StrategySubscriptionRepository repo) {
+        var users=mock(org.com.sharekhan.repository.AppUserRepository.class);
+        when(users.lockForEnrollment(anyLong())).thenReturn(java.util.Optional.of(new org.com.sharekhan.entity.AppUser()));
+        return new org.com.sharekhan.onboarding.StrategyEnrollmentService(repo,users);
+    }
 }

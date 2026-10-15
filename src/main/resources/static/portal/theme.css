@@ -1,0 +1,43 @@
+/* Shared visual tokens for the customer portal and existing trading/admin pages. */
+:root{--ink:#162238;--muted:#66748b;--line:#e0e6ef;--bg:#f4f6fa;--accent:#254de6;--nav:#111e35;--green:#087b65;--radius:16px}
+.positive{color:var(--green)}.negative{color:#b63b45}
+.legacy-workspace{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif!important;background:var(--bg)!important;color:var(--ink)!important;margin:0!important;font-size:14px;line-height:1.5}
+.legacy-workspace *{box-sizing:border-box}.legacy-workspace h2{font-size:27px;letter-spacing:-.7px;color:var(--ink)}
+.legacy-workspace>h2{margin:0!important;padding:26px 32px;background:white;border-bottom:1px solid var(--line)}
+.legacy-workspace>div[style*="display:flex"]{gap:24px;padding:24px;align-items:flex-start}
+.legacy-workspace .users-list{float:none;width:236px;flex-shrink:0;background:var(--nav);color:#dce5f5;border:0;padding:24px 18px;border-radius:var(--radius);position:sticky;top:20px;max-height:calc(100vh - 40px);overflow:auto}
+.legacy-workspace .users-list h4{color:white;text-transform:uppercase;font-size:11px;letter-spacing:1.5px;margin-top:0}
+.legacy-workspace .users-list li{padding:12px;border-radius:8px;margin:4px 0}.legacy-workspace .users-list li:hover{background:#263851}.legacy-workspace .users-list li.active{background:#355bef;color:white}
+.legacy-workspace .users-list .muted{color:#adbed8}.legacy-workspace .content{margin:0;max-width:none;flex:1;min-width:0}
+.legacy-workspace h3,.legacy-workspace h4{color:var(--ink);font-size:17px;letter-spacing:-.3px;margin:0 0 16px}
+.legacy-workspace #placeOrderPanel,.legacy-workspace #requestsSection,.legacy-workspace #executedSection,.legacy-workspace #brokersSection,.legacy-workspace .analytics-panel{border:1px solid var(--line)!important;padding:24px!important;background:white!important;border-radius:var(--radius);margin-bottom:24px!important;box-shadow:0 3px 8px #14203903}
+.legacy-workspace #strategyPanel,.legacy-workspace #scriptMasterPanel,.legacy-workspace .analytics-equity-panel,.legacy-workspace .analytics-backtest-panel,.legacy-workspace .analytics-ai{border:1px solid var(--line)!important;padding:18px!important;border-radius:12px;background:#fafbfe!important;margin:16px 0!important}
+.legacy-workspace .analytics-cards{grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:14px;margin:20px 0}
+.legacy-workspace .analytics-card{padding:20px;border:1px solid var(--line);border-radius:12px;box-shadow:0 3px 10px #16223804}
+.legacy-workspace .analytics-card .label{color:var(--muted);font-size:12px}.legacy-workspace .analytics-card .value{font-size:25px;letter-spacing:-.6px;margin-top:8px}
+.legacy-workspace .analytics-card .value.positive{color:var(--green)}.legacy-workspace .analytics-card .value.negative{color:#b63b45}
+.legacy-workspace .analytics-toolbar{padding:16px;background:var(--bg);border-radius:10px;gap:12px;align-items:flex-end}
+.legacy-workspace .analytics-toolbar label{display:grid;gap:6px;font-size:12px;color:var(--muted)}
+.legacy-workspace .table-scroll{width:100%;overflow:auto;border:1px solid var(--line);border-radius:12px;margin:16px 0;background:white}
+.legacy-workspace table{width:100%;border-collapse:separate!important;border-spacing:0;border:0!important;font-size:12px;white-space:nowrap}
+.legacy-workspace th,.legacy-workspace td{border:0!important;border-bottom:1px solid var(--line)!important;padding:13px 12px!important;text-align:left;vertical-align:middle}
+.legacy-workspace th{background:#f5f7fc!important;color:#65748d;font-weight:650;font-size:10px;text-transform:uppercase;letter-spacing:.7px;position:sticky;top:0;z-index:1}
+.legacy-workspace tbody tr:nth-child(even){background:#fafbfe}.legacy-workspace tbody tr:hover{background:#f0f4ff}.legacy-workspace tbody tr:last-child td{border-bottom:0!important}
+.legacy-workspace input,.legacy-workspace select,.legacy-workspace textarea{font:inherit;padding:9px 11px!important;border:1px solid #cbd4e2;border-radius:8px;background:white;color:var(--ink);min-height:38px;max-width:100%}
+.legacy-workspace input[type=checkbox],.legacy-workspace input[type=radio]{min-height:0;width:auto;padding:0!important}
+.legacy-workspace button,.legacy-workspace .btn,.legacy-workspace .tab-btn{font:inherit;font-weight:600;cursor:pointer;padding:10px 14px!important;border:1px solid var(--line);border-radius:8px;background:#edf1fa;color:#283d60;min-height:36px}
+.legacy-workspace .btn.primary,.legacy-workspace .tab-btn.active{background:var(--accent);border-color:var(--accent);color:white}.legacy-workspace .btn.danger{background:#fff0ef;color:#a12a2a;border-color:#f3d8d3}
+.legacy-workspace button:hover{filter:brightness(.97)}.legacy-workspace button:disabled{opacity:.5;cursor:default}
+.legacy-workspace :is(input,select,button,a):focus-visible{outline:3px solid #b4c3ff;outline-offset:2px}
+.legacy-workspace .muted,.legacy-workspace .hint,.legacy-workspace .subtle,.legacy-workspace .analytics-state{color:var(--muted)!important}
+.legacy-workspace .pnl-summary{padding:15px 18px;border:1px solid var(--line);border-radius:10px;background:#f7f9fc;gap:18px}
+.legacy-workspace .trade-scope-badge,.legacy-workspace .status-pill{display:inline-block;padding:5px 8px;border:0;border-radius:6px;font-size:10px;letter-spacing:.3px;font-weight:700;background:#edf1f8;color:#526582}
+.legacy-workspace .trade-scope-own,.legacy-workspace .status-good{background:#e6f5ed;color:var(--green)}.legacy-workspace .trade-scope-simulator,.legacy-workspace .status-wait{background:#fff4dc;color:#95661c}.legacy-workspace .status-bad{background:#fff0ef;color:#a12a2a}
+.legacy-workspace .form-grid{gap:14px 18px}.legacy-workspace .form-grid label.inline.small{font-size:12px;font-weight:600;color:var(--muted)}
+.legacy-workspace .section-divider{border-color:var(--line)}.legacy-workspace .section-title{color:var(--accent);font-size:12px;text-transform:uppercase;letter-spacing:.8px}
+.legacy-workspace #userTabs{gap:8px!important;background:white;padding:12px;border-radius:12px;border:1px solid var(--line);margin-bottom:24px!important}
+.legacy-workspace .analytics-grids{gap:20px}.legacy-workspace .analytics-grids>div{min-width:0}.legacy-workspace .trade-chart-dialog{border-radius:18px;padding:26px;box-shadow:0 30px 100px #0d1c3444}
+.legacy-workspace .symbol-chart-link{background:transparent!important;padding:0!important;border:0!important;color:var(--accent)!important;min-height:0}
+.legacy-workspace form:not(.form-grid){max-width:none}.legacy-workspace .edit-row td{background:#f1f4fc}
+.legacy-order-page{padding:28px!important;max-width:1440px;margin:auto!important}.legacy-order-page>form{background:white;padding:24px;border-radius:var(--radius);border:1px solid var(--line)}
+@media(max-width:900px){.legacy-workspace>div[style*="display:flex"]{padding:16px;gap:16px;flex-direction:column}.legacy-workspace .users-list{position:static;width:100%;max-height:none}.legacy-workspace .content{width:100%}.legacy-workspace #placeOrderPanel,.legacy-workspace #requestsSection,.legacy-workspace #executedSection,.legacy-workspace .analytics-panel{padding:16px!important}.legacy-workspace .analytics-grids{grid-template-columns:1fr}.legacy-workspace .analytics-toolbar{align-items:stretch}.legacy-workspace .analytics-toolbar label{flex:1;min-width:130px}.legacy-workspace .form-grid{grid-template-columns:120px minmax(0,1fr)}}

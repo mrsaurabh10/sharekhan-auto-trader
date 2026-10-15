@@ -37,7 +37,12 @@ public class CurrentUserService {
         if (isAdmin()) {
             return requestedUserId;
         }
-        return currentAppUserIdOrNull();
+        return requireAppUserId();
+    }
+
+    public Long requireAppUserId() {
+        return currentAppUser().map(AppUser::getId).orElseThrow(() ->
+            new org.springframework.security.access.AccessDeniedException("App user login required"));
     }
 
     private Authentication authentication() {

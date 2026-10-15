@@ -248,7 +248,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
         TriggeredTradeSetupEntity first = new TriggeredTradeSetupEntity();
         first.setId(9290L);
         first.setSymbol("BRITANNIA");
-        first.setAppUserId(1L);
+        first.setAppUserId(9L);
         first.setBrokerCredentialsId(55L);
         first.setTargetOrderGroupId(9290L);
         first.setTargetStage(1);
@@ -1106,6 +1106,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
             });
             when(brokerCredentialsRepo.findById(55L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder()
                     .id(55L)
+                    .appUserId(9L)
                     .brokerName(Broker.SHAREKHAN.getDisplayName())
                     .customerId(999L)
                     .apiKey("api-key")
@@ -1150,6 +1151,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
         private void useSimulatorBroker() {
             when(brokerCredentialsRepo.findById(55L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder()
                     .id(55L)
+                    .appUserId(9L)
                     .brokerName(Broker.SIMULATOR.getDisplayName())
                     .customerId(999L)
                     .apiKey("api-key")

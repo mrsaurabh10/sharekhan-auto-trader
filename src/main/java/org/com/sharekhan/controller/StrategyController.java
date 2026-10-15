@@ -26,6 +26,7 @@ public class StrategyController {
     private final StrategyTemplateService strategyTemplateService;
     private final StrategySubscriptionService strategySubscriptionService;
     private final CurrentUserService currentUserService;
+    private final org.com.sharekhan.onboarding.UserTradingAccess tradingAccess;
 
     @GetMapping("/templates")
     public ResponseEntity<?> templates() {
@@ -34,6 +35,7 @@ public class StrategyController {
 
     @PostMapping("/apply")
     public ResponseEntity<?> apply(@RequestBody StrategyApplyRequest request) {
+        tradingAccess.scope(request);
         try {
             if (!currentUserService.isAdmin()) {
                 request.setUserId(currentUserService.currentAppUserIdOrNull());
@@ -52,6 +54,7 @@ public class StrategyController {
      */
     @PostMapping("/fno-0925-mover/run")
     public ResponseEntity<?> runFno0925Mover(@RequestBody(required = false) StrategyApplyRequest request) {
+        if (!currentUserService.isAdmin()) tradingAccess.scope(request != null ? request : new StrategyApplyRequest());
         try {
             StrategyApplyRequest effective = request != null ? request : new StrategyApplyRequest();
             effective.setTemplateId(Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID);
@@ -71,6 +74,7 @@ public class StrategyController {
 
     @PostMapping("/start")
     public ResponseEntity<?> start(@RequestBody StrategyApplyRequest request) {
+        tradingAccess.scope(request);
         try {
             if (!currentUserService.isAdmin()) {
                 request.setUserId(currentUserService.currentAppUserIdOrNull());

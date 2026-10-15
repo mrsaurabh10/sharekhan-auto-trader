@@ -33,8 +33,13 @@ public class TradeRequestController {
                     if (!currentUserService.isAdmin() && !ownedByCurrentUser(request.getAppUserId())) {
                         return ResponseEntity.status(403).body("Forbidden: request does not belong to user");
                     }
-                    tradeRequestRepository.deleteById(id);
-                    webSocketSubscriptionHelper.unsubscribeFromScrip(request.getExchange() + request.getScripCode());
+                    int deleted = tradeRequestRepository.deleteUnsubmittedRequest(id,
+                        currentUserService.isAdmin() ? null : currentUserService.requireAppUserId(),
+                        java.util.List.of(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION,
+                            org.com.sharekhan.enums.TriggeredTradeStatus.TRIGGERED, org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED,
+                            org.com.sharekhan.enums.TriggeredTradeStatus.FAILED, org.com.sharekhan.enums.TriggeredTradeStatus.CANCELLED));
+                    if (deleted == 0) return ResponseEntity.status(409).body("Entry submission has started. Manage the broker order or position instead.");
+                    // Other users may still need this instrument's shared market-data subscription.
                     return ResponseEntity.ok("Request cancelled");
                 })
                 .orElse(ResponseEntity.notFound().build());
@@ -44,6 +49,8 @@ public class TradeRequestController {
     public ResponseEntity<?> updateRequest(@PathVariable Long id, @RequestBody UpdateTargetsRequest update) {
         return tradeRequestRepository.findById(id)
                 .map(request -> {
+                    if (!currentUserService.isAdmin() && !ownedByCurrentUser(request.getAppUserId()))
+                        return ResponseEntity.status(403).body("Forbidden: request does not belong to user");
                     boolean changed = false;
                     boolean recalculatedAtrLevels = false;
                     if (update.getEntryPrice() != null && atrPreviousDayTradeLevelService.appliesTo(request)) {

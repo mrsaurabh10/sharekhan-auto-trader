@@ -31,12 +31,13 @@ public class TradeTriggerController {
     private final TradingMessageService tradingMessageService;
     private final CurrentUserService currentUserService;
     private final StockAtrTradeService stockAtrTradeService;
+    private final org.com.sharekhan.onboarding.UserTradingAccess tradingAccess;
 
     @Value("${app.admin.token:}")
     private String adminToken;
 
     private boolean authorized(String headerToken) {
-        if (adminToken == null || adminToken.isBlank()) return true; // no admin token configured -> allow
+        if (adminToken == null || adminToken.isBlank()) return false; // No configured token means no header-authorized access.
         return adminToken.equals(headerToken);
     }
 
@@ -132,6 +133,7 @@ public class TradeTriggerController {
 
     @PostMapping("/trigger-on-price")
     public ResponseEntity<?> createTriggerTrade(@RequestBody TriggerRequest request) {
+        tradingAccess.scope(request);
         // If userId is not passed we accept it; service will fallback to default customer/app user handling.
         if (!currentUserService.isAdmin()) {
             request.setUserId(currentUserService.currentAppUserIdOrNull());
@@ -142,6 +144,7 @@ public class TradeTriggerController {
 
     @PostMapping("/manual-execute")
     public ResponseEntity<?> manualExecuteTrade(@RequestBody TriggerRequest request) {
+        tradingAccess.scope(request);
         if (!currentUserService.isAdmin()) {
             request.setUserId(currentUserService.currentAppUserIdOrNull());
         }
@@ -175,6 +178,7 @@ public class TradeTriggerController {
 
     @PutMapping("/force-close/{scripCode}")
     public ResponseEntity<String> forceCloseTrade(@PathVariable int scripCode, @RequestParam(required = false) Double price) {
+        if (!currentUserService.isAdmin()) return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Use square-off with your trade ID");
         boolean result = tradeExecutionService.forceCloseByScripCode(scripCode, price);
         if (result) {
             return ResponseEntity.ok("✅ Trade for scripCode " + scripCode + " closed forcefully.");
@@ -196,6 +200,7 @@ public class TradeTriggerController {
     }
 
     private String normalizeSetupScopeForSession(String scope) {
+        if (!currentUserService.isAdmin()) return "own";
         String normalized = scope == null || scope.isBlank() ? "own" : scope.trim().toLowerCase();
         if (currentUserService.isAdmin() && "own".equals(normalized)) {
             return "user";

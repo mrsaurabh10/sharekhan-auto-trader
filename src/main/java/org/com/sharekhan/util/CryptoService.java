@@ -21,6 +21,8 @@ public class CryptoService {
     private String base64Key;
 
     private SecretKeySpec keySpec;
+    private boolean persistentKey;
+    public boolean hasPersistentKey() { return persistentKey; }
     private final SecureRandom secureRandom = new SecureRandom();
     private static final String AES = "AES";
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
@@ -29,6 +31,7 @@ public class CryptoService {
 
     @PostConstruct
     public void init() {
+        persistentKey = base64Key != null && !base64Key.isBlank();
         if (base64Key == null || base64Key.isBlank()) {
             // generate a temporary 256-bit key to allow startup; warn the operator
             byte[] tempKey = new byte[32];

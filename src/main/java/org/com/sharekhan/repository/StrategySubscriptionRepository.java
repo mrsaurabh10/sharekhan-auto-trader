@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface StrategySubscriptionRepository extends JpaRepository<StrategySubscriptionEntity, Long> {
+    long countByAppUserIdAndStatusIn(Long appUserId, List<String> statuses);
     List<StrategySubscriptionEntity> findByStatusOrderByIdDesc(String status);
     List<StrategySubscriptionEntity> findByStatusInOrderByIdDesc(List<String> statuses);
     List<StrategySubscriptionEntity> findByAppUserIdOrderByIdDesc(Long appUserId);

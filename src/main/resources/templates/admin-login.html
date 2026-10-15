@@ -1,33 +1,65 @@
 <!DOCTYPE html>
 <html lang="en" xmlns:th="http://www.thymeleaf.org">
 <head>
-    <meta charset="UTF-8" />
-    <title>Admin Login</title>
-    <style>
-        body { font-family: Arial, sans-serif; background:#f5f6fa; }
-        .container { max-width:420px; margin:6rem auto; background:#fff;padding:2rem;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.06);}
-        h2{margin-top:0}
-        label{display:block;margin:0.5rem 0 0.25rem}
-        input[type=password], input[type=text]{width:100%;padding:0.6rem;border:1px solid #ddd;border-radius:4px}
-        button{margin-top:1rem;padding:0.6rem 1rem;border:0;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer}
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AutoTrader · Your trading workspace</title>
+<link rel="stylesheet" href="/portal/portal.css">
 </head>
 <body>
-<div class="container">
-    <h2>Login</h2>
-    <form method="post" action="/login">
-        <!-- CSRF token provided by controller as model attribute _csrf -->
-        <input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}" />
-
-        <label for="username">Username</label>
-        <input id="username" name="username" type="text" required />
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" required />
-        <div style="margin-top:1rem;">
-            <button type="submit">Login</button>
-        </div>
-    </form>
-    <p style="margin-top:1rem;color:#666;font-size:0.9rem">Admins open the admin dashboard; app users open their own trading dashboard.</p>
+<main class="auth-layout">
+<aside class="auth-story">
+<div class="brand">
+<span class="brand-mark">↗</span> AutoTrader</div>
+<div>
+<div class="eyebrow">YOUR STRATEGY. YOUR CONTROL.</div>
+<h1>A clearer way<br>to trade.</h1>
+<p>Connect your broker, follow your strategies, and manage every order from one focused workspace.</p>
+<div class="story-lines" aria-hidden="true">
+<span style="height:30%">
+</span>
+<span style="height:45%">
+</span>
+<span style="height:39%">
+</span>
+<span style="height:63%">
+</span>
+<span style="height:55%">
+</span>
+<span style="height:78%">
+</span>
+<span style="height:72%">
+</span>
+<span style="height:100%">
+</span>
 </div>
+<p>01 &nbsp; Create your account<br>02 &nbsp; Connect Sharekhan<br>03 &nbsp; Build your trading workflow</p>
+</div>
+<small>Trading involves risk. You control when trading is enabled.</small>
+</aside>
+<section class="auth-main">
+<div class="eyebrow">WELCOME BACK</div>
+<h1>Sign in to your workspace</h1>
+<p class="muted">Your brokers, strategies, and orders. All in one place.</p>
+<div class="notice error" th:if="${param.error}" role="alert">Unable to sign in. Check your details and verify your email if you recently registered.</div>
+<div class="notice success" th:if="${param.logout}" role="status">You have been signed out.</div>
+<div class="notice success" th:if="${param.passwordUpdated}" role="status">Password updated. Sign in again with your new password.</div>
+<form method="post" action="/login">
+<input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}">
+<label>Email or username<input name="username" autocomplete="username" required autofocus>
+</label>
+<label>Password<input name="password" type="password" autocomplete="current-password" required>
+</label>
+<button class="primary" type="submit">Sign in <span aria-hidden="true">→</span>
+</button>
+</form>
+<div class="auth-links">
+<a href="/account?mode=signup">Create an account</a>
+<a href="/account?mode=forgot">Forgot password?</a>
+</div>
+<p class="section-note">Registered recently? <a href="/account?mode=resend">Resend verification email</a>
+</p>
+</section>
+</main>
 </body>
 </html>

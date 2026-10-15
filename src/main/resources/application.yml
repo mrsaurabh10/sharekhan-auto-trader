@@ -1,4 +1,9 @@
 spring:
+  mail:
+    properties:
+      mail.smtp.connectiontimeout: 5000
+      mail.smtp.timeout: 5000
+      mail.smtp.writetimeout: 5000
   servlet:
     multipart:
       max-file-size: 128MB
@@ -55,6 +60,10 @@ logging:
 
 # Application specific
 app:
+  onboarding:
+    enabled: ${APP_ONBOARDING_ENABLED:false}
+    base-url: ${APP_ONBOARDING_BASE_URL:}
+    mail-from: ${APP_ONBOARDING_MAIL_FROM:}
   database:
     # PostgreSQL-only branch cutover. When true, SPRING_DATASOURCE_* is the
     # primary JPA datasource and H2 is not constructed as the application DB.

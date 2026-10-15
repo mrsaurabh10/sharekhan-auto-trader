@@ -29,6 +29,11 @@ public class UserController {
     private final CryptoService cryptoService;
     private final PasswordEncoder passwordEncoder;
     private final UserConfigService userConfigService;
+    private final org.com.sharekhan.onboarding.UserTradingAccess tradingAccess;
+    private final org.com.sharekhan.onboarding.BrokerConnectionRepository connections;
+    private final org.com.sharekhan.onboarding.BrokerConnectionService connectionService;
+    private final org.com.sharekhan.onboarding.AccountProfileRepository profiles;
+    private final org.com.sharekhan.onboarding.AccountService accounts;
 
     @GetMapping("/me")
     public ResponseEntity<?> me() {
@@ -43,7 +48,10 @@ public class UserController {
         currentUserService.currentAppUser().ifPresent(u -> {
             body.put("id", u.getId());
             body.put("customerId", u.getCustomerId());
-            body.put("notes", u.getNotes());
+            profiles.findById(u.getId()).ifPresent(p -> {
+                body.put("displayName", p.getDisplayName()); body.put("email", p.getEmail());
+                body.put("emailVerified", p.getVerifiedAt() != null);
+            });
         });
         return ResponseEntity.ok(body);
     }
@@ -63,6 +71,8 @@ public class UserController {
                     row.put("active", b.getActive() != null ? b.getActive() : Boolean.FALSE);
                     row.put("tradingEnabled", effectiveTradingEnabled(b));
                     row.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
+                    row.put("connected", tradingAccess.connected(b.getId()));
+                    row.put("verifiedUntil", connections.findById(b.getId()).map(c -> c.getVerifiedUntil()).orElse(null));
                     return row;
                 })
                 .collect(Collectors.toList());
@@ -71,28 +81,24 @@ public class UserController {
 
     @PostMapping("/brokers")
     @Transactional
-    public ResponseEntity<?> createMyBroker(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> createMyBroker(@RequestBody org.com.sharekhan.onboarding.BrokerCredentialRequest input) {
+        Map<String, Object> body = input.fields(true);
         Long userId = requireUserId();
         String brokerName = text(body.get("brokerName"));
-        if (brokerName == null || brokerName.isBlank()) {
-            return ResponseEntity.badRequest().body("brokerName required");
+        brokerName = org.com.sharekhan.onboarding.BrokerCatalog.requireSupported(brokerName);
+        if (!cryptoService.hasPersistentKey()) return ResponseEntity.status(503).body("Broker encryption is not configured");
+        brokerName = "Sharekhan";
+        for (String field : java.util.List.of("apiKey", "brokerPassword", "clientCode", "totpSecret", "secretKey")) {
+            if (text(body.get(field)) == null || text(body.get(field)).isBlank()) return ResponseEntity.badRequest().body("Complete all required credentials");
         }
         BrokerCredentialsEntity b = new BrokerCredentialsEntity();
         b.setAppUserId(userId);
         b.setBrokerName(brokerName);
         b.setCustomerId(longValue(body.get("customerId")));
         updateSensitiveFields(b, body);
-        b.setActive(body.containsKey("active") ? Boolean.valueOf(String.valueOf(body.get("active"))) : Boolean.TRUE);
-        Boolean tradingEnabled = body.containsKey("tradingEnabled") ? Boolean.valueOf(String.valueOf(body.get("tradingEnabled"))) : null;
-        Boolean defaultForOrders = body.containsKey("defaultForOrders") ? Boolean.valueOf(String.valueOf(body.get("defaultForOrders"))) : Boolean.FALSE;
-        if (Boolean.TRUE.equals(defaultForOrders) && tradingEnabled == null) {
-            tradingEnabled = true;
-        }
-        b.setTradingEnabled(tradingEnabled);
-        b.setDefaultForOrders(defaultForOrders);
-        if (Boolean.TRUE.equals(defaultForOrders)) {
-            clearDefaultOrderBrokerForUser(userId, null);
-        }
+        b.setActive(false);
+        b.setTradingEnabled(false);
+        b.setDefaultForOrders(false);
         deactivateOtherActiveBrokers(userId, b.getBrokerName(), null, b.getActive());
         brokerCredentialsRepository.save(b);
         return ResponseEntity.ok(Map.of("id", b.getId(), "brokerName", b.getBrokerName(), "appUserId", b.getAppUserId()));
@@ -111,12 +117,12 @@ public class UserController {
         resp.put("customerId", b.getCustomerId());
         resp.put("appUserId", b.getAppUserId());
         resp.put("active", b.getActive() != null ? b.getActive() : Boolean.FALSE);
-        resp.put("apiKey", safeDecrypt(b.getApiKey()));
+        resp.put("hasApiKey", b.getApiKey() != null);
         resp.put("brokerUsername", safeDecrypt(b.getBrokerUsername()));
-        resp.put("brokerPassword", safeDecrypt(b.getBrokerPassword()));
+        resp.put("hasBrokerPassword", b.getBrokerPassword() != null);
         resp.put("clientCode", safeDecrypt(b.getClientCode()));
-        resp.put("totpSecret", safeDecrypt(b.getTotpSecret()));
-        resp.put("secretKey", safeDecrypt(b.getSecretKey()));
+        resp.put("hasTotpSecret", b.getTotpSecret() != null);
+        resp.put("hasSecretKey", b.getSecretKey() != null);
         resp.put("tradingEnabled", effectiveTradingEnabled(b));
         resp.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
         return ResponseEntity.ok(resp);
@@ -124,36 +130,29 @@ public class UserController {
 
     @PutMapping("/brokers/{id}")
     @Transactional
-    public ResponseEntity<?> updateMyBroker(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> updateMyBroker(@PathVariable Long id, @RequestBody org.com.sharekhan.onboarding.BrokerCredentialRequest input) {
+        Map<String, Object> body = input.fields(false);
         Long userId = requireUserId();
         BrokerCredentialsEntity b = brokerCredentialsRepository.findById(id).orElse(null);
         if (b == null || !userId.equals(b.getAppUserId())) {
             return ResponseEntity.notFound().build();
         }
-        if (body.containsKey("brokerName")) {
-            b.setBrokerName(text(body.get("brokerName")));
+        if (body.containsKey("brokerName") && !b.getBrokerName().equalsIgnoreCase(text(body.get("brokerName"))))
+            return ResponseEntity.badRequest().body("Broker type cannot be changed");
+        if (!cryptoService.hasPersistentKey()) return ResponseEntity.status(503).body("Broker encryption is not configured");
+        // Only supplied, nonempty secrets replace stored values. Saving invalidates verification.
+        boolean changing = java.util.List.of("apiKey", "brokerUsername", "brokerPassword", "clientCode", "totpSecret", "secretKey", "customerId")
+            .stream().anyMatch(key -> body.get(key) != null && !text(body.get(key)).isBlank());
+        if (changing) {
+            connectionService.disconnect(id);
+            if (body.containsKey("customerId")) b.setCustomerId(longValue(body.get("customerId")));
+            updateSensitiveFields(b, body);
         }
-        if (body.containsKey("customerId")) {
-            b.setCustomerId(longValue(body.get("customerId")));
+        // Trading activation only happens through the explicit consent endpoint.
+        if (Boolean.TRUE.equals(body.get("defaultForOrders"))) {
+            tradingAccess.requireReady(userId, id);
+            clearDefaultOrderBrokerForUser(userId, id); b.setDefaultForOrders(true);
         }
-        updateSensitiveFields(b, body);
-        if (body.containsKey("tradingEnabled")) {
-            b.setTradingEnabled(body.get("tradingEnabled") == null ? null : Boolean.valueOf(String.valueOf(body.get("tradingEnabled"))));
-        }
-        if (body.containsKey("defaultForOrders")) {
-            Boolean newDefault = body.get("defaultForOrders") == null ? null : Boolean.valueOf(String.valueOf(body.get("defaultForOrders")));
-            if (Boolean.TRUE.equals(newDefault)) {
-                clearDefaultOrderBrokerForUser(userId, b.getId());
-                if (b.getTradingEnabled() == null || !b.getTradingEnabled()) {
-                    b.setTradingEnabled(true);
-                }
-            }
-            b.setDefaultForOrders(newDefault);
-        }
-        if (body.containsKey("active")) {
-            b.setActive(body.get("active") == null ? null : Boolean.valueOf(String.valueOf(body.get("active"))));
-        }
-        deactivateOtherActiveBrokers(userId, b.getBrokerName(), b.getId(), b.getActive());
         brokerCredentialsRepository.save(b);
         return ResponseEntity.ok("updated");
     }
@@ -166,8 +165,8 @@ public class UserController {
         if (b == null || !userId.equals(b.getAppUserId())) {
             return ResponseEntity.notFound().build();
         }
-        brokerCredentialsRepository.delete(b);
-        return ResponseEntity.ok("deleted");
+        connectionService.disconnect(id);
+        return ResponseEntity.ok("disconnected");
     }
 
     @PostMapping("/password")
@@ -177,9 +176,13 @@ public class UserController {
         if (newPassword == null || newPassword.isBlank()) {
             return ResponseEntity.badRequest().body("password required");
         }
+        org.com.sharekhan.onboarding.AccountService.validatePassword(newPassword);
         AppUser user = currentUserService.currentAppUser()
                 .orElseThrow(() -> new org.springframework.security.access.AccessDeniedException("App user login required"));
+        if (!passwordEncoder.matches(body.getOrDefault("currentPassword", ""), user.getPassword()))
+            return ResponseEntity.badRequest().body("Current password is incorrect");
         user.setPassword(passwordEncoder.encode(newPassword));
+        accounts.expireSessions(user.getUsername());
         return ResponseEntity.ok("updated");
     }
 
@@ -224,12 +227,12 @@ public class UserController {
     }
 
     private void updateSensitiveFields(BrokerCredentialsEntity b, Map<String, Object> body) {
-        if (body.containsKey("apiKey")) b.setApiKey(encryptNullable(text(body.get("apiKey"))));
-        if (body.containsKey("brokerUsername")) b.setBrokerUsername(encryptNullable(text(body.get("brokerUsername"))));
-        if (body.containsKey("brokerPassword")) b.setBrokerPassword(encryptNullable(text(body.get("brokerPassword"))));
-        if (body.containsKey("clientCode")) b.setClientCode(encryptNullable(text(body.get("clientCode"))));
-        if (body.containsKey("totpSecret")) b.setTotpSecret(encryptNullable(text(body.get("totpSecret"))));
-        if (body.containsKey("secretKey")) b.setSecretKey(encryptNullable(text(body.get("secretKey"))));
+        if (body.get("apiKey") != null && !text(body.get("apiKey")).isBlank()) b.setApiKey(encryptNullable(text(body.get("apiKey"))));
+        if (body.get("brokerUsername") != null && !text(body.get("brokerUsername")).isBlank()) b.setBrokerUsername(encryptNullable(text(body.get("brokerUsername"))));
+        if (body.get("brokerPassword") != null && !text(body.get("brokerPassword")).isBlank()) b.setBrokerPassword(encryptNullable(text(body.get("brokerPassword"))));
+        if (body.get("clientCode") != null && !text(body.get("clientCode")).isBlank()) b.setClientCode(encryptNullable(text(body.get("clientCode"))));
+        if (body.get("totpSecret") != null && !text(body.get("totpSecret")).isBlank()) b.setTotpSecret(encryptNullable(text(body.get("totpSecret"))));
+        if (body.get("secretKey") != null && !text(body.get("secretKey")).isBlank()) b.setSecretKey(encryptNullable(text(body.get("secretKey"))));
     }
 
     private void deactivateOtherActiveBrokers(Long userId, String brokerName, Long currentBrokerId, Boolean newActive) {

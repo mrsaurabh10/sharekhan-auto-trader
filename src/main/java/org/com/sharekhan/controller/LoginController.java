@@ -19,6 +19,6 @@ public class LoginController {
 
     @GetMapping("/dashboard")
     public String userDashboard() {
-        return "redirect:/admin-dashboard.html";
+        return "portal";
     }
 }

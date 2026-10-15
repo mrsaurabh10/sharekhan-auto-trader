@@ -158,7 +158,7 @@ public class BacktestController {
 
     private boolean authorized(String headerToken) {
         if (!StringUtils.hasText(adminToken)) {
-            return true;
+            return false;
         }
         return adminToken.equals(headerToken);
     }

@@ -89,8 +89,11 @@
             .analytics-grids { grid-template-columns: 1fr; }
         }
     </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="/portal/theme.css">
+    <script src="/portal/legacy-theme.js" defer></script>
 </head>
-<body>
+<body class="legacy-workspace">
 <h2>Admin Dashboard</h2>
 <!-- Show server-side dashboard load error, if any -->
 <div th:if="${error}" style="background:#ffeaea;border:1px solid #ffb6b6;padding:8px;margin-bottom:8px;color:#800">Error: <span th:text="${error}"></span></div>

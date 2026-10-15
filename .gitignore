@@ -50,3 +50,7 @@ build/
 /outputs/trade_export/~$trades_export_20260609.xlsx
 /outputs/trade_export/node_modules/
 /outputs/trade_export/node_modules/
+
+# Local UI review captures and Python bytecode
+/outputs/onboarding-ux/
+__pycache__/

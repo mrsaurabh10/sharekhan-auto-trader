@@ -242,11 +242,24 @@ class SharekhanHistoricalControllerTest {
                 .andExpect(jsonPath("$.status", is("success")));
     }
 
+    @Test
+    void rejectsAnonymousAccessWhenAdminTokenIsNotConfigured() throws Exception {
+        var controller = new SharekhanHistoricalController(mock(SharekhanHistoricalService.class),
+                mock(ScriptMasterRepository.class), mock(ScriptMasterService.class));
+        MockMvcBuilders.standaloneSetup(controller).build()
+                .perform(get("/api/sharekhan/historical/candles").param("scripCode", "12345"))
+                .andExpect(status().isForbidden());
+    }
+
     private MockMvc mockMvc(SharekhanHistoricalController controller) {
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
-        return MockMvcBuilders.standaloneSetup(controller)
+        boolean needsFixtureToken = ReflectionTestUtils.getField(controller, "adminToken") == null;
+        if (needsFixtureToken) ReflectionTestUtils.setField(controller, "adminToken", "fixture-token");
+        var builder = MockMvcBuilders.standaloneSetup(controller);
+        if (needsFixtureToken) builder.defaultRequest(get("/").header("X-Admin-Token", "fixture-token"));
+        return builder
                 .setMessageConverters(new MappingJackson2HttpMessageConverter(objectMapper))
                 .build();
     }

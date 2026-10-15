@@ -90,6 +90,7 @@ public class TradeAnalyticsController {
     }
 
     private String normalizeAnalyticsScopeForSession(String scope) {
+        if (!currentUserService.isAdmin()) return "own";
         return scope == null || scope.isBlank() ? null : scope.trim().toLowerCase();
     }
 

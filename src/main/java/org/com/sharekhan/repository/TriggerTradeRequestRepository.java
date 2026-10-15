@@ -17,6 +17,16 @@ import java.time.LocalDateTime;
 
 @Repository
 public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTradeRequestEntity, Long> {
+    long countByAppUserId(Long appUserId);
+
+    boolean existsByBrokerCredentialsIdAndStatusIn(Long brokerCredentialsId, List<TriggeredTradeStatus> statuses);
+
+    @Modifying
+    @Transactional
+    @Query("delete from TriggerTradeRequestEntity r where r.id = :id and (:userId is null or r.appUserId = :userId) "
+        + "and r.status in :statuses and not exists (select t.id from TriggeredTradeSetupEntity t where t.triggerRequestId = r.id)")
+    int deleteUnsubmittedRequest(@Param("id") Long id, @Param("userId") Long userId,
+                                @Param("statuses") List<TriggeredTradeStatus> statuses);
 
     List<TriggerTradeRequestEntity> findByStatus(TriggeredTradeStatus status);
 

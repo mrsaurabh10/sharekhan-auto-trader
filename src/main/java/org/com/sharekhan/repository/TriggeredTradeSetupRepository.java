@@ -17,6 +17,8 @@ import java.time.LocalDateTime;
 
 @Repository
 public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTradeSetupEntity, Long> {
+    boolean existsByBrokerCredentialsIdAndStatusIn(Long brokerCredentialsId, java.util.List<TriggeredTradeStatus> statuses);
+
 
     List<TriggeredTradeSetupEntity> findByBrokerProductTypeIgnoreCaseAndTriggeredAtBetween(
             String product, LocalDateTime from, LocalDateTime to);
