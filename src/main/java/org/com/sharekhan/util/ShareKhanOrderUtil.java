@@ -14,6 +14,21 @@ import java.util.Locale;
 
 public class ShareKhanOrderUtil {
 
+    /** A non-null error payload is not an order-modification acknowledgement. */
+    public static boolean isModifyAccepted(JSONObject response, String expectedOrderId) {
+        if (response == null || expectedOrderId == null) return false;
+        String status = response.optString("status", "").trim();
+        if (!status.isEmpty() && !"200".equals(status)) return false;
+        if (!response.optString("error", "").isBlank()
+                || !response.optString("errormsg", "").isBlank()) return false;
+        JSONObject data = response.optJSONObject("data");
+        if (data == null || !data.optString("errormsg", "").isBlank()) return false;
+        String orderStatus = data.optString("orderStatus", "").toLowerCase(Locale.ROOT);
+        if (orderStatus.contains("reject") || orderStatus.contains("cancel")) return false;
+        String orderId = data.optString("orderId", data.optString("orsOrderId", ""));
+        return expectedOrderId.equals(orderId);
+    }
+
     public static boolean isFullyExecutedStatus(String rawStatus) {
         String normalized = normalizeOrderStatus(rawStatus);
         if (normalized.isBlank() || isPartiallyExecutedStatus(normalized)) {

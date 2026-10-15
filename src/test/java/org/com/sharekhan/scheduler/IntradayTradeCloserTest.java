@@ -17,6 +17,22 @@ import static org.mockito.Mockito.when;
 class IntradayTradeCloserTest {
 
     @Test
+    void startsClosureChaseForEveryTargetLegEvenWithoutCachedLtp() {
+        var setups = mock(TriggeredTradeSetupRepository.class);
+        var execution = mock(TradeExecutionService.class);
+        var first = org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().id(10265L).scripCode(123).build();
+        var second = org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().id(10282L).scripCode(123).build();
+        when(setups.findByIntradayTrueAndStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED))
+                .thenReturn(java.util.List.of());
+        when(setups.findByIntradayTrueAndStatus(org.com.sharekhan.enums.TriggeredTradeStatus.TARGET_ORDER_PLACED))
+                .thenReturn(java.util.List.of(first, second));
+        new IntradayTradeCloser(setups, mock(TriggerTradeRequestRepository.class), execution,
+                mock(LtpCacheService.class)).closeIntradayTrades();
+        verify(execution).startIntradayExitChase(first);
+        verify(execution).startIntradayExitChase(second);
+    }
+
+    @Test
     void purgeUsesMarketCloseCutoffAndPreservesOnlyNonIntradayPendingConfirmations() {
         TriggerTradeRequestRepository requestRepository = mock(TriggerTradeRequestRepository.class);
         when(requestRepository.deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(
