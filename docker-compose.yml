@@ -31,6 +31,9 @@ services:
     # Reserve enough capacity for the 2-vCPU / 2-GiB VM host and Docker itself.
     cpus: "2.0"
     mem_limit: 1536m
+    # Keep operator-managed optional keys (including APP_CRYPTO_KEY and APP_ADMIN_TOKEN).
+    env_file:
+      - .env
     environment:
       SPRING_PROFILES_ACTIVE: "${SPRING_PROFILES_ACTIVE:-user-test}"
       SERVER_PORT: "${SERVER_PORT:-8080}"

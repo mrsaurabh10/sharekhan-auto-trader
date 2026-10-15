@@ -131,7 +131,7 @@ separately. H2 integration tests do not establish PostgreSQL/live broker readine
 The user requested this branch on the existing server for testing. The inspected
 server checkout was `1520ea4` on local `codex/postgresql-bootstrap`, with no
 tracked changes. Existing runtime artifacts, `.env`, mounts and PostgreSQL are
-preserved. Docker Compose forwards optional onboarding/mail settings; registration
+preserved. Docker Compose loads the operator-managed `.env` and forwards optional onboarding/mail settings; registration
 stays disabled by default. The inspected server has none of the onboarding/SMTP
 settings, so signup and recovery require operator configuration before testing.
 No email or broker authentication was performed during preparation.
