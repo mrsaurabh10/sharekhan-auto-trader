@@ -53,7 +53,7 @@ public class IntradayTradeCloser {
                     ltp = 0.0;
                     //TODO get the ltp from a different service
                 }
-                tradeExecutionService.squareOff(trade, ltp,"Intraday closing at 3:35 PM");
+                tradeExecutionService.squareOff(trade, ltp,"INTRADAY_CLOSE");
                 log.info("💼 Closed intraday trade for {}", trade.getSymbol());
             } catch (Exception e) {
                 log.error("❌ Failed to close intraday trade {}: {}", trade.getId(), e.getMessage(), e);
@@ -62,14 +62,9 @@ public class IntradayTradeCloser {
 
         for (TriggeredTradeSetupEntity trade : intradayTargetOrders) {
             try {
-                Double ltp = ltpCacheService.getLtp(trade.getScripCode());
-                if (ltp == null || ltp <= 0) {
-                    log.warn("⚠️ Intraday target trade {} missing LTP; skipping modify for existing exit order {}", trade.getId(), trade.getExitOrderId());
-                    continue;
-                }
-                boolean modified = tradeExecutionService.modifyExitOrderForIntradayClose(trade, ltp);
-                if (modified) {
-                    log.info("✏️ Updated intraday target exit order {} for trade {} to LTP {}", trade.getExitOrderId(), trade.getId(), ltp);
+                boolean started = tradeExecutionService.startIntradayExitChase(trade);
+                if (started) {
+                    log.info("Intraday exit chase scheduled for trade {} existing order {}", trade.getId(), trade.getExitOrderId());
                 }
             } catch (Exception e) {
                 log.error("❌ Failed to update intraday target trade {}: {}", trade.getId(), e.getMessage(), e);
