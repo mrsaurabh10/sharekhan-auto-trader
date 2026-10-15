@@ -56,7 +56,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         at(start);
         when(trades.findById(trade.getId())).thenReturn(Optional.of(trade));
         when(credentials.findById(55L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder()
-                .id(55L).brokerName("Shoonya").customerId(999L).active(true).build()));
+                .id(55L).appUserId(1L).brokerName("Shoonya").customerId(999L).active(true).build()));
         when(brokers.getService(anyString())).thenReturn(broker);
         when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Open"));
         when(broker.modifyEntryOrder(any(), any(), anyString(), anyDouble()))
@@ -73,6 +73,14 @@ class TradeExecutionServiceIntradayExitChaseTest {
     private static JSONObject history(String status) {
         return new JSONObject().put("data", new JSONArray().put(
                 new JSONObject().put("orderStatus", status).put("avgPrice", 42.0)));
+    }
+
+    @Test
+    void doesNotRouteAnExitThroughAnotherUsersBroker() {
+        when(credentials.findById(55L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder()
+                .id(55L).appUserId(2L).brokerName("Shoonya").customerId(999L).active(true).build()));
+        assertThat(service.startIntradayExitChase(trade)).isFalse();
+        verifyNoInteractions(brokers);
     }
 
     @Test
@@ -198,7 +206,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         ReflectionTestUtils.setField(service, "tokenStoreService", tokens);
         when(tokens.getAccessToken(org.com.sharekhan.enums.Broker.SHAREKHAN, 999L)).thenReturn("test-token");
         when(credentials.findById(55L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder()
-                .id(55L).brokerName("Sharekhan").apiKey("test-key").customerId(999L).active(true).build()));
+                .id(55L).appUserId(1L).brokerName("Sharekhan").apiKey("test-key").customerId(999L).active(true).build()));
         when(scripts.findById(123)).thenReturn(Optional.of(org.com.sharekhan.entity.ScriptMasterEntity.builder()
                 .scripCode(123).exchange("NF").optionType("CE").tickSize(0.05).build()));
         var client = mock(com.sharekhan.SharekhanConnect.class);

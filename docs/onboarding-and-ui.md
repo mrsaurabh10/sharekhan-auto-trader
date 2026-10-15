@@ -1,6 +1,6 @@
 # Customer onboarding and shared trading UI
 
-Implementation branch: `codex/user-onboarding-ui`.
+Implementation branch: `codex/user-onboarding-ui`. Includes current `main` at `25d8c66` (intraday exit fixes).
 
 ## User journey
 
@@ -16,7 +16,7 @@ The first catalog exposes Sharekhan only. Existing adapters are retained interna
 add a broker to customer onboarding only after its connection and execution behavior
 have been implemented and verified. There is no billing component.
 
-## Deployment configuration (not configured or deployed by this change)
+## Deployment configuration
 
 Registration and recovery are disabled unless all of these are available:
 
@@ -125,3 +125,21 @@ reads, analytics isolation and concurrent enrollment. Only external email, broke
 authentication and the existing trading execution boundary are stubbed; no schedulers
 or real broker calls run. The existing broker execution tests cover that engine
 separately. H2 integration tests do not establish PostgreSQL/live broker readiness.
+
+## Test deployment preparation — 2026-10-15
+
+The user requested this branch on the existing server for testing. The inspected
+server checkout was `1520ea4` on local `codex/postgresql-bootstrap`, with no
+tracked changes. Existing runtime artifacts, `.env`, mounts and PostgreSQL are
+preserved. Docker Compose forwards optional onboarding/mail settings; registration
+stays disabled by default. The inspected server has none of the onboarding/SMTP
+settings, so signup and recovery require operator configuration before testing.
+No email or broker authentication was performed during preparation.
+
+The merged release passed the filtered regression suite (459 selected, 457 passed,
+two skipped). Known baseline classes and sandbox socket tests remain excluded as
+listed in `docs/intraday-exit-chase.md`. Maven package also passed. The new broker
+owner check required the intraday chase fixtures to identify their account owner.
+A final ownership regression is included in the deployment candidate. Deployment
+status and exact published/deployed commits are recorded in the parent project
+knowledge files.
