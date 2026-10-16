@@ -66,6 +66,95 @@ class TradeExecutionServiceIntradayExitChaseTest {
         quotes.recordQuote(123, 42.0, 42.2, 42.1);
     }
 
+    @Test
+    void failedStopModifyKeepsSameOrderAndRetriesUntilFilled() {
+        when(broker.modifyEntryOrder(any(), any(), anyString(), anyDouble()))
+                .thenReturn(OrderPlacementResult.builder().success(false).build())
+                .thenReturn(OrderPlacementResult.builder().success(false).build())
+                .thenReturn(OrderPlacementResult.builder().success(true).build());
+        assertThat(service.modifyExitOrderForStop(trade, 38.9)).isFalse();
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        tick.run();
+        verify(future, never()).cancel(anyBoolean());
+        tick.run();
+        when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Fully Executed"));
+        tick.run();
+        verify(broker, times(3)).modifyEntryOrder(eq(trade), any(), eq("211652102"), anyDouble());
+        verify(future).cancel(true);
+        assertThat(trade.getExitOrderId()).isEqualTo("211652102");
+        assertThat(trade.getExitReason()).isEqualTo("STOP_LOSS_HIT");
+        verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
+    }
+
+    @Test
+    void squareOffReusesExistingSellInsteadOfPlacingAnother() {
+        trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+        service.squareOff(trade, 38.9, "STOP_LOSS_HIT");
+        verify(broker).modifyEntryOrder(eq(trade), any(), eq("211652102"), eq(38.9));
+        verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
+        verify(trades, never()).claimIfStatusEquals(anyLong(), anyString(), anyString(), anyString());
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+    }
+
+    @Test
+    void stopChaseWaitsOnUnknownStatusAndStaleBookAndStopsAtDeadline() {
+        service.modifyExitOrderForStop(trade, 38.9);
+        clearInvocations(broker);
+        when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(null);
+        tick.run();
+        when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Open"));
+        doReturn(true).when(quotes).isBookStale(any(), any());
+        tick.run();
+        verify(broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+        at(start.plusSeconds(300));
+        tick.run();
+        verify(future).cancel(true);
+        verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
+    }
+
+    @Test
+    void cancelledStopOrderNeverCreatesReplacementSell() {
+        service.modifyExitOrderForStop(trade, 38.9);
+        clearInvocations(broker);
+        when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Cancelled"));
+        tick.run();
+        verify(future).cancel(true);
+        verify(broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+        verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
+    }
+
+    @Test
+    void placementGuardRejectsExistingSellEvenWhenCalledDirectly() {
+        TriggeredTradeSetupEntity stale = TriggeredTradeSetupEntity.builder()
+                .id(trade.getId()).status(TriggeredTradeStatus.EXIT_TRIGGERED).build();
+        OrderPlacementResult result = ReflectionTestUtils.invokeMethod(service,
+                "placeExitOrderAndPersistWithoutLock", stale, 38.9, "STOP_LOSS_HIT",
+                TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        assertThat(result.isSuccess()).isFalse();
+        verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
+    }
+
+    @Test
+    void partialStopFillKeepsOriginalOrderAndQuantityDuringChase() {
+        service.modifyExitOrderForStop(trade, 38.9);
+        clearInvocations(broker);
+        when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Partially Executed"));
+        tick.run();
+        verify(broker).modifyEntryOrder(eq(trade), any(), eq("211652102"), eq(42.0));
+        assertThat(trade.getQuantity()).isEqualTo(500L);
+        assertThat(trade.getExitReason()).isEqualTo("STOP_LOSS_HIT");
+        verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
+    }
+
+    @Test
+    void terminalTradeCannotBeReopenedBySquareOffWithOldExitId() {
+        trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
+        service.squareOff(trade, 38.9, "STOP_LOSS_HIT");
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXITED_SUCCESS);
+        verify(broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+        verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
+    }
+
     private void at(Instant now) {
         ReflectionTestUtils.setField(service, "exitChaseClock", Clock.fixed(now, ZoneOffset.UTC));
     }
