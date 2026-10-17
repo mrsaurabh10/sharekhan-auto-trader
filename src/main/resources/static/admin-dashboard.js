@@ -3,6 +3,29 @@
 (function () {
   'use strict';
 
+  const logoutForm = document.getElementById('adminLogoutForm');
+  if (logoutForm) logoutForm.addEventListener('submit', async function (event) {
+    event.preventDefault();
+    const button = logoutForm.querySelector('button');
+    const error = document.getElementById('adminLogoutError');
+    button.disabled = true;
+    error.hidden = true;
+    try {
+      const response = await fetch('/api/auth/csrf-token', {credentials: 'same-origin', headers: {Accept: 'application/json'}});
+      if (!response.ok) throw new Error('CSRF unavailable');
+      const csrf = await response.json();
+      if (!csrf.token || !csrf.parameter) throw new Error('CSRF missing');
+      const input = document.createElement('input');
+      input.type = 'hidden'; input.name = csrf.parameter; input.value = csrf.token;
+      logoutForm.appendChild(input);
+      HTMLFormElement.prototype.submit.call(logoutForm);
+    } catch (e) {
+      error.textContent = 'Unable to sign out. Please try again.';
+      error.hidden = false;
+      button.disabled = false;
+    }
+  });
+
   const LIVE_PNL_STATUSES = new Set(['EXECUTED', 'EXIT_ORDER_PLACED', 'TARGET_ORDER_PLACED']);
 
   let currentRequestPage = 0;

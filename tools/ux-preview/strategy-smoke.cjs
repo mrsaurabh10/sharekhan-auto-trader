@@ -29,7 +29,7 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
         if(endpoint.startsWith('/portal/')||endpoint==='/admin-dashboard.js')return route.fulfill({contentType:endpoint.endsWith('.js')?'text/javascript':'text/css',body:fs.readFileSync(path.join(root,'src/main/resources/static',endpoint),'utf8')});
         if(endpoint==='/api/analytics/trades')return json(analytics);
         if(endpoint==='/api/user/me')return json({id:1,username:'Sample user',displayName:'Sample user',admin});
-        if(endpoint==='/api/auth/csrf-token')return json({header:'X-CSRF-TOKEN',token:'mock-only'});
+        if(endpoint==='/api/auth/csrf-token')return json({header:'X-CSRF-TOKEN',token:'mock-only',parameter:'_csrf'});
         if(endpoint==='/api/user/brokers')return json(brokers);
         if(/^\/admin\/app-users\/\d+\/brokers$/.test(endpoint))return json(endpoint.includes('/2/')?[account(8),account(9)]:brokers);
         if(endpoint==='/admin/app-users')return json([{id:1,username:'User one'},{id:2,username:'User two'}]);
@@ -179,7 +179,20 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
     await a.getByRole('button',{name:'Brokers',exact:true}).click();assert.equal(await a.locator('#brokersSection').isVisible(),true);
     await a.getByRole('button',{name:'Account',exact:true}).click();assert.equal(await a.locator('#accountSection').isVisible(),true);
     await a.getByRole('button',{name:'Trading',exact:true}).click();assert.equal(await a.locator('#strategyBroker').inputValue(),'9');
-    assert.deepEqual(admin.errors,[]);await a.close();
-    console.log('PASS: signed analytics values, missing/zero data, chart crossings/gaps, responsive tables; responsive admin layout, expandable tools, tab navigation; portal and admin broker defaults/selection, active/history filters, configure readiness, activation payloads and visible errors.');
+    assert.deepEqual(admin.errors,[]);
+    await a.route('**/api/auth/csrf-token',route=>route.fulfill({status:503,body:'Unavailable'}));
+    await a.getByRole('button',{name:'Sign out',exact:true}).click();
+    await a.locator('#adminLogoutError').waitFor({state:'visible'});
+    assert.equal(await a.getByRole('button',{name:'Sign out',exact:true}).isEnabled(),true);
+    await a.unroute('**/api/auth/csrf-token');
+    let logoutRequest;
+    await a.route('**/login?logout',route=>route.fulfill({contentType:'text/html',body:'<h1>Signed out</h1>'}));
+    await a.route('**/logout',route=>{logoutRequest=route.request();return route.fulfill({contentType:'text/html',body:'<script>location.replace("/login?logout")</script>'});});
+    await a.getByRole('button',{name:'Sign out',exact:true}).click();
+    await a.waitForURL('**/login?logout');
+    assert.equal(logoutRequest.method(),'POST');
+    assert.equal(new URLSearchParams(logoutRequest.postData()).get('_csrf'),'mock-only');
+    await a.close();
+    console.log('PASS: admin sign-out CSRF form and retryable errors; signed analytics values, missing/zero data, chart crossings/gaps, responsive tables; responsive admin layout, expandable tools, tab navigation; portal and admin broker defaults/selection, active/history filters, configure readiness, activation payloads and visible errors.');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

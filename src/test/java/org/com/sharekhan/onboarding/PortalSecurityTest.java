@@ -96,7 +96,11 @@ class PortalSecurityTest {
             .andExpect(redirectedUrl("/dashboard"));
     }
     @Test void logoutRequiresPostAndCsrf() throws Exception {
-        mvc.perform(post("/logout").with(user("alex").roles("USER"))).andExpect(status().isForbidden());
-        mvc.perform(post("/logout").accept("text/html").with(user("alex").roles("USER")).with(csrf())).andExpect(status().is3xxRedirection());
+        for (String role : new String[]{"ADMIN", "USER"}) {
+            mvc.perform(post("/logout").with(user("alex").roles(role))).andExpect(status().isForbidden());
+            mvc.perform(post("/logout").accept("text/html").with(user("alex").roles(role)).with(csrf()))
+                .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("/login?logout"))
+                .andExpect(org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated());
+        }
     }
 }
