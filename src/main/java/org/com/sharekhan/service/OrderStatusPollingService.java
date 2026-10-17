@@ -555,6 +555,9 @@ public class OrderStatusPollingService {
             if (broker == Broker.SIMULATOR) {
                 return true;
             }
+            if (broker == Broker.DHAN) {
+                return ctx.getBrokerCredentialsId() != null && ctx.getClientCode() != null && !ctx.getClientCode().isBlank();
+            }
             if (ctx.getApiKey() == null) {
                 return false;
             }

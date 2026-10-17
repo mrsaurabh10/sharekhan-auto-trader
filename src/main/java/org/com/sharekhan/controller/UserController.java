@@ -71,7 +71,7 @@ public class UserController {
                     row.put("active", b.getActive() != null ? b.getActive() : Boolean.FALSE);
                     row.put("tradingEnabled", effectiveTradingEnabled(b));
                     row.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
-                    row.put("tradingSupported", "Sharekhan".equalsIgnoreCase(b.getBrokerName()));
+                    row.put("tradingSupported", org.com.sharekhan.onboarding.BrokerCatalog.tradingSupported(b.getBrokerName()));
                     row.put("hasTotpSecret", b.getTotpSecret() != null && !b.getTotpSecret().isBlank());
                     row.put("hasApiSecret", b.getSecretKey() != null && !b.getSecretKey().isBlank());
                     row.put("connected", tradingAccess.connected(b.getId()));

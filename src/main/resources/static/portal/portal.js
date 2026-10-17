@@ -41,7 +41,7 @@
     t.append(body); container.append(t);
   }
   const orderColumns = [['Instrument', 'symbol'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => badge(row.status || 'PENDING')], ['Source', 'source']];
-  function readyBrokers() { return state.brokers.filter(b => b.brokerName === 'Sharekhan' && b.connected && b.active && b.tradingEnabled); }
+  function readyBrokers() { return state.brokers.filter(b => ['Sharekhan','Dhan'].includes(b.brokerName) && b.connected && b.active && b.tradingEnabled); }
   function brokerLabel(b) { return b.brokerName + ' · ' + (b.clientCode || 'Account ' + b.id); }
   function refreshSelectors() {
     for (const selector of ['#orderBroker', '#strategyBroker']) {
@@ -82,8 +82,8 @@
       if (b.brokerName === 'Dhan' && b.hasApiKey && b.hasApiSecret) actions.append(button('Login with Dhan API key', async () => {
         const result = await api('/api/user/brokers/'+b.id+'/dhan/consent','POST',{}); location.assign(result.loginUrl);
       }));
-      if (b.brokerName === 'Dhan') card.append(node('p','Token generation only. Dhan order execution is not available yet.','muted'));
-      if (b.brokerName === 'Sharekhan') actions.append(button(b.tradingEnabled ? 'Disable new trading' : 'Enable trading', async () => {
+      if (b.brokerName === 'Dhan') card.append(node('p','Cash and option limit orders. Whitelist the server static IP in Dhan before enabling trading.','muted'));
+      if (['Sharekhan','Dhan'].includes(b.brokerName)) actions.append(button(b.tradingEnabled ? 'Disable new trading' : 'Enable trading', async () => {
         if (!b.tradingEnabled && !await confirmAction('Enable live trading for this broker account? Orders and strategy subscriptions can then submit broker orders.')) return;
         await api('/api/user/brokers/'+b.id+'/trading','POST',{enabled:!b.tradingEnabled}); notify(b.tradingEnabled ? 'New trading disabled. Existing positions remain open.' : 'Trading enabled.'); await loadBrokers();
       }, b.tradingEnabled ? 'secondary' : 'primary'));
@@ -106,7 +106,7 @@
     const f = $('#brokerForm'), dhan = f.elements.brokerName.value === 'Dhan';
     const apiLogin = $('#dhanMethod').value === 'api';
     $('#dhanMethodRow').hidden = !dhan; $('#dhanAuthHelp').hidden = !dhan;
-    $('#brokerFormNote').textContent = dhan ? 'Generate a token after saving. Dhan order execution is not available yet.' : 'Saving credentials does not enable trading. Verify the connection, then explicitly enable trading.';
+    $('#brokerFormNote').textContent = dhan ? 'Verify the connection after saving. Whitelist the server static IP in Dhan, then explicitly enable trading.' : 'Saving credentials does not enable trading. Verify the connection, then explicitly enable trading.';
     const visible = dhan ? (apiLogin ? ['clientCode','apiKey','secretKey'] : ['clientCode','brokerPassword','totpSecret']) : ['customerId','clientCode','apiKey','brokerPassword','totpSecret','secretKey'];
     for (const name of ['customerId','clientCode','apiKey','brokerPassword','totpSecret','secretKey']) {
       const input=f.elements[name]; input.closest('label').hidden=!visible.includes(name);

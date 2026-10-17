@@ -125,7 +125,7 @@
 <h2>Available brokers</h2>
 <span class="badge good">SUPPORTED</span>
 </div>
-<p class="muted">Sharekhan supports trading. Dhan supports token generation with PIN + TOTP or API key + secret browser login; Dhan trading is not available yet.</p>
+<p class="muted">Sharekhan supports trading. Dhan supports PIN + TOTP or API key login, and cash/option limit orders. Whitelist the server static IP in Dhan before enabling trading.</p>
 <button class="secondary" id="showBrokerForm">+ Add broker account</button>
 </div>
 </div>
@@ -134,7 +134,7 @@
 <p class="muted">Credentials are encrypted. Saved passwords and secrets are never displayed.</p>
 <form id="brokerForm" class="form-grid">
 <input type="hidden" name="id">
-<label>Broker<select name="brokerName"><option value="Sharekhan">Sharekhan</option><option value="Dhan">Dhan (token generation)</option></select></label>
+<label>Broker<select name="brokerName"><option value="Sharekhan">Sharekhan</option><option value="Dhan">Dhan</option></select></label>
 <label id="dhanMethodRow" hidden>Dhan login method<select id="dhanMethod"><option value="totp">PIN + TOTP</option><option value="api">API key + secret</option></select></label>
 <p id="dhanAuthHelp" class="full muted" hidden>PIN + TOTP uses the authenticator setup secret to generate a fresh code. For API key login, set your Dhan app redirect URL to this site's /api/user/brokers/dhan/callback, save credentials, then select “Login with Dhan API key”.</p>
 <label class="full">Client code<input name="clientCode" required autocomplete="off">

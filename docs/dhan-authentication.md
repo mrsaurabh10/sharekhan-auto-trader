@@ -1,9 +1,8 @@
 # Dhan token generation
 
-Dhan is available in the customer portal's Brokers form for authentication only.
-Order placement, quotes, positions and execution reconciliation are not implemented
-for Dhan. Trading activation and strategy/order selection remain blocked for Dhan.
-Sharekhan's existing connection and trading flow remains available.
+Dhan is available in the customer portal's Brokers form. Standard cash/option order
+execution is implemented in `dhan-orders.md`, including trading consent, static-IP
+requirements and reconciliation limits. Sharekhan's existing flow remains available.
 
 Source: https://dhanhq.co/docs/v2/authentication/ (reviewed 2026-10-17).
 The documented PIN/TOTP endpoint does not accept an API key. API key/secret uses
@@ -43,7 +42,7 @@ start browser login again. No automatic background browser consent is attempted.
 ## Storage and verification
 
 Existing broker credential/token tables and persistent AES-GCM encryption are
-reused; no schema migration is needed. Dhan Client ID maps to encrypted clientCode,
+reused for authentication; order execution adds a submission journal (see `dhan-orders.md`). Dhan Client ID maps to encrypted clientCode,
 PIN to brokerPassword, API secret to secretKey and authenticator seed to totpSecret.
 Sharekhan-only customerId is not required for Dhan. Blank edits preserve saved
 values and credential updates invalidate verification. API and TOTP credentials

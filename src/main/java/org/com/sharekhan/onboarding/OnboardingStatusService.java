@@ -35,7 +35,7 @@ public class OnboardingStatusService {
                 && BrokerCatalog.supports(b.getBrokerName())
                 && ("Dhan".equalsIgnoreCase(b.getBrokerName()) || (b.getCustomerId() != null && b.getCustomerId() > 0))
                 && verified.contains(b.getId())).toList();
-        long tradingReady = connected.stream().filter(b -> "Sharekhan".equalsIgnoreCase(b.getBrokerName()) && Boolean.TRUE.equals(b.getTradingEnabled())).count();
+        long tradingReady = connected.stream().filter(b -> BrokerCatalog.tradingSupported(b.getBrokerName()) && Boolean.TRUE.equals(b.getTradingEnabled())).count();
         long active = subscriptions.countByAppUserIdAndStatusIn(userId, List.of("ACTIVE", "TRIGGERED"));
         long orders = requests.countByAppUserId(userId);
         List<Step> steps = List.of(

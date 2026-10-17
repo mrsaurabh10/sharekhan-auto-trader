@@ -15,8 +15,18 @@ public final class BrokerCatalog {
                 "Connect your Sharekhan trading account using your API credentials.",
                 List.of("customerId", "clientCode", "apiKey", "brokerPassword", "totpSecret", "secretKey")),
                 new SupportedBroker("Dhan", "Dhan", true,
-                    "Generate a Dhan access token using PIN + TOTP or API key + secret browser login. Authentication only; trading is not available yet.",
+                    "Generate a Dhan access token using PIN + TOTP or API key + secret browser login. Supports cash and option limit orders with explicit trading consent; whitelist your server static IP in Dhan.",
                     List.of("clientCode")));
+    }
+
+    public static boolean tradingSupported(String name) {
+        return "Sharekhan".equalsIgnoreCase(name) || "Dhan".equalsIgnoreCase(name);
+    }
+
+    public static boolean hasTradingIdentity(org.com.sharekhan.entity.BrokerCredentialsEntity broker) {
+        return "Dhan".equalsIgnoreCase(broker.getBrokerName())
+            ? broker.getClientCode() != null && !broker.getClientCode().isBlank()
+            : "Sharekhan".equalsIgnoreCase(broker.getBrokerName()) && broker.getCustomerId() != null && broker.getCustomerId() > 0;
     }
 
     public static boolean supports(String name) {

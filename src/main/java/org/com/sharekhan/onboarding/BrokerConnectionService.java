@@ -49,7 +49,7 @@ public class BrokerConnectionService {
             BrokerConnection connection = connections.findById(id).orElseGet(BrokerConnection::new);
             connection.setCredentialId(id); connection.setVerifiedUntil(until); connections.save(connection);
             broker.setActive(true); brokers.save(broker);
-            return Map.of("message", "Dhan".equalsIgnoreCase(broker.getBrokerName()) ? "Dhan token generated. Trading support is not available yet." : "Sharekhan connection verified. You can enable trading.", "verifiedUntil", until);
+            return Map.of("message", "Dhan".equalsIgnoreCase(broker.getBrokerName()) ? "Dhan connection verified. Whitelist your server static IP in Dhan before enabling trading." : "Sharekhan connection verified. You can enable trading.", "verifiedUntil", until);
     }
     @Transactional
     public Map<String, Object> completeDhanConsent(Long id, String tokenId) {
@@ -59,9 +59,9 @@ public class BrokerConnectionService {
     @Transactional
     public void setTrading(Long id, boolean enabled) {
         var broker = access.owned(id);
-        if (enabled && !"Sharekhan".equalsIgnoreCase(broker.getBrokerName()))
+        if (enabled && !BrokerCatalog.tradingSupported(broker.getBrokerName()))
             throw new ResponseStatusException(BAD_REQUEST, "Trading is not supported for this broker yet");
-        if (enabled && (broker.getCustomerId() == null || broker.getCustomerId() <= 0 || !access.connected(id) || !Boolean.TRUE.equals(broker.getActive())))
+        if (enabled && (!BrokerCatalog.hasTradingIdentity(broker) || !access.connected(id) || !Boolean.TRUE.equals(broker.getActive())))
             throw new ResponseStatusException(BAD_REQUEST, "Verify your connection before enabling trading");
         broker.setTradingEnabled(enabled); brokers.save(broker);
     }

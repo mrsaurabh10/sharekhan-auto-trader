@@ -58,6 +58,15 @@ import static org.mockito.Mockito.when;
 
 class TradeExecutionServiceBrokerSideEntryTest {
     @Test
+    void dhanContextRequiresScopedClientIdentityButNotSharekhanCustomerOrApiKey() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        var dhan = new BrokerContext(null,null,"1000000001","Dhan",55L);
+        assertThat((Boolean)ReflectionTestUtils.invokeMethod(ctx.service,"isBrokerContextUsable",dhan)).isTrue();
+        dhan.setBrokerCredentialsId(null);
+        assertThat((Boolean)ReflectionTestUtils.invokeMethod(ctx.service,"isBrokerContextUsable",dhan)).isFalse();
+    }
+
+    @Test
     void entryRejectionAuditPreservesSpotReferenceAndObservedTime() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         TradeAuditService audit = mock(TradeAuditService.class);

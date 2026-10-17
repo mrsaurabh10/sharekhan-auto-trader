@@ -31,9 +31,9 @@ public class UserTradingAccess {
     public void requireReady(Long userId, Long brokerId) {
         BrokerCredentialsEntity b = brokers.findById(brokerId == null ? -1L : brokerId)
             .filter(c -> userId != null && userId.equals(c.getAppUserId())).orElseThrow(() -> new AccessDeniedException("Choose your own broker account"));
-        if (b.getCustomerId() == null || b.getCustomerId() <= 0 || !Boolean.TRUE.equals(b.getActive()) || !Boolean.TRUE.equals(b.getTradingEnabled())
-            || !"Sharekhan".equalsIgnoreCase(b.getBrokerName()) || !connected(b.getId()))
-            throw new ResponseStatusException(BAD_REQUEST, "Connect your Sharekhan account and enable trading first");
+        if (!BrokerCatalog.hasTradingIdentity(b) || !Boolean.TRUE.equals(b.getActive()) || !Boolean.TRUE.equals(b.getTradingEnabled())
+            || !BrokerCatalog.tradingSupported(b.getBrokerName()) || !connected(b.getId()))
+            throw new ResponseStatusException(BAD_REQUEST, "Connect your broker account and enable trading first");
     }
     public void requireOnboardedReady(Long userId, Long brokerId) {
         if (userId != null && (profiles.existsById(userId) || (brokerId != null && connections.existsById(brokerId)))) requireReady(userId, brokerId);

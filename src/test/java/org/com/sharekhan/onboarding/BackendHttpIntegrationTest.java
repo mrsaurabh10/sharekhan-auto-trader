@@ -120,7 +120,7 @@ class BackendHttpIntegrationTest {
                 .source(input.getSource()).createdAt(LocalDateTime.now()).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build());
         });
     }
-    @Test void dhanTotpAndApiKeyFlowsPersistScopedEncryptedTokensAndNeverEnableTrading() throws Exception {
+    @Test void dhanTotpAndApiKeyFlowsPersistScopedEncryptedTokensAndRequireTradingConsent() throws Exception {
         MockHttpSession session=registerAndLogin();
         when(dhan.loginAndFetchToken(any(BrokerCredentialsEntity.class))).thenReturn(new AuthTokenResult("dhan-test-token",3600));
         when(dhan.beginConsent(any())).thenReturn("https://auth.dhan.co/login/consentApp-login?consentAppId=test-consent");
@@ -139,10 +139,13 @@ class BackendHttpIntegrationTest {
         assertThat(crypto.decrypt(token.getToken())).isEqualTo("dhan-test-token");
         mvc.perform(get("/api/user/onboarding").session(session)).andExpect(jsonPath("$.connectedBrokers").value(1))
             .andExpect(jsonPath("$.tradingReadyBrokers").value(0));
-        mvc.perform(get("/api/user/brokers").session(session)).andExpect(jsonPath("$[0].tradingSupported").value(false))
+        mvc.perform(get("/api/user/brokers").session(session)).andExpect(jsonPath("$[0].tradingSupported").value(true))
             .andExpect(jsonPath("$[0].apiKey").doesNotExist()).andExpect(jsonPath("$[0].totpSecret").doesNotExist());
         mvc.perform(post("/api/user/brokers/"+id+"/trading").session(session).with(csrf()).contentType("application/json").content("{\"enabled\":true}"))
-            .andExpect(status().isBadRequest());
+            .andExpect(status().isOk());
+        mvc.perform(get("/api/user/onboarding").session(session)).andExpect(jsonPath("$.tradingReadyBrokers").value(1));
+        mvc.perform(post("/api/user/brokers/"+id+"/trading").session(session).with(csrf()).contentType("application/json").content("{\"enabled\":false}"))
+            .andExpect(status().isOk());
         mvc.perform(post("/api/strategies/start").session(session).with(csrf()).contentType("application/json")
             .content("{\"templateId\":\"TEST_BREAKOUT\",\"symbol\":\"NIFTY\",\"lots\":1,\"brokerCredentialsId\":"+id+"}"))
             .andExpect(status().isBadRequest());
@@ -168,6 +171,25 @@ class BackendHttpIntegrationTest {
             .andExpect(header().string("Location","/portal?dhan=failed#brokers"));
         verify(dhan,times(1)).consumeConsent(any(),eq("test-token-id"));
         verifyNoInteractions(engine);
+    }
+    @Test void dhanVerifiedPinOnlyAccountCanSubmitScopedRequestsAndStrategiesAfterConsent() throws Exception {
+        MockHttpSession session=registerAndLogin();
+        when(dhan.loginAndFetchToken(any(BrokerCredentialsEntity.class))).thenReturn(new AuthTokenResult("dhan-test-token",3600));
+        String payload="{\"brokerName\":\"Dhan\",\"clientCode\":\"1000000001\",\"brokerPassword\":\"012345\",\"totpSecret\":\"JBSWY3DPEHPK3PXP\"}";
+        String created=mvc.perform(post("/api/user/brokers").session(session).with(csrf()).contentType("application/json").content(payload))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        long id=json.readTree(created).get("id").asLong();
+        mvc.perform(post("/api/trades/trigger-on-price").session(session).with(csrf()).contentType("application/json").content(orderJson(id))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/user/brokers/"+id+"/connect").session(session).with(csrf())).andExpect(status().isOk());
+        mvc.perform(post("/api/trades/trigger-on-price").session(session).with(csrf()).contentType("application/json").content(orderJson(id))).andExpect(status().isBadRequest());
+        mvc.perform(post("/api/user/brokers/"+id+"/trading").session(session).with(csrf()).contentType("application/json").content("{\"enabled\":true}")).andExpect(status().isOk());
+        mvc.perform(post("/api/trades/trigger-on-price").session(session).with(csrf()).contentType("application/json").content(orderJson(id))).andExpect(status().isOk())
+            .andExpect(jsonPath("$.brokerCredentialsId").value(id));
+        mvc.perform(post("/api/strategies/start").session(session).with(csrf()).contentType("application/json")
+            .content("{\"templateId\":\"TEST_BREAKOUT\",\"symbol\":\"NIFTY\",\"lots\":1,\"brokerCredentialsId\":"+id+"}"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACTIVE"));
+        assertThat(brokers.findById(id).orElseThrow().getApiKey()).isNull();
+        assertThat(brokers.findById(id).orElseThrow().getCustomerId()).isNull();
     }
     @Test void signupBrokerSubscriptionAndOrderWorkThroughAuthenticatedHttp() throws Exception {
         MockHttpSession session=registerAndLogin();
