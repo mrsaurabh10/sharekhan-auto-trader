@@ -73,6 +73,22 @@ class PortalSecurityTest {
             .andExpect(content().string(org.hamcrest.Matchers.containsString("Create an order")));
         mvc.perform(get("/admin-dashboard.html").with(user("alex").roles("USER"))).andExpect(status().isForbidden());
     }
+    @Test void workspaceLinkAndDhanCallbackRenderPersonalPortalForBothRoles() throws Exception {
+        for (String role : new String[]{"ADMIN", "USER"}) {
+            for (String path : new String[]{"/portal", "/portal/", "/dashboard"}) {
+                mvc.perform(get(path).param("dhan", "connected").with(user("alex").roles(role)))
+                    .andExpect(status().isOk()).andExpect(view().name("portal"))
+                    .andExpect(content().string(org.hamcrest.Matchers.containsString("Create an order")));
+            }
+        }
+    }
+    @Test void workspaceRequiresLoginWhileItsAssetsRemainPublic() throws Exception {
+        for (String path : new String[]{"/portal", "/portal/", "/dashboard"}) {
+            mvc.perform(get(path).accept("text/html")).andExpect(status().is3xxRedirection())
+                .andExpect(redirectedUrlPattern("**/login"));
+        }
+        mvc.perform(get("/portal/portal.js")).andExpect(status().isOk());
+    }
     @Test void rootSelectsTheCorrectWorkspaceForTheRole() throws Exception {
         mvc.perform(get("/").with(user("admin").roles("ADMIN")))
             .andExpect(redirectedUrl("/admin/dashboard"));
@@ -80,7 +96,11 @@ class PortalSecurityTest {
             .andExpect(redirectedUrl("/dashboard"));
     }
     @Test void logoutRequiresPostAndCsrf() throws Exception {
-        mvc.perform(post("/logout").with(user("alex").roles("USER"))).andExpect(status().isForbidden());
-        mvc.perform(post("/logout").accept("text/html").with(user("alex").roles("USER")).with(csrf())).andExpect(status().is3xxRedirection());
+        for (String role : new String[]{"ADMIN", "USER"}) {
+            mvc.perform(post("/logout").with(user("alex").roles(role))).andExpect(status().isForbidden());
+            mvc.perform(post("/logout").accept("text/html").with(user("alex").roles(role)).with(csrf()))
+                .andExpect(status().is3xxRedirection()).andExpect(redirectedUrl("/login?logout"))
+                .andExpect(org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated());
+        }
     }
 }

@@ -72,3 +72,9 @@
 @media(max-width:480px){.admin-layout .execution-filter-fields{width:100%;grid-template-columns:minmax(0,1fr)}.admin-layout .execution-filters[open]{width:100%}}
 
 .admin-layout:not(.admin-mode) .admin-label{display:none}
+
+.admin-layout .admin-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:12px;flex-shrink:0}
+.admin-layout #adminLogoutForm{display:flex;align-items:center;gap:8px;margin:0;flex-wrap:wrap}
+.admin-layout #adminLogoutForm button{white-space:nowrap;margin:0;padding:7px 12px}
+.admin-layout #adminLogoutError{color:#b42318;font-size:12px;max-width:220px}
+@media(max-width:480px){.admin-layout .admin-heading{flex-wrap:wrap;gap:8px}.admin-layout .admin-actions{gap:8px}}

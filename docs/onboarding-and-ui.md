@@ -223,3 +223,15 @@ along with its renderer and styles. Normal analytics cards, equity curve and
 symbol/day tables remain. This UI removal does not delete saved replay data or
 change the analytics API. Mock browser verification covers admin analytics after
 removal in addition to the portal P&L colour checks.
+
+The admin **My workspace** link opens the signed-in account's personal dashboard
+(brokers, subscriptions, orders and analytics), independent of the user selected
+in admin. `/portal` and `/portal/` now render the same protected dashboard as
+`/dashboard`; this also restores Dhan consent callback landing URLs and preserves
+their query/hash. Portal assets remain public so the login/account pages can load
+shared styles. Workspace navigation does not change account or impersonate a user.
+
+Admin header now includes **Sign out** beside My workspace. It fetches a fresh
+CSRF token and submits the existing POST /logout form, returning to /login?logout.
+Token retrieval failure stays on the dashboard with a visible retryable error.
+The header actions wrap on small screens. Admin JS v34 and layout CSS v2.
