@@ -38,13 +38,14 @@
     const usersList = document.querySelector('.users-list');
     const content = document.querySelector('.content');
     if (usersList) usersList.style.display = isAdmin ? 'block' : 'none';
-    if (content) content.style.marginLeft = isAdmin ? '240px' : '0';
+    document.body.classList.toggle('admin-mode',isAdmin);
+    if (content) content.style.removeProperty('margin-left');
     const triggerAllBtn = document.getElementById('triggerForAllUsersBtn');
     if (triggerAllBtn) triggerAllBtn.style.display = isAdmin ? 'inline-block' : 'none';
     const scriptMasterPanel = document.getElementById('scriptMasterPanel');
     if (scriptMasterPanel) scriptMasterPanel.style.display = isAdmin ? 'block' : 'none';
     const placeOrderHeading = document.querySelector('#placeOrderPanel h4');
-    if (placeOrderHeading) placeOrderHeading.innerText = isAdmin ? 'Place Order (Admin)' : 'Place Order';
+    if (placeOrderHeading) placeOrderHeading.innerText = 'Trading workspace';
   }
 
   function brokerListUrl(userId) {
@@ -2556,7 +2557,8 @@
       const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : String(v)); };
       setVal('entryPrice', req.entryPrice != null ? req.entryPrice : (req.entry || '')); setVal('stopLoss', req.stopLoss != null ? req.stopLoss : (req.stop_loss || '')); setVal('target1', req.target1 != null ? req.target1 : (req.t1 || '')); setVal('target2', req.target2 != null ? req.target2 : (req.t2 || '')); setVal('target3', req.target3 != null ? req.target3 : (req.t3 || '')); setVal('quantity', req.quantity != null ? req.quantity : (req.qty || '')); setVal('spotScripCode', req.spotScripCode != null ? req.spotScripCode : '');
       const intr = document.getElementById('intraday'); if (intr) intr.checked = !!(req.intraday); const tsl = document.getElementById('tslEnabled'); if (tsl) tsl.checked = !!(req.tslEnabled); const usp = document.getElementById('useSpotPrice'); if (usp) usp.checked = !!(req.useSpotPrice); const use = document.getElementById('useSpotForEntry'); if (use) use.checked = !!(req.useSpotForEntry); const uss = document.getElementById('useSpotForSl'); if (uss) uss.checked = !!(req.useSpotForSl); const ust = document.getElementById('useSpotForTarget'); if (ust) ust.checked = !!(req.useSpotForTarget);
-      const panel = document.getElementById('placeOrderPanel'); if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const composer=document.getElementById('manualOrderComposer');if(composer)composer.open=true;
+      const panel = composer || document.getElementById('placeOrderPanel'); if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
     } catch (e) { console.debug('prefillPlaceOrderFormFromRequestRow failed', e); }
   }
 

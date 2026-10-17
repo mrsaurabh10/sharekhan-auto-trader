@@ -35,7 +35,7 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
         if(endpoint==='/api/strategies/start') {
           starts.push(route.request().postDataJSON());return rejectStart?json({message:'Mock broker unavailable'},503):json({id:4,status:'ACTIVE'});
         }
-        if(endpoint==='/api/orders/requests'||endpoint==='/api/orders/executed')return json({content:[],totalElements:0});
+        if(endpoint==='/api/orders/requests'||endpoint==='/api/orders/executed')return json({content:[],totalElements:0,number:0,totalPages:1,first:true,last:true});
         return json([]);
       });
       await page.goto('http://ui.test/'+(admin?'admin-dashboard.html':'portal#strategies'));
@@ -94,7 +94,40 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
     await a.locator('#strategyStatusFilter').selectOption('CANCELLED');
     await a.waitForFunction(()=>document.querySelector('#strategy-subscriptions-table tbody').textContent.includes('CANCELLED'));
     assert.equal(await a.locator('#strategy-subscriptions-table tbody tr').count(),1);
+    await a.locator('#strategyStatusFilter').selectOption('ACTIVE');
+    await a.waitForFunction(()=>document.querySelectorAll('#strategy-subscriptions-table tbody tr').length===2);
+    await a.setViewportSize({width:1440,height:960});
+    const layout=await a.evaluate(()=>{
+      const side=document.querySelector('.users-list').getBoundingClientRect(),content=document.querySelector('.content').getBoundingClientRect();
+      return {gap:content.left-side.right,width:content.width,header:document.querySelector('.admin-header').getBoundingClientRect().height};
+    });
+    assert.ok(layout.gap>=12 && layout.gap<=20,'Sidebar should have one compact gutter');
+    assert.ok(layout.width>1100,'Workspace should use available desktop width');
+    assert.ok(layout.header<90,'Header should stay compact');
+    assert.equal(await a.locator('#newUserPassword').isVisible(),false);
+    await a.locator('.user-create summary').click();assert.equal(await a.locator('#newUserPassword').isVisible(),true);
+    await a.locator('.user-create summary').click();
+    assert.equal(await a.locator('#refreshSharekhanMasterBtn').isVisible(),false);
+    await a.locator('#scriptMasterPanel summary').click();assert.equal(await a.locator('#refreshSharekhanMasterBtn').isVisible(),true);
+    await a.locator('#scriptMasterPanel summary').click();
+    assert.equal(await a.locator('#exchange').isVisible(),false);
+    await a.locator('#manualOrderComposer summary').click();assert.equal(await a.locator('#exchange').isVisible(),true);
+    await a.locator('#manualOrderComposer summary').click();
+    await a.locator('.execution-filters summary').click();
+    assert.equal(await a.locator('#statusFilter').isVisible(),true);
+    await a.locator('.execution-filters summary').click();
+    await a.evaluate(()=>window.scrollTo(0,0));
+    await a.screenshot({path:'/private/tmp/admin-layout-desktop.png',fullPage:true});
+    for(const width of [1024,760,390]) {
+      await a.setViewportSize({width,height:900});
+      assert.ok(await a.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'No body overflow at '+width);
+      assert.equal(await a.locator('#strategyBroker').isVisible(),true);
+    }
+    await a.screenshot({path:'/private/tmp/admin-layout-mobile.png',fullPage:true});
+    await a.getByRole('button',{name:'Brokers',exact:true}).click();assert.equal(await a.locator('#brokersSection').isVisible(),true);
+    await a.getByRole('button',{name:'Account',exact:true}).click();assert.equal(await a.locator('#accountSection').isVisible(),true);
+    await a.getByRole('button',{name:'Trading',exact:true}).click();assert.equal(await a.locator('#strategyBroker').inputValue(),'9');
     assert.deepEqual(admin.errors,[]);await a.close();
-    console.log('PASS: portal and admin broker defaults/selection, active/history filters, configure readiness, activation payloads and visible errors.');
+    console.log('PASS: responsive admin layout, expandable tools, tab navigation; portal and admin broker defaults/selection, active/history filters, configure readiness, activation payloads and visible errors.');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

@@ -174,3 +174,24 @@ point to a local Chrome executable. Every HTTP response is mocked and external
 requests are blocked. Checks cover both screens, one/multiple brokers, selected
 activation payload, readiness feedback, in-dialog errors, user changes and history
 filters. No live strategy or broker request is submitted by these checks.
+
+## Compact admin workspace (2026-10-17)
+
+The admin dashboard uses a dedicated responsive stylesheet built on the portal's
+shared visual tokens. A compact branded header, narrow user rail and a single
+16px gutter replace the old sidebar plus a second 240px JavaScript content margin.
+The main workspace now fills the available width. Form labels sit above inputs
+in three columns (four on large screens, two on tablets, one on phones). Tables
+scroll inside their cards instead of stretching the page.
+
+Add user, script master tools, manual order entry and executed-trade filters use
+native expandable sections. Strategy configuration and subscriptions stay visible.
+Opening these sections does not submit an action. The rejected-order prefill path
+automatically opens and scrolls to the manual composer so its populated values
+remain discoverable. Broker, account, strategy and trading actions retain their
+existing IDs and handlers. No broker or order-execution rules change.
+
+The mock browser smoke also checks the one-gutter desktop geometry, compact header,
+expandable controls, tab navigation and no horizontal body overflow at 1440, 1024,
+760 and 390px. Desktop/mobile screenshots are reviewed separately. This verifies
+local rendering; it is not a deployment or live-broker check.
