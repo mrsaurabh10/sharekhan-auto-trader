@@ -6,6 +6,7 @@ import org.com.sharekhan.dto.StrategyTemplateResponse;
 import org.com.sharekhan.strategy.StrategyEvaluator;
 import org.com.sharekhan.strategy.StrategyMetadata;
 import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
+import org.com.sharekhan.strategy.Stock0925MoverAtrBreakoutStrategy;
 import org.com.sharekhan.strategy.MarketauxSentimentSwingAtrStrategy;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -50,6 +51,9 @@ public class StrategyTemplateService {
         if (isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             request.setSymbol("FNO_UNIVERSE");
         }
+        if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
+            Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
+        }
         StrategyEvaluator evaluator = evaluators.get(normalizeTemplateId(request.getTemplateId()));
         if (evaluator == null) {
             throw new IllegalArgumentException("Unknown strategy template: " + request.getTemplateId());
@@ -74,7 +78,8 @@ public class StrategyTemplateService {
     }
 
     private boolean isAutomaticUniverseTemplate(String templateId) {
-        return isFnoMoverTemplate(templateId)
+        return Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId == null ? "" : templateId.trim())
+                || isFnoMoverTemplate(templateId)
                 || MarketauxSentimentSwingAtrStrategy.TEMPLATE_ID.equalsIgnoreCase(normalizeTemplateId(templateId));
     }
 

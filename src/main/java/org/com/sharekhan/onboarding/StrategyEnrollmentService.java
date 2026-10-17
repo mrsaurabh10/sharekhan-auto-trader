@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Objects;
 import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.dto.StrategyApplyRequest;
+import org.com.sharekhan.strategy.Stock0925MoverAtrBreakoutStrategy;
 import org.com.sharekhan.entity.StrategySubscriptionEntity;
 import org.com.sharekhan.repository.AppUserRepository;
 import org.com.sharekhan.repository.StrategySubscriptionRepository;
@@ -20,6 +21,8 @@ public class StrategyEnrollmentService {
     @Transactional
     public StrategySubscriptionEntity enroll(StrategyApplyRequest request, String templateId,
                                               String symbol, String source) {
+        boolean stockMover = Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+        if (stockMover) Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
         users.lockForEnrollment(request.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         var matches = subscriptions.findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(
@@ -30,15 +33,20 @@ public class StrategyEnrollmentService {
                 .findFirst();
         if (existing.isPresent()) {
             var subscription = existing.get();
+            if (stockMover) {
+                subscription.setInvestmentPerStock(request.getInvestmentPerStock());
+                subscription.setLots(null);
+            }
             if (!"ACTIVE".equalsIgnoreCase(subscription.getStatus())) {
                 subscription.setStatus("ACTIVE");
                 subscription.setLastMessage("Strategy is active and will run daily until cancelled.");
                 return subscriptions.save(subscription);
             }
-            return subscription;
+            return stockMover ? subscriptions.save(subscription) : subscription;
         }
         return subscriptions.save(StrategySubscriptionEntity.builder()
-                .templateId(templateId).symbol(symbol).lots(request.getLots())
+                .templateId(templateId).symbol(symbol).lots(stockMover ? null : request.getLots())
+                .investmentPerStock(stockMover ? request.getInvestmentPerStock() : null)
                 .intraday(request.getIntraday() == null || request.getIntraday())
                 .appUserId(request.getUserId()).brokerCredentialsId(request.getBrokerCredentialsId())
                 .source(source).status("ACTIVE").lastMessage("Strategy started and waiting for confirmation.").build());

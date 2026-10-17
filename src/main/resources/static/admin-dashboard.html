@@ -161,6 +161,11 @@
                         <div class="form-row"><label class="inline small" for="strategyLots">Lots</label>
                             <input id="strategyLots" type="number" min="1" value="1">
                         </div>
+                        <div class="form-row" id="strategyInvestmentRow" style="display:none">
+                            <label class="inline small" for="strategyInvestmentPerStock">Per stock (₹)</label>
+                            <input id="strategyInvestmentPerStock" type="number" min="0.01" max="999999999.99" step="0.01" placeholder="e.g. 10000">
+                            <div class="hint grid-span-all">Investment per stock, up to five stocks. Whole shares are sized at the signal entry price; charges and fill-price changes are extra.</div>
+                        </div>
                         <div class="form-row grid-span-all" id="strategySymbolQuantitiesRow" style="display:none"><label class="inline small" for="strategySymbolQuantities">Symbols and shares</label>
                             <textarea id="strategySymbolQuantities" rows="3" placeholder="SBIN:900&#10;RELIANCE:300"></textarea>
                             <div class="hint">One row per stock: SYMBOL:QUANTITY. Three BIGTRADEPLUS brackets are created for each stock.</div>
@@ -175,7 +180,7 @@
                     </div>
                     <div id="strategyResult" class="hint"></div>
                     <table id="strategy-subscriptions-table" style="width:100%;border-collapse:collapse;margin-top:8px" border="1">
-                        <thead><tr><th>ID</th><th>Template</th><th>Symbol</th><th>Lots</th><th>Status</th><th>Last Check</th><th>Message</th><th>Trade Request</th><th>Action</th></tr></thead>
+                        <thead><tr><th>ID</th><th>Template</th><th>Symbol</th><th>Size / investment</th><th>Status</th><th>Last Check</th><th>Message</th><th>Trade Request</th><th>Action</th></tr></thead>
                         <tbody><tr><td colspan="9">No strategies loaded</td></tr></tbody>
                     </table>
                 </div>
@@ -478,6 +483,6 @@
 </div>
 
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
-<script src="/admin-dashboard.js?v=29" defer></script>
+<script src="/admin-dashboard.js?v=30" defer></script>
 </body>
 </html>

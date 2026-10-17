@@ -50,4 +50,24 @@ class IntradayTradeCloserTest {
         verify(requestRepository).deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(
                 eq(today.atTime(15, 30)), eq(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION));
     }
+    @Test
+    void cashCloserHandlesCashOnlyAndPreservesDeliveryOptionsAndBtp() {
+        var setups = mock(TriggeredTradeSetupRepository.class);
+        var execution = mock(TradeExecutionService.class);
+        var ltp = mock(LtpCacheService.class);
+        var cash = org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().id(1L).exchange("NC").scripCode(123).build();
+        var option = org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().id(2L).exchange("NF").build();
+        var btp = org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().id(3L).exchange("NC").brokerProductType("BIGTRADEPLUS").build();
+        var target = org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().id(4L).exchange("BC").build();
+        when(setups.findByIntradayTrueAndStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED))
+                .thenReturn(java.util.List.of(cash, option, btp));
+        when(setups.findByIntradayTrueAndStatus(org.com.sharekhan.enums.TriggeredTradeStatus.TARGET_ORDER_PLACED))
+                .thenReturn(java.util.List.of(target, option));
+        when(ltp.getLtp(123)).thenReturn(750d);
+        new IntradayTradeCloser(setups, mock(TriggerTradeRequestRepository.class), execution, ltp).closeCashIntradayTrades();
+        verify(execution).squareOff(cash, 750d, "INTRADAY_CLOSE");
+        verify(execution).startIntradayExitChase(target);
+        org.mockito.Mockito.verifyNoMoreInteractions(execution);
+    }
+
 }

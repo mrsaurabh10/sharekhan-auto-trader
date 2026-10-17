@@ -60,6 +60,12 @@ class BackendHttpIntegrationTest {
         StrategyTemplateService.class, StrategySubscriptionService.class, StrategyEnrollmentService.class, NseMarketCalendar.class,
         TradingRequestService.class, TradeCostCalculator.class, TradeAnalyticsService.class})
     static class Backend {
+        @Bean StrategyEvaluator stockStrategy() {
+            return new StrategyEvaluator() {
+                public StrategyMetadata metadata(){return new StrategyMetadata("STOCK_0925_MOVER_ATR_BREAKOUT","Stocks 9:25 Mover Breakout","Stock test evaluator", "");}
+                public StrategyApplyResponse apply(StrategyApplyRequest r){return StrategyApplyResponse.builder().status("waiting").message("Waiting").build();}
+            };
+        }
         @Bean StrategyEvaluator testStrategy() {
             return new StrategyEvaluator() {
                 public StrategyMetadata metadata(){return new StrategyMetadata("TEST_BREAKOUT","Test breakout","Integration test strategy", "CE");}
@@ -205,6 +211,35 @@ class BackendHttpIntegrationTest {
             assertThat(first.get(10,java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(second.get(10,java.util.concurrent.TimeUnit.SECONDS));
         }
         assertThat(subscriptions.count()).isOne();
+    }
+
+
+    @Test void stockSubscriptionPersistsBudgetThroughScopedHttpAndUpdatesWithoutAnotherEnrollment() throws Exception {
+        var session = registerAndLogin(); long broker = createBroker(session);
+        mvc.perform(post("/api/user/brokers/"+broker+"/connect").session(session).with(csrf())).andExpect(status().isOk());
+        mvc.perform(post("/api/user/brokers/"+broker+"/trading").session(session).with(csrf())
+                .contentType("application/json").content("{\"enabled\":true}")).andExpect(status().isOk());
+        var body = new java.util.HashMap<String,Object>();
+        body.put("templateId", "STOCK_0925_MOVER_ATR_BREAKOUT"); body.put("userId", 999);
+        body.put("brokerCredentialsId", broker); body.put("investmentPerStock", new java.math.BigDecimal("10000.50"));
+        mvc.perform(post("/api/strategies/start").session(session).with(csrf()).contentType("application/json")
+                .content(json.writeValueAsString(body))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.investmentPerStock").value(10000.50)).andExpect(jsonPath("$.symbol").value("FNO_UNIVERSE"));
+        var first = subscriptions.findAll().getFirst();
+        assertThat(first.getAppUserId()).isNotEqualTo(999L); assertThat(first.getLots()).isNull();
+        assertThat(first.getInvestmentPerStock()).isEqualByComparingTo("10000.50");
+        body.put("investmentPerStock", new java.math.BigDecimal("20000"));
+        mvc.perform(post("/api/strategies/start").session(session).with(csrf()).contentType("application/json")
+                .content(json.writeValueAsString(body))).andExpect(status().isOk()).andExpect(jsonPath("$.id").value(first.getId()));
+        assertThat(subscriptions.count()).isOne();
+        assertThat(subscriptions.findById(first.getId()).orElseThrow().getInvestmentPerStock()).isEqualByComparingTo("20000");
+        body.put("investmentPerStock", 0);
+        mvc.perform(post("/api/strategies/start").session(session).with(csrf()).contentType("application/json")
+                .content(json.writeValueAsString(body))).andExpect(status().isBadRequest());
+        body.remove("investmentPerStock");
+        mvc.perform(post("/api/strategies/start").session(session).with(csrf()).contentType("application/json")
+                .content(json.writeValueAsString(body))).andExpect(status().isBadRequest());
+        verify(engine, never()).executeTriggeredTrade(any());
     }
 
     private MockHttpSession registerAndLogin() throws Exception {

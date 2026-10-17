@@ -7,6 +7,7 @@ import org.com.sharekhan.dto.StrategyApplyResponse;
 import org.com.sharekhan.entity.StrategySubscriptionEntity;
 import org.com.sharekhan.repository.StrategySubscriptionRepository;
 import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
+import org.com.sharekhan.strategy.Stock0925MoverAtrBreakoutStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoCeStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoPeStrategy;
 import org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusStrategy;
@@ -125,7 +126,8 @@ public class StrategySubscriptionService {
         }
         repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
                 .filter(subscription -> Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID
-                        .equalsIgnoreCase(subscription.getTemplateId()))
+                        .equalsIgnoreCase(subscription.getTemplateId())
+                        || Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(subscription.getTemplateId()))
                 .forEach(this::evaluate);
     }
 
@@ -149,6 +151,7 @@ public class StrategySubscriptionService {
             request.setTemplateId(subscription.getTemplateId());
             request.setSymbol(subscription.getSymbol());
             request.setLots(subscription.getLots());
+            request.setInvestmentPerStock(subscription.getInvestmentPerStock());
             request.setIntraday(subscription.getIntraday());
             request.setUserId(subscription.getAppUserId());
             request.setBrokerCredentialsId(subscription.getBrokerCredentialsId());
@@ -196,15 +199,22 @@ public class StrategySubscriptionService {
         if (!strategyTemplateService.supports(request.getTemplateId())) {
             throw new IllegalArgumentException("Unknown strategy template");
         }
-        if (request.getLots() == null) request.setLots(1);
-        if (request.getLots() < 1 || request.getLots() > 1000) {
-            throw new IllegalArgumentException("Choose between 1 and 1000 lots");
+        if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
+            request.setLots(null);
+        } else {
+            if (request.getLots() == null) request.setLots(1);
+            if (request.getLots() < 1 || request.getLots() > 1000) {
+                throw new IllegalArgumentException("Choose between 1 and 1000 lots");
+            }
         }
         if (request.getSymbol() != null && request.getSymbol().length() > 255) {
             throw new IllegalArgumentException("Instrument list is too long (maximum 255 characters)");
         }
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
+        }
+        if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
+            Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
         }
         if (request.getUserId() == null) {
             throw new IllegalArgumentException("userId is required to start a background strategy");
@@ -245,7 +255,8 @@ public class StrategySubscriptionService {
     }
 
     private boolean isAutomaticUniverseTemplate(String templateId) {
-        return isFnoMoverTemplate(templateId)
+        return Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId == null ? "" : templateId.trim())
+                || isFnoMoverTemplate(templateId)
                 || MarketauxSentimentSwingAtrStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 

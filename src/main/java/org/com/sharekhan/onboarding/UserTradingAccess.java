@@ -84,7 +84,15 @@ public class UserTradingAccess {
         request.setUserId(current.requireAppUserId());
         requireReady(request.getUserId(), request.getBrokerCredentialsId());
         request.setSource("strategy:" + request.getTemplateId());
-        if (request.getLots() == null || request.getLots() < 1 || request.getLots() > 1000)
+        if (org.com.sharekhan.strategy.Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId())) {
+            try {
+                org.com.sharekhan.strategy.Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
+            } catch (IllegalArgumentException e) {
+                throw new ResponseStatusException(BAD_REQUEST, e.getMessage());
+            }
+            request.setLots(null);
+        } else if (request.getLots() == null || request.getLots() < 1 || request.getLots() > 1000) {
             throw new ResponseStatusException(BAD_REQUEST, "Choose between 1 and 1000 lots");
+        }
     }
 }

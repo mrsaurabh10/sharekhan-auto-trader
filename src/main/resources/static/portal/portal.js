@@ -115,12 +115,20 @@
       const card = node('article',null,'card'); card.append(node('div','STRATEGY','eyebrow'),node('h2',template.name),node('p',template.description));
       const el = button('Configure subscription →',async () => {
         const f = $('#subscriptionForm'); f.reset(); f.elements.templateId.value=template.id;
-        f.elements.symbol.value = /FNO_0925|MARKETAUX/.test(template.id) ? 'FNO_UNIVERSE' : '';
+        const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
+        const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
+        f.elements.symbol.value = automatic ? 'FNO_UNIVERSE' : '';
+        f.elements.symbol.readOnly = automatic;
+        $('#subscriptionLotsRow').hidden = stockMover;
+        f.elements.lots.disabled = stockMover;
+        $('#subscriptionInvestmentRow').hidden = !stockMover;
+        f.elements.investmentPerStock.disabled = !stockMover;
+        f.elements.investmentPerStock.required = stockMover;
         $('#strategyDialogTitle').textContent=template.name; $('#strategyDialogDescription').textContent=template.description;
         $('#strategyDialog').showModal();
       }); el.disabled=!readyBrokers().length; card.append(el); $('#strategyCatalog').append(card);
     });
-    table($('#subscriptions'),[['Strategy','templateId'],['Instruments','symbol'],['Lots','lots'],['Status',r=>badge(r.status,['ACTIVE','TRIGGERED'].includes(r.status))],['Latest update','lastMessage']],state.subscriptions,(row,td)=>{
+    table($('#subscriptions'),[['Strategy','templateId'],['Instruments','symbol'],['Size / investment',r=>r.investmentPerStock != null ? '₹'+r.investmentPerStock+' / stock' : r.lots],['Status',r=>badge(r.status,['ACTIVE','TRIGGERED'].includes(r.status))],['Latest update','lastMessage']],state.subscriptions,(row,td)=>{
       if (row.status !== 'CANCELLED') td.append(button('Cancel',async()=>{
         if (!await confirmAction('Cancel future evaluations for this subscription? Existing orders and positions remain open.')) return;
         await api('/api/strategies/subscriptions/'+row.id+'/cancel','POST',{}); await loadStrategies(); notify('Subscription cancelled. Existing orders and positions remain open.');
@@ -129,7 +137,12 @@
   }
   async function loadStrategies() { state.subscriptions=await api('/api/strategies/subscriptions'); renderStrategies(); await loadOnboarding(); }
   $('#subscriptionForm').addEventListener('submit',event=>{event.preventDefault(); const f=event.target; busy(f.querySelector('button[type=submit]'),async()=>{
-    const body=Object.fromEntries(new FormData(f)); delete body.consent; body.brokerCredentialsId=Number(body.brokerCredentialsId); body.lots=Number(body.lots); body.intraday=f.elements.intraday.checked;
+    const body=Object.fromEntries(new FormData(f)); delete body.consent; body.brokerCredentialsId=Number(body.brokerCredentialsId); body.intraday=f.elements.intraday.checked;
+    if (body.templateId === 'STOCK_0925_MOVER_ATR_BREAKOUT') {
+      const amount = String(body.investmentPerStock || '').trim();
+      if (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 999999999.99) throw new Error('Enter a positive investment per stock with up to two decimal places.');
+      body.investmentPerStock = Number(amount); body.lots = null;
+    } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
     await api('/api/strategies/start','POST',body); $('#strategyDialog').close(); notify('Strategy subscription activated.'); await loadStrategies(); await loadOrders();
   });});
   async function loadOrders() {

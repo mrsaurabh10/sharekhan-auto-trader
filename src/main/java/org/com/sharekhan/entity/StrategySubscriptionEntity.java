@@ -25,6 +25,8 @@ public class StrategySubscriptionEntity {
     private String symbol;
 
     private Integer lots;
+    @Column(precision = 19, scale = 2)
+    private java.math.BigDecimal investmentPerStock;
     private Boolean intraday;
     private Long appUserId;
     private Long brokerCredentialsId;

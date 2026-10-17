@@ -1020,6 +1020,29 @@ class PriceTriggerServiceTest {
                         open, high, low, close, 1_000L));
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+    void stopWithExistingTargetNeverDispatchesNewSell(boolean modifyAccepted) {
+        TriggeredTradeSetupEntity trade = optionTrade(99001L, 999999, 20000);
+        trade.setStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
+        trade.setExitOrderId("EXISTING-TARGET-SELL");
+        trade.setStopLoss(100.0);
+        when(triggeredRepo.findById(99001L)).thenReturn(Optional.of(trade));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade, 95.0)).thenReturn(true);
+        when(triggeredRepo.claimIfStatusEquals(99001L, TriggeredTradeStatus.TARGET_ORDER_PLACED.name(),
+                TriggeredTradeStatus.EXIT_TRIGGERED.name(), "STOP_LOSS_HIT")).thenAnswer(invocation -> {
+                    trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
+                    trade.setExitReason("STOP_LOSS_HIT");
+                    return 1;
+                });
+        when(tradeExecutionService.modifyExitOrderForStop(trade, 95.0)).thenReturn(modifyAccepted);
+
+        service.handleTradeWithLock(99001L, 95.0, null);
+
+        verify(tradeExecutionService).modifyExitOrderForStop(trade, 95.0);
+        verify(tradeExecutionService, never()).squareOff(any(), anyDouble(), anyString());
+    }
+
     private TriggeredTradeSetupEntity optionTrade(Long id, Integer scripCode, Integer spotScripCode) {
         return TriggeredTradeSetupEntity.builder()
                 .id(id)

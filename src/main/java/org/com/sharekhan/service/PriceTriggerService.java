@@ -1073,6 +1073,9 @@ public class PriceTriggerService {
 
                     if (modified) {
                         log.warn("📉 SL hit for trade {} - modified existing exit order {} to price {}", tradeId, reloaded.getExitOrderId(), stopPriceOption);
+                    } else if (exitOrderAlreadyPresent) {
+                        log.warn("SL modification not acknowledged for trade {} order {}; retaining existing order for reconciliation/chase",
+                                tradeId, reloaded.getExitOrderId());
                     } else {
                         log.warn("📉 SL hit for trade {} at RefLTP: {} (TradedLTP: {}) - proceeding to squareOff", tradeId, slRefPrice, confirmedTradedLtp);
                         dispatchSquareOff(reloaded, confirmedTradedLtp, exitReason);

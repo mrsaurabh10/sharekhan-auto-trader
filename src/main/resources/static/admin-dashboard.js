@@ -2362,9 +2362,12 @@
     const isSpotBigTradePlus = function () {
       return ['SPOT_ATR_PDH_BIGTRADEPLUS', 'SPOT_ATR_PDL_BIGTRADEPLUS'].includes(String((templateSelect && templateSelect.value) || '').trim().toUpperCase());
     };
+    const isStockMover = function () {
+      return String((templateSelect && templateSelect.value) || '').toUpperCase() === 'STOCK_0925_MOVER_ATR_BREAKOUT';
+    };
     const automaticUniverseTemplate = function () {
       const id = (templateSelect && templateSelect.value ? templateSelect.value : '').trim().toUpperCase();
-      return id === 'FNO_0925_MOVER_ATR_BREAKOUT' || id === 'MARKETAUX_SENTIMENT_SWING_ATR';
+      return id === 'STOCK_0925_MOVER_ATR_BREAKOUT' || id === 'FNO_0925_MOVER_ATR_BREAKOUT' || id === 'MARKETAUX_SENTIMENT_SWING_ATR';
     };
     const updateSymbolInput = function () {
       if (!symbolInput) return;
@@ -2374,11 +2377,13 @@
       symbolInput.style.display = btp ? 'none' : '';
       if (quantitiesRow) quantitiesRow.style.display = btp ? '' : 'none';
       const lotsInput = document.getElementById('strategyLots');
-      if (lotsInput && btp) lotsInput.closest('.form-row').style.display = 'none';
+      const investmentRow = document.getElementById('strategyInvestmentRow');
+      if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';
+      if (lotsInput && (btp || isStockMover())) lotsInput.closest('.form-row').style.display = 'none';
       else if (lotsInput) lotsInput.closest('.form-row').style.display = '';
       symbolInput.value = automatic ? '' : symbolInput.value;
       symbolInput.placeholder = automatic
-        ? 'Selected automatically from the F&O news universe'
+        ? 'Selected automatically from the F&O stock universe'
         : 'e.g. NIFTY, RELIANCE; use commas/new lines for manual F&O lists';
     };
     if (templateSelect) {
@@ -2401,6 +2406,13 @@
       const intraday = !!(document.getElementById('strategyIntraday') && document.getElementById('strategyIntraday').checked);
       if (!templateId) { if (result) result.innerText = 'Select a strategy template.'; return; }
       const btp = isSpotBigTradePlus();
+      const stockMover = isStockMover();
+      const investmentText = String((document.getElementById('strategyInvestmentPerStock') || {}).value || '').trim();
+      const investmentPerStock = Number(investmentText);
+      if (stockMover && (!/^\d+(\.\d{1,2})?$/.test(investmentText) || !Number.isFinite(investmentPerStock) || investmentPerStock <= 0 || investmentPerStock > 999999999.99)) {
+        if (result) result.innerText = 'Enter a positive investment per stock with up to two decimal places.';
+        return;
+      }
       const rows = btp ? String((quantitiesInput || {}).value || '').split(/[\n,;]+/).map(v => v.trim()).filter(Boolean) : [];
       if (btp && rows.length === 0) { if (result) result.innerText = 'Enter at least one SYMBOL:QUANTITY row.'; return; }
       if (!btp && !automaticUniverse && !symbol) { if (result) result.innerText = 'Enter a symbol.'; return; }
@@ -2417,7 +2429,8 @@
         const responses = [];
         for (const configuration of configurations) {
           responses.push(await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify({
-            templateId, symbol: configuration.symbol, lots: configuration.lots, intraday,
+            templateId, symbol: configuration.symbol, lots: stockMover ? null : configuration.lots,
+            investmentPerStock: stockMover ? investmentPerStock : null, intraday,
             userId: window.selectedUserId || null, brokerCredentialsId, source: 'strategy:' + templateId
           }) }));
         }
@@ -2453,7 +2466,7 @@
         tr.innerHTML = '<td>' + escapeHtml(row.id) + '</td>' +
           '<td>' + escapeHtml(row.templateId || '-') + '</td>' +
           '<td>' + escapeHtml(row.symbol || '-') + '</td>' +
-          '<td>' + escapeHtml(row.lots != null ? row.lots : '-') + '</td>' +
+          '<td>' + escapeHtml(row.investmentPerStock != null ? '₹' + row.investmentPerStock + ' / stock' : (row.lots != null ? row.lots : '-')) + '</td>' +
           '<td>' + escapeHtml(row.status || '-') + '</td>' +
           '<td>' + escapeHtml(row.lastEvaluatedAt || '-') + '</td>' +
           '<td>' + escapeHtml(row.lastMessage || '-') + '</td>' +
