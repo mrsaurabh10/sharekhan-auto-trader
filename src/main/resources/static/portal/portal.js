@@ -41,7 +41,7 @@
     t.append(body); container.append(t);
   }
   const orderColumns = [['Instrument', 'symbol'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => badge(row.status || 'PENDING')], ['Source', 'source']];
-  function readyBrokers() { return state.brokers.filter(b => b.connected && b.active && b.tradingEnabled); }
+  function readyBrokers() { return state.brokers.filter(b => b.brokerName === 'Sharekhan' && b.connected && b.active && b.tradingEnabled); }
   function brokerLabel(b) { return b.brokerName + ' · ' + (b.clientCode || 'Account ' + b.id); }
   function refreshSelectors() {
     for (const selector of ['#orderBroker', '#strategyBroker']) {
@@ -61,7 +61,7 @@
     $('#orderCount').textContent=status ? status.orderRequests : '—';
     $('#brokerStatus').textContent=status ? (status.connectedBrokers ? 'CONNECTION VERIFIED':'SETUP NEEDED') : 'Loading';
     $('#brokerStatus').className='badge '+(status && status.connectedBrokers ? 'good':'warn');
-    const details={ACCOUNT:'You’re signed in to your personal workspace.',BROKER:'Add your Sharekhan credentials and verify the connection.',TRADING:'Explicitly enable new trading for your connected account.',WORKFLOW:'Subscribe to a strategy or review your first order.'};
+    const details={ACCOUNT:'You’re signed in to your personal workspace.',BROKER:'Add broker credentials and verify the connection.',TRADING:'Explicitly enable new trading for your connected account.',WORKFLOW:'Subscribe to a strategy or review your first order.'};
     const steps=status ? status.steps : [];
     $('#progress').textContent=status ? steps.filter(s=>s.complete).length+' of '+steps.length+' complete':'Loading progress';
     $('#onboardingSteps').replaceChildren();
@@ -70,21 +70,25 @@
   }
   function renderBrokers() {
     const list = $('#brokerAccounts'); list.replaceChildren();
-    if (!state.brokers.length) list.append(node('div', 'No broker connected yet. Add your Sharekhan account to get started.', 'empty'));
+    if (!state.brokers.length) list.append(node('div', 'No broker connected yet. Add a broker account to get started.', 'empty'));
     state.brokers.forEach(b => {
       const card = node('article', null, 'card'); const title = node('div',null,'row'); title.append(node('h2', brokerLabel(b)), badge(b.connected ? 'CONNECTED' : 'NOT CONNECTED', b.connected)); card.append(title);
       card.append(node('p', b.connected ? 'Session verified until ' + new Date(b.verifiedUntil).toLocaleString('en-IN') : 'Credentials saved. Verify your connection to continue.', 'muted'));
       card.append(badge(b.tradingEnabled ? 'NEW TRADING ENABLED' : 'NEW TRADING DISABLED', b.tradingEnabled));
       const actions = node('div',null,'actions');
-      actions.append(button(b.connected ? 'Reconnect' : 'Verify connection', async () => {
+      if (b.brokerName !== 'Dhan' || b.hasTotpSecret) actions.append(button(b.brokerName === 'Dhan' ? 'Generate token with TOTP' : b.connected ? 'Reconnect' : 'Verify connection', async () => {
         const result = await api('/api/user/brokers/'+b.id+'/connect','POST',{}); notify(result.message); await loadBrokers();
       }));
-      actions.append(button(b.tradingEnabled ? 'Disable new trading' : 'Enable trading', async () => {
+      if (b.brokerName === 'Dhan' && b.hasApiKey && b.hasApiSecret) actions.append(button('Login with Dhan API key', async () => {
+        const result = await api('/api/user/brokers/'+b.id+'/dhan/consent','POST',{}); location.assign(result.loginUrl);
+      }));
+      if (b.brokerName === 'Dhan') card.append(node('p','Token generation only. Dhan order execution is not available yet.','muted'));
+      if (b.brokerName === 'Sharekhan') actions.append(button(b.tradingEnabled ? 'Disable new trading' : 'Enable trading', async () => {
         if (!b.tradingEnabled && !await confirmAction('Enable live trading for this broker account? Orders and strategy subscriptions can then submit broker orders.')) return;
         await api('/api/user/brokers/'+b.id+'/trading','POST',{enabled:!b.tradingEnabled}); notify(b.tradingEnabled ? 'New trading disabled. Existing positions remain open.' : 'Trading enabled.'); await loadBrokers();
       }, b.tradingEnabled ? 'secondary' : 'primary'));
       actions.append(button('Edit credentials', async () => {
-        const f = $('#brokerForm'); f.reset(); f.elements.id.value = b.id;
+        const f = $('#brokerForm'); f.reset(); f.elements.id.value = b.id; f.elements.brokerName.value = b.brokerName; f.elements.brokerName.disabled = true; configureBrokerForm();
         for (const input of f.querySelectorAll('input:not([type=hidden])')) input.required = false;
         $('#brokerFormTitle').textContent = 'Update credentials · ' + brokerLabel(b);
         $('#brokerFormCard').scrollIntoView({behavior:'smooth'}); f.elements.clientCode.focus();
@@ -98,15 +102,40 @@
   }
   async function loadOnboarding() { state.onboarding=await api('/api/user/onboarding'); renderOverview(); }
   async function loadBrokers() { state.brokers = await api('/api/user/brokers'); renderBrokers(); await loadOnboarding(); }
+  function configureBrokerForm() {
+    const f = $('#brokerForm'), dhan = f.elements.brokerName.value === 'Dhan';
+    const apiLogin = $('#dhanMethod').value === 'api';
+    $('#dhanMethodRow').hidden = !dhan; $('#dhanAuthHelp').hidden = !dhan;
+    $('#brokerFormNote').textContent = dhan ? 'Generate a token after saving. Dhan order execution is not available yet.' : 'Saving credentials does not enable trading. Verify the connection, then explicitly enable trading.';
+    const visible = dhan ? (apiLogin ? ['clientCode','apiKey','secretKey'] : ['clientCode','brokerPassword','totpSecret']) : ['customerId','clientCode','apiKey','brokerPassword','totpSecret','secretKey'];
+    for (const name of ['customerId','clientCode','apiKey','brokerPassword','totpSecret','secretKey']) {
+      const input=f.elements[name]; input.closest('label').hidden=!visible.includes(name);
+      input.disabled=!visible.includes(name); input.required=!f.elements.id.value && visible.includes(name);
+    }
+    f.elements.brokerPassword.maxLength = dhan ? 6 : 512;
+    if (dhan) f.elements.brokerPassword.pattern='[0-9]{6}'; else f.elements.brokerPassword.removeAttribute('pattern');
+    // Keep labels accessible when changing broker-specific names.
+    f.elements.clientCode.closest('label').firstChild.textContent = dhan ? 'Dhan Client ID' : 'Client code';
+    f.elements.brokerPassword.closest('label').firstChild.textContent = dhan ? 'Dhan PIN (6 digits)' : 'Broker password';
+    $('#brokerFormTitle').textContent=(f.elements.id.value ? 'Update credentials · ' : 'Add your ') + f.elements.brokerName.value + ' account';
+  }
+  $('#brokerForm').elements.brokerName.addEventListener('change', configureBrokerForm);
+  $('#dhanMethod').addEventListener('change', configureBrokerForm);
+  configureBrokerForm();
+  const dhanResult = new URLSearchParams(location.search).get('dhan');
+  if (dhanResult) {
+    notify(dhanResult === 'connected' ? 'Dhan token generated successfully.' : 'Dhan login failed or expired. Start login again.', dhanResult !== 'connected');
+    history.replaceState(null, '', '/portal#brokers');
+  }
   $('#showBrokerForm').addEventListener('click', () => {
     const f = $('#brokerForm'); f.reset(); f.elements.id.value = '';
-    for (const name of ['customerId','clientCode','apiKey','brokerPassword','totpSecret','secretKey']) f.elements[name].required = true;
-    $('#brokerFormTitle').textContent = 'Add your Sharekhan account'; f.elements.clientCode.focus();
+    f.elements.brokerName.disabled = false; configureBrokerForm();
+    f.elements.clientCode.focus();
   });
   $('#brokerForm').addEventListener('submit', event => { event.preventDefault(); const f=event.target; busy(f.querySelector('button'),async () => {
-    const body = Object.fromEntries([...new FormData(f)].filter(([key,value]) => key !== 'id' && value !== '')); body.brokerName = 'Sharekhan';
+    const body = Object.fromEntries([...new FormData(f)].filter(([key,value]) => key !== 'id' && value !== '')); body.brokerName = f.elements.brokerName.value;
     const id = f.elements.id.value; await api('/api/user/brokers'+(id ? '/'+id : ''),id ? 'PUT':'POST',body);
-    f.reset(); f.elements.id.value=''; notify('Credentials saved. Verify the broker connection next.'); await loadBrokers();
+    f.reset(); f.elements.id.value=''; f.elements.brokerName.disabled=false; configureBrokerForm(); notify('Credentials saved. Verify the broker connection next.'); await loadBrokers();
   }); });
   function renderStrategies() {
     $('#strategyCatalog').replaceChildren();

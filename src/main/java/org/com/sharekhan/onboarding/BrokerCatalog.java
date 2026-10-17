@@ -13,7 +13,10 @@ public final class BrokerCatalog {
     public static List<SupportedBroker> list() {
         return List.of(new SupportedBroker("Sharekhan", "Sharekhan", true,
                 "Connect your Sharekhan trading account using your API credentials.",
-                List.of("customerId", "clientCode", "apiKey", "brokerPassword", "totpSecret", "secretKey")));
+                List.of("customerId", "clientCode", "apiKey", "brokerPassword", "totpSecret", "secretKey")),
+                new SupportedBroker("Dhan", "Dhan", true,
+                    "Generate a Dhan access token using PIN + TOTP or API key + secret browser login. Authentication only; trading is not available yet.",
+                    List.of("clientCode")));
     }
 
     public static boolean supports(String name) {

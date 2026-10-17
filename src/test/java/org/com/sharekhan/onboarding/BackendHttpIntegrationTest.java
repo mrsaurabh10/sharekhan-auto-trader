@@ -52,7 +52,7 @@ class BackendHttpIntegrationTest {
     @EntityScan(basePackages={"org.com.sharekhan.entity","org.com.sharekhan.onboarding"})
     @EnableJpaRepositories(basePackages={"org.com.sharekhan.repository","org.com.sharekhan.onboarding"})
     @Import({SecurityConfig.class, AccountController.class, OnboardingController.class, BrokerCatalogController.class,
-        UserController.class, AuthController.class, LoginController.class, PortalController.class,
+        DhanConnectionController.class, UserController.class, AuthController.class, LoginController.class, PortalController.class,
         StrategyController.class, TradeTriggerController.class, TradeRequestController.class, OrderViewController.class,
         TradeAnalyticsController.class, AccountService.class, CurrentUserService.class, AdminUserDetailsService.class,
         UserConfigService.class, UserTradingAccess.class, BrokerConnectionService.class, BrokerCredentialsService.class,
@@ -94,6 +94,7 @@ class BackendHttpIntegrationTest {
     @Autowired StrategyEnrollmentService enrollment;
     @MockBean AccountMailService mail;
     @MockBean SharekhanAuthProvider provider;
+    @MockBean DhanAuthProvider dhan;
     @MockBean TradeExecutionService engine;
     @MockBean TradeCloseService close;
     @MockBean TradingMessageService messages;
@@ -118,6 +119,55 @@ class BackendHttpIntegrationTest {
                 .entryPrice(input.getEntryPrice()).stopLoss(input.getStopLoss()).quantity(input.getQuantity().longValue())
                 .source(input.getSource()).createdAt(LocalDateTime.now()).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build());
         });
+    }
+    @Test void dhanTotpAndApiKeyFlowsPersistScopedEncryptedTokensAndNeverEnableTrading() throws Exception {
+        MockHttpSession session=registerAndLogin();
+        when(dhan.loginAndFetchToken(any(BrokerCredentialsEntity.class))).thenReturn(new AuthTokenResult("dhan-test-token",3600));
+        when(dhan.beginConsent(any())).thenReturn("https://auth.dhan.co/login/consentApp-login?consentAppId=test-consent");
+        when(dhan.consumeConsent(any(),eq("test-token-id"))).thenReturn(new AuthTokenResult("dhan-consent-token",3600));
+        String payload="{\"brokerName\":\"Dhan\",\"clientCode\":\"1000000001\",\"brokerPassword\":\"012345\",\"totpSecret\":\"JBSWY3DPEHPK3PXP\",\"apiKey\":\"test-key\",\"secretKey\":\"test-secret\"}";
+        mvc.perform(post("/api/user/brokers").session(session).contentType("application/json").content(payload)).andExpect(status().isForbidden());
+        String response=mvc.perform(post("/api/user/brokers").session(session).with(csrf()).contentType("application/json").content(payload))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        long id=json.readTree(response).get("id").asLong();
+        var saved=brokers.findById(id).orElseThrow();
+        assertThat(saved.getBrokerName()).isEqualTo("Dhan");
+        assertThat(crypto.decrypt(saved.getBrokerPassword())).isEqualTo("012345");
+        assertThat(saved.getTotpSecret()).isNotEqualTo("JBSWY3DPEHPK3PXP");
+        mvc.perform(post("/api/user/brokers/"+id+"/connect").session(session).with(csrf())).andExpect(status().isOk());
+        var token=tokens.findAllByBrokerNameAndBrokerCredentialsId("Dhan",id).getFirst();
+        assertThat(crypto.decrypt(token.getToken())).isEqualTo("dhan-test-token");
+        mvc.perform(get("/api/user/onboarding").session(session)).andExpect(jsonPath("$.connectedBrokers").value(1))
+            .andExpect(jsonPath("$.tradingReadyBrokers").value(0));
+        mvc.perform(get("/api/user/brokers").session(session)).andExpect(jsonPath("$[0].tradingSupported").value(false))
+            .andExpect(jsonPath("$[0].apiKey").doesNotExist()).andExpect(jsonPath("$[0].totpSecret").doesNotExist());
+        mvc.perform(post("/api/user/brokers/"+id+"/trading").session(session).with(csrf()).contentType("application/json").content("{\"enabled\":true}"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(post("/api/strategies/start").session(session).with(csrf()).contentType("application/json")
+            .content("{\"templateId\":\"TEST_BREAKOUT\",\"symbol\":\"NIFTY\",\"lots\":1,\"brokerCredentialsId\":"+id+"}"))
+            .andExpect(status().isBadRequest());
+        mvc.perform(get("/api/user/brokers/dhan/callback?tokenId=test-token-id").session(session))
+            .andExpect(status().isSeeOther()).andExpect(header().string("Location","/portal?dhan=failed#brokers"));
+        verify(dhan,never()).consumeConsent(any(),any());
+        mvc.perform(post("/api/user/brokers/"+id+"/dhan/consent").session(session).with(csrf()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.loginUrl").value("https://auth.dhan.co/login/consentApp-login?consentAppId=test-consent"));
+        mvc.perform(get("/api/user/brokers/dhan/callback?tokenId=test-token-id").session(session))
+            .andExpect(status().isSeeOther()).andExpect(header().string("Location","/portal?dhan=connected#brokers"))
+            .andExpect(header().string("Cache-Control","no-store"));
+        assertThat(crypto.decrypt(tokens.findAllByBrokerNameAndBrokerCredentialsId("Dhan",id).getFirst().getToken())).isEqualTo("dhan-consent-token");
+        mvc.perform(get("/api/user/brokers/dhan/callback?tokenId=test-token-id").session(session))
+            .andExpect(header().string("Location","/portal?dhan=failed#brokers"));
+        verify(dhan,times(1)).consumeConsent(any(),eq("test-token-id"));
+        mvc.perform(post("/api/user/brokers/"+id+"/dhan/consent").with(user("unrelated-user")).with(csrf()))
+            .andExpect(status().isForbidden());
+        // A callback must not use credentials edited after consent was initiated.
+        mvc.perform(post("/api/user/brokers/"+id+"/dhan/consent").session(session).with(csrf())).andExpect(status().isOk());
+        mvc.perform(put("/api/user/brokers/"+id).session(session).with(csrf()).contentType("application/json")
+            .content("{\"apiKey\":\"changed-key\"}")).andExpect(status().isOk());
+        mvc.perform(get("/api/user/brokers/dhan/callback?tokenId=test-token-id").session(session))
+            .andExpect(header().string("Location","/portal?dhan=failed#brokers"));
+        verify(dhan,times(1)).consumeConsent(any(),eq("test-token-id"));
+        verifyNoInteractions(engine);
     }
     @Test void signupBrokerSubscriptionAndOrderWorkThroughAuthenticatedHttp() throws Exception {
         MockHttpSession session=registerAndLogin();

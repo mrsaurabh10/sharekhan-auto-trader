@@ -32,9 +32,10 @@ public class OnboardingStatusService {
                 .filter(c -> c.getVerifiedUntil() != null && c.getVerifiedUntil().isAfter(Instant.now()))
                 .map(BrokerConnection::getCredentialId).collect(java.util.stream.Collectors.toSet());
         var connected = owned.stream().filter(b -> Boolean.TRUE.equals(b.getActive())
-                && BrokerCatalog.supports(b.getBrokerName()) && b.getCustomerId() != null
-                && b.getCustomerId() > 0 && verified.contains(b.getId())).toList();
-        long tradingReady = connected.stream().filter(b -> Boolean.TRUE.equals(b.getTradingEnabled())).count();
+                && BrokerCatalog.supports(b.getBrokerName())
+                && ("Dhan".equalsIgnoreCase(b.getBrokerName()) || (b.getCustomerId() != null && b.getCustomerId() > 0))
+                && verified.contains(b.getId())).toList();
+        long tradingReady = connected.stream().filter(b -> "Sharekhan".equalsIgnoreCase(b.getBrokerName()) && Boolean.TRUE.equals(b.getTradingEnabled())).count();
         long active = subscriptions.countByAppUserIdAndStatusIn(userId, List.of("ACTIVE", "TRIGGERED"));
         long orders = requests.countByAppUserId(userId);
         List<Step> steps = List.of(

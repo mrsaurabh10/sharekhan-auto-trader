@@ -17,7 +17,7 @@ class BrokerConnectionServiceTest {
     StrategySubscriptionRepository subscriptions=mock(StrategySubscriptionRepository.class);
     TriggeredTradeSetupRepository trades=mock(TriggeredTradeSetupRepository.class);
     TriggerTradeRequestRepository requests=mock(TriggerTradeRequestRepository.class);
-    BrokerConnectionService service=new BrokerConnectionService(access,brokers,connections,provider,tokens,subscriptions,trades,requests);
+    BrokerConnectionService service=new BrokerConnectionService(access,brokers,connections,provider,mock(DhanAuthProvider.class),tokens,subscriptions,trades,requests);
     @Test void verifiesWithoutImplicitlyEnablingTradingOrReturningToken() {
         var broker=broker();when(provider.loginAndFetchToken(broker)).thenReturn(new AuthTokenResult("private-token",3600));
         var result=service.connect(1L);

@@ -18,6 +18,14 @@ class BrokerCredentialRequestTest {
             .isInstanceOf(ResponseStatusException.class);
         assertThat(input("12345","private-password","Sharekhan").toString()).doesNotContain("private-password");
     }
+    @Test void dhanRequiresClientIdAndOneCompleteAuthenticationMethod() {
+        assertThat(new BrokerCredentialRequest("Dhan",null,null,null,"012345","1000000001","JBSWY3DPEHPK3PXP",null,false).fields(true)).containsKey("brokerPassword");
+        assertThat(new BrokerCredentialRequest("Dhan",null,"key",null,null,"1000000001",null,"secret",false).fields(true)).containsKey("apiKey");
+        for (String pin : new String[]{"12345", "abcdef", "1234567"})
+            assertThatThrownBy(()->new BrokerCredentialRequest("Dhan",null,null,null,pin,"1000000001","JBSWY3DPEHPK3PXP",null,false).fields(true)).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(()->new BrokerCredentialRequest("Dhan",null,"key",null,null,"1000000001",null,null,false).fields(true)).isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(()->new BrokerCredentialRequest("Dhan",null,null,null,"123456","1000000001","123456",null,false).fields(true)).isInstanceOf(ResponseStatusException.class);
+    }
     private BrokerCredentialRequest input(String id,String password,String broker) {
         return new BrokerCredentialRequest(broker,id,"test-api",null,password,"test-client","test-totp","test-secret",false);
     }

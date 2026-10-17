@@ -22,6 +22,7 @@ public class BrokerConnectionService {
     private final BrokerCredentialsRepository brokers;
     private final BrokerConnectionRepository connections;
     private final SharekhanAuthProvider provider;
+    private final org.com.sharekhan.auth.DhanAuthProvider dhan;
     private final AccessTokenPersistenceService tokens;
     private final StrategySubscriptionRepository subscriptions;
     private final TriggeredTradeSetupRepository trades;
@@ -30,26 +31,36 @@ public class BrokerConnectionService {
     public Map<String, Object> connect(Long id) {
         var broker = access.owned(id);
         BrokerCatalog.requireSupported(broker.getBrokerName());
-        if (broker.getCustomerId() == null || broker.getCustomerId() <= 0)
+        if ("Sharekhan".equalsIgnoreCase(broker.getBrokerName()) && (broker.getCustomerId() == null || broker.getCustomerId() <= 0))
             throw new ResponseStatusException(BAD_REQUEST, "Add the Sharekhan customer ID before verifying this connection");
         try {
-            var result = provider.loginAndFetchToken(broker);
+            var result = "Dhan".equalsIgnoreCase(broker.getBrokerName()) ? dhan.loginAndFetchToken(broker) : provider.loginAndFetchToken(broker);
+            return recordConnection(broker, result);
+        } catch (Exception ex) {
+            throw new ResponseStatusException(BAD_REQUEST, broker.getBrokerName() + " connection failed. Check your credentials and try again.");
+        }
+    }
+    private Map<String, Object> recordConnection(org.com.sharekhan.entity.BrokerCredentialsEntity broker, org.com.sharekhan.auth.AuthTokenResult result) {
+            Long id = broker.getId();
             if (result == null || result.token() == null || result.token().isBlank() || result.expiresIn() <= 60)
                 throw new IllegalStateException("Invalid session");
             Instant until = Instant.now().plusSeconds(result.expiresIn() - 60);
-            tokens.replaceTokenForBrokerCredentials("Sharekhan", id, result.token(), until);
+            tokens.replaceTokenForBrokerCredentials(broker.getBrokerName(), id, result.token(), until);
             BrokerConnection connection = connections.findById(id).orElseGet(BrokerConnection::new);
             connection.setCredentialId(id); connection.setVerifiedUntil(until); connections.save(connection);
             broker.setActive(true); brokers.save(broker);
-            return Map.of("message", "Sharekhan connection verified. You can enable trading.", "verifiedUntil", until);
-        } catch (Exception ex) {
-            // Do not expose broker exceptions or submitted credentials to the browser.
-            throw new ResponseStatusException(BAD_REQUEST, "Sharekhan connection failed. Check your credentials and try again.");
-        }
+            return Map.of("message", "Dhan".equalsIgnoreCase(broker.getBrokerName()) ? "Dhan token generated. Trading support is not available yet." : "Sharekhan connection verified. You can enable trading.", "verifiedUntil", until);
+    }
+    @Transactional
+    public Map<String, Object> completeDhanConsent(Long id, String tokenId) {
+        var broker = access.owned(id);
+        return recordConnection(broker, dhan.consumeConsent(broker, tokenId));
     }
     @Transactional
     public void setTrading(Long id, boolean enabled) {
         var broker = access.owned(id);
+        if (enabled && !"Sharekhan".equalsIgnoreCase(broker.getBrokerName()))
+            throw new ResponseStatusException(BAD_REQUEST, "Trading is not supported for this broker yet");
         if (enabled && (broker.getCustomerId() == null || broker.getCustomerId() <= 0 || !access.connected(id) || !Boolean.TRUE.equals(broker.getActive())))
             throw new ResponseStatusException(BAD_REQUEST, "Verify your connection before enabling trading");
         broker.setTradingEnabled(enabled); brokers.save(broker);

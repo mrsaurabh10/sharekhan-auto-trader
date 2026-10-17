@@ -71,6 +71,9 @@ public class UserController {
                     row.put("active", b.getActive() != null ? b.getActive() : Boolean.FALSE);
                     row.put("tradingEnabled", effectiveTradingEnabled(b));
                     row.put("defaultForOrders", Boolean.TRUE.equals(b.getDefaultForOrders()));
+                    row.put("tradingSupported", "Sharekhan".equalsIgnoreCase(b.getBrokerName()));
+                    row.put("hasTotpSecret", b.getTotpSecret() != null && !b.getTotpSecret().isBlank());
+                    row.put("hasApiSecret", b.getSecretKey() != null && !b.getSecretKey().isBlank());
                     row.put("connected", tradingAccess.connected(b.getId()));
                     row.put("verifiedUntil", connections.findById(b.getId()).map(c -> c.getVerifiedUntil()).orElse(null));
                     return row;
@@ -87,8 +90,7 @@ public class UserController {
         String brokerName = text(body.get("brokerName"));
         brokerName = org.com.sharekhan.onboarding.BrokerCatalog.requireSupported(brokerName);
         if (!cryptoService.hasPersistentKey()) return ResponseEntity.status(503).body("Broker encryption is not configured");
-        brokerName = "Sharekhan";
-        for (String field : java.util.List.of("apiKey", "brokerPassword", "clientCode", "totpSecret", "secretKey")) {
+        for (String field : org.com.sharekhan.onboarding.BrokerCatalog.requiredFields(brokerName)) {
             if (text(body.get(field)) == null || text(body.get(field)).isBlank()) return ResponseEntity.badRequest().body("Complete all required credentials");
         }
         BrokerCredentialsEntity b = new BrokerCredentialsEntity();
@@ -131,12 +133,14 @@ public class UserController {
     @PutMapping("/brokers/{id}")
     @Transactional
     public ResponseEntity<?> updateMyBroker(@PathVariable Long id, @RequestBody org.com.sharekhan.onboarding.BrokerCredentialRequest input) {
-        Map<String, Object> body = input.fields(false);
         Long userId = requireUserId();
         BrokerCredentialsEntity b = brokerCredentialsRepository.findById(id).orElse(null);
         if (b == null || !userId.equals(b.getAppUserId())) {
             return ResponseEntity.notFound().build();
         }
+        Map<String, Object> body = new org.com.sharekhan.onboarding.BrokerCredentialRequest(
+            input.brokerName() == null ? b.getBrokerName() : input.brokerName(), input.customerId(), input.apiKey(),
+            input.brokerUsername(), input.brokerPassword(), input.clientCode(), input.totpSecret(), input.secretKey(), input.defaultForOrders()).fields(false);
         if (body.containsKey("brokerName") && !b.getBrokerName().equalsIgnoreCase(text(body.get("brokerName"))))
             return ResponseEntity.badRequest().body("Broker type cannot be changed");
         if (!cryptoService.hasPersistentKey()) return ResponseEntity.status(503).body("Broker encryption is not configured");

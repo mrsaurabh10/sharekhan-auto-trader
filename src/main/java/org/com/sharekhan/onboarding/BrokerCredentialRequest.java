@@ -34,6 +34,17 @@ public record BrokerCredentialRequest(String brokerName, String customerId, Stri
                     throw new ResponseStatusException(BAD_REQUEST, "Complete all required broker credentials, including customer ID");
             }
         }
+        if ("Dhan".equalsIgnoreCase(brokerName)) {
+            if (clientCode != null && !clientCode.isBlank() && !clientCode.trim().matches("[0-9]{1,20}"))
+                throw new ResponseStatusException(BAD_REQUEST, "Dhan Client ID must contain digits only");
+            if (brokerPassword != null && !brokerPassword.isBlank() && !brokerPassword.matches("[0-9]{6}"))
+                throw new ResponseStatusException(BAD_REQUEST, "Dhan PIN must contain six digits");
+            if (totpSecret != null && !totpSecret.isBlank() && !totpSecret.matches("(?i)[A-Z2-7]{16,128}=*"))
+                throw new ResponseStatusException(BAD_REQUEST, "Enter the authenticator setup secret, not a one-time TOTP code");
+            if (creating && !((result.containsKey("brokerPassword") && result.containsKey("totpSecret"))
+                    || (result.containsKey("apiKey") && result.containsKey("secretKey"))))
+                throw new ResponseStatusException(BAD_REQUEST, "Dhan requires PIN and TOTP secret, or API key and API secret");
+        }
         if (defaultForOrders != null) result.put("defaultForOrders", defaultForOrders);
         return result;
     }
