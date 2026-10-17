@@ -1,7 +1,7 @@
 # Stocks 9:25 Mover Breakout
 
 Template: `STOCK_0925_MOVER_ATR_BREAKOUT`. This is a separate buy-only cash-equity
-strategy. The existing `FNO_0925_MOVER_ATR_BREAKOUT` option strategy is unchanged.
+strategy. It has its own cash sizing and selection; it does not place option orders.
 
 ## Selection and entry
 
@@ -17,7 +17,10 @@ empty for that day; a failed API call can retry on the next tick.
 
 The shared `Fno925EntryQualificationService` supplies the same bullish completed
 five-minute opening-range breakout and VWAP-reclaim/base-break checks, volume,
-candle quality and ATR(75) checks. Internal `CE` denotes the bullish direction
+candle quality and ATR(75) checks. A new cash entry also requires the latest
+completed five-minute signal candle to close strictly above its open; bearish
+and flat candles keep the candidate waiting. This direction check covers both
+entry setups. Internal `CE` denotes the bullish direction
 for that shared qualifier only. Cash requests contain no option type, strike,
 expiry, lot size or option feed lookup. There are no new entries from 15:20 IST.
 

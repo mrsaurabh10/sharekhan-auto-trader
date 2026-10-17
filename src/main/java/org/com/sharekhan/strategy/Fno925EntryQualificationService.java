@@ -73,6 +73,15 @@ public class Fno925EntryQualificationService {
     private double sessionExtremeBufferAtr = 0.50d;
 
     public Qualification qualify(Fno925Candidate candidate, LocalDateTime now) {
+        return qualify(candidate, now, false);
+    }
+
+    /** Mover templates require the completed signal candle to agree with the entry direction. */
+    public Qualification qualifyWithDirectionalCandle(Fno925Candidate candidate, LocalDateTime now) {
+        return qualify(candidate, now, true);
+    }
+
+    private Qualification qualify(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {
         CandleLoad load = support.loadCandlesWithHistoricalFallback(candidate.spot(), ATR_PERIOD + 1);
         List<StrategyCandle> allCandles = load.candles().stream()
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
@@ -101,6 +110,15 @@ public class Fno925EntryQualificationService {
 
         // Do not backfill an old candle: an evaluation must act on the most recently completed candle only.
         StrategyCandle breakout = completedBreakouts.get(completedBreakouts.size() - 1);
+        if (requireDirectionalCandle) {
+            boolean bullish = "CE".equalsIgnoreCase(candidate.optionType());
+            boolean matchesDirection = bullish ? breakout.close() > breakout.open() : breakout.close() < breakout.open();
+            if (!matchesDirection) {
+                return Qualification.waiting(bullish
+                        ? "entry requires a bullish completed five-minute signal candle (close > open)"
+                        : "entry requires a bearish completed five-minute signal candle (close < open)");
+            }
+        }
         Qualification orb = qualifyMorningOrb(candidate, todayCandles, allCandles, breakout, rangeHigh, rangeLow);
         if (orb.qualified()) {
             return orb;
