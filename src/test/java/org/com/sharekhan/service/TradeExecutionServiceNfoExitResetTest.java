@@ -5,7 +5,6 @@ import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.junit.jupiter.api.Test;
 
-import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -16,30 +15,24 @@ class TradeExecutionServiceNfoExitResetTest {
             null, null, null, null, null, null, null, null);
 
     @Test
-    void resetsNonIntradayNfoOptionTargetOrderAfterMarketCloseWithoutStatusLookup() {
-        TriggeredTradeSetupEntity trade = nfoOptionTargetOrder();
-
-        assertThat(service.isClosedNfoOptionExitOrder(trade,
-                LocalDateTime.of(2026, 7, 29, 15, 30))).isTrue();
+    void unknownNfoExitIsKeptUntilBrokerConfirmsItsOutcome() {
+        var trades=org.mockito.Mockito.mock(org.com.sharekhan.repository.TriggeredTradeSetupRepository.class);
+        var credentials=org.mockito.Mockito.mock(org.com.sharekhan.repository.BrokerCredentialsRepository.class);
+        var brokers=org.mockito.Mockito.mock(org.com.sharekhan.service.broker.BrokerServiceFactory.class);
+        var broker=org.mockito.Mockito.mock(TestBroker.class);
+        var trade=nfoOptionTargetOrder();trade.setId(12L);trade.setAppUserId(4L);trade.setBrokerCredentialsId(7L);trade.setExitOrderId("12345");
+        org.mockito.Mockito.when(trades.findById(12L)).thenReturn(java.util.Optional.of(trade));
+        org.mockito.Mockito.when(credentials.findById(7L)).thenReturn(java.util.Optional.of(org.com.sharekhan.entity.BrokerCredentialsEntity.builder()
+            .id(7L).appUserId(4L).brokerName("Shoonya").active(true).build()));
+        org.mockito.Mockito.when(brokers.getService("Shoonya")).thenReturn(broker);
+        var engine=new TradeExecutionService(trades,null,null,null,null,null,null,null,null,null,null,null,credentials,brokers,new OrderPlacementGuard(),null);
+        assertThat(engine.resetNonIntradayExitOrderIfInactive(12L)).isEqualTo(TradeExecutionService.EndOfDayExitResetResult.SKIPPED_BROKER_UNAVAILABLE);
+        assertThat(trade.getExitOrderId()).isEqualTo("12345");
+        org.mockito.Mockito.verify(broker).fetchOrderStatus(org.mockito.ArgumentMatchers.eq(trade),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq("12345"));
+        org.mockito.Mockito.verify(trades,org.mockito.Mockito.never()).resetInactiveNonIntradayExitState(org.mockito.ArgumentMatchers.anyLong(),org.mockito.ArgumentMatchers.any());
     }
 
-    @Test
-    void keepsNfoOptionTargetOrderProtectedBeforeMarketClose() {
-        assertThat(service.isClosedNfoOptionExitOrder(nfoOptionTargetOrder(),
-                LocalDateTime.of(2026, 7, 29, 15, 29, 59))).isFalse();
-    }
-
-    @Test
-    void doesNotApplyExpiryAssumptionToEquityOrIntradayTrades() {
-        TriggeredTradeSetupEntity equity = nfoOptionTargetOrder();
-        equity.setExchange("NC");
-        TriggeredTradeSetupEntity intraday = nfoOptionTargetOrder();
-        intraday.setIntraday(true);
-        LocalDateTime afterClose = LocalDateTime.of(2026, 7, 29, 17, 5);
-
-        assertThat(service.isClosedNfoOptionExitOrder(equity, afterClose)).isFalse();
-        assertThat(service.isClosedNfoOptionExitOrder(intraday, afterClose)).isFalse();
-    }
+    private interface TestBroker extends org.com.sharekhan.service.broker.BrokerService, org.com.sharekhan.service.broker.OrderStatusBrokerService {}
 
     @Test
     void normalizesApiCashEquityExchangeBeforeScriptMasterLookup() {

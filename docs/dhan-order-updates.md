@@ -1,101 +1,105 @@
-# Dhan live order updates and bounded reconciliation
+# Dhan live order updates and polling ownership
 
-Dhan's individual order WebSocket is implemented alongside the REST adapter.
+Dhan's individual order WebSocket runs alongside the REST adapter.
 Source reviewed 2026-10-17: https://dhanhq.co/docs/v2/order-update/ .
-This is local implementation; no live Dhan account/socket/order or deployment
-verification has been performed. Tests use mocked sockets and broker responses.
+Local tests use mocked sockets/broker responses. No live broker connection, order,
+production CPU measurement or deployment has been performed for this feature.
 
-## Connection lifecycle
+## Monitoring policy
+
+| Mode | Status requests |
+| --- | --- |
+| Submitted entry awaiting confirmation | Shared poller every `app.order.poll-delay-ms` (default 2 seconds), unless its entry chase owns status reads. Matching stream updates can finish it sooner. |
+| Resting `TARGET_ORDER_PLACED` on Dhan/Sharekhan | No recurring status timer or REST fallback. Dhan fill updates reconcile directly. Sharekhan ACKs request a coalesced authoritative REST check because an ACK alone lacks complete fill evidence. |
+| Active entry, SL, exit or target chase | The chase obtains status once per iteration and publishes its scoped response to shared reconciliation. The general poller skips its REST call while the chase owns the order. |
+| Entry chase paused/stopped with entry still pending | Entry confirmation polling resumes automatically; pausing repricing does not forget the submitted order. |
+| Exit chase stopped without confirmed closure | One final shared status check when a general exit monitor exists, then stream updates/reconnect recovery. The chase deadline reports unresolved exposure. No indefinite exit polling. |
+| Broker without an implemented order stream | Resting targets retain a slower 60-second REST fallback; confirmation/chase behavior stays available. |
+
+Exit chases, including ordinary target chases, stop after five minutes or their
+existing session deadline. Unknown broker status never permits repricing or a
+replacement sell. A deadline does not establish a fill or cancel the order.
+Startup restores monitors once; reconnect performs catch-up for tracked orders.
+The previous five-minute repeating full-table recovery scan has been removed.
+There is no timed final-session REST check for a socket-only resting target.
+Explicit catch-up after the Dhan session deadline can still persist unresolved
+attention, retaining order IDs and accepting later confirmed stream fills.
+
+Dhan entry status failures retain the five-unavailable-outcome warning and
+five-minute REST backoff. Broker/session gating remains; a final unresolved entry
+check at/after 15:45 IST suspends that timer with attention. Polling never treats
+an unknown response as rejection or success.
+
+## Connection lifecycle and CPU
 
 `DhanOrderUpdateService` opens `wss://api-order-update.dhan.co` per saved credential.
-It sends the documented SELF login message with MsgCode 42, ClientId and the valid
-same-credential access token. Tokens/credentials are not logged. A successful send
-means the socket login message was sent; it is not reported as proof of successful
-broker authorization. REST recovery stays independent of stream availability.
+It sends SELF LoginReq with MsgCode 42, ClientId and the valid same-credential
+access token. Sending login does not prove broker authorization. Tokens, raw
+messages and credentials are not logged.
 
-The five-second scan connects accounts that enabled trading or still have tracked
-entry/exit orders. Order placement also requests a connection refresh. Disabling
-new trading retains a stream needed for pending exits. Invalid/expired scoped tokens
-close their streams; token/Client ID changes replace the connection. No implicit
-broker login, global-token fallback or order action is performed by the connector.
-Application shutdown aborts sockets and stops delivery/poll executors.
+A five-second in-memory maintenance tick handles reconnection/heartbeat. Account,
+token and pending-order demand are refreshed from the database once per minute;
+placement requests a coalesced earlier refresh. This means credential changes
+can take up to a minute to reach an already-connected stream. Cached expiry is
+checked every tick. New order actions still validate current scoped credentials.
+Trading-disabled accounts retain streams required by pending orders. No implicit
+broker login or global-token fallback is used.
 
-Connection failures use exponential retry backoff capped at sixty seconds, subject
-to the scan interval. Ping/pong checks detect a silent socket (30-second pings,
-90-second liveness budget). Socket generations reject delayed frames from an older
-connection. A bounded delivery queue and 64 KiB fragmented-message limit prevent
-unbounded buffering; dropped events are recovered by REST. Per-session order-version
-tracking is bounded to 1,000 entries. Sanitized connection logs contain credential
-IDs and retry timing, not auth messages, tokens or raw broker payloads.
+Retry backoff is capped at 60 seconds. Ping/pong uses 30-second pings and a
+90-second liveness budget. Generations reject old socket callbacks. Delivery is
+bounded to 256 queued tasks and frames to 64 KiB. A dropped/failed delivery marks
+a gap; maintenance reconnects streams and triggers REST catch-up, preventing a
+silently lost terminal event from leaving a socket-only target unresolved.
+Per-session version tracking is bounded to 1,000 orders.
 
-## Reconciliation
+Dhan updates use an in-memory credential/order/correlation index. Manual or
+unrelated account updates cause no trade lookup. Sharekhan ACK routing also uses
+an order index and queues at most one outstanding check per tracked trade. Its
+reconnect restores ACK subscriptions for pending entries and exits as well as
+resting targets, then requests catch-up.
 
-Only `order_alert` messages for the authenticated Client ID are accepted. Quantity
-consistency, average fill price and broker timestamp are validated. Duplicate/older
-messages, decreasing filled quantities and terminal-to-other-status regressions
-are ignored. OrderNo/CorrelationId, exchange segment, side and credential ownership
-are checked before applying updates to a tracked application trade. Other account
-orders, including manually placed orders, do not create or mutate application trades.
+Dhan REST status reads remain fresh. Their full metadata may be consumed once by
+the same worker's immediate modify call, within two seconds, avoiding a duplicate
+GET before PUT. This is scoped by credential, trade, client, order and current
+token. It is not shared between threads, cannot be seeded by socket data, and is
+consumed before mutation. Stale/rotated metadata requires a new GET. Cancellation
+always performs its own fresh lookup.
 
-Stream updates and REST snapshots run through the same trade reconciliation under
-per-trade serialization and the existing entry lock. A placement acknowledgement
-still does not confirm a fill. The completed entry monitor is stopped before entry
-hooks create a target monitor, avoiding a race that delayed new-target tracking.
-Normal Dhan REST calls stay uncached, providing independent periodic recovery.
-Sending socket login triggers REST catch-up for tracked orders. Unknown submission
-correlation handles are matched directly to CorrelationId updates.
+## Reconciliation and exposure
 
-An inactive target/exit becomes EXIT_FAILED, retaining its original exit order ID
-and open-position semantics. It does not reject the original entry, sync its entry
-request to REJECTED or release its live price feed. This fixes the shared poller's
-TARGET_ORDER_PLACED/EXIT_TRIGGERED terminal-classification defect for other brokers
-as well. Entry rejection behavior and Sharekhan's existing poll interval remain.
+Only authenticated-client `order_alert` messages with consistent quantities,
+valid average fill prices and broker timestamps are accepted. Duplicate/older
+updates, decreasing fills and terminal regressions are ignored. Credential,
+order/correlation, side and exchange segment must match before reconciliation.
+A placement/modify acknowledgement never proves execution.
 
-Dhan partly filled inactive exits retain their full original tracked quantity and
-order ID, become EXIT_FAILED, and receive a manual-reconciliation reason containing
-filled/remaining units. No replacement sell is submitted and no position is inferred
-closed. Normal full-fill validation is still required before position closure.
+Chase snapshots, REST and stream events share per-trade serialization with the
+existing decision lock. An old entry monitor stops before entry hooks create its
+target. Replaced orders and foreign-credential snapshots cannot complete the new
+order. Exit chase cancellation does not interrupt the thread persisting a fill.
 
-## Monitoring budgets
+Inactive targets/exits become `EXIT_FAILED`, retaining order ID and open-position
+semantics. They do not reject the entry, sync its request to rejected, or release
+its price feed. Sharekhan rejection ACKs now use this same exit-aware path.
+Partial inactive Dhan exits retain original quantity/order ID and receive
+`DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED`; both polling and chase stop for manual
+remaining-position reconciliation. No replacement sell is submitted.
 
-- Dhan gets an initial REST check after placement, then a 60-second fallback cadence.
-  Live stream messages reconcile immediately; they do not postpone periodic REST.
-- Five consecutive unavailable REST outcomes trigger a notification and five-minute
-  REST backoff. Valid stream/REST evidence can clear the unavailable-status reason.
-  A restart preserves the attention indication and resumes the slower failure budget.
-- Regular reconciliation is session-gated. A final REST attempt occurs on the first
-  scheduled check at/after 15:45 IST on the order's recorded session date (including
-  an unresolved order rediscovered later). This is a reconciliation deadline, not
-  exchange timing or permission to place orders after close.
-- If the final outcome is still pending/unavailable, the REST timer is cancelled and
-  DHAN_SESSION_RECONCILIATION_REQUIRED is saved with an owner notification attempt.
-  The position/order IDs remain; late matching stream events can still establish a
-  confirmed outcome. Restart does not reactivate frequent polling for this reason.
-- Partial inactive exits get DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED and suspend
-  their timer immediately. They need operator reconciliation of remaining exposure.
+Calendar close alone no longer clears an NFO delivery exit ID. Broker verification
+is required; a missing status preserves the order for reconciliation. Notifications
+and monitoring deadlines never infer that the bought position has closed.
 
-The stream may remain connected while a valid account is trading-enabled or has
-unresolved orders. Suspending an order's periodic timer does not disconnect all
-other orders in that account. Application monitoring uses the existing weekday
-calendar; special sessions/holidays are not newly implemented. The deadline does
-not guarantee a broker fill, cancel an order or authorize automatic replacement.
-Notification transport failures do not discard the persisted attention reason.
-
-Configuration properties (defaults shown):
+Configuration defaults:
 
 | Property | Default |
 | --- | --- |
+| `app.order.poll-delay-ms` | `2000` |
 | `app.dhan.order-updates.enabled` | `true` |
 | `app.dhan.order-updates.scan-ms` | `5000` |
-| `app.dhan.order-updates.rest-fallback-ms` | `60000` |
 | `app.dhan.order-updates.unavailable-backoff-ms` | `300000` |
 | `app.dhan.order-updates.unavailable-limit` | `5` |
 
-No additional schema is required for streaming. Attention reasons/comments use
-existing trade columns; the prior Dhan submission journal remains required.
-
-Correction to earlier investigation notes: shared REST polling reads
-`app.order.poll-delay-ms`, default 2000 ms. The source YAML's 5000 ms value belongs
-to `app.mstock.poll-delay-ms` and does not set this shared property. The new Dhan
-fallback uses its separate explicit property above. Actual production overrides
-were not inspected in this change.
+The former `app.dhan.order-updates.rest-fallback-ms` is superseded by mode-based
+ownership. Special sessions/holidays are not newly implemented. Streaming adds no
+schema; the prior Dhan submission journal is still required. Existing market-data
+feeds are still needed for strategy and chase prices.

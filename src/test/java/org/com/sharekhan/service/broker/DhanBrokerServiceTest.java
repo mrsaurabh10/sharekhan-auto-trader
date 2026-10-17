@@ -145,4 +145,27 @@ class DhanBrokerServiceTest {
         when(client.exchange(eq("GET"),anyString(),anyString(),isNull())).thenReturn(response(200,order("CANCELLED",3,7).put("transactionType","SELL")));
         assertThat(service.fetchOrderStatus(trade,context,"12345").getJSONArray("data").getJSONObject(0).getString("orderStatus")).isEqualTo("Partly Executed");
     }
+    @Test void chaseReusesPrecedingStatusReadForOneModificationOnly() throws Exception {
+        trade.setOrderId("12345");
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull())).thenReturn(response(200,order("PENDING",0,10)));
+        when(client.exchange(eq("PUT"),eq("/orders/12345"),anyString(),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","PENDING")));
+        assertThat(service.fetchOrderStatus(trade,context,"12345")).isNotNull();
+        assertThat(service.modifyEntryOrder(trade,context,"12345",100).isSuccess()).isTrue();
+        verify(client,times(1)).exchange(eq("GET"),anyString(),anyString(),isNull());
+        assertThat(service.modifyEntryOrder(trade,context,"12345",100.05).isSuccess()).isTrue();
+        verify(client,times(2)).exchange(eq("GET"),anyString(),anyString(),isNull());
+    }
+    @Test void staleMetadataAndTokenRotationRequireFreshStatusRead() throws Exception {
+        trade.setOrderId("12345");var nanos=new java.util.concurrent.atomic.AtomicLong();
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"snapshotTicker",(java.util.function.LongSupplier)nanos::get);
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull())).thenReturn(response(200,order("PENDING",0,10)));
+        when(client.exchange(eq("PUT"),eq("/orders/12345"),anyString(),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","PENDING")));
+        service.fetchOrderStatus(trade,context,"12345");nanos.set(java.util.concurrent.TimeUnit.SECONDS.toNanos(3));
+        service.modifyEntryOrder(trade,context,"12345",100);verify(client,times(2)).exchange(eq("GET"),anyString(),anyString(),isNull());
+        service.fetchOrderStatus(trade,context,"12345");
+        when(tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",7L)).thenReturn(Optional.of(AccessTokenEntity.builder().token("rotated").expiry(Instant.now().plusSeconds(3600)).build()));
+        service.modifyEntryOrder(trade,context,"12345",100);
+        verify(client).exchange(eq("GET"),eq("/orders/12345"),eq("rotated"),isNull());
+    }
+
 }

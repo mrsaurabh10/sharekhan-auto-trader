@@ -10,9 +10,7 @@ import org.com.sharekhan.cache.LtpCacheService;
 import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.ws.QuotePayloadParser.BidAsk;
 import org.com.sharekhan.entity.ScriptMasterEntity;
-import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.enums.Broker;
-import org.com.sharekhan.monitoring.OrderPlacedEvent;
 import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.service.PriceTriggerService;
 import org.com.sharekhan.service.ScripExecutorManager;
@@ -26,7 +24,6 @@ import java.net.URI;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -103,6 +100,7 @@ public class WebSocketClientService  {
 
         sendSubscribeMessage();
         tradeExecutionService.subscribeForOpenTrades();
+        eventPublisher.publishEvent(new org.com.sharekhan.monitoring.BrokerOrderHintEvent("Sharekhan",null));
     }
 
 
@@ -182,32 +180,9 @@ public class WebSocketClientService  {
                 } else {
                     String orderId = data.has("SharekhanOrderID") ? data.get("SharekhanOrderID").asText() : "";
                     String ackState = data.has("AckState") ? data.get("AckState").asText() : "";
-                    if ("TradeConfirmation".equalsIgnoreCase(ackState)) {
-                        // Order confirmed - try to map to either orderId or exitOrderId
-                        Optional<TriggeredTradeSetupEntity> triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByOrderId(orderId);
-                        if (triggeredTradeSetupEntity.isEmpty()) {
-                            triggeredTradeSetupEntity = triggeredTradeSetupRepository.findByExitOrderId(orderId);
-                        }
-                        if (triggeredTradeSetupEntity.isPresent()) {
-                            TriggeredTradeSetupEntity t = triggeredTradeSetupEntity.get();
-                            eventPublisher.publishEvent(new OrderPlacedEvent(t));
-                            log.info("✅ ACK TradeConfirmation - orderId={} mapped to tradeId={} status={}", orderId, t.getId(), t.getStatus());
-                        } else {
-                            log.info("✅ ACK TradeConfirmation - orderId={} no matching trade found", orderId);
-                        }
-                    } else if ("NewOrderRejection".equalsIgnoreCase(ackState)) {
-                        Optional<TriggeredTradeSetupEntity> t = triggeredTradeSetupRepository.findByOrderId(orderId);
-                        if (t.isEmpty()) t = triggeredTradeSetupRepository.findByExitOrderId(orderId);
-                        if (t.isPresent()) {
-                            tradeExecutionService.markOrderRejected(orderId);
-                            log.warn("🔴 ACK NewOrderRejection - orderId={} mapped to tradeId={}", orderId, t.get().getId());
-                        } else {
-                            tradeExecutionService.markOrderRejected(orderId);
-                            log.warn("🔴 ACK NewOrderRejection - orderId={} (no mapped trade)", orderId);
-                        }
-                    } else {
-                        log.debug("ACK received - orderId={} ackState={}", orderId, ackState);
-                    }
+                    if(!orderId.isBlank())eventPublisher.publishEvent(
+                        new org.com.sharekhan.monitoring.BrokerOrderHintEvent("Sharekhan",orderId));
+
                 }
              }
          } catch (Exception e) {

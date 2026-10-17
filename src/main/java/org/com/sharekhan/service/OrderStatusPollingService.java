@@ -51,8 +51,7 @@ public class OrderStatusPollingService {
     private final TriggeredTradeSetupRepository tradeRepo;
     private final TriggerTradeRequestRepository triggerRequestRepo;
     private final Map<String, ScheduledFuture<?>> activePolls = new ConcurrentHashMap<>();
-     // Track last modify price attempted per orderId to avoid spamming identical modify requests
-     private final Map<String, Double> lastModifyPrice = new ConcurrentHashMap<>();
+
     private final WebSocketClientService webSocketClientService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketSubscriptionHelper webSocketSubscriptionHelper;
@@ -69,31 +68,58 @@ public class OrderStatusPollingService {
     @Value("${app.order.poll-delay-ms:2000}")
     private long orderPollDelayMs;
 
-    @Value("${app.dhan.order-updates.rest-fallback-ms:60000}") private long dhanRestDelayMs=60000;
     @Value("${app.dhan.order-updates.unavailable-backoff-ms:300000}") private long dhanBackoffMs=300000;
     @Value("${app.dhan.order-updates.unavailable-limit:5}") private int dhanUnavailableLimit=5;
     private Clock monitorClock=Clock.systemUTC();
     private final Map<String,Consumer<JSONObject>> pushedReconciliations=new ConcurrentHashMap<>();
     private final Object[] reconciliationLocks=java.util.stream.IntStream.range(0,256).mapToObj(i->new Object()).toArray();
     private final Map<String,Long> dhanCredentials=new ConcurrentHashMap<>();
+    private record Registration(String broker, Long credential, String orderId, TriggeredTradeStatus status) {}
+    private record Route(Long credential, String orderId) {}
+    private record BrokerRoute(String broker, String orderId) {}
+    private final Map<BrokerRoute,java.util.Set<String>> brokerRoutes=new ConcurrentHashMap<>();
+    private final Map<String,Registration> registrations=new ConcurrentHashMap<>();
+    private final Map<Route,java.util.Set<String>> dhanRoutes=new ConcurrentHashMap<>();
+    private final java.util.Set<String> queuedHints=ConcurrentHashMap.newKeySet();
     private static class DhanBudget {int failures; Instant nextRest=Instant.EPOCH; boolean finalAttempted;}
 
     @jakarta.annotation.PreDestroy public void shutdown() {
-        executor.shutdownNow();activePolls.clear();pushedReconciliations.clear();dhanCredentials.clear();
+        executor.shutdownNow();activePolls.clear();pushedReconciliations.clear();dhanCredentials.clear();registrations.clear();dhanRoutes.clear();brokerRoutes.clear();queuedHints.clear();
     }
     @EventListener public void onDhanOrderUpdate(DhanOrderUpdateEvent event) {
-        for(var entry:dhanCredentials.entrySet()) {
-            if(!event.credentialId().equals(entry.getValue())) continue;
-            var current=tradeRepo.findById(Long.valueOf(entry.getKey())).orElse(null);
-            if(current==null)continue;
-            String id=isExitOrder(current) ? current.getExitOrderId() : current.getOrderId();
-            if(!event.orderId().equals(id) && !("DHAN-CORR-"+event.correlationId()).equals(id))continue;
-            var handler=pushedReconciliations.get(entry.getKey());
-            if(handler!=null) {
-                JSONObject row;
-                try {row=new JSONObject(event.payload());}catch(Exception ignored){continue;}
-                handler.accept(row);
-            }
+        var keys=new java.util.HashSet<String>();
+        keys.addAll(dhanRoutes.getOrDefault(new Route(event.credentialId(),event.orderId()),java.util.Set.of()));
+        if(event.correlationId()!=null && !event.correlationId().isBlank())
+            keys.addAll(dhanRoutes.getOrDefault(new Route(event.credentialId(),"DHAN-CORR-"+event.correlationId()),java.util.Set.of()));
+        for(String key:keys) {
+            var handler=pushedReconciliations.get(key);
+            if(handler!=null)try{handler.accept(new JSONObject(event.payload()));}catch(Exception ignored){}
+        }
+    }
+    @EventListener public void onSnapshot(org.com.sharekhan.monitoring.BrokerOrderSnapshotEvent event) {
+        String key=String.valueOf(event.tradeId());
+        var registration=registrations.get(key);
+        if(registration==null || !Objects.equals(registration.credential(),event.credentialId())
+            || !Objects.equals(registration.orderId(),event.orderId()))return;
+        var handler=pushedReconciliations.get(key);
+        if(handler!=null)handler.accept(new JSONObject().put("_snapshot",new JSONObject(event.payload())));
+    }
+    @EventListener public void onBrokerHint(org.com.sharekhan.monitoring.BrokerOrderHintEvent event) {
+        var keys=event.orderId()==null ? registrations.keySet()
+            : brokerRoutes.getOrDefault(new BrokerRoute(event.broker().toLowerCase(java.util.Locale.ROOT),event.orderId()),java.util.Set.of());
+        for(String key:keys) {
+            var registration=registrations.get(key);
+            if(registration==null)continue;
+            if(!registration.broker().equalsIgnoreCase(event.broker())
+                || (event.orderId()!=null && !event.orderId().equals(registration.orderId())) || !queuedHints.add(key))continue;
+            try {executor.execute(()->{
+                try {if(registrations.get(key)==registration
+                    && !tradeExecutionService.isEntryOrderChaseActive(Long.valueOf(key))
+                    && !tradeExecutionService.isExitOrderChaseActive(Long.valueOf(key))) {
+                    var handler=pushedReconciliations.get(key);
+                    if(handler!=null)handler.accept(new JSONObject().put("_forceDhanRest",true));
+                }} finally {queuedHints.remove(key);}
+            });}catch(RejectedExecutionException ignored){queuedHints.remove(key);}
         }
     }
     @EventListener public void onDhanStreamConnected(org.com.sharekhan.dhan.DhanOrderStreamConnectedEvent event) {
@@ -104,7 +130,10 @@ public class OrderStatusPollingService {
     }
     private void stopTimer(String key) {var future=activePolls.remove(key);if(future!=null)future.cancel(false);}
     private void stopMonitoring(String key) {
-        stopTimer(key);pushedReconciliations.remove(key);dhanCredentials.remove(key);lastModifyPrice.remove(key);
+        stopTimer(key);pushedReconciliations.remove(key);dhanCredentials.remove(key);
+        var old=registrations.remove(key);
+        if(old!=null)brokerRoutes.computeIfPresent(new BrokerRoute(old.broker().toLowerCase(java.util.Locale.ROOT),old.orderId()),(route,keys)->{keys.remove(key);return keys.isEmpty()?null:keys;});
+        if(old!=null && "Dhan".equalsIgnoreCase(old.broker()))dhanRoutes.computeIfPresent(new Route(old.credential(),old.orderId()),(route,keys)->{keys.remove(key);return keys.isEmpty()?null:keys;});
     }
     private boolean needsMonitoring(TriggeredTradeSetupEntity trade) {
         return trade!=null && (isExitOrder(trade) || trade.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
@@ -148,9 +177,7 @@ public class OrderStatusPollingService {
         log.info("Initializing OrderStatusPollingService - checking for pending orders to resume monitoring");
         resumePollingForPendingOrders();
         
-        // Also schedule a periodic check to catch any orders that might need monitoring when market opens
-        // or if polling was interrupted
-        executor.scheduleAtFixedRate(this::resumePollingForPendingOrders, 1, 5, TimeUnit.MINUTES);
+
     }
 
     private void resumePollingForPendingOrders() {
@@ -180,6 +207,8 @@ public class OrderStatusPollingService {
             for (TriggeredTradeSetupEntity trade : pendingTargetOrders) {
                 if (trade.getExitOrderId() != null && !trade.getExitOrderId().isEmpty()) {
                     monitorOrderStatus(trade);
+                    var registration=registrations.get(String.valueOf(trade.getId()));
+                    if(registration!=null)onBrokerHint(new org.com.sharekhan.monitoring.BrokerOrderHintEvent(registration.broker(),trade.getExitOrderId()));
                     resumedCount++;
                 }
             }
@@ -329,18 +358,25 @@ public class OrderStatusPollingService {
     public synchronized void monitorOrderStatus(TriggeredTradeSetupEntity trade) {
         // Use DB id as key so we don't schedule multiple polls for same trade
         final String tradeKey = String.valueOf(trade.getId());
-        ScheduledFuture<?> existing = activePolls.get(tradeKey);
-        if (pushedReconciliations.containsKey(tradeKey) || (existing != null && !existing.isDone() && !existing.isCancelled())) {
-            log.debug("Poll already active for trade {} - skipping duplicate schedule", tradeKey);
-            return;
-        }
+        var initialContext=resolveBrokerContext(trade.getBrokerCredentialsId(),trade.getAppUserId());
+        if(initialContext==null || initialContext.getBrokerName()==null)return;
+        Registration registration=new Registration(initialContext.getBrokerName(),trade.getBrokerCredentialsId(),
+            isExitOrder(trade)?trade.getExitOrderId():trade.getOrderId(),trade.getStatus());
+        if(registration.equals(registrations.get(tradeKey)))return;
+        stopMonitoring(tradeKey);
+        registrations.put(tradeKey,registration);
+        brokerRoutes.computeIfAbsent(new BrokerRoute(registration.broker().toLowerCase(java.util.Locale.ROOT),registration.orderId()),ignored->ConcurrentHashMap.newKeySet()).add(tradeKey);
 
         DhanBudget budget=new DhanBudget();
         if("DHAN_ORDER_RECONCILIATION_REQUIRED".equals(trade.getReason()))budget.failures=Math.max(1,dhanUnavailableLimit);
         Object reconciliationLock=reconciliationLocks[Math.floorMod(tradeKey.hashCode(),reconciliationLocks.length)];
         Consumer<JSONObject> reconciliation = pushed -> {
+            if(registrations.get(tradeKey)!=registration)return;
+            boolean snapshot=pushed!=null && pushed.has("_snapshot");
             boolean forceRest=pushed!=null && pushed.optBoolean("_forceDhanRest",false);
             if(forceRest)pushed=null;
+            if(pushed==null && !forceRest && (budget.finalAttempted
+                || (monitorClock.instant().isBefore(budget.nextRest) && monitorClock.instant().isBefore(dhanDeadline(trade)))))return;
             String orderIdToMonitor = null;
             boolean dhan=false;
             boolean finalDhanAttempt=false;
@@ -356,6 +392,8 @@ public class OrderStatusPollingService {
                     log.warn("Skipping status poll for trade {} because its broker order id is missing", currentTrade.getId());
                     return;
                 }
+                if(!Objects.equals(orderIdToMonitor,registration.orderId())
+                    || !Objects.equals(currentTrade.getBrokerCredentialsId(),registration.credential()))return;
                 BrokerCtx ctx = resolveBrokerContext(currentTrade.getBrokerCredentialsId(), currentTrade.getAppUserId());
                 if (!isBrokerContextUsable(ctx)) {
                     throw new IllegalStateException("No active broker configured for this trade");
@@ -370,7 +408,8 @@ public class OrderStatusPollingService {
                     }
                 }
                 JSONObject response;
-                if(pushed!=null) {
+                if(snapshot)response=pushed.getJSONObject("_snapshot");
+                else if(pushed!=null) {
                     var broker=brokerServiceFactory.getService(ctx.getBrokerName());
                     if(!(broker instanceof OrderUpdateBrokerService updates))return;
                     response=updates.normalizeOrderUpdate(currentTrade,toBrokerContext(ctx),orderIdToMonitor,pushed);
@@ -378,7 +417,7 @@ public class OrderStatusPollingService {
                 } else response=fetchBrokerOrderStatus(currentTrade,ctx,orderIdToMonitor);
                 if(dhan && response!=null && response.optBoolean("requiresExitReconciliation",false)) {
                     requireDhanAttention(currentTrade,"Inactive Dhan exit has filled="+response.optLong("filledQuantity")+", remaining="+response.optLong("remainingQuantity")+"; reconcile actual position before another sell",true,false);
-                    budget.finalAttempted=true;stopTimer(tradeKey);return;
+                    budget.finalAttempted=true;stopTimer(tradeKey);tradeExecutionService.stopExitOrderChase(currentTrade.getId());return;
                 }
                 TradeStatus tradeStatus = tradeExecutionService.evaluateOrderFinalStatus(currentTrade, response);
                 if(dhan && tradeStatus!=TradeStatus.NO_RECORDS && (response!=null)) {
@@ -390,7 +429,7 @@ public class OrderStatusPollingService {
                 }
                 if(dhan && pushed==null) {
                     if(tradeStatus==TradeStatus.NO_RECORDS)budget.failures++;else budget.failures=0;
-                    budget.nextRest=monitorClock.instant().plusMillis(budget.failures>=Math.max(1,dhanUnavailableLimit) ? Math.max(1000,dhanBackoffMs) : Math.max(1000,dhanRestDelayMs));
+                    budget.nextRest=monitorClock.instant().plusMillis(budget.failures>=Math.max(1,dhanUnavailableLimit) ? Math.max(1000,dhanBackoffMs) : Math.max(200,orderPollDelayMs));
                     if(budget.failures>=Math.max(1,dhanUnavailableLimit))requireDhanAttention(currentTrade,"Dhan order status repeatedly unavailable; switched to slower REST reconciliation",false,false);
                 }
                 if(dhan && finalDhanAttempt && tradeStatus!=TradeStatus.FULLY_EXECUTED && tradeStatus!=TradeStatus.REJECTED) {
@@ -570,20 +609,28 @@ public class OrderStatusPollingService {
         };
         Consumer<JSONObject> guarded=pushed->{
             Runnable work=()->{synchronized(reconciliationLock){reconciliation.accept(pushed);}};
-            if(trade.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)tradeExecutionService.reconcileEntryUnderLock(trade.getId(),work);
-            else work.run();
+            tradeExecutionService.reconcileEntryUnderLock(trade.getId(),work);
         };
-        var initialContext=resolveBrokerContext(trade.getBrokerCredentialsId(),trade.getAppUserId());
-        boolean dhan=initialContext!=null && "Dhan".equalsIgnoreCase(initialContext.getBrokerName());
-        long delay=Math.max(orderPollDelayMs,200L);
+        boolean dhan="Dhan".equalsIgnoreCase(initialContext.getBrokerName());
+        boolean socket=dhan || "Sharekhan".equalsIgnoreCase(initialContext.getBrokerName());
+        pushedReconciliations.put(tradeKey,guarded);
         if(dhan) {
-            pushedReconciliations.put(tradeKey,guarded);dhanCredentials.put(tradeKey,trade.getBrokerCredentialsId());
-            delay=Math.max(dhanRestDelayMs,1000L);
-            boolean suspended=("DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED".equals(trade.getReason())) || "DHAN_SESSION_RECONCILIATION_REQUIRED".equals(trade.getReason())
-                || ("DHAN_ORDER_RECONCILIATION_REQUIRED".equals(trade.getReason()) && !monitorClock.instant().isBefore(dhanDeadline(trade)));
+            dhanCredentials.put(tradeKey,trade.getBrokerCredentialsId());
+            dhanRoutes.computeIfAbsent(new Route(registration.credential(),registration.orderId()),ignored->ConcurrentHashMap.newKeySet()).add(tradeKey);
+            boolean suspended="DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED".equals(trade.getReason()) || "DHAN_SESSION_RECONCILIATION_REQUIRED".equals(trade.getReason());
             if(suspended){budget.finalAttempted=true;return;}
         }
-        activePolls.put(tradeKey,executor.scheduleWithFixedDelay(()->guarded.accept(null),250L,delay,TimeUnit.MILLISECONDS));
+        // Resting broker targets are owned by the order stream. Reconnect/startup catch-up is event driven.
+        if(socket && trade.getStatus()==TriggeredTradeStatus.TARGET_ORDER_PLACED)return;
+        long delay=trade.getStatus()==TriggeredTradeStatus.TARGET_ORDER_PLACED ? Math.max(60000,orderPollDelayMs) : Math.max(orderPollDelayMs,200L);
+        activePolls.put(tradeKey,executor.scheduleWithFixedDelay(()->{
+            if(registrations.get(tradeKey)!=registration)return;
+            // The chase already obtains an authoritative snapshot on every iteration.
+            if(tradeExecutionService.isEntryOrderChaseActive(trade.getId()) || tradeExecutionService.isExitOrderChaseActive(trade.getId()))return;
+            guarded.accept(null);
+            // An inactive exit chase gets one final reconciliation; never poll it indefinitely.
+            if(socket && registrations.get(tradeKey)==registration && registration.status()!=TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)stopTimer(tradeKey);
+        },250L,delay,TimeUnit.MILLISECONDS));
     }
 
     static boolean isExitOrder(TriggeredTradeSetupEntity trade) {

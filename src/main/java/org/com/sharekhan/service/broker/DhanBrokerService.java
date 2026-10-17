@@ -29,6 +29,23 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
     private record Session(String clientId, String token, boolean entryEnabled) {
         @Override public String toString() { return "DhanSession[redacted]"; }
     }
+    // One-use metadata from the same worker's preceding status GET, never a stream payload.
+    private record ModificationSnapshot(Long credential, Long trade, String order, String client,
+                                        String token, long atNanos, String row) {
+        @Override public String toString(){return "ModificationSnapshot[redacted]";}
+    }
+    private final ThreadLocal<ModificationSnapshot> modificationSnapshot=new ThreadLocal<>();
+    private java.util.function.LongSupplier snapshotTicker=System::nanoTime;
+    private JSONObject modificationOrder(Session session,TriggeredTradeSetupEntity trade,String orderId) throws Exception {
+        var snapshot=modificationSnapshot.get();modificationSnapshot.remove();
+        if(snapshot!=null && Objects.equals(snapshot.credential(),trade.getBrokerCredentialsId())
+            && Objects.equals(snapshot.trade(),trade.getId()) && Objects.equals(snapshot.order(),orderId)
+            && snapshot.client().equals(session.clientId()) && snapshot.token().equals(session.token())
+            && snapshotTicker.getAsLong()-snapshot.atNanos()>=0
+            && snapshotTicker.getAsLong()-snapshot.atNanos()<java.util.concurrent.TimeUnit.SECONDS.toNanos(2))
+            return new JSONObject(snapshot.row());
+        return lookup(session,orderId);
+    }
     @Override public Broker getBroker() { return Broker.DHAN; }
     @Override public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double price) {
         return place(trade,context,price,null,"BUY");
@@ -93,7 +110,7 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
     @Override public OrderPlacementResult modifyEntryOrder(TriggeredTradeSetupEntity trade, BrokerContext context, String orderId, double newPrice) {
         try {
             Session session = session(trade,context);
-            JSONObject current = lookup(session,orderId);
+            JSONObject current = modificationOrder(session,trade,orderId);
             var instrument = instruments.resolve(trade);
             validateOrder(current,trade,instrument,orderId);
             String status = current.getString("orderStatus");
@@ -116,6 +133,7 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
         } catch (Exception ignored) { return rejected("Dhan modification unconfirmed; reconcile the existing order",newPrice); }
     }
     @Override public void cancelEntryOrder(TriggeredTradeSetupEntity trade, BrokerContext context, String orderId) {
+        modificationSnapshot.remove();
         try {
             Session session = session(trade,context);
             JSONObject current = lookup(session,orderId);
@@ -126,6 +144,7 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
         } catch (Exception ignored) { throw new IllegalStateException("Dhan cancellation unconfirmed; reconcile existing order before replacement"); }
     }
     @Override public JSONObject fetchOrderStatus(TriggeredTradeSetupEntity trade, BrokerContext context, String orderId) {
+        modificationSnapshot.remove();
         try {
             Session session = session(trade,context);
             JSONObject row = lookup(session,orderId);
@@ -133,7 +152,10 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
             if (!session.clientId().equals(row.getString("dhanClientId"))) return null;
             if (!DhanInstrumentResolver.segment(trade.getExchange()).equals(row.getString("exchangeSegment"))
                     || !(orderId.equals(trade.getExitOrderId()) ? "SELL" : "BUY").equals(row.getString("transactionType"))) return null;
-            return adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
+            JSONObject response=adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
+            if(response!=null)modificationSnapshot.set(new ModificationSnapshot(trade.getBrokerCredentialsId(),trade.getId(),
+                orderId,session.clientId(),session.token(),snapshotTicker.getAsLong(),row.toString()));
+            return response;
         } catch (Exception ignored) { return null; }
     }
     @Override public JSONObject normalizeOrderUpdate(TriggeredTradeSetupEntity trade, BrokerContext context, String orderId, JSONObject row) {

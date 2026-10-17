@@ -85,15 +85,24 @@ class DhanOrderUpdateServiceTest {
         old.onText(sockets.getFirst(),alert("TRADED",10,0,"2026-10-19 10:00:00"),true);
         verify(events,never()).publishEvent(isA(DhanOrderUpdateEvent.class));
         when(tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",7L)).thenReturn(Optional.of(AccessTokenEntity.builder().token("rotated-token").expiry(now.plusSeconds(7200)).build()));
-        service.refresh();verify(connector,times(3)).connect(any());verify(sockets.get(1),atLeastOnce()).abort();
-        when(tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",7L)).thenReturn(Optional.empty());service.refresh();verify(sockets.get(2),atLeastOnce()).abort();
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(60),ZoneOffset.UTC));service.refresh();verify(connector,times(3)).connect(any());verify(sockets.get(1),atLeastOnce()).abort();
+        when(tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",7L)).thenReturn(Optional.empty());ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(120),ZoneOffset.UTC));service.refresh();verify(sockets.get(2),atLeastOnce()).abort();
     }
     @Test void pendingExitKeepsStreamWhenNewTradingDisabledAndHeartbeatDetectsDeadConnection() {
         var broker=brokers.findAllByBrokerName("Dhan").getFirst();broker.setTradingEnabled(false);
         service.refresh();verifyNoInteractions(connector);
         when(trades.findByStatusIn(any())).thenReturn(List.of(TriggeredTradeSetupEntity.builder().brokerCredentialsId(7L).build()));
-        service.refresh();verify(connector,times(1)).connect(any());
+        ReflectionTestUtils.setField(service,"configurationDirty",true);service.refresh();verify(connector,times(1)).connect(any());
         ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(35),ZoneOffset.UTC));service.refresh();verify(sockets.getFirst()).sendPing(any());
         ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(100),ZoneOffset.UTC));service.refresh();verify(sockets.getFirst(),atLeastOnce()).abort();
     }
+    @Test void heartbeatDoesNotScanDatabaseAndQueueGapReconnectsForCatchup() {
+        service.refresh();clearInvocations(brokers,trades,tokens,crypto);
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(35),ZoneOffset.UTC));service.refresh();
+        verifyNoInteractions(brokers,trades,tokens,crypto);verify(sockets.getFirst()).sendPing(any());
+        ReflectionTestUtils.setField(service,"deliveryGap",true);service.refresh();verify(sockets.getFirst(),atLeastOnce()).abort();
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(40),ZoneOffset.UTC));service.refresh();
+        verify(connector,times(2)).connect(any());verifyNoInteractions(brokers,trades,tokens,crypto);
+    }
+
 }

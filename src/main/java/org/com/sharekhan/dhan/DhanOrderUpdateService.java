@@ -34,6 +34,10 @@ public class DhanOrderUpdateService {
     @Value("${app.dhan.order-updates.enabled:true}") private boolean enabled=true;
     private Clock clock=Clock.systemUTC();
     private volatile boolean stopped;
+    private volatile boolean deliveryGap;
+    private volatile boolean configurationDirty=true;
+    private Instant nextConfigurationRefresh=Instant.EPOCH;
+    private final java.util.concurrent.atomic.AtomicBoolean refreshQueued=new java.util.concurrent.atomic.AtomicBoolean();
     private final Map<Long,Session> sessions=new ConcurrentHashMap<>();
     private final ExecutorService delivery=new ThreadPoolExecutor(2,2,0,TimeUnit.MILLISECONDS,
         new ArrayBlockingQueue<>(256),r->{var t=new Thread(r,"dhan-order-updates");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
@@ -48,11 +52,28 @@ public class DhanOrderUpdateService {
     }
     private record Version(Instant time,long filled,String status) {}
 
-    @EventListener public void onOrderPlaced(OrderPlacedEvent ignored) { enqueue(this::refresh); }
+    @EventListener public void onOrderPlaced(OrderPlacedEvent ignored) {
+        configurationDirty=true;
+        if(refreshQueued.compareAndSet(false,true))enqueue(()->{
+            try {refresh();} finally {refreshQueued.set(false);}
+        });
+    }
     @Scheduled(initialDelayString="${app.dhan.order-updates.scan-ms:5000}",fixedDelayString="${app.dhan.order-updates.scan-ms:5000}")
     public synchronized void refresh() {
         if (stopped) return;
         if (!enabled) {sessions.values().forEach(this::close);sessions.clear();return;}
+        // Heartbeats/reconnects use memory only. Credentials/demand need a DB scan once a minute.
+        if(deliveryGap) {
+            deliveryGap=false;
+            sessions.values().forEach(session->failed(session,session.generation));
+        }
+        for(var entry:new ArrayList<>(sessions.entrySet())) {
+            if(!entry.getValue().expiry.isAfter(clock.instant())) {
+                sessions.remove(entry.getKey(),entry.getValue());close(entry.getValue());configurationDirty=true;
+            } else connectIfDue(entry.getValue());
+        }
+        if(!configurationDirty && clock.instant().isBefore(nextConfigurationRefresh))return;
+        configurationDirty=false;nextConfigurationRefresh=clock.instant().plusSeconds(60);
         Set<Long> needed=new HashSet<>();
         for (var trade:trades.findByStatusIn(TRACKED)) if(trade.getBrokerCredentialsId()!=null) needed.add(trade.getBrokerCredentialsId());
         Set<Long> retained=new HashSet<>();
@@ -120,7 +141,7 @@ public class DhanOrderUpdateService {
             if(socket!=null)socket.abort();
             session.failures=Math.min(session.failures+1,6);
             session.retryAt=clock.instant().plusSeconds(Math.min(60,1L<<session.failures));
-            log.warn("Dhan order stream disconnected for credential {}; reconnect backoff {} seconds; REST fallback remains available",session.id,Math.min(60,1L<<session.failures));
+            log.warn("Dhan order stream disconnected for credential {}; reconnect backoff {} seconds; reconnect will reconcile tracked orders",session.id,Math.min(60,1L<<session.failures));
         }
     }
     private void close(Session session) {
@@ -135,8 +156,11 @@ public class DhanOrderUpdateService {
     }
     private void enqueue(Runnable work) {
         if(stopped)return;
-        try {delivery.execute(()->{try{work.run();}catch(Exception ignored){/* REST reconciles any lost event. */}});}
-        catch(RejectedExecutionException ignored){/* Bounded queue: recovery uses REST rather than unbounded buffering. */}
+        try {delivery.execute(()->{try{work.run();}catch(Exception ignored){deliveryGap=true;}});}
+        catch(RejectedExecutionException ignored){
+            // A dropped terminal update must trigger reconnect + REST catch-up.
+            deliveryGap=true;refreshQueued.set(false);
+        }
     }
     private class Listener implements WebSocket.Listener {
         final Session session;final long generation;final StringBuilder fragment=new StringBuilder();

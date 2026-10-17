@@ -80,7 +80,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Fully Executed"));
         tick.run();
         verify(broker, times(3)).modifyEntryOrder(eq(trade), any(), eq("211652102"), anyDouble());
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         assertThat(trade.getExitOrderId()).isEqualTo("211652102");
         assertThat(trade.getExitReason()).isEqualTo("STOP_LOSS_HIT");
         verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
@@ -108,7 +108,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         verify(broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
         at(start.plusSeconds(300));
         tick.run();
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
     }
 
@@ -118,7 +118,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         clearInvocations(broker);
         when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Cancelled"));
         tick.run();
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
         verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
     }
@@ -185,7 +185,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         verify(broker, times(2)).modifyEntryOrder(eq(trade), any(), eq("211652102"), prices.capture());
         assertThat(prices.getAllValues()).containsExactly(42.0, 41.8);
         assertThat(trade.getExitReason()).isEqualTo("INTRADAY_CLOSE");
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
         service.advanceStagedTargetStopsAfterTargetExit(trade);
         verify(trades, never()).findByTargetOrderGroupIdAndStatusIn(any(), any());
@@ -225,7 +225,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
                 .thenReturn(OrderPlacementResult.builder().success(false).build());
         service.startIntradayExitChase(trade);
         tick.run();
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(notifications).sendTradeMessageForUser(eq(1L), anyString(), contains("did not accept"));
         assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_ORDER_PLACED);
         assertThat(trade.getExitedAt()).isNull();
@@ -236,7 +236,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         when(broker.fetchOrderStatus(any(), any(), anyString())).thenReturn(history("Cancelled"));
         service.startIntradayExitChase(trade);
         tick.run();
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(notifications).sendTradeMessageForUser(eq(1L), anyString(), contains("REJECTED"));
         verify(broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
         verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
@@ -247,7 +247,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         service.startIntradayExitChase(trade);
         at(start.plusSeconds(300));
         tick.run();
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(notifications).sendTradeMessageForUser(eq(1L), anyString(), contains("deadline"));
         assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_ORDER_PLACED);
         assertThat(trade.getExitedAt()).isNull();
@@ -259,7 +259,7 @@ class TradeExecutionServiceIntradayExitChaseTest {
         service.startIntradayExitChase(trade);
         trade.setExitOrderId("replacement");
         tick.run();
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(broker, never()).fetchOrderStatus(any(), any(), anyString());
     }
 
@@ -323,10 +323,20 @@ class TradeExecutionServiceIntradayExitChaseTest {
         service.startIntradayExitChase(trade);
         at(start);
         tick.run();
-        verify(future).cancel(true);
+        verify(future).cancel(false);
         verify(notifications).sendTradeMessageForUser(eq(1L), anyString(), contains("deadline"));
         verify(broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
     }
 
     private interface TestBroker extends ModifiableEntryBrokerService, OrderStatusBrokerService { }
+    @Test void ordinaryTargetChaseAlsoWaitsOnUnknownStatusAndHasFiveMinuteBudget() {
+        trade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);trade.setExitReason("EXIT_CHASE");
+        ReflectionTestUtils.invokeMethod(service,"scheduleExitOrderChase",trade);
+        when(broker.fetchOrderStatus(any(),any(),anyString())).thenReturn(null);
+        tick.run();verify(broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        at(start.plusSeconds(300));tick.run();verify(future).cancel(false);
+        verify(notifications).sendTradeMessageForUser(eq(1L),anyString(),contains("deadline"));
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+    }
+
 }
