@@ -35,7 +35,7 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID,
             "Stocks 9:25 Mover Breakout",
-            "At 9:25 selects the top 5 gainers from the F&O stock universe. Buys cash shares on the same bullish opening-range or VWAP-reclaim breakout, sized by investment per stock.",
+            "At 9:25 selects the top 5 gainers from the F&O stock universe. Buys cash shares on a qualified opening-range or VWAP-reclaim breakout with a bullish completed five-minute signal candle, sized by investment per stock.",
             "");
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
     private static final int TOP_COUNT = 5;
@@ -116,7 +116,7 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             }
             evaluated++;
             support.warmUpStockFeed(selection.spot());
-            Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualify(selection, now);
+            Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualifyWithDirectionalCandle(selection, now);
             if (!qualification.qualified()) {
                 support.auditStrategy(request, METADATA, selection.symbol(),
                         "STRATEGY_EVALUATION", "REJECTED", qualification.reason(), null, null);

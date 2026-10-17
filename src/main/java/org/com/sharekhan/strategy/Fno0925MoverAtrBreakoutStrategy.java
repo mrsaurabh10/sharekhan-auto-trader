@@ -8,8 +8,10 @@ import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.service.MStockGainerLoserService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -36,7 +38,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID,
             "F&O 9:25 Mover Breakout",
-            "At 9:25 chooses top 5 F&O gainers when gainers outnumber losers, otherwise top 5 losers. It enters ATM CE/PE only on a qualified morning opening-range breakout or VWAP-reclaim base breakout.",
+            "At 9:25 chooses top 5 F&O gainers when gainers outnumber losers, otherwise top 5 losers. It enters ATM CE/PE only on a qualified morning opening-range breakout or VWAP-reclaim base breakout. CE requires a bullish completed five-minute signal candle; PE requires a bearish one.",
             "AUTO");
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
     private static final int TOP_COUNT = 5;
@@ -46,6 +48,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private static final double TARGET2_ATR_MULTIPLIER = 3d;
     private static final double TARGET3_ATR_MULTIPLIER = 4d;
 
+    private final Clock clock;
     private final StrategySupport support;
     private final ScriptMasterRepository scriptMasterRepository;
     private final MStockGainerLoserService gainerLoserService;
@@ -53,10 +56,19 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private final Map<LocalDate, List<Fno925Candidate>> selectionsByDay = new ConcurrentHashMap<>();
     private final Map<RunKey, Set<String>> submittedSymbolsByRun = new ConcurrentHashMap<>();
 
+    @Autowired
     public Fno0925MoverAtrBreakoutStrategy(StrategySupport support,
                                             ScriptMasterRepository scriptMasterRepository,
                                             MStockGainerLoserService gainerLoserService,
                                             Fno925EntryQualificationService entryQualificationService) {
+        this(support, scriptMasterRepository, gainerLoserService, entryQualificationService,
+                Clock.system(StrategySupport.MARKET_ZONE));
+    }
+
+    Fno0925MoverAtrBreakoutStrategy(StrategySupport support, ScriptMasterRepository scriptMasterRepository,
+                                  MStockGainerLoserService gainerLoserService,
+                                  Fno925EntryQualificationService entryQualificationService, Clock clock) {
+        this.clock = clock;
         this.support = support;
         this.scriptMasterRepository = scriptMasterRepository;
         this.gainerLoserService = gainerLoserService;
@@ -70,7 +82,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
 
     @Override
     public StrategyApplyResponse apply(StrategyApplyRequest request) {
-        LocalDateTime now = LocalDateTime.now(StrategySupport.MARKET_ZONE);
+        LocalDateTime now = LocalDateTime.now(clock);
         String symbol = request.getSymbol() == null ? "FNO_UNIVERSE" : request.getSymbol().trim().toUpperCase(Locale.ROOT);
         if (now.toLocalTime().isBefore(SELECTION_TIME)) {
             return support.waiting(METADATA, symbol, "Waiting for the 09:25 F&O mover snapshot.");
@@ -104,7 +116,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             }
             evaluated++;
             support.warmUpPreferredFnoFeeds(request, metadataFor(selection.optionType()), selection.symbol(), selection.spot());
-            Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualify(selection, now);
+            Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualifyWithDirectionalCandle(selection, now);
             if (!qualification.qualified()) {
                 support.auditStrategy(request, metadataFor(selection.optionType()), selection.symbol(),
                         "STRATEGY_EVALUATION", "REJECTED", qualification.reason(), null, null);

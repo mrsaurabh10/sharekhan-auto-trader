@@ -2,6 +2,9 @@ package org.com.sharekhan.strategy;
 
 import org.com.sharekhan.entity.ScriptMasterEntity;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Answers;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -166,6 +169,123 @@ class Fno925EntryQualificationServiceTest {
         assertThat(hasRetest).isFalse();
         assertThat(tooExtended).isTrue();
         assertThat(nearSupport).isTrue();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"CE,MORNING_ORB", "PE,MORNING_ORB", "CE,VWAP_RECLAIM_BASE_BREAKOUT", "PE,VWAP_RECLAIM_BASE_BREAKOUT"})
+    void moverAcceptsMatchingDirectionForBothEntrySetups(String optionType, String setup) {
+        LocalDate day = LocalDate.of(2026, 7, 17);
+        List<StrategyCandle> candles = directionalFixture(day, optionType, setup, false);
+        Fno925EntryQualificationService service = directionalService(candles);
+        LocalDateTime now = day.atTime(setup.equals("MORNING_ORB") ? LocalTime.of(9, 40) : LocalTime.of(9, 50));
+
+        var result = service.qualifyWithDirectionalCandle(new Fno925Candidate("TEST", ScriptMasterEntity.builder().build(), optionType), now);
+
+        assertThat(result.qualified()).isTrue();
+        assertThat(result.signal().setup()).isEqualTo(setup);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"CE,MORNING_ORB", "PE,MORNING_ORB", "CE,VWAP_RECLAIM_BASE_BREAKOUT", "PE,VWAP_RECLAIM_BASE_BREAKOUT"})
+    void moverRejectsOppositeDirectionWithoutChangingLegacyQualification(String optionType, String setup) {
+        LocalDate day = LocalDate.of(2026, 7, 17);
+        List<StrategyCandle> candles = directionalFixture(day, optionType, setup, true);
+        Fno925EntryQualificationService service = directionalService(candles);
+        LocalDateTime now = day.atTime(setup.equals("MORNING_ORB") ? LocalTime.of(9, 40) : LocalTime.of(9, 50));
+        Fno925Candidate candidate = new Fno925Candidate("TEST", ScriptMasterEntity.builder().build(), optionType);
+
+        assertThat(service.qualify(candidate, now).qualified()).isTrue();
+        var rejected = service.qualifyWithDirectionalCandle(candidate, now);
+
+        assertThat(rejected.qualified()).isFalse();
+        assertThat(rejected.reason()).contains("entry requires a "
+                + (optionType.equals("CE") ? "bullish" : "bearish") + " completed five-minute signal candle");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CE", "PE"})
+    void moverRejectsFlatCompletedSignalCandle(String optionType) {
+        LocalDate day = LocalDate.of(2026, 7, 17);
+        List<StrategyCandle> candles = directionalFixture(day, optionType, "MORNING_ORB", false);
+        StrategyCandle last = candles.get(candles.size() - 1);
+        candles.set(candles.size() - 1, new StrategyCandle(day, last.time(), last.close(), last.high(), last.low(), last.close(), 250L));
+
+        var result = directionalService(candles).qualifyWithDirectionalCandle(
+                new Fno925Candidate("TEST", ScriptMasterEntity.builder().build(), optionType), day.atTime(9, 40));
+
+        assertThat(result.qualified()).isFalse();
+        assertThat(result.reason()).contains("completed five-minute signal candle");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CE", "PE"})
+    void moverUsesCompletedSignalDirectionAndIgnoresOppositeFormingCandle(String optionType) {
+        LocalDate day = LocalDate.of(2026, 7, 17);
+        List<StrategyCandle> candles = directionalFixture(day, optionType, "MORNING_ORB", false);
+        StrategyCandle forming = new StrategyCandle(day, LocalTime.of(9, 40), 109d, 110d, 106d, 107d, 250L);
+        candles.add(optionType.equals("CE") ? forming : mirror(forming));
+
+        var result = directionalService(candles).qualifyWithDirectionalCandle(
+                new Fno925Candidate("TEST", ScriptMasterEntity.builder().build(), optionType), day.atTime(9, 42));
+
+        assertThat(result.qualified()).isTrue();
+        assertThat(result.signal().breakoutCandle().time()).isEqualTo(LocalTime.of(9, 35));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CE", "PE"})
+    void laterMatchingCandleCanQualifyAfterAnOppositeDirectionWasRejected(String optionType) {
+        LocalDate day = LocalDate.of(2026, 7, 17);
+        List<StrategyCandle> candles = directionalFixture(day, optionType, "MORNING_ORB", true);
+        Fno925EntryQualificationService service = directionalService(candles);
+        Fno925Candidate candidate = new Fno925Candidate("TEST", ScriptMasterEntity.builder().build(), optionType);
+
+        assertThat(service.qualifyWithDirectionalCandle(candidate, day.atTime(9, 40)).qualified()).isFalse();
+        StrategyCandle next = new StrategyCandle(day, LocalTime.of(9, 40), 107d, 109d, 106d, 108.5d, 250L);
+        candles.add(optionType.equals("CE") ? next : mirror(next));
+
+        var result = service.qualifyWithDirectionalCandle(candidate, day.atTime(9, 45));
+        assertThat(result.qualified()).isTrue();
+        assertThat(result.signal().breakoutCandle().time()).isEqualTo(LocalTime.of(9, 40));
+    }
+
+    private Fno925EntryQualificationService directionalService(List<StrategyCandle> candles) {
+        StrategySupport support = mock(StrategySupport.class);
+        when(support.roundPrice(anyDouble())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(76)))
+                .thenReturn(new CandleLoad(candles, true, null));
+        Fno925EntryQualificationService service = configuredService(support);
+        // Match the existing reclaim fixture; isolate direction from unrelated extension/support checks.
+        ReflectionTestUtils.setField(service, "baseBreakMinAtr", 0.04d);
+        ReflectionTestUtils.setField(service, "sessionExtremeBufferAtr", 0d);
+        return service;
+    }
+
+    private List<StrategyCandle> directionalFixture(LocalDate day, String optionType, String setup, boolean opposite) {
+        List<StrategyCandle> candles = historicalCandles(day);
+        if (setup.equals("MORNING_ORB")) {
+            candles.add(candle(LocalTime.of(9, 15), 100d, 105d, 95d, 102d));
+            candles.add(candle(LocalTime.of(9, 20), 102d, 106d, 98d, 104d));
+            candles.add(candle(LocalTime.of(9, 25), 104d, 105d, 101d, 102d));
+            candles.add(candle(LocalTime.of(9, 30), 102d, 104d, 100d, 103d));
+            candles.add(opposite ? new StrategyCandle(day, LocalTime.of(9, 35), 109d, 109.5d, 106.5d, 107d, 250L)
+                    : new StrategyCandle(day, LocalTime.of(9, 35), 103d, 108d, 102d, 107d, 250L));
+        } else {
+            candles.add(candle(LocalTime.of(9, 15), 100d, 105d, 95d, 100d));
+            candles.add(candle(LocalTime.of(9, 20), 100d, 104d, 96d, 100d));
+            candles.add(candle(LocalTime.of(9, 25), 98d, 100d, 97d, 99d));
+            candles.add(candle(LocalTime.of(9, 30), 100d, 102d, 99d, 101d));
+            candles.add(candle(LocalTime.of(9, 35), 101d, 103d, 100d, 102d));
+            candles.add(candle(LocalTime.of(9, 40), 102d, 103d, 101d, 102.5d));
+            candles.add(opposite ? new StrategyCandle(day, LocalTime.of(9, 45), 105d, 105.2d, 103.9d, 104d, 250L)
+                    : new StrategyCandle(day, LocalTime.of(9, 45), 102.5d, 104.5d, 102d, 104d, 250L));
+        }
+        return optionType.equals("CE") ? candles : new ArrayList<>(candles.stream().map(this::mirror).toList());
+    }
+
+    private StrategyCandle mirror(StrategyCandle candle) {
+        return new StrategyCandle(candle.date(), candle.time(), 200d - candle.open(), 200d - candle.low(),
+                200d - candle.high(), 200d - candle.close(), candle.volume());
     }
 
     private Fno925EntryQualificationService configuredService(StrategySupport support) {

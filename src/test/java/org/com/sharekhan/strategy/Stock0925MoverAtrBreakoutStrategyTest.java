@@ -42,7 +42,7 @@ class Stock0925MoverAtrBreakoutStrategyTest {
         when(scripts.findDistinctOptionUnderlyingSymbols()).thenReturn(List.of("ABC"));
         when(movers.topGainers()).thenReturn(List.of(new MStockGainerLoserService.Mover("ABC",750,5)));
         when(support.resolveSpotScript("ABC")).thenReturn(spot);
-        when(qualification.qualify(any(), any())).thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal()));
+        when(qualification.qualifyWithDirectionalCandle(any(), any())).thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal()));
         when(support.executeTriggeredTrade(any())).thenReturn(TriggerTradeRequestEntity.builder().id(10L).build());
         when(support.waiting(any(), any(), anyString())).thenAnswer(c -> StrategyApplyResponse.builder().status("waiting").message(c.getArgument(2)).build());
     }
@@ -69,7 +69,7 @@ class Stock0925MoverAtrBreakoutStrategyTest {
         setup();
         {
             assertThat(strategy.apply(request("749.99")).getMessage()).contains("below the price of one share");
-            when(qualification.qualify(any(),any())).thenReturn(Fno925EntryQualificationService.Qualification.waiting("no breakout"));
+            when(qualification.qualifyWithDirectionalCandle(any(),any())).thenReturn(Fno925EntryQualificationService.Qualification.waiting("no breakout"));
             assertThat(strategy.apply(request("10000")).getMessage()).contains("no breakout");
             verify(support, never()).executeTriggeredTrade(any());
         }
@@ -80,6 +80,23 @@ class Stock0925MoverAtrBreakoutStrategyTest {
             strategy.apply(request("10000"));
             verify(support, never()).executeTriggeredTrade(any()); verifyNoInteractions(qualification);
         }
+    }
+    @Test void directionRejectionIsAuditedAndCanRetryOnALaterMatchingCandle() {
+        setup();
+        String reason = "entry requires a bullish completed five-minute signal candle (close > open)";
+        when(qualification.qualifyWithDirectionalCandle(any(), any()))
+                .thenReturn(Fno925EntryQualificationService.Qualification.waiting(reason))
+                .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal()));
+
+        assertThat(strategy.apply(request("10000")).getMessage()).contains(reason);
+        verify(support, never()).executeTriggeredTrade(any());
+        verify(support).auditStrategy(any(), any(), eq("ABC"), eq("STRATEGY_EVALUATION"),
+                eq("REJECTED"), eq(reason), isNull(), isNull());
+
+        assertThat(strategy.apply(request("10000")).getStatus()).isEqualTo("triggered");
+        verify(qualification, times(2)).qualifyWithDirectionalCandle(any(), eq(now));
+        verify(qualification, never()).qualify(any(), any());
+        verify(support, times(1)).executeTriggeredTrade(any());
     }
     @Test void snapshotChoosesFivePositiveFnoGainersAndIgnoresDuplicatesAndOtherStocks() {
         setup(); when(scripts.findDistinctOptionUnderlyingSymbols()).thenReturn(List.of("ABC","B","C","D","E","F","DOWN"));
