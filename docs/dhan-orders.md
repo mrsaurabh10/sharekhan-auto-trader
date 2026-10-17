@@ -14,7 +14,8 @@ No live orders or account configuration changes are part of automated tests.
   application's existing intraday setting. Quantities are shares/units already;
   the adapter does not multiply them by lot size again.
 - Entry/exit modification of the same broker order, cancellation requests and
-  order polling through the existing BrokerService interfaces. A cancel request
+  order polling through the existing BrokerService interfaces, with Dhan live
+  order updates and bounded REST recovery described in `dhan-order-updates.md`. A cancel request
   acknowledgement is not confirmation of cancellation or absence of fills.
 - Existing target/SL and chase logic remains in the application. Dhan acknowledgements
   never mark trades executed: polling requires full filled quantity, zero remaining
@@ -68,9 +69,11 @@ cancelled or expired orders. A confirmed unsuccessful entry needs a fresh reques
 replacement exits/overnight target rearming for the same trade require operator
 reconciliation before a new submission generation can be introduced. Do not erase
 a journal row merely because an API lookup failed or because a target expired.
-Partly filled inactive exits remain pending with their original order ID; reconcile
-fills and the remaining position manually rather than selling the original full
-quantity again. Existing bounded chase notifications can report incomplete exits.
+Partly filled inactive exits retain their original order ID and become EXIT_FAILED
+with a reconciliation-required reason and notification attempt. Reconcile fills
+and the remaining position manually before another sell. Periodic status checks
+are bounded as documented in `dhan-order-updates.md`; late stream updates remain
+available. Existing bounded chase notifications can also report incomplete exits.
 These are conservative limits, not guarantees of exactly-once execution across
 manual broker actions or database restoration.
 

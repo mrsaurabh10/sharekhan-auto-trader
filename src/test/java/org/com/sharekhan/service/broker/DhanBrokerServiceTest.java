@@ -133,6 +133,13 @@ class DhanBrokerServiceTest {
         assertThatThrownBy(()->service.cancelEntryOrder(trade,context,"12345")).hasMessageContaining("unconfirmed").hasMessageNotContaining("private-error").hasNoCause();
         verify(client,never()).exchange(eq("POST"),anyString(),anyString(),any());
     }
+    @Test void streamNormalizationChecksCurrentOwnerAccountOrderAndSideWithoutRest() {
+        assertThat(service.normalizeOrderUpdate(trade,context,"12345",order("TRADED",10,0))).isNotNull();
+        assertThat(service.normalizeOrderUpdate(trade,context,"other-order",order("TRADED",10,0))).isNull();
+        assertThat(service.normalizeOrderUpdate(trade,context,"12345",order("TRADED",10,0).put("dhanClientId","foreign-client"))).isNull();
+        assertThat(service.normalizeOrderUpdate(trade,context,"12345",order("TRADED",10,0).put("transactionType","SELL"))).isNull();
+        verifyNoInteractions(client);
+    }
     @Test void partialCancelledExitStaysPendingToPreventOverselling() throws Exception {
         trade.setExitOrderId("12345");
         when(client.exchange(eq("GET"),anyString(),anyString(),isNull())).thenReturn(response(200,order("CANCELLED",3,7).put("transactionType","SELL")));

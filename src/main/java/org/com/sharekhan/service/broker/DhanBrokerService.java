@@ -18,7 +18,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 @Service @RequiredArgsConstructor
-public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService, OrderStatusBrokerService {
+public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService, OrderUpdateBrokerService {
     private static final String CORRELATION_PREFIX = "DHAN-CORR-";
     private final DhanOrderClient client;
     private final DhanInstrumentResolver instruments;
@@ -136,6 +136,17 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
             return adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
         } catch (Exception ignored) { return null; }
     }
+    @Override public JSONObject normalizeOrderUpdate(TriggeredTradeSetupEntity trade, BrokerContext context, String orderId, JSONObject row) {
+        try {
+            Session session=session(trade,context);
+            boolean correlation=orderId.startsWith(CORRELATION_PREFIX);
+            if(!session.clientId().equals(row.getString("dhanClientId"))
+                || (correlation ? !orderId.substring(CORRELATION_PREFIX.length()).equals(row.getString("correlationId")) : !orderId.equals(row.getString("orderId")))
+                || !DhanInstrumentResolver.segment(trade.getExchange()).equals(row.getString("exchangeSegment"))
+                || !(orderId.equals(trade.getExitOrderId()) ? "SELL" : "BUY").equals(row.getString("transactionType"))) return null;
+            return adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
+        } catch(Exception ignored) {return null;}
+    }
     private Session session(TriggeredTradeSetupEntity trade, BrokerContext context) {
         if (trade == null || context == null || context.getBrokerCredentialsId() == null || !"Dhan".equalsIgnoreCase(context.getBrokerName())
                 || !Objects.equals(trade.getBrokerCredentialsId(),context.getBrokerCredentialsId())) throw new IllegalArgumentException();
@@ -205,7 +216,8 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
         if (!Set.of("TRANSIT","PENDING","PART_TRADED","TRADED","REJECTED","CANCELLED","EXPIRED").contains(status)) throw new IllegalArgumentException();
         boolean inactive = Set.of("REJECTED","CANCELLED","EXPIRED").contains(status);
         // A partly filled, inactive exit needs manual remaining-quantity reconciliation. Keep its ID and exposure.
-        if (exit && inactive && filled>0 && remaining>0) inactive=false;
+        boolean partialInactiveExit=exit && inactive && filled>0 && remaining>0;
+        if (partialInactiveExit) inactive=false;
         // Don't let generic filledQty fallbacks confirm malformed or contradictory responses.
         if (filled==quantity && !full) throw new IllegalArgumentException();
         var normalized = new JSONObject().put("orderId",requestedId).put("orderStatus",full ? "Fully Executed" : inactive ? "Rejected" : filled>0 ? "Partly Executed" : "Pending")
@@ -214,7 +226,8 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
             if (!Double.isFinite(average) || average<=0) throw new IllegalArgumentException();
             normalized.put("avgPrice",average);
         }
-        return new JSONObject().put("data",new JSONArray().put(normalized));
+        return new JSONObject().put("data",new JSONArray().put(normalized))
+            .put("requiresExitReconciliation",partialInactiveExit).put("filledQuantity",filled).put("remainingQuantity",remaining);
     }
     private static OrderPlacementResult rejected(String reason,double price) {
         return OrderPlacementResult.builder().success(false).status("Rejected").attemptedPrice(price).rejectionReason(reason).build();
