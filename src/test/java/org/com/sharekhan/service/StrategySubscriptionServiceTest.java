@@ -83,4 +83,29 @@ class StrategySubscriptionServiceTest {
         assertThat(created.getBrokerCredentialsId()).isEqualTo(3L);
     }
 
+    @org.junit.jupiter.api.Test
+    void stockBudgetIsSavedReplayedAndUpdatedWithoutStoppingAfterFirstStock() {
+        var repo = mock(StrategySubscriptionRepository.class);
+        var evaluator = mock(StrategyTemplateService.class);
+        var service = new StrategySubscriptionService(repo, evaluator, mock(NseMarketCalendar.class));
+        when(repo.save(any())).thenAnswer(c -> c.getArgument(0));
+        var request = new StrategyApplyRequest(); request.setTemplateId("STOCK_0925_MOVER_ATR_BREAKOUT");
+        request.setUserId(1L); request.setLots(99); request.setInvestmentPerStock(new java.math.BigDecimal("10000.50"));
+        var saved = service.start(request);
+        assertThat(saved.getSymbol()).isEqualTo("FNO_UNIVERSE");
+        assertThat(saved.getInvestmentPerStock()).isEqualByComparingTo("10000.50");
+        assertThat(saved.getLots()).isNull();
+        when(evaluator.apply(any())).thenReturn(StrategyApplyResponse.builder().status("triggered")
+                .message("One stock entered").tradeRequest(TriggerTradeRequestEntity.builder().id(99L).build()).build());
+        service.evaluate(saved); service.evaluate(saved);
+        verify(evaluator, times(2)).apply(argThat(r -> r.getInvestmentPerStock().compareTo(new java.math.BigDecimal("10000.50")) == 0));
+        assertThat(saved.getStatus()).isEqualTo("ACTIVE"); assertThat(saved.getCompletedAt()).isNull();
+        when(repo.findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(anyList(),anyString(),anyString(),anyLong()))
+                .thenReturn(List.of(saved));
+        request.setInvestmentPerStock(new java.math.BigDecimal("20000"));
+        assertThat(service.start(request).getInvestmentPerStock()).isEqualByComparingTo("20000");
+        request.setInvestmentPerStock(java.math.BigDecimal.ZERO);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.start(request)).isInstanceOf(IllegalArgumentException.class);
+    }
+
 }

@@ -72,6 +72,28 @@ public class IntradayTradeCloser {
         }
     }
 
+    /** Cash closes at 15:30; retry before close for late fills or failed first attempts. */
+    @Scheduled(cron = "0 21,24,27 15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void closeCashIntradayTrades() {
+        for (TriggeredTradeStatus status : List.of(TriggeredTradeStatus.EXECUTED, TriggeredTradeStatus.TARGET_ORDER_PLACED)) {
+            for (TriggeredTradeSetupEntity trade : setupRepository.findByIntradayTrueAndStatus(status)) {
+                if (!"NC".equalsIgnoreCase(trade.getExchange()) && !"BC".equalsIgnoreCase(trade.getExchange())) continue;
+                // BIGTRADEPLUS brackets have their own broker-managed exit lifecycle.
+                if ("BIGTRADEPLUS".equalsIgnoreCase(trade.getBrokerProductType())) continue;
+                try {
+                    if (status == TriggeredTradeStatus.TARGET_ORDER_PLACED) {
+                        tradeExecutionService.startIntradayExitChase(trade);
+                    } else {
+                        Double ltp = ltpCacheService.getLtp(trade.getScripCode());
+                        tradeExecutionService.squareOff(trade, ltp == null ? 0d : ltp, "INTRADAY_CLOSE");
+                    }
+                } catch (Exception e) {
+                    log.error("Cash intraday close failed for trade {}: {}", trade.getId(), e.getMessage(), e);
+                }
+            }
+        }
+    }
+
     /**
      * Removes stale same-day requests, including non-intraday requests and rows with no creation timestamp.
      * Only non-intraday PLACED_PENDING_CONFIRMATION requests and requests created at or after today's 15:30 IST close are preserved.

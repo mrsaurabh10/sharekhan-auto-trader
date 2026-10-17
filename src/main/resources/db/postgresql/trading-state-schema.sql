@@ -6,3 +6,5 @@ ALTER TABLE triggered_trade_setups ADD COLUMN IF NOT EXISTS broker_product_type 
 CREATE INDEX IF NOT EXISTS idx_strategy_subscriptions_user ON strategy_subscriptions(app_user_id);
 CREATE INDEX IF NOT EXISTS idx_trigger_requests_user ON trigger_trade_requests(app_user_id);
 CREATE INDEX IF NOT EXISTS idx_triggered_setups_request ON triggered_trade_setups(trigger_request_id);
+
+ALTER TABLE strategy_subscriptions ADD COLUMN IF NOT EXISTS investment_per_stock NUMERIC(19,2);

@@ -7,6 +7,7 @@ import org.com.sharekhan.dto.StrategyApplyResponse;
 import org.com.sharekhan.entity.StrategySubscriptionEntity;
 import org.com.sharekhan.repository.StrategySubscriptionRepository;
 import org.com.sharekhan.strategy.Fno0925MoverAtrBreakoutStrategy;
+import org.com.sharekhan.strategy.Stock0925MoverAtrBreakoutStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoCeStrategy;
 import org.com.sharekhan.strategy.AtrPreviousDayFnoPeStrategy;
 import org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusStrategy;
@@ -57,6 +58,11 @@ public class StrategySubscriptionService {
                     .findFirst().orElse(null);
             if (matching != null) {
                 StrategySubscriptionEntity found = matching;
+                if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId)) {
+                    found.setInvestmentPerStock(request.getInvestmentPerStock());
+                    found.setLots(null);
+                    found = repository.save(found);
+                }
                 if (!ACTIVE.equalsIgnoreCase(found.getStatus())) {
                     found.setStatus(ACTIVE);
                     found.setLastMessage("Strategy is active and will run daily until cancelled.");
@@ -70,7 +76,8 @@ public class StrategySubscriptionService {
         StrategySubscriptionEntity entity = StrategySubscriptionEntity.builder()
                 .templateId(templateId)
                 .symbol(symbol)
-                .lots(request.getLots())
+                .lots(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId) ? null : request.getLots())
+                .investmentPerStock(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId) ? request.getInvestmentPerStock() : null)
                 .intraday(request.getIntraday() != null ? request.getIntraday() : true)
                 .appUserId(request.getUserId())
                 .brokerCredentialsId(request.getBrokerCredentialsId())
@@ -154,7 +161,8 @@ public class StrategySubscriptionService {
         }
         repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
                 .filter(subscription -> Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID
-                        .equalsIgnoreCase(subscription.getTemplateId()))
+                        .equalsIgnoreCase(subscription.getTemplateId())
+                        || Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(subscription.getTemplateId()))
                 .forEach(this::evaluate);
     }
 
@@ -178,6 +186,7 @@ public class StrategySubscriptionService {
             request.setTemplateId(subscription.getTemplateId());
             request.setSymbol(subscription.getSymbol());
             request.setLots(subscription.getLots());
+            request.setInvestmentPerStock(subscription.getInvestmentPerStock());
             request.setIntraday(subscription.getIntraday());
             request.setUserId(subscription.getAppUserId());
             request.setBrokerCredentialsId(subscription.getBrokerCredentialsId());
@@ -225,6 +234,9 @@ public class StrategySubscriptionService {
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
         }
+        if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
+            Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
+        }
         if (request.getUserId() == null) {
             throw new IllegalArgumentException("userId is required to start a background strategy");
         }
@@ -264,7 +276,8 @@ public class StrategySubscriptionService {
     }
 
     private boolean isAutomaticUniverseTemplate(String templateId) {
-        return isFnoMoverTemplate(templateId)
+        return Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId == null ? "" : templateId.trim())
+                || isFnoMoverTemplate(templateId)
                 || MarketauxSentimentSwingAtrStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
     }
 

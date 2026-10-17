@@ -296,6 +296,11 @@ public class StrategySupport {
         }
     }
 
+    /** Prepares only the cash feed; the stock strategy never needs an option contract. */
+    public void warmUpStockFeed(ScriptMasterEntity spotScript) {
+        tradeExecutionService.warmUpSpotLtp(spotScript, "Stock mover strategy monitoring");
+    }
+
     /**
      * Prepares the exact spot and preferred-expiry ATM option feeds for the
      * manually configured F&O strategies before a breakout is eligible.
@@ -458,6 +463,15 @@ public class StrategySupport {
         LocalDateTime start = day.atStartOfDay();
         return triggeredTradeSetupRepository.countTriggeredForSymbolOnDay(
                 source.trim(), symbol.trim(), appUserId, start, start.plusDays(1)) > 0;
+    }
+
+    /** Includes failed/rejected attempts, so restarts cannot spend a stock's daily budget twice. */
+    public boolean hasStockMoverRequestOn(String source, LocalDate day, Long userId, String symbol) {
+        if (userId == null) return false;
+        ScriptMasterEntity spot = resolveSpotScript(symbol);
+        List<TriggerTradeRequestEntity> rows = triggerTradeRequestRepository.findDailySourceInstrumentRequests(
+                source, spot.getScripCode(), userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay());
+        return (rows != null && !rows.isEmpty()) || hasEntryForSymbolOn(source, day, userId, symbol);
     }
 
     public ScriptMasterEntity resolveSpotScript(String symbol) {
