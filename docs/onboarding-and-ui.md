@@ -195,3 +195,25 @@ The mock browser smoke also checks the one-gutter desktop geometry, compact head
 expandable controls, tab navigation and no horizontal body overflow at 1440, 1024,
 760 and 390px. Desktop/mobile screenshots are reviewed separately. This verifies
 local rendering; it is not a deployment or live-broker check.
+
+## Analytics P&L presentation (2026-10-17)
+
+The user portal displays profit in green with a + sign, losses in red, and zero or
+missing values in neutral grey. P&L badges have accessible profit/loss/break-even
+labels. This covers summary cards, instrument/day/cumulative results, recent closed
+trades and gross/net P&L in the executions table. Costs use a separate neutral amber
+summary card; a cost is not labelled as profit. Numeric columns use right alignment
+and tabular figures. Win-rate bars retain the exact percentage without introducing
+an arbitrary good/bad threshold. Breakdown panels share space equally and stack
+on narrower screens; tables keep their internal horizontal scroll.
+
+The cumulative gross P&L chart has a dashed zero reference and green/red segments
+above/below zero, split at actual zero crossings. Point tooltips show date and full
+INR value. Missing/non-finite data shows a dash in tables and a gap in the chart,
+not an invented zero. Empty data and a single zero point are supported. These are
+presentation changes only; API filters, gross/net calculations and trading logic
+are unchanged. CSS/JS asset versions are bumped together.
+
+The isolated mock browser smoke covers signed colours/labels, zero/null/invalid
+values, alignment, summary cards, win-rate display, chart crossings/gaps/single-point
+and empty states, and mobile overflow, alongside existing strategy/admin checks.

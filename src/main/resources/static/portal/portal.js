@@ -43,9 +43,9 @@
     container.replaceChildren(); container.tabIndex=0; container.setAttribute("role","region"); container.setAttribute("aria-label",container.id.replaceAll(/([A-Z])/g," $1")+" table");
     if (!rows.length) { container.append(node('div', 'Nothing here yet. Your activity will appear here.', 'empty')); return; }
     const t = node('table'); const head = node('thead'); const hr = node('tr');
-    columns.forEach(c => hr.append(node('th', c[0]))); if (action) hr.append(node('th', 'Actions')); head.append(hr); t.append(head);
+    columns.forEach(c => hr.append(node('th', c[0], c[2]))); if (action) hr.append(node('th', 'Actions')); head.append(hr); t.append(head);
     const body = node('tbody');
-    rows.forEach(row => { const tr = node('tr'); columns.forEach(c => { const td = node('td'); const value = typeof c[1] === 'function' ? c[1](row) : row[c[1]]; if (value instanceof Node) td.append(value); else td.textContent = value == null ? '—' : String(value); tr.append(td); }); if (action) { const td = node('td'); action(row, td); tr.append(td); } body.append(tr); });
+    rows.forEach(row => { const tr = node('tr'); columns.forEach(c => { const td = node('td', null, c[2]); const value = typeof c[1] === 'function' ? c[1](row) : row[c[1]]; if (value instanceof Node) td.append(value); else td.textContent = value == null ? '—' : String(value); tr.append(td); }); if (action) { const td = node('td'); action(row, td); tr.append(td); } body.append(tr); });
     t.append(body); container.append(t);
   }
   const orderColumns = [['Instrument', 'symbol'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => badge(row.status || 'PENDING')], ['Source', 'source']];
@@ -194,7 +194,7 @@
       if (!await confirmAction('Cancel this order request?')) return;
       await api('/api/trades/cancel-request/'+row.id,'POST',{}); notify('Request cancelled.'); await loadOrders();
     })));
-    table($('#executions'),[['Instrument','symbol'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Gross P&L',r=>money(r.pnl)],['Costs',r=>money(r.totalTradeCost)],['Net P&L',r=>money(r.effectivePnl)],['Status',r=>badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
+    table($('#executions'),[['Instrument','symbol'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Gross P&L',r=>pnlValue(r.pnl),'numeric'],['Costs',r=>money(r.totalTradeCost),'numeric'],['Net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
       if (['EXECUTED','TARGET_ORDER_PLACED'].includes(row.status)) td.append(button('Close position',async()=>{
         if (!await confirmAction('Submit a live square-off order for this position?')) return;
         await api('/api/trades/square-off/'+row.id,'POST',{}); notify('Square-off requested. Check broker execution status.'); await loadOrders();
@@ -240,31 +240,81 @@
     notify('Order request #'+result.id+' submitted. Status: '+result.status+'.'); state.requestPage=0; await loadOrders();
   });});
   $('#passwordForm').addEventListener('submit',event=>{event.preventDefault(); const f=event.target; busy(f.querySelector('button'),async()=>{await api('/api/user/password','POST',Object.fromEntries(new FormData(f))); f.reset(); location.assign('/login?passwordUpdated');});});
-  const money = value => value == null ? '—' : new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:2}).format(value);
+  function financialNumber(value) {
+    if(value==null || !['number','string'].includes(typeof value) || (typeof value==='string' && !value.trim()))return null;
+    const number=Number(value);return Number.isFinite(number) ? number : null;
+  }
+  const currency=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',minimumFractionDigits:2,maximumFractionDigits:2});
+  const money = value => financialNumber(value)==null ? '—' : currency.format(financialNumber(value));
+  function pnlTone(value) {
+    const number=financialNumber(value);return number==null || number===0 ? 'neutral' : number>0 ? 'positive' : 'negative';
+  }
+  function pnlValue(value) {
+    const number=financialNumber(value), tone=pnlTone(value);
+    const text=(tone==='positive' ? '+' : '')+money(value);
+    const result=node('span',text,'pnl-value '+tone);
+    result.setAttribute('aria-label',number==null ? 'No P&L data' : (tone==='positive' ? 'Profit ' : tone==='negative' ? 'Loss ' : 'Break-even ')+money(Math.abs(number)));
+    return result;
+  }
+  function winRate(value) {
+    const number=financialNumber(value);
+    if(number==null || number<0 || number>100)return node('span','—','muted');
+    const result=node('span',null,'win-rate');result.append(node('span',number.toFixed(1)+'%'));
+    const track=node('span',null,'win-rate-track'),fill=node('span');
+    track.setAttribute('aria-hidden','true');fill.style.width=number+'%';track.append(fill);result.append(track);return result;
+  }
+  function renderEquityChart(days) {
+    const chart=$('#equityChart');chart.replaceChildren();
+    const points=days.map((day,index)=>({day,index,value:financialNumber(day.cumulativeRealizedPnl)})).filter(point=>point.value!=null);
+    if(!points.length){chart.append(node('div','No realized P&L data in this period. Adjust your filters to view performance.','empty'));return;}
+    const values=points.map(point=>point.value),low=Math.min(0,...values),high=Math.max(0,...values),range=high-low||1;
+    const x=index=>100+index*860/Math.max(1,days.length-1),y=value=>230-(value-low)*190/range;
+    const svgNs='http://www.w3.org/2000/svg';
+    function svgNode(tag,attributes){const element=document.createElementNS(svgNs,tag);for(const [key,value] of Object.entries(attributes))element.setAttribute(key,value);return element;}
+    const svg=svgNode('svg',{viewBox:'0 0 1000 280',role:'img','aria-label':'Cumulative gross realized P&L in INR. Green above zero, red below zero. '+points[0].day.date+' to '+points.at(-1).day.date});
+    const axisFormat=new Intl.NumberFormat('en-IN',{notation:'compact',maximumFractionDigits:1});
+    for(let i=0;i<=4;i++) {
+      const value=low+range*i/4;
+      svg.append(svgNode('line',{x1:100,x2:960,y1:y(value),y2:y(value),stroke:'#e0e6ef'}));
+      const label=svgNode('text',{x:8,y:y(value)+4,fill:'#66748b','font-size':12});label.textContent='₹'+axisFormat.format(value);svg.append(label);
+    }
+    svg.append(svgNode('line',{x1:100,x2:960,y1:y(0),y2:y(0),stroke:'#8795aa','stroke-dasharray':'5 5',class:'equity-zero'}));
+    const color=value=>value>0 ? '#087b52' : value<0 ? '#ba3346' : '#66748b';
+    function segment(x1,v1,x2,v2,tone){svg.append(svgNode('line',{x1,y1:y(v1),x2,y2:y(v2),stroke:color(tone),'stroke-width':3,'stroke-linecap':'round',class:'equity-segment'}));}
+    for(let i=1;i<points.length;i++) {
+      const before=points[i-1],after=points[i];
+      if(after.index!==before.index+1)continue; // Do not fabricate values across missing days.
+      if((before.value<0 && after.value>0)||(before.value>0 && after.value<0)) {
+        const crossing=x(before.index)+(x(after.index)-x(before.index))*(-before.value)/(after.value-before.value);
+        segment(x(before.index),before.value,crossing,0,before.value);segment(crossing,0,x(after.index),after.value,after.value);
+      } else segment(x(before.index),before.value,x(after.index),after.value,after.value || before.value);
+    }
+    for(const point of points) {
+      const circle=svgNode('circle',{cx:x(point.index),cy:y(point.value),r:3.5,fill:color(point.value),class:'equity-point'});
+      const title=svgNode('title',{});title.textContent=point.day.date+': '+(point.value>0 ? '+' : '')+money(point.value);circle.append(title);svg.append(circle);
+    }
+    for(const point of [...new Set([points[0],points.at(-1)])]) {
+      const label=svgNode('text',{x:x(point.index),y:266,'text-anchor':point===points[0] ? 'start' : 'end',fill:'#66748b','font-size':12});label.textContent=point.day.date;svg.append(label);
+    }
+    chart.append(svg);
+  }
   async function loadAnalytics() {
     const params=new URLSearchParams([...new FormData($('#analyticsForm'))].filter(([,v])=>v!==''));
     const data=await api('/api/analytics/trades?'+params.toString());
     const summary=data.summary || {}; const cards=$('#analyticsSummary');cards.replaceChildren();
     for (const [label,value,financial] of [['Net realized P&L',summary.effectiveRealizedPnl,true],['Gross realized P&L',summary.realizedPnl,true],['Trading costs',summary.totalTradeCost,true],['Closed trades',summary.totalClosedTrades,false],['Win rate',summary.winRate == null ? '—' : summary.winRate.toFixed(1)+'%',false],['Open positions',summary.openTrades,false]]) {
-      const card=node('div',null,'card');card.append(node('div',label,'stat-label'));
+      const card=node('div',null,'card metric-card');card.append(node('div',label,'stat-label'));
       const amount=node('div',financial ? money(value) : value == null ? '—' : value,'stat-value');
-      if (financial && label!=='Trading costs' && value != null) amount.classList.add(value>=0?'positive':'negative');
+      if(financial && label!=='Trading costs') {
+        const tone=pnlTone(value);amount.replaceChildren(pnlValue(value));card.classList.add('metric-'+tone);
+      }
+      if(label==='Trading costs')card.classList.add('metric-cost');
       card.append(amount);cards.append(card);
     }
-    table($('#symbolAnalytics'),[['Instrument','symbol'],['Closed trades','closedCount'],['Gross P&L',r=>money(r.realizedPnl)],['Win rate',r=>r.winRate == null ? '—':r.winRate.toFixed(1)+'%']],data.bySymbol || []);
-    table($('#dayAnalytics'),[['Date','date'],['Closed trades','closedCount'],['Gross P&L',r=>money(r.realizedPnl)],['Cumulative',r=>money(r.cumulativeRealizedPnl)]],data.byDay || []);
-    table($('#closedTrades'),[['Instrument','symbol'],['Quantity','quantity'],['Entry',r=>money(r.entryPrice)],['Exit',r=>money(r.exitPrice)],['Gross P&L',r=>money(r.pnl)],['Exit reason','exitReason']],data.recentClosedTrades || []);
-    const chart=$('#equityChart');chart.replaceChildren();const days=data.byDay || [];
-    if(!days.length) chart.append(node('div','No closed trades in this period. Adjust your filters to view performance.','empty'));
-    else {
-      const svgNs='http://www.w3.org/2000/svg';const svg=document.createElementNS(svgNs,'svg');svg.setAttribute('viewBox','0 0 1000 280');svg.setAttribute('role','img');svg.setAttribute('aria-label','Cumulative realized profit and loss from '+days[0].date+' to '+days[days.length-1].date);
-      const values=days.map(d=>Number(d.cumulativeRealizedPnl)||0), low=Math.min(0,...values), high=Math.max(0,...values), range=high-low||1;
-      const x=i=>70+i*890/Math.max(1,values.length-1), y=v=>230-(v-low)*190/range;
-      for(let i=0;i<=4;i++){const value=low+range*i/4;const line=document.createElementNS(svgNs,'line');for(const [k,v] of Object.entries({x1:70,x2:960,y1:y(value),y2:y(value),stroke:'#e0e6ef'}))line.setAttribute(k,v);svg.append(line);const text=document.createElementNS(svgNs,'text');text.setAttribute('x','3');text.setAttribute('y',y(value)+4);text.setAttribute('fill','#66748b');text.setAttribute('font-size','11');text.textContent=Math.round(value).toLocaleString('en-IN');svg.append(text);}
-      const path=document.createElementNS(svgNs,'polyline');path.setAttribute('points',values.map((v,i)=>x(i)+','+y(v)).join(' '));path.setAttribute('fill','none');path.setAttribute('stroke','#254de6');path.setAttribute('stroke-width','3');svg.append(path);
-      for(const i of [...new Set([0,values.length-1])]){const dot=document.createElementNS(svgNs,'circle');dot.setAttribute('cx',x(i));dot.setAttribute('cy',y(values[i]));dot.setAttribute('r','4');dot.setAttribute('fill','#254de6');svg.append(dot);const label=document.createElementNS(svgNs,'text');label.setAttribute('x',x(i));label.setAttribute('y','266');label.setAttribute('text-anchor',i===0?'start':'end');label.setAttribute('fill','#66748b');label.setAttribute('font-size','12');label.textContent=days[i].date;svg.append(label);}
-      chart.append(svg);
-    }
+    table($('#symbolAnalytics'),[['Instrument','symbol'],['Closed trades','closedCount','numeric'],['Gross P&L',r=>pnlValue(r.realizedPnl),'numeric'],['Win rate',r=>winRate(r.winRate),'numeric']],data.bySymbol || []);
+    table($('#dayAnalytics'),[['Date','date'],['Closed trades','closedCount','numeric'],['Gross P&L',r=>pnlValue(r.realizedPnl),'numeric'],['Cumulative',r=>pnlValue(r.cumulativeRealizedPnl),'numeric']],data.byDay || []);
+    table($('#closedTrades'),[['Instrument','symbol'],['Quantity','quantity','numeric'],['Entry',r=>money(r.entryPrice),'numeric'],['Exit',r=>money(r.exitPrice),'numeric'],['Gross P&L',r=>pnlValue(r.pnl),'numeric'],['Exit reason','exitReason']],data.recentClosedTrades || []);
+    renderEquityChart(data.byDay || []);
   }
   $('#analyticsForm').addEventListener('submit',event=>{event.preventDefault();busy(event.target.querySelector('button'),loadAnalytics);});
   try {

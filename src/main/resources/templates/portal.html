@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AutoTrader · Your trading workspace</title>
-<link rel="stylesheet" href="/portal/portal.css">
+<link rel="stylesheet" href="/portal/portal.css?v=20261017-pnl">
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -309,10 +309,11 @@
 <span class="badge">CLOSED TRADES</span>
 </div>
 <p class="muted">Cumulative realized P&amp;L for the selected period, before trading costs.</p>
+<div class="pnl-legend" aria-label="P&L colour key"><span class="pnl-value positive">+ Profit</span><span class="pnl-value negative">− Loss</span><span class="pnl-value neutral">0 Break-even</span></div>
 <div id="equityChart" class="equity-chart">
 </div>
 </div>
-<div class="grid two-columns section-gap">
+<div class="grid two-columns analytics-breakdown section-gap">
 <div class="card">
 <h2>Performance by instrument</h2>
 <div id="symbolAnalytics" class="table-wrap">
@@ -419,7 +420,7 @@
 </div>
 </form>
 </dialog>
-<script src="/portal/portal.js?v=20261017-strategies" defer>
+<script src="/portal/portal.js?v=20261017-pnl" defer>
 </script>
 </body>
 </html>

@@ -15,12 +15,19 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
       const page=await browser.newPage({viewport:{width:1360,height:960}});
       const errors=[];page.on('pageerror',e=>errors.push(e.message));
       const starts=[];let rejectStart=false;
+      let analytics={
+        summary:{effectiveRealizedPnl:-320.5,realizedPnl:1000,totalTradeCost:1320.5,totalClosedTrades:5,winRate:60,openTrades:2},
+        bySymbol:[{symbol:'PROFIT',closedCount:3,realizedPnl:1250,winRate:100},{symbol:'LOSS',closedCount:2,realizedPnl:-250,winRate:0},{symbol:'ZERO',closedCount:1,realizedPnl:0,winRate:50},{symbol:'MISSING',closedCount:0,realizedPnl:null,winRate:null},{symbol:'INVALID',closedCount:0,realizedPnl:'invalid',winRate:null}],
+        byDay:[250,-250,0,1000,null,1000].map((value,i)=>({date:'2026-10-0'+(i+1),closedCount:1,realizedPnl:value,cumulativeRealizedPnl:value})),
+        recentClosedTrades:[{symbol:'PROFIT',quantity:10,entryPrice:100,exitPrice:125,pnl:250,exitReason:'TARGET'},{symbol:'LOSS',quantity:10,entryPrice:100,exitPrice:95,pnl:-50,exitReason:'STOP_LOSS'}]
+      };
       await page.route('**/*',route=>{
         const url=new URL(route.request().url()), endpoint=url.pathname;
         if(url.hostname!=='ui.test')return route.abort();
         const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
         if(endpoint==='/portal'||endpoint==='/admin-dashboard.html')return route.fulfill({contentType:'text/html',body:fs.readFileSync(path.join(root,'src/main/resources',endpoint==='/portal'?'templates/portal.html':'static/admin-dashboard.html'),'utf8')});
         if(endpoint.startsWith('/portal/')||endpoint==='/admin-dashboard.js')return route.fulfill({contentType:endpoint.endsWith('.js')?'text/javascript':'text/css',body:fs.readFileSync(path.join(root,'src/main/resources/static',endpoint),'utf8')});
+        if(endpoint==='/api/analytics/trades')return json(analytics);
         if(endpoint==='/api/user/me')return json({id:1,username:'Sample user',displayName:'Sample user',admin});
         if(endpoint==='/api/auth/csrf-token')return json({header:'X-CSRF-TOKEN',token:'mock-only'});
         if(endpoint==='/api/user/brokers')return json(brokers);
@@ -39,7 +46,7 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
         return json([]);
       });
       await page.goto('http://ui.test/'+(admin?'admin-dashboard.html':'portal#strategies'));
-      return {page,errors,starts,reject:()=>rejectStart=true};
+      return {page,errors,starts,reject:()=>rejectStart=true,setAnalytics:value=>analytics=value};
     }
     const single=await fixture([account(7)]);const p=single.page;
     await p.getByRole('button',{name:'Configure subscription →'}).click();
@@ -59,6 +66,47 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
     await p.locator('#subscriptionStatusFilter').selectOption('ALL');
     await p.waitForFunction(()=>document.querySelectorAll('#subscriptions tbody tr').length===3);
     assert.deepEqual(single.errors,[]);await p.close();
+
+    const analytics=await fixture([account(7)]);const report=analytics.page;
+    await report.waitForFunction(()=>document.querySelector('#strategyBroker').value==='7');
+    await report.locator('[data-view=analytics]').click();
+    await report.locator('#symbolAnalytics .pnl-value.positive').waitFor();
+    const profit=report.locator('#symbolAnalytics tbody tr').nth(0).locator('.pnl-value');
+    const loss=report.locator('#symbolAnalytics tbody tr').nth(1).locator('.pnl-value');
+    assert.ok((await profit.textContent()).startsWith('+₹'));
+    assert.equal(await profit.getAttribute('aria-label'),'Profit ₹1,250.00');
+    assert.equal(await profit.evaluate(el=>getComputedStyle(el).color),'rgb(8, 123, 82)');
+    assert.equal(await loss.evaluate(el=>getComputedStyle(el).color),'rgb(186, 51, 70)');
+    assert.equal(await loss.getAttribute('aria-label'),'Loss ₹250.00');
+    const neutral=report.locator('#symbolAnalytics tbody tr').nth(2).locator('.pnl-value');
+    assert.equal(await neutral.textContent(),'₹0.00');assert.ok((await neutral.getAttribute('class')).includes('neutral'));
+    for(const index of [3,4])assert.equal(await report.locator('#symbolAnalytics tbody tr').nth(index).locator('.pnl-value').textContent(),'—');
+    assert.equal(await report.locator('#symbolAnalytics tbody tr').nth(0).locator('td.numeric').first().evaluate(el=>getComputedStyle(el).textAlign),'right');
+    assert.equal(await report.locator('#analyticsSummary .metric-negative').count(),1);
+    assert.equal(await report.locator('#analyticsSummary .metric-positive').count(),1);
+    assert.equal(await report.locator('#analyticsSummary .metric-cost').count(),1);
+    assert.equal(await report.locator('#closedTrades .pnl-value.negative').count(),1);
+    assert.equal(await report.locator('#equityChart .equity-zero').count(),1);
+    assert.equal(await report.locator('#equityChart .equity-segment').count(),4); // Missing day is a gap, not invented zero.
+    assert.ok(await report.locator('#equityChart .equity-segment[stroke="#087b52"]').count()>0);
+    assert.ok(await report.locator('#equityChart .equity-segment[stroke="#ba3346"]').count()>0);
+    assert.ok(await report.locator('#dayAnalytics').evaluate(el=>el.scrollWidth<=el.clientWidth+1),'Daily cumulative column fits on desktop');
+    await report.screenshot({path:'/private/tmp/analytics-colors-desktop.png',fullPage:true});
+    await report.setViewportSize({width:390,height:844});
+    assert.ok(await report.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    await report.screenshot({path:'/private/tmp/analytics-colors-mobile.png',fullPage:true});
+    for(const payload of [
+      {summary:{realizedPnl:0,effectiveRealizedPnl:0},byDay:[{date:'2026-10-01',cumulativeRealizedPnl:0}]},
+      {summary:{},byDay:[{date:'2026-10-01',cumulativeRealizedPnl:null}]},
+      {summary:{},byDay:[]}
+    ]) {
+      analytics.setAnalytics(payload);await report.locator('#analyticsForm button[type=submit]').click();
+      await report.waitForFunction(()=>!document.querySelector('#analyticsForm button').disabled);
+      const text=await report.locator('#view-analytics').textContent();assert.ok(!text.includes('NaN')&&!text.includes('Infinity'));
+      if(payload.byDay[0]?.cumulativeRealizedPnl===0){assert.equal(await report.locator('#equityChart circle').count(),1);assert.equal(await report.locator('#analyticsSummary .pnl-value.positive').count(),0);}
+      else assert.equal(await report.locator('#equityChart svg').count(),0);
+    }
+    assert.deepEqual(analytics.errors,[]);await report.close();
 
     const multiple=await fixture([account(7),account(8)]);
     await multiple.page.getByRole('button',{name:'Configure subscription →'}).click();
@@ -128,6 +176,6 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
     await a.getByRole('button',{name:'Account',exact:true}).click();assert.equal(await a.locator('#accountSection').isVisible(),true);
     await a.getByRole('button',{name:'Trading',exact:true}).click();assert.equal(await a.locator('#strategyBroker').inputValue(),'9');
     assert.deepEqual(admin.errors,[]);await a.close();
-    console.log('PASS: responsive admin layout, expandable tools, tab navigation; portal and admin broker defaults/selection, active/history filters, configure readiness, activation payloads and visible errors.');
+    console.log('PASS: signed analytics values, missing/zero data, chart crossings/gaps, responsive tables; responsive admin layout, expandable tools, tab navigation; portal and admin broker defaults/selection, active/history filters, configure readiness, activation payloads and visible errors.');
   } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});
