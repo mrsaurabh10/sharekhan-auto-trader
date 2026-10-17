@@ -544,11 +544,6 @@
     return num > 0 ? ' positive' : ' negative';
   }
 
-  function analyticsPnlCell(value) {
-    const num = Number(value);
-    const color = isNaN(num) || num === 0 ? '#333' : (num > 0 ? 'green' : 'red');
-    return '<td style="color:' + color + ';font-weight:bold">' + escapeHtml(formatAnalyticsNumber(value)) + '</td>';
-  }
 
   function formatAnalyticsAxisValue(value) {
     const num = Number(value);
@@ -685,7 +680,6 @@
     if (state) state.innerText = message || '';
     if (cards) cards.innerHTML = '';
     renderEquityChart([]);
-    renderBacktestAnalytics(null);
     if (symbolBody) symbolBody.innerHTML = '<tr><td colspan="5">No symbol data</td></tr>';
     if (dayBody) dayBody.innerHTML = '<tr><td colspan="4">No daily data</td></tr>';
     if (narrativeBox) narrativeBox.style.display = 'none';
@@ -725,7 +719,6 @@
       '<div class="analytics-card"><div class="label">' + escapeHtml(def[0]) + '</div><div class="value' + analyticsValueClass(def[2]) + '">' + escapeHtml(def[1]) + '</div></div>'
     ).join('');
 
-    renderBacktestAnalytics(data && data.backtest);
 
     const bySymbol = Array.isArray(data && data.bySymbol) ? data.bySymbol : [];
     symbolBody.innerHTML = bySymbol.length ? bySymbol.map(row =>
@@ -754,71 +747,6 @@
         narrative.innerText = '';
       }
     }
-  }
-
-  function renderBacktestAnalytics(backtest) {
-    const panel = document.getElementById('analyticsBacktestPanel');
-    const cards = document.getElementById('analyticsBacktestCards');
-    const dayBody = document.querySelector('#analyticsBacktestDayTable tbody');
-    if (!panel || !cards || !dayBody) return;
-
-    if (!backtest) {
-      panel.style.display = 'none';
-      cards.innerHTML = '';
-      dayBody.innerHTML = '<tr><td colspan="12">No saved backtest replay data for this filter/range.</td></tr>';
-      return;
-    }
-
-    const summary = backtest && backtest.summary ? backtest.summary : {};
-    const byDay = Array.isArray(backtest && backtest.byDay) ? backtest.byDay : [];
-    panel.style.display = 'block';
-    const totalTrades = Number(summary.totalTrades || 0);
-    const comparableTrades = Number(summary.comparableTrades || 0);
-    const actualComparableTrades = Number(summary.actualComparableTrades || 0);
-    const reentryComparableTrades = Number(summary.oneMinuteReentryComparableTrades || 0);
-    const failedTrades = Number(summary.failedTrades || 0);
-    const closerText = '1m ' + String(summary.oneMinuteCloserToActual || 0)
-      + ' / 5m ' + String(summary.fiveMinuteCloserToActual || 0)
-      + ' / Tie ' + String(summary.closerToActualTies || 0);
-    const coverageText = comparableTrades + ' / ' + totalTrades
-      + (actualComparableTrades ? ' / Actual ' + actualComparableTrades : '')
-      + (reentryComparableTrades ? ' / Re-entry ' + reentryComparableTrades : '')
-      + (failedTrades ? ' / Failed ' + failedTrades : '');
-
-    const cardDefs = [
-      ['Actual PnL', formatAnalyticsNumber(summary.actualPnl), summary.actualPnl],
-      ['1m Close PnL', formatAnalyticsNumber(summary.oneMinutePnl), summary.oneMinutePnl],
-      ['5m Close PnL', formatAnalyticsNumber(summary.fiveMinutePnl), summary.fiveMinutePnl],
-      ['1m Re-entry PnL', formatAnalyticsNumber(summary.oneMinuteReentryPnl), summary.oneMinuteReentryPnl],
-      ['5m - 1m', formatAnalyticsNumber(summary.diffFiveMinusOne), summary.diffFiveMinusOne],
-      ['Re-entry - 1m', formatAnalyticsNumber(summary.diffReentryMinusOne), summary.diffReentryMinusOne],
-      ['1m - Actual', formatAnalyticsNumber(summary.oneMinuteMinusActual), summary.oneMinuteMinusActual],
-      ['5m - Actual', formatAnalyticsNumber(summary.fiveMinuteMinusActual), summary.fiveMinuteMinusActual],
-      ['Re-entry - Actual', formatAnalyticsNumber(summary.oneMinuteReentryMinusActual), summary.oneMinuteReentryMinusActual],
-      ['Closer To Actual', closerText, null],
-      ['Coverage', coverageText, null],
-      ['Last Run', formatAnalyticsDateTime(summary.lastRunAt), null]
-    ];
-    cards.innerHTML = cardDefs.map(def =>
-      '<div class="analytics-card"><div class="label">' + escapeHtml(def[0]) + '</div><div class="value' + analyticsValueClass(def[2]) + '">' + escapeHtml(def[1]) + '</div></div>'
-    ).join('');
-
-    dayBody.innerHTML = byDay.length ? byDay.map(row => {
-      const tradeText = String(row.comparableTrades || 0) + ' / ' + String(row.totalTrades || 0);
-      return '<tr><td>' + escapeHtml(row.date || '-') + '</td>' +
-        '<td>' + escapeHtml(tradeText) + '</td>' +
-        '<td>' + escapeHtml(String(row.failedTrades || 0)) + '</td>' +
-        analyticsPnlCell(row.actualPnl) +
-        analyticsPnlCell(row.oneMinutePnl) +
-        analyticsPnlCell(row.fiveMinutePnl) +
-        analyticsPnlCell(row.oneMinuteReentryPnl) +
-        analyticsPnlCell(row.diffFiveMinusOne) +
-        analyticsPnlCell(row.diffReentryMinusOne) +
-        analyticsPnlCell(row.oneMinuteMinusActual) +
-        analyticsPnlCell(row.fiveMinuteMinusActual) +
-        analyticsPnlCell(row.oneMinuteReentryMinusActual) +
-        '</tr>';
-    }).join('') : '<tr><td colspan="12">No saved backtest replay data for this filter/range.</td></tr>';
   }
 
   function selectedAnalyticsSources() {

@@ -172,6 +172,10 @@ const templates = [{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',descri
       assert.equal(await a.locator('#strategyBroker').isVisible(),true);
     }
     await a.screenshot({path:'/private/tmp/admin-layout-mobile.png',fullPage:true});
+    await a.getByRole('button',{name:'Analytics',exact:true}).click();
+    await a.locator('#analyticsCards .analytics-card').first().waitFor();
+    assert.equal(await a.locator('#analyticsBacktestPanel').count(),0);
+    assert.equal(await a.locator('#analyticsSymbolTable').isVisible(),true);
     await a.getByRole('button',{name:'Brokers',exact:true}).click();assert.equal(await a.locator('#brokersSection').isVisible(),true);
     await a.getByRole('button',{name:'Account',exact:true}).click();assert.equal(await a.locator('#accountSection').isVisible(),true);
     await a.getByRole('button',{name:'Trading',exact:true}).click();assert.equal(await a.locator('#strategyBroker').inputValue(),'9');

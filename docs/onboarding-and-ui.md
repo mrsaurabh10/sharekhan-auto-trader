@@ -217,3 +217,9 @@ are unchanged. CSS/JS asset versions are bumped together.
 The isolated mock browser smoke covers signed colours/labels, zero/null/invalid
 values, alignment, summary cards, win-rate display, chart crossings/gaps/single-point
 and empty states, and mobile overflow, alongside existing strategy/admin checks.
+
+The unused admin **Backtest Replay: 1m Close vs 5m Close** block has been removed,
+along with its renderer and styles. Normal analytics cards, equity curve and
+symbol/day tables remain. This UI removal does not delete saved replay data or
+change the analytics API. Mock browser verification covers admin analytics after
+removal in addition to the portal P&L colour checks.

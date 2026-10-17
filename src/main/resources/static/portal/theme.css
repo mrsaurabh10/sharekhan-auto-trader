@@ -11,7 +11,7 @@
 .legacy-workspace .users-list .muted{color:#adbed8}.legacy-workspace .content{margin:0;max-width:none;flex:1;min-width:0}
 .legacy-workspace h3,.legacy-workspace h4{color:var(--ink);font-size:17px;letter-spacing:-.3px;margin:0 0 16px}
 .legacy-workspace #placeOrderPanel,.legacy-workspace #requestsSection,.legacy-workspace #executedSection,.legacy-workspace #brokersSection,.legacy-workspace .analytics-panel{border:1px solid var(--line)!important;padding:24px!important;background:white!important;border-radius:var(--radius);margin-bottom:24px!important;box-shadow:0 3px 8px #14203903}
-.legacy-workspace #strategyPanel,.legacy-workspace #scriptMasterPanel,.legacy-workspace .analytics-equity-panel,.legacy-workspace .analytics-backtest-panel,.legacy-workspace .analytics-ai{border:1px solid var(--line)!important;padding:18px!important;border-radius:12px;background:#fafbfe!important;margin:16px 0!important}
+.legacy-workspace #strategyPanel,.legacy-workspace #scriptMasterPanel,.legacy-workspace .analytics-equity-panel,.legacy-workspace .analytics-ai{border:1px solid var(--line)!important;padding:18px!important;border-radius:12px;background:#fafbfe!important;margin:16px 0!important}
 .legacy-workspace .analytics-cards{grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:14px;margin:20px 0}
 .legacy-workspace .analytics-card{padding:20px;border:1px solid var(--line);border-radius:12px;box-shadow:0 3px 10px #16223804}
 .legacy-workspace .analytics-card .label{color:var(--muted);font-size:12px}.legacy-workspace .analytics-card .value{font-size:25px;letter-spacing:-.6px;margin-top:8px}
