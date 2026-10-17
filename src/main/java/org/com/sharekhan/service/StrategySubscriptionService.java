@@ -56,6 +56,21 @@ public class StrategySubscriptionService {
     }
 
     public List<StrategySubscriptionEntity> list(Long appUserId, boolean admin) {
+        return list(appUserId,admin,"ACTIVE");
+    }
+
+    public List<StrategySubscriptionEntity> list(Long appUserId, boolean admin, String status) {
+        String filter=status==null ? "ACTIVE" : status.trim().toUpperCase(Locale.ROOT);
+        List<String> statuses=switch(filter) {
+            case "ACTIVE" -> List.of(ACTIVE,TRIGGERED);
+            case "CANCELLED" -> List.of(CANCELLED);
+            case "ALL" -> List.of();
+            default -> throw new IllegalArgumentException("Status must be ACTIVE, CANCELLED or ALL");
+        };
+        if(!statuses.isEmpty()) {
+            if(admin && appUserId==null)return repository.findByStatusInOrderByIdDesc(statuses);
+            return appUserId==null ? List.of() : repository.findByAppUserIdAndStatusInOrderByIdDesc(appUserId,statuses);
+        }
         if (admin && appUserId == null) {
             return repository.findAll().stream()
                     .sorted((a, b) -> Long.compare(b.getId() != null ? b.getId() : 0L, a.getId() != null ? a.getId() : 0L))

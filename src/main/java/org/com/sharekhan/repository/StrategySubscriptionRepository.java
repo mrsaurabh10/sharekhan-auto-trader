@@ -9,6 +9,7 @@ public interface StrategySubscriptionRepository extends JpaRepository<StrategySu
     long countByAppUserIdAndStatusIn(Long appUserId, List<String> statuses);
     List<StrategySubscriptionEntity> findByStatusOrderByIdDesc(String status);
     List<StrategySubscriptionEntity> findByStatusInOrderByIdDesc(List<String> statuses);
+    List<StrategySubscriptionEntity> findByAppUserIdAndStatusInOrderByIdDesc(Long appUserId, List<String> statuses);
     List<StrategySubscriptionEntity> findByAppUserIdOrderByIdDesc(Long appUserId);
     List<StrategySubscriptionEntity> findByStatusAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(
             String status,

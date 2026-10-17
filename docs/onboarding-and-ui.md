@@ -143,3 +143,34 @@ owner check required the intraday chase fixtures to identify their account owner
 A final ownership regression is included in the deployment candidate. Deployment
 status and exact published/deployed commits are recorded in the parent project
 knowledge files.
+
+## Strategy broker choice and subscription history (2026-10-17)
+
+The trading dashboard now has an explicit broker account selector for strategies.
+A single configured account is selected by default; with multiple accounts, choose
+one before starting. Switching users clears the previous user's broker choice and
+ignores delayed broker/list responses. The chosen credential ID is sent with the
+subscription request. The portal similarly selects its sole eligible broker and
+preserves that default when the configuration form resets. Existing readiness and
+trading-consent checks still apply.
+
+Both screens initially show active subscriptions (`ACTIVE` and `TRIGGERED`, which
+are both ongoing lifecycle states). Use **Cancelled** or **All** in the subscription
+filter to see history. Filtering happens in the database through
+`GET /api/strategies/subscriptions?status=ACTIVE|CANCELLED|ALL`; omitting status means
+ACTIVE. Results remain scoped to the authenticated user, or the selected user for
+an administrator. No subscriptions are deleted by filtering.
+
+**Configure subscription** now opens even before a broker is ready. Its dialog
+explains the setup requirement and links to Brokers; activation stays disabled
+until a supported broker is connected, active and trading-enabled. Backend errors
+appear inside the open dialog instead of behind it. Browser testing reproduced the
+previous disabled-button behavior for an unready account; a ready account already
+opened normally. Actual production account readiness was not inspected.
+
+Mock-only browser smoke checks live in `tools/ux-preview/strategy-smoke.cjs`.
+Run with Node and an installed Playwright package; `BROWSER_EXECUTABLE_PATH` can
+point to a local Chrome executable. Every HTTP response is mocked and external
+requests are blocked. Checks cover both screens, one/multiple brokers, selected
+activation payload, readiness feedback, in-dialog errors, user changes and history
+filters. No live strategy or broker request is submitted by these checks.

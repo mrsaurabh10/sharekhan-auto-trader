@@ -88,9 +88,11 @@ public class StrategyController {
     }
 
     @GetMapping("/subscriptions")
-    public ResponseEntity<?> subscriptions(@RequestParam(name = "userId", required = false) Long userId) {
+    public ResponseEntity<?> subscriptions(@RequestParam(name = "userId", required = false) Long userId,
+                                           @RequestParam(name = "status", defaultValue = "ACTIVE") String status) {
         Long scopedUserId = currentUserService.scopedUserId(userId);
-        return ResponseEntity.ok(strategySubscriptionService.list(scopedUserId, currentUserService.isAdmin()));
+        try {return ResponseEntity.ok(strategySubscriptionService.list(scopedUserId, currentUserService.isAdmin(),status));}
+        catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(Map.of("error",e.getMessage()));}
     }
 
     @PostMapping("/subscriptions/{id}/cancel")

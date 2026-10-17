@@ -155,6 +155,9 @@
                         <div class="form-row"><label class="inline small" for="strategyTemplate">Template</label>
                             <select id="strategyTemplate"><option value="">Loading strategies...</option></select>
                         </div>
+                        <div class="form-row"><label class="inline small" for="strategyBroker">Broker account</label>
+                            <select id="strategyBroker" required><option value="">Select a user first</option></select>
+                        </div>
                         <div class="form-row"><label class="inline small" for="strategySymbol">Symbol</label>
                             <input id="strategySymbol" placeholder="e.g. NIFTY, RELIANCE; use commas/new lines for manual F&O lists">
                         </div>
@@ -179,6 +182,8 @@
                         <button type="button" class="btn" id="refreshStrategiesBtn">Refresh Strategies</button>
                     </div>
                     <div id="strategyResult" class="hint"></div>
+                    <label for="strategyStatusFilter">Subscriptions</label>
+                    <select id="strategyStatusFilter"><option value="ACTIVE">Active</option><option value="CANCELLED">Cancelled</option><option value="ALL">All</option></select>
                     <table id="strategy-subscriptions-table" style="width:100%;border-collapse:collapse;margin-top:8px" border="1">
                         <thead><tr><th>ID</th><th>Template</th><th>Symbol</th><th>Size / investment</th><th>Status</th><th>Last Check</th><th>Message</th><th>Trade Request</th><th>Action</th></tr></thead>
                         <tbody><tr><td colspan="9">No strategies loaded</td></tr></tbody>
@@ -483,6 +488,6 @@
 </div>
 
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
-<script src="/admin-dashboard.js?v=30" defer></script>
+<script src="/admin-dashboard.js?v=31" defer></script>
 </body>
 </html>

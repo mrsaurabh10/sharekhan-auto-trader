@@ -18,7 +18,15 @@
     if (!response.ok) throw new Error(typeof result === 'string' ? (result.startsWith('<') ? 'Unable to complete this request. Refresh and try again.' : result) : result.message || result.error || 'Request failed');
     return result;
   }
-  async function busy(button, action) { button.disabled = true; try { await action(); } catch (error) { notify(error.message, true); } finally { button.disabled = false; } }
+  async function busy(button, action) {
+    const errorBox=button.closest('#strategyDialog') ? $('#strategyFormError') : null;
+    if(errorBox)errorBox.hidden=true;
+    button.disabled=true;
+    try {await action();} catch(error) {
+      if(errorBox){errorBox.textContent=error.message;errorBox.hidden=false;errorBox.focus();}
+      else notify(error.message,true);
+    } finally {button.disabled=false;}
+  }
   function button(text, action, style = 'secondary') { const el = node('button', text, style); el.type = 'button'; el.addEventListener('click', () => busy(el, action)); return el; }
   function badge(text, good = false) { return node('span', text, 'badge' + (good ? ' good' : '')); }
   function view(name) {
@@ -29,7 +37,7 @@
     if (name === 'analytics') loadAnalytics().catch(e => notify(e.message, true));
     if (name === 'orders') loadInstruments().catch(e => notify(e.message, true));
   }
-  document.querySelectorAll('[data-view],[data-goto]').forEach(el => el.addEventListener('click', () => view(el.dataset.view || el.dataset.goto)));
+  document.querySelectorAll('[data-view],[data-goto]').forEach(el => el.addEventListener('click', () => {el.closest('dialog')?.close();view(el.dataset.view || el.dataset.goto);}));
   document.querySelectorAll('[data-close]').forEach(el => el.addEventListener('click', () => el.closest('dialog').close()));
   function table(container, columns, rows, action) {
     container.replaceChildren(); container.tabIndex=0; container.setAttribute("role","region"); container.setAttribute("aria-label",container.id.replaceAll(/([A-Z])/g," $1")+" table");
@@ -47,10 +55,14 @@
     for (const selector of ['#orderBroker', '#strategyBroker']) {
       const el = $(selector), previous = el.value; el.replaceChildren();
       el.append(new Option(readyBrokers().length ? 'Choose a broker account' : 'Connect a broker and enable trading first', ''));
-      readyBrokers().forEach(b => el.append(new Option(brokerLabel(b), b.id))); el.value = previous;
+      const brokers=readyBrokers();
+      brokers.forEach(b => el.append(new Option(brokerLabel(b), b.id, brokers.length===1)));
+      el.value=brokers.some(b=>String(b.id)===previous) ? previous : brokers.length===1 ? String(brokers[0].id) : '';
     }
     const ab=$('#analyticsBroker'); const selected=ab.value; ab.replaceChildren(new Option('All my brokers',''), ...state.brokers.map(b=>new Option(brokerLabel(b),b.id))); ab.value=selected;
     $('#strategyGate').hidden = readyBrokers().length > 0;
+    $('#strategyDialogGate').hidden=readyBrokers().length > 0;
+    $('#subscriptionForm button[type=submit]').disabled=!readyBrokers().length;
     $('#orderForm button[type=submit]').disabled = !readyBrokers().length;
     $('#orderGate').textContent = readyBrokers().length ? '' : 'Connect a broker and enable trading in Brokers to continue.';
   }
@@ -101,7 +113,7 @@
     });
   }
   async function loadOnboarding() { state.onboarding=await api('/api/user/onboarding'); renderOverview(); }
-  async function loadBrokers() { state.brokers = await api('/api/user/brokers'); renderBrokers(); await loadOnboarding(); }
+  async function loadBrokers() { state.brokers = await api('/api/user/brokers'); renderBrokers(); await loadOnboarding(); renderStrategies(); }
   function configureBrokerForm() {
     const f = $('#brokerForm'), dhan = f.elements.brokerName.value === 'Dhan';
     const apiLogin = $('#dhanMethod').value === 'api';
@@ -143,7 +155,7 @@
     state.templates.forEach(template => {
       const card = node('article',null,'card'); card.append(node('div','STRATEGY','eyebrow'),node('h2',template.name),node('p',template.description));
       const el = button('Configure subscription →',async () => {
-        const f = $('#subscriptionForm'); f.reset(); f.elements.templateId.value=template.id;
+        const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
         const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
         f.elements.symbol.value = automatic ? 'FNO_UNIVERSE' : '';
@@ -155,16 +167,17 @@
         f.elements.investmentPerStock.required = stockMover;
         $('#strategyDialogTitle').textContent=template.name; $('#strategyDialogDescription').textContent=template.description;
         $('#strategyDialog').showModal();
-      }); el.disabled=!readyBrokers().length; card.append(el); $('#strategyCatalog').append(card);
+      }); card.append(el); $('#strategyCatalog').append(card);
     });
-    table($('#subscriptions'),[['Strategy','templateId'],['Instruments','symbol'],['Size / investment',r=>r.investmentPerStock != null ? '₹'+r.investmentPerStock+' / stock' : r.lots],['Status',r=>badge(r.status,['ACTIVE','TRIGGERED'].includes(r.status))],['Latest update','lastMessage']],state.subscriptions,(row,td)=>{
-      if (row.status !== 'CANCELLED') td.append(button('Cancel',async()=>{
+    table($('#subscriptions'),[['Strategy','templateId'],['Broker',r=>{const b=state.brokers.find(b=>b.id===r.brokerCredentialsId);return b ? brokerLabel(b) : 'Account '+r.brokerCredentialsId;}],['Instruments','symbol'],['Size / investment',r=>r.investmentPerStock != null ? '₹'+r.investmentPerStock+' / stock' : r.lots],['Status',r=>badge(r.status,['ACTIVE','TRIGGERED'].includes(r.status))],['Latest update','lastMessage']],state.subscriptions,(row,td)=>{
+      if (['ACTIVE','TRIGGERED'].includes(row.status)) td.append(button('Cancel',async()=>{
         if (!await confirmAction('Cancel future evaluations for this subscription? Existing orders and positions remain open.')) return;
         await api('/api/strategies/subscriptions/'+row.id+'/cancel','POST',{}); await loadStrategies(); notify('Subscription cancelled. Existing orders and positions remain open.');
       }));
     });
   }
-  async function loadStrategies() { state.subscriptions=await api('/api/strategies/subscriptions'); renderStrategies(); await loadOnboarding(); }
+  async function loadStrategies() { state.subscriptions=await api('/api/strategies/subscriptions?status='+encodeURIComponent($('#subscriptionStatusFilter').value)); renderStrategies(); await loadOnboarding(); }
+  $('#subscriptionStatusFilter').addEventListener('change',()=>busy($('#subscriptionStatusFilter'),loadStrategies));
   $('#subscriptionForm').addEventListener('submit',event=>{event.preventDefault(); const f=event.target; busy(f.querySelector('button[type=submit]'),async()=>{
     const body=Object.fromEntries(new FormData(f)); delete body.consent; body.brokerCredentialsId=Number(body.brokerCredentialsId); body.intraday=f.elements.intraday.checked;
     if (body.templateId === 'STOCK_0925_MOVER_ATR_BREAKOUT') {

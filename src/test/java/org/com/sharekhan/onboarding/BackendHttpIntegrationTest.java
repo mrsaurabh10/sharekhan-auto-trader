@@ -314,6 +314,24 @@ class BackendHttpIntegrationTest {
         verify(engine, never()).executeTriggeredTrade(any());
     }
 
+    @Test void strategyListDefaultsToRunningAndHistoryFiltersRemainUserScoped() throws Exception {
+        var session=registerAndLogin();long owner=users.findByUsername("alex@example.test").orElseThrow().getId();
+        for(String state:java.util.List.of("ACTIVE","TRIGGERED","CANCELLED"))
+            subscriptions.saveAndFlush(org.com.sharekhan.entity.StrategySubscriptionEntity.builder()
+                .templateId("TEST").symbol(state).appUserId(owner).status(state).build());
+        subscriptions.saveAndFlush(org.com.sharekhan.entity.StrategySubscriptionEntity.builder()
+            .templateId("FOREIGN").symbol("FOREIGN").appUserId(owner+1000).status("ACTIVE").build());
+        mvc.perform(get("/api/strategies/subscriptions").session(session))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(2))
+            .andExpect(jsonPath("$[0].status").value("TRIGGERED")).andExpect(jsonPath("$[1].status").value("ACTIVE"));
+        mvc.perform(get("/api/strategies/subscriptions?status=CANCELLED&userId="+(owner+1000)).session(session))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].appUserId").value(owner)).andExpect(jsonPath("$[0].status").value("CANCELLED"));
+        mvc.perform(get("/api/strategies/subscriptions?status=ALL").session(session))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(3));
+        mvc.perform(get("/api/strategies/subscriptions?status=invalid").session(session)).andExpect(status().isBadRequest());
+    }
+
     private MockHttpSession registerAndLogin() throws Exception {
         mvc.perform(post("/api/account/register").with(csrf()).contentType("application/json")
             .content("{\"displayName\":\"Alex\",\"email\":\"alex@example.test\",\"password\":\"a unique test password\"}"))

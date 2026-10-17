@@ -2164,6 +2164,7 @@
     const lbl = document.getElementById('placeOrderSelectedUser'); if (lbl) lbl.innerText = window.selectedUserName;
     if (!window.currentUserTab) window.currentUserTab = 'trading';
     const parent = document.getElementById('usersContainer'); if (parent) parent.querySelectorAll('li').forEach(function(li){ li.classList && li.classList.remove('active'); }); if (liElem && liElem.classList) liElem.classList.add('active');
+    loadStrategyBrokers(appUserId);
     showBrokersSectionFor(appUserId, window.selectedUserName);
     updateAccountSectionFor(window.selectedUserName);
     showUserTab(window.currentUserTab);
@@ -2228,6 +2229,26 @@
   }
 
   // --- Place Order wiring ---
+  let strategyBrokerLoadSeq=0;
+  async function loadStrategyBrokers(userId) {
+    const select=document.getElementById('strategyBroker'); if(!select)return;
+    const sequence=++strategyBrokerLoadSeq;
+    const previous=select.dataset.userId===String(userId) ? select.value : '';
+    select.dataset.userId=String(userId || '');select.disabled=true;
+    select.replaceChildren(new Option(userId ? 'Loading broker accounts...' : 'Select a user first',''));
+    if(!userId)return;
+    try {
+      const brokers=await fetchJson(brokerListUrl(userId));
+      if(sequence!==strategyBrokerLoadSeq || String(window.selectedUserId)!==String(userId))return;
+      select.replaceChildren(new Option(brokers.length ? 'Choose a broker account' : 'No broker accounts configured',''));
+      brokers.forEach(b=>select.append(new Option((b.brokerName || 'Broker')+' · '+(b.clientCode || 'Account '+b.id)+(b.tradingEnabled ? '' : ' (trading disabled)'),String(b.id))));
+      select.value=brokers.some(b=>String(b.id)===previous) ? previous : brokers.length===1 ? String(brokers[0].id) : '';
+      select.disabled=!brokers.length;
+    } catch(error) {
+      if(sequence===strategyBrokerLoadSeq)select.replaceChildren(new Option('Unable to load brokers; refresh strategies to retry',''));
+    }
+  }
+
   async function resolveBrokerForUser(userId) {
     try {
       const list = await fetchJson(brokerListUrl(userId)).catch(() => null);
@@ -2355,6 +2376,8 @@
     const refreshBtn = document.getElementById('refreshStrategiesBtn');
     const result = document.getElementById('strategyResult');
     const errDiv = document.getElementById('serverError');
+    const statusFilter=document.getElementById('strategyStatusFilter');
+    if(statusFilter)statusFilter.addEventListener('change',()=>loadStrategySubscriptions(window.selectedUserId));
     const templateSelect = document.getElementById('strategyTemplate');
     const symbolInput = document.getElementById('strategySymbol');
     const quantitiesInput = document.getElementById('strategySymbolQuantities');
@@ -2392,6 +2415,7 @@
     }
     if (refreshBtn) {
       refreshBtn.addEventListener('click', function () {
+        loadStrategyBrokers(window.selectedUserId);
         loadStrategySubscriptions(window.selectedUserId).catch(function(){});
       });
     }
@@ -2399,6 +2423,7 @@
     btn.addEventListener('click', async function () {
       if (result) result.innerText = '';
       if (errDiv) { errDiv.style.display = 'none'; errDiv.innerText = ''; }
+      const selectedStrategyUserId=window.selectedUserId || null;
       const templateId = (document.getElementById('strategyTemplate') || {}).value || '';
       const symbol = ((document.getElementById('strategySymbol') || {}).value || '').trim().toUpperCase();
       const automaticUniverse = automaticUniverseTemplate();
@@ -2419,7 +2444,11 @@
       try {
         btn.disabled = true;
         await ensureCsrf();
-        const brokerCredentialsId = window.selectedUserId ? await resolveBrokerForUser(window.selectedUserId) : null;
+        if(String(window.selectedUserId)!==String(selectedStrategyUserId))throw new Error('Selected user changed. Review the strategy before starting.');
+        const brokerSelect=document.getElementById('strategyBroker');
+        if(!brokerSelect || brokerSelect.disabled || brokerSelect.dataset.userId!==String(window.selectedUserId) || !brokerSelect.value)
+          throw new Error('Choose a broker account for this strategy.');
+        const brokerCredentialsId=Number(brokerSelect.value);
         const configurations = btp ? rows.map(row => {
           const parts = row.split(':').map(v => v.trim());
           const quantity = Number(parts[1]);
@@ -2431,7 +2460,7 @@
           responses.push(await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify({
             templateId, symbol: configuration.symbol, lots: stockMover ? null : configuration.lots,
             investmentPerStock: stockMover ? investmentPerStock : null, intraday,
-            userId: window.selectedUserId || null, brokerCredentialsId, source: 'strategy:' + templateId
+            userId: selectedStrategyUserId, brokerCredentialsId, source: 'strategy:' + templateId
           }) }));
         }
         if (result) result.innerText = 'STARTED: ' + responses.length + ' strategy subscription(s) are running in background.';
@@ -2445,7 +2474,9 @@
     });
   }
 
+  let strategySubscriptionLoadSeq=0;
   async function loadStrategySubscriptions(userId) {
+    const sequence=++strategySubscriptionLoadSeq;
     const tbody = document.querySelector('#strategy-subscriptions-table tbody');
     if (!tbody) return;
     const uid = userId || window.selectedUserId || null;
@@ -2454,8 +2485,10 @@
       return;
     }
     try {
-      const url = '/api/strategies/subscriptions' + (uid ? ('?userId=' + encodeURIComponent(uid)) : '');
+      const filter=(document.getElementById('strategyStatusFilter') || {}).value || 'ACTIVE';
+      const url = '/api/strategies/subscriptions?status='+encodeURIComponent(filter)+(uid ? ('&userId=' + encodeURIComponent(uid)) : '');
       const rows = await fetchJson(url);
+      if(sequence!==strategySubscriptionLoadSeq)return;
       if (!Array.isArray(rows) || rows.length === 0) {
         tbody.innerHTML = '<tr><td colspan="9">No strategies</td></tr>';
         return;
@@ -2464,7 +2497,7 @@
       rows.forEach(row => {
         const tr = document.createElement('tr');
         tr.innerHTML = '<td>' + escapeHtml(row.id) + '</td>' +
-          '<td>' + escapeHtml(row.templateId || '-') + '</td>' +
+          '<td>' + escapeHtml(row.templateId || '-') + '<br><small>Broker #' + escapeHtml(row.brokerCredentialsId || '-') + '</small></td>' +
           '<td>' + escapeHtml(row.symbol || '-') + '</td>' +
           '<td>' + escapeHtml(row.investmentPerStock != null ? '₹' + row.investmentPerStock + ' / stock' : (row.lots != null ? row.lots : '-')) + '</td>' +
           '<td>' + escapeHtml(row.status || '-') + '</td>' +
@@ -2472,7 +2505,7 @@
           '<td>' + escapeHtml(row.lastMessage || '-') + '</td>' +
           '<td>' + escapeHtml(row.generatedTradeRequestId || '-') + '</td>';
         const action = document.createElement('td');
-        if (String(row.status || '').toUpperCase() === 'ACTIVE') {
+        if (['ACTIVE','TRIGGERED'].includes(String(row.status || '').toUpperCase())) {
           const manualFno = ['FNO_VWAP_RECLAIM_BASE_CE', 'FNO_VWAP_RECLAIM_BASE_PE', 'FNO_ATR_PREVIOUS_DAY_CE', 'FNO_ATR_PREVIOUS_DAY_PE'].includes(String(row.templateId || '').toUpperCase());
           if (manualFno) {
             const update = document.createElement('button');
@@ -2507,6 +2540,7 @@
         tbody.appendChild(tr);
       });
     } catch (e) {
+      if(sequence!==strategySubscriptionLoadSeq)return;
       tbody.innerHTML = '<tr><td colspan="9">Error loading strategies</td></tr>';
       console.error('Failed to load strategy subscriptions', e);
     }
