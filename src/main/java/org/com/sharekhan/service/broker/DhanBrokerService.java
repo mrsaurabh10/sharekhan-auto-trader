@@ -92,16 +92,18 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
                 var response = client.exchange("POST","/orders",session.token(),body);
                 if (response.ok()) {
                     var result = accepted(response.json(),null,price);
-                    if (result != null) return pendingPlacement(result);
+                    if (result != null) return placementOutcome(result, session, side);
                 } else if (response.code() >= 400 && response.code() < 500 && response.code() != 408 && response.code() != 429) {
-                    return rejected("Dhan rejected order (HTTP " + response.code() + "); check broker permissions, static IP and order parameters",price);
+                    var refusal = rejected("Dhan rejected order (HTTP " + response.code() + "); check broker permissions, static IP and order parameters",price);
+                    refusal.setDefinitiveBrokerRejection(true);
+                    return refusal;
                 }
             } catch (Exception ignored) { /* Delivery may have occurred. Never resubmit. */ }
         }
         try {
             JSONObject found = lookup(session,CORRELATION_PREFIX+correlation);
             var result = accepted(found,null,price);
-            if (result != null) return pendingPlacement(result);
+            if (result != null) return placementOutcome(result, session, side);
         } catch (Exception ignored) {}
         // Durable correlation handle lets the normal poller recover the real order after a lost response.
         return OrderPlacementResult.builder().success(true).orderId(CORRELATION_PREFIX+correlation).status("Pending")
@@ -219,6 +221,21 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
     private static OrderPlacementResult pendingPlacement(OrderPlacementResult result) {
         // Even an inactive acknowledgement can have fills. Persist its ID and let polling reconcile it.
         result.setSuccess(true);result.setStatus("Pending");return result;
+    }
+    private OrderPlacementResult placementOutcome(OrderPlacementResult result, Session session, String side) {
+        if (!result.isSuccess() && "BUY".equals(side)) {
+            try {
+                // Confirm absence of fills before treating an inactive acknowledgement as a failed entry.
+                JSONObject row = lookup(session, result.getOrderId());
+                long quantity = row.getLong("quantity");
+                if ("REJECTED".equals(row.getString("orderStatus")) && "BUY".equals(row.getString("transactionType"))
+                        && quantity > 0 && row.getLong("filledQty") == 0 && row.getLong("remainingQuantity") == quantity) {
+                    result.setDefinitiveBrokerRejection(true);
+                    return result;
+                }
+            } catch (Exception ignored) { /* Keep the order ID for normal fill reconciliation. */ }
+        }
+        return pendingPlacement(result);
     }
     private static OrderPlacementResult accepted(JSONObject row,String expectedId,double price) {
         String id = safeId(row.getString("orderId"));

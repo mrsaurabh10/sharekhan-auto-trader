@@ -109,6 +109,60 @@ class DhanBrokerServiceTest {
         assertThat(service.placeOrder(trade,context,100).getOrderId()).isEqualTo("12345");
         verify(client,times(1)).exchange(eq("POST"),anyString(),anyString(),any());
     }
+    @Test void explicitHttpRejectionIsTerminalAndDoesNotReconcileOrRetry() throws Exception {
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any()))
+            .thenReturn(new DhanOrderClient.Response(400,"private broker response"));
+        var result=service.placeOrder(trade,context,100);
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.isDefinitiveBrokerRejection()).isTrue();
+        assertThat(result.getStatus()).isEqualTo("Rejected");
+        assertThat(result.getRejectionReason()).contains("HTTP 400").doesNotContain("private broker response");
+        verify(client,never()).exchange(eq("GET"),anyString(),anyString(),any());
+    }
+    @Test void rejectedAcknowledgementBecomesTerminalWhenOrderLookupConfirmsZeroFills() throws Exception {
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any()))
+            .thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","REJECTED")));
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull()))
+            .thenReturn(response(200,order("REJECTED",0,10)));
+        var result=service.placeOrder(trade,context,100);
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.isDefinitiveBrokerRejection()).isTrue();
+        assertThat(result.getOrderId()).isEqualTo("12345");
+        assertThat(result.getStatus()).isEqualTo("Rejected");
+    }
+    @Test void rejectedAcknowledgementWithUnavailableLookupRetainsTrackingId() throws Exception {
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any()))
+            .thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","REJECTED")));
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull()))
+            .thenReturn(new DhanOrderClient.Response(503,"unavailable"));
+        var result=service.placeOrder(trade,context,100);
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.isDefinitiveBrokerRejection()).isFalse();
+        assertThat(result.getOrderId()).isEqualTo("12345");
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints={408,429,500})
+    void uncertainHttpResponseRemainsPendingForCorrelationRecovery(int http) throws Exception {
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any()))
+            .thenReturn(new DhanOrderClient.Response(http,"unavailable"));
+        when(client.exchange(eq("GET"),anyString(),anyString(),isNull()))
+            .thenReturn(new DhanOrderClient.Response(404,"not found"));
+        var result=service.placeOrder(trade,context,100);
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.isDefinitiveBrokerRejection()).isFalse();
+        assertThat(result.getOrderId()).startsWith("DHAN-CORR-");
+    }
+    @Test void rejectedAcknowledgementWithPartialFillStillRequiresReconciliation() throws Exception {
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any()))
+            .thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","REJECTED")));
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull()))
+            .thenReturn(response(200,order("REJECTED",3,7)));
+        var result=service.placeOrder(trade,context,100);
+        assertThat(result.isSuccess()).isTrue();
+        assertThat(result.isDefinitiveBrokerRejection()).isFalse();
+        assertThat(result.getOrderId()).isEqualTo("12345");
+        assertThat(result.getStatus()).isEqualTo("Pending");
+    }
     @Test void mapsPartialAndTerminalFillsUsingActualAverageAndRejectsContradictions() throws Exception {
         when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull())).thenReturn(response(200,order("PART_TRADED",3,7)),response(200,order("TRADED",10,0)),response(200,order("PENDING",10,0)),response(200,order("TRADED",10,0).put("averageTradedPrice",0)));
         assertThat(service.fetchOrderStatus(trade,context,"12345").getJSONArray("data").getJSONObject(0).getString("orderStatus")).isEqualTo("Partly Executed");

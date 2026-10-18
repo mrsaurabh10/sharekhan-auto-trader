@@ -21,6 +21,13 @@ No live orders or account configuration changes are part of automated tests.
   never mark trades executed: polling requires full filled quantity, zero remaining
   quantity and a positive actual average fill price before confirming a full fill.
 
+An explicit HTTP 4xx refusal (except 408/429) marks the entry request REJECTED
+with its diagnostic reason and disables the local trigger fallback. A REJECTED
+placement acknowledgement with an order ID becomes terminal after an owned-order
+lookup confirms zero fills. Unavailable lookups, partial fills, timeouts and other
+uncertain delivery outcomes retain their tracking ID for reconciliation. These
+outcomes never authorize a second POST for the same submission.
+
 Excluded: futures/currency/commodity contracts, short entries, market/AMO orders,
 MTF, Dhan Super/BO/CO products and Sharekhan BIGTRADEPLUS strategies. Orders over
 the published freeze quantity are rejected rather than split into independent

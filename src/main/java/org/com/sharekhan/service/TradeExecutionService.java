@@ -991,6 +991,23 @@ public class TradeExecutionService {
                         reason,
                         limitPrice,
                         result != null ? result.getAttemptedPrice() : limitPrice);
+                if (result != null && !result.isSuccess() && result.isDefinitiveBrokerRejection()) {
+                    int rejected = triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(
+                            latest.getId(), TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
+                            TriggeredTradeStatus.REJECTED.name(), reason,
+                            "Broker rejected the entry submission; automatic retry is disabled.");
+                    if (rejected == 1) {
+                        latest.setStatus(TriggeredTradeStatus.REJECTED);
+                        latest.setReason(reason);
+                        latest.setComment("Broker rejected the entry submission; automatic retry is disabled.");
+                        requestEntity.setStatus(latest.getStatus());
+                        requestEntity.setReason(latest.getReason());
+                        requestEntity.setComment(latest.getComment());
+                        auditEntryOutcome(pendingTrade, "ENTRY_REJECTED", reason, result.getOrderId(), result);
+                    }
+                    log.warn("Broker rejected entry request {}; terminal transition count={}", latest.getId(), rejected);
+                    return;
+                }
                 revertBrokerSideEntryClaim(latest, requestEntity);
                 log.warn("⚠️ Broker-side entry trigger rejected for request {}. Continuing earlier websocket trigger flow. Reason={}",
                         latest.getId(), reason);
@@ -2625,6 +2642,9 @@ public class TradeExecutionService {
             lastResult = result;
             if (result != null && result.getAttemptedPrice() == null) {
                 result.setAttemptedPrice(price);
+            }
+            if (result != null && !result.isSuccess() && result.isDefinitiveBrokerRejection()) {
+                return result;
             }
 
             if (result != null && isUsableBrokerOrderId(result.getOrderId())) {

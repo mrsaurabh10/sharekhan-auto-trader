@@ -10,6 +10,8 @@ public class OrderPlacementResult {
     private String orderId;
     private String status; // e.g. "Fully Executed", "Pending", "Rejected"
     private String rejectionReason;
+    // An explicit broker refusal, distinct from local validation or an unknown delivery outcome.
+    private boolean definitiveBrokerRejection;
     private Double attemptedPrice;
     private Double executedPrice;
     private Long executedQuantity;

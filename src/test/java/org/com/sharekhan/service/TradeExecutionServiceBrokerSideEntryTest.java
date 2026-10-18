@@ -416,6 +416,47 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void definitiveBrokerRejectionTerminatesRequestWithReasonAndNoFallback() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(false).status("Rejected")
+                .definitiveBrokerRejection(true).rejectionReason("Dhan rejected order (HTTP 400)").build());
+        when(ctx.triggerRepo.claimIfStatusEqualsWithOutcome(eq(77L), eq("ENTRY_SUBMITTING"), eq("REJECTED"),
+                anyString(), anyString())).thenReturn(1);
+        TradeAuditService audit = mock(TradeAuditService.class);
+        ReflectionTestUtils.setField(ctx.service, "tradeAuditService", audit);
+
+        TriggerTradeRequestEntity saved = ctx.service.executeTrade(optionRequest());
+
+        assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        assertThat(saved.getReason()).isEqualTo("Dhan rejected order (HTTP 400)");
+        assertThat(saved.getComment()).contains("automatic retry is disabled");
+        verify(ctx.triggerRepo, never()).claimIfStatusEquals(77L, "ENTRY_SUBMITTING", "PLACED_PENDING_CONFIRMATION");
+        verify(ctx.triggeredRepo, never()).save(any());
+        verify(ctx.eventPublisher, never()).publishEvent(any());
+        ArgumentCaptor<org.com.sharekhan.entity.TradeAuditEventEntity> event =
+                ArgumentCaptor.forClass(org.com.sharekhan.entity.TradeAuditEventEntity.class);
+        verify(audit).record(event.capture());
+        assertThat(event.getValue().getOutcome()).isEqualTo("REJECTED");
+        assertThat(event.getValue().getTriggerRequestId()).isEqualTo(77L);
+    }
+
+    @Test
+    void immediateEntryPreservesDefinitiveBrokerRejectionWithoutChasing() {
+        TestContext ctx = new TestContext(pending("unused"));
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(123.45);
+        when(ctx.broker.placeOrder(any(), any(), anyDouble())).thenReturn(OrderPlacementResult.builder()
+                .success(false).status("Rejected").definitiveBrokerRejection(true)
+                .rejectionReason("Dhan rejected order (HTTP 400)").build());
+
+        TriggeredTradeSetupEntity rejected = ctx.service.executeTradeFromEntity(triggerRequestEntity(), true);
+
+        assertThat(rejected.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        assertThat(rejected.getReason()).isEqualTo("Dhan rejected order (HTTP 400)");
+        verify(ctx.broker, times(1)).placeOrder(any(), any(), anyDouble());
+        verify(ctx.broker, never()).modifyEntryOrder(any(), any(), anyString(), anyDouble());
+        verify(ctx.eventPublisher, never()).publishEvent(any());
+    }
+
+    @Test
     void rejectedBrokerSideEntryTriggerLeavesRequestPendingForOriginalFlow() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder()
                 .success(false)
