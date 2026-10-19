@@ -235,3 +235,22 @@ Admin header now includes **Sign out** beside My workspace. It fetches a fresh
 CSRF token and submits the existing POST /logout form, returning to /login?logout.
 Token retrieval failure stays on the dashboard with a visible retryable error.
 The header actions wrap on small screens. Admin JS v34 and layout CSS v2.
+
+
+### Automatic session refresh and connection verification
+
+Successful credential-scoped token persistence (including scheduled customer-token
+refresh) also updates the expiry of an existing, previously verified connection.
+The token and verification are saved in one transaction. This prevents a refreshed
+broker session from remaining blocked by an old onboarding verification expiry.
+Only a nonblank token with a future expiry for the same active broker credential
+can renew verification. Global or unscoped user tokens do not renew connections.
+
+Refresh does not create first-time connection consent, restore an explicitly
+disconnected connection, change broker activity, or enable trading. The guarded
+update increments the connection version so a concurrent stale write cannot
+silently overwrite a disconnect. Shorter replacement sessions also shorten
+verification to the actual token expiry. Authentication failures still require
+attention; this change does not bypass expiry checks or replay missed signals.
+Existing stale verification is repaired on the next successful token refresh; an
+explicit reconnect remains an immediate recovery option after release.

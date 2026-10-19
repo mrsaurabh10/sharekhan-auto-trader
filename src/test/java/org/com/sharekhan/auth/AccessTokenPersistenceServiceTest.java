@@ -22,7 +22,8 @@ class AccessTokenPersistenceServiceTest {
         AccessTokenPersistenceService service = new AccessTokenPersistenceService(
                 repository.proxy(),
                 new PlainCryptoService(),
-                brokerCredentialsRepository()
+                brokerCredentialsRepository(),
+                org.mockito.Mockito.mock(org.com.sharekhan.onboarding.BrokerConnectionRepository.class)
         );
 
         Instant expiry = Instant.parse("2026-06-08T09:15:30Z");
