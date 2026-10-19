@@ -1011,7 +1011,7 @@
       '<div style="margin-bottom:8px"><label>Target2</label><br/><input id="modal_target2" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Target3</label><br/><input id="modal_target3" type="number" step="0.01" style="width:100%"/></div>' +
       '<div style="margin-bottom:8px"><label>Quantity</label><br/><input id="modal_quantity" type="number" min="1" style="width:100%"/></div>' +
-      '<div style="margin-bottom:8px"><label><input id="modal_intraday" type="checkbox"/> Intraday</label></div>' +
+      '<div style="margin-bottom:8px"><label><input id="modal_intraday" type="checkbox"/> Same-day exit managed by app</label></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_tslEnabled" type="checkbox"/> Enable TSL (partial booking)</label></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_useSpotPrice" type="checkbox"/> Use Spot Price (All)</label></div>' +
       '<div style="margin-bottom:8px"><label><input id="modal_useSpotForEntry" type="checkbox"/> Spot for Entry</label></div>' +

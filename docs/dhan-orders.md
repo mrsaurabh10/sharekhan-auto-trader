@@ -7,11 +7,18 @@ No live orders or account configuration changes are part of automated tests.
 
 ## Supported execution
 
+All new standard Dhan entries use delivery for cash (`CNC`) or carry-forward for
+options (`MARGIN`), including strategies and message sources. The `intraday` flag
+controls app-managed same-day exits, independently of the broker product. The
+selected execution product is persisted with the trade and inherited by target
+legs and later exits. Existing broker positions retain their original product;
+they cannot be converted by relabelling database rows. See `order-products.md`.
+
 - Long entries and sell exits for standard NSE/BSE cash equities and NSE/BSE
   equity/index options, using the application's NC/BC/NF/BF exchange mapping.
 - DAY limit orders, and buy stop-limit entries (`STOP_LOSS`) held by Dhan.
-- INTRADAY, cash CNC delivery and option MARGIN carry-forward, derived from the
-  application's existing intraday setting. Quantities are shares/units already;
+- Cash CNC delivery and option MARGIN carry-forward for new entries; existing
+  INTRADAY positions retain their product when closing. Quantities are shares/units already;
   the adapter does not multiply them by lot size again.
 - Entry/exit modification of the same broker order, cancellation requests and
   order polling through the existing BrokerService interfaces, with Dhan live
@@ -86,9 +93,11 @@ manual broker actions or database restoration.
 
 ## Schema and rollout
 
-One additive table is required on the primary JPA datasource. Existing deployments
+The submission journal and `triggered_trade_setups.broker_execution_product`
+column are required on the primary JPA datasource. Existing deployments
 using Hibernate ddl-auto=update create it on an authorized rollout. For managed
-PostgreSQL schema deployments, review `db/postgresql/dhan-order-submissions.sql`.
+PostgreSQL schema deployments, review `db/postgresql/dhan-order-submissions.sql`
+and `db/postgresql/broker-execution-product-schema.sql`.
 It has no credentials, foreign-key dependency or existing trading-row changes.
 No production schema changes, deployment or real order tests have been run here.
 

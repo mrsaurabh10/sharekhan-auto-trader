@@ -91,6 +91,35 @@ class OrderStatusPollingServiceDhanUpdateTest {
         assertThat(trade.getExitPrice()).isEqualTo(100.5);assertThat(trade.getPnl()).isEqualTo(105d);
         verifyNoInteractions(http);verify(engine,times(1)).advanceStagedTargetStopsAfterTargetExit(any());
     }
+    @Test void missedSocketFillIsPersistedFromRealDhanArrayThroughRestPolling() throws Exception {
+        trade.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        trade.setOrderId("12345");trade.setExitOrderId(null);
+        var tokenStore=mock(org.com.sharekhan.auth.AccessTokenPersistenceService.class);
+        when(tokenStore.findLatestByBrokerAndBrokerCredentialsId("Dhan",7L)).thenReturn(Optional.of(
+            AccessTokenEntity.builder().token("test-token").expiry(Instant.now().plusSeconds(3600)).build()));
+        var http=mock(DhanOrderClient.class);
+        var adapter=new DhanBrokerService(http,mock(DhanInstrumentResolver.class),mock(DhanSubmissionClaim.class),credentials,tokenStore,
+            (CryptoService)ReflectionTestUtils.getField(service,"cryptoService"));
+        when(factory.getService("Dhan")).thenReturn(adapter);
+        JSONObject fill=new JSONObject().put("dhanClientId","1000000001").put("orderId","12345").put("orderStatus","TRADED")
+            .put("exchangeSegment","NSE_EQ").put("transactionType","BUY").put("quantity",10).put("filledQty",10)
+            .put("remainingQuantity",0).put("averageTradedPrice",100.5);
+        when(http.exchange(eq("GET"),eq("/orders/12345"),eq("test-token"),isNull()))
+            .thenReturn(new DhanOrderClient.Response(200,new JSONArray().put(fill).toString()));
+        when(engine.evaluateOrderFinalStatus(any(),any())).thenCallRealMethod();
+        service.monitorOrderStatus(trade);
+        tasks.getFirst().run();
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        assertThat(trade.getActualEntryPrice()).isEqualTo(100.5);
+        assertThat(trade.getEntryAt()).isNotNull();
+        verify(trades).save(argThat(saved->saved.getStatus()==TriggeredTradeStatus.EXECUTED && Double.valueOf(100.5).equals(saved.getActualEntryPrice())));
+        verify(engine,times(1)).handleEntryOrderExecution(trade);
+        verify(futures.getFirst()).cancel(false);
+        tasks.getFirst().run();
+        verify(engine,times(1)).handleEntryOrderExecution(trade);
+        verify(http,times(1)).exchange(eq("GET"),eq("/orders/12345"),eq("test-token"),isNull());
+        verify(http,never()).exchange(eq("POST"),anyString(),anyString(),any());
+    }
     @Test void streamRejectsForeignCredentialAndUnmatchedOrderBeforeReconciliation() {
         service.monitorOrderStatus(trade);
         service.onDhanOrderUpdate(new DhanOrderUpdateEvent(8L,"12345","sat-test",row("Pending").toString()));

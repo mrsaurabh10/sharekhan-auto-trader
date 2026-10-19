@@ -1,6 +1,12 @@
 # Dhan live order updates and polling ownership
 
 Dhan's individual order WebSocket runs alongside the REST adapter.
+Single-order REST lookups accept both an object and an array (the latter observed
+on 2026-10-19). Selection requires exactly one matching order/correlation and the
+configured client; empty, foreign-account, duplicate or malformed results cannot
+confirm execution. This restores entry confirmation through REST/chase snapshots
+when a socket fill is missed. Only a consistent full fill with a positive actual
+average price reaches the existing execution persistence and post-entry hooks.
 Source reviewed 2026-10-17: https://dhanhq.co/docs/v2/order-update/ .
 Local tests use mocked sockets/broker responses. No live broker connection, order,
 production CPU measurement or deployment has been performed for this feature.

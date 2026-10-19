@@ -2188,6 +2188,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setEntryPrice(trigger.getEntryPrice());
             triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
             triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
+            triggeredTradeSetupEntity.setBrokerExecutionProduct(trigger.getBrokerExecutionProduct());
             // Persist the credential actually used to place the order. A trigger can
             // omit its credential and be routed to a default broker; polling must not
             // later re-resolve to a different broker.
@@ -4775,6 +4776,7 @@ public class TradeExecutionService {
         leg.setTslEnabled(true); leg.setUseSpotPrice(root.getUseSpotPrice());
         leg.setUseSpotForEntry(root.getUseSpotForEntry()); leg.setUseSpotForSl(false); leg.setUseSpotForTarget(false);
         leg.setSpotScripCode(root.getSpotScripCode()); leg.setIntraday(root.getIntraday()); leg.setSource(root.getSource());
+        leg.setBrokerExecutionProduct(root.getBrokerExecutionProduct());
         leg.setStatus(TriggeredTradeStatus.EXECUTED); leg.setTriggeredAt(root.getTriggeredAt()); leg.setEntryAt(root.getEntryAt());
         leg.setTargetOrderGroupId(groupId); leg.setTargetStage(stage);
         leg.setOrderId(root.getOrderId() != null ? root.getOrderId() + "-T" + stage : null);

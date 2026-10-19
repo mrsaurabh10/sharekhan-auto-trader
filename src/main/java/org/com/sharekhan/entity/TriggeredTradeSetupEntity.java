@@ -92,6 +92,11 @@ public class TriggeredTradeSetupEntity {
     @Column(name = "intraday")
     private Boolean intraday;  // default false
 
+    // Broker product is independent of the app's same-day exit flag. Null on
+    // legacy trades: their exits must retain the product used before this policy.
+    @Column(name = "broker_execution_product", length = 32)
+    private String brokerExecutionProduct;
+
     @Column(name = "source")
     private String source;
 

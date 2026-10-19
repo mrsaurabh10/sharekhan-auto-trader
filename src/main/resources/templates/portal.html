@@ -228,7 +228,8 @@
 <label>Target 3 (₹, optional)<input name="target3" type="number" min="0.01" step="0.01">
 </label>
 <label class="check">
-<input name="intraday" type="checkbox" checked>Intraday order</label>
+<input name="intraday" type="checkbox" checked>Same-day exit managed by app</label>
+<small class="full muted">Broker orders always use delivery (cash) or carry-forward (options). This setting controls the app’s same-day exit.</small>
 <div class="full actions">
 <button class="primary" type="submit">Review order →</button>
 <small id="orderGate">
@@ -386,7 +387,7 @@
 <small>Up to five stocks. Whole shares are sized at the signal price; charges and fill-price changes are extra.</small>
 </label>
 <label class="check">
-<input name="intraday" type="checkbox" checked>Intraday</label>
+<input name="intraday" type="checkbox" checked>Same-day exit managed by app</label>
 <label class="check">
 <input type="checkbox" name="consent" required>I understand this subscription may generate live orders immediately and on future trading days.</label>
 <div class="actions">
@@ -420,7 +421,7 @@
 </div>
 </form>
 </dialog>
-<script src="/portal/portal.js?v=20261017-pnl" defer>
+<script src="/portal/portal.js?v=20261019-all-delivery" defer>
 </script>
 </body>
 </html>

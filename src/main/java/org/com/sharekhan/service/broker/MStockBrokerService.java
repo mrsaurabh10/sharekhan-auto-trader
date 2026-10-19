@@ -75,6 +75,8 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
                                                  String orderId,
                                                  double newPrice) {
         try {
+            if (trade != null && StringUtils.hasText(trade.getBrokerProductType()))
+                return rejected("Broker-managed products such as BIGTRADEPLUS require Sharekhan",newPrice);
             if (!isUsableOrderId(orderId)) {
                 return rejected("MStock order id is required for modify", newPrice);
             }
@@ -116,6 +118,8 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
     @Override
     public void cancelEntryOrder(TriggeredTradeSetupEntity trade, BrokerContext context, String orderId) {
         try {
+            if (trade != null && StringUtils.hasText(trade.getBrokerProductType()))
+                throw new IllegalArgumentException("BIGTRADEPLUS requires Sharekhan");
             if (!isUsableOrderId(orderId)) {
                 log.warn("MStock cancel skipped for trade {} because order id is not usable: {}",
                         trade != null ? trade.getId() : null, orderId);
@@ -192,6 +196,9 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
             if (trade == null) {
                 return rejected("Trade is required", price);
             }
+            if (StringUtils.hasText(trade.getBrokerProductType())) {
+                return rejected("Broker-managed products such as BIGTRADEPLUS require Sharekhan", price);
+            }
             if (trade.getQuantity() == null || trade.getQuantity() <= 0L) {
                 return rejected("Quantity must be greater than zero", price);
             }
@@ -201,6 +208,7 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
 
             InstrumentIdentity instrument = resolveInstrumentIdentity(trade);
             String variety = ShareKhanOrderUtil.isAfterHours() ? "amo" : "regular";
+            if ("BUY".equals(transactionType)) trade.setBrokerExecutionProduct(isDerivativeExchange(instrument.exchange()) ? "NRML" : "CNC");
 
             Map<String, String> form = buildBaseOrderForm(trade, instrument, transactionType, orderType, price, triggerPrice);
             form.put("tag", buildOrderTag(trade));
@@ -478,6 +486,13 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
     }
 
     private String resolveProduct(TriggeredTradeSetupEntity trade, String exchange) {
+        if (trade != null && trade.getBrokerExecutionProduct() != null) {
+            String product=trade.getBrokerExecutionProduct();
+            if (!java.util.Set.of("MIS",isDerivativeExchange(exchange) ? "NRML" : "CNC").contains(product))
+                throw new IllegalArgumentException("Stored MStock execution product does not match instrument");
+            return product;
+        }
+        // Existing pre-policy positions retain their original product when closing/modifying.
         if (trade != null && Boolean.TRUE.equals(trade.getIntraday())) {
             return "MIS";
         }

@@ -232,7 +232,7 @@
     if (['NC','BC'].includes(body.exchange)) { body.strikePrice=null; body.optionType=null; body.expiry=null; }
     body.intraday=f.elements.intraday.checked; body.action='BUY';
     pendingOrder=body; $('#orderSummary').replaceChildren();
-    for (const [label,value] of [['Broker',f.elements.brokerCredentialsId.selectedOptions[0].textContent],['Instrument',body.instrument],['Exchange',body.exchange],['Contract',body.optionType],['Strike',body.strikePrice],['Expiry',body.expiry],[body.optionType ? 'Lots' : 'Shares',body.quantity],['Entry ₹',body.entryPrice],['Stop-loss ₹',body.stopLoss],['Target 1 ₹',body.target1],['Target 2 ₹',body.target2],['Target 3 ₹',body.target3],['Product',body.intraday?'Intraday':'Delivery']]) if(value!=null) $('#orderSummary').append(node('dt',label),node('dd',value));
+    for (const [label,value] of [['Broker',f.elements.brokerCredentialsId.selectedOptions[0].textContent],['Instrument',body.instrument],['Exchange',body.exchange],['Contract',body.optionType],['Strike',body.strikePrice],['Expiry',body.expiry],[body.optionType ? 'Lots' : 'Shares',body.quantity],['Entry ₹',body.entryPrice],['Stop-loss ₹',body.stopLoss],['Target 1 ₹',body.target1],['Target 2 ₹',body.target2],['Target 3 ₹',body.target3],['Broker product',body.optionType?'Carry-forward':'Delivery'],['Same-day exit by app',body.intraday?'Enabled':'Disabled']]) if(value!=null) $('#orderSummary').append(node('dt',label),node('dd',value));
     $('#confirmOrder').reset(); $('#reviewDialog').showModal();
   });
   $('#confirmOrder').addEventListener('submit',event=>{event.preventDefault(); busy(event.target.querySelector('button[type=submit]'),async()=>{

@@ -1428,6 +1428,7 @@ public class PriceTriggerService {
             remainingTrade.setOriginalLots(totalLots);
             remainingTrade.setTslEnabled(trade.getTslEnabled()); // Preserve TSL flag
             remainingTrade.setIntraday(trade.getIntraday());
+            remainingTrade.setBrokerExecutionProduct(trade.getBrokerExecutionProduct());
             remainingTrade.setStatus(TriggeredTradeStatus.EXECUTED);
             remainingTrade.setTriggeredAt(trade.getTriggeredAt());
             remainingTrade.setEntryAt(trade.getEntryAt());

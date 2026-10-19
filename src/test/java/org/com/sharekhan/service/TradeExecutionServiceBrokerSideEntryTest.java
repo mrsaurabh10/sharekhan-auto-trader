@@ -179,6 +179,15 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(allocation).containsExactly(66, 66, 68);
     }
 
+    @Test void stagedTargetsRetainBrokerExecutionProductAndAppManagedSameDayExit() {
+        TestContext ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        var root=TriggeredTradeSetupEntity.builder().id(1L).originalLots(3).quantity(195L)
+                .intraday(true).brokerExecutionProduct("CNC").build();
+        TriggeredTradeSetupEntity leg=ReflectionTestUtils.invokeMethod(ctx.service,"copyTargetLeg",root,1L,2,1,210d,195L);
+        assertThat(leg.getBrokerExecutionProduct()).isEqualTo("CNC");
+        assertThat(leg.getIntraday()).isTrue();
+    }
+
     @Test
     void usesShoonyaLiveBookForFnoEntryBeforeMstockFallback() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
@@ -551,17 +560,20 @@ class TradeExecutionServiceBrokerSideEntryTest {
         when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(quote));
         when(ctx.quoteCache.isStale(any(), any(Duration.class))).thenReturn(false);
         when(ctx.broker.placeOrder(any(), any(BrokerContext.class), eq(125.0)))
-                .thenReturn(OrderPlacementResult.builder()
+                .thenAnswer(call->{
+                    ((TriggeredTradeSetupEntity)call.getArgument(0)).setBrokerExecutionProduct("CNC");
+                    return OrderPlacementResult.builder()
                         .success(true)
                         .orderId("ENTRY-ORDER-1")
                         .status("Pending")
                         .attemptedPrice(125.0)
-                        .build());
+                        .build();});
 
         TriggeredTradeSetupEntity created = ctx.service.executeTradeFromEntity(triggerRequestEntity(), true);
 
         assertThat(created.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
         assertThat(created.getOrderId()).isEqualTo("ENTRY-ORDER-1");
+        assertThat(created.getBrokerExecutionProduct()).isEqualTo("CNC");
         assertThat(ctx.service.isEntryOrderChaseActive(created.getId())).isTrue();
         verify(ctx.broker).placeOrder(any(), any(BrokerContext.class), eq(125.0));
 

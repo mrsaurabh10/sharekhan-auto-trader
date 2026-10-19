@@ -491,6 +491,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             }
             order.orderType = "NORMAL";
             order.productType = "INVESTMENT";
+            if ("B".equals(transactionType)) trade.setBrokerExecutionProduct("INVESTMENT");
             order.instrumentType = trade.getInstrumentType();
             
             if (trade.getStrikePrice() != null) {

@@ -74,10 +74,11 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
             } else throw new IllegalArgumentException("Persist request or trade before sending Dhan order");
             if (trade.getBrokerProductType() != null && !trade.getBrokerProductType().isBlank())
                 throw new IllegalArgumentException("Dhan broker-managed products are unsupported");
+            if ("BUY".equals(side)) trade.setBrokerExecutionProduct(instrument.segment().endsWith("FNO") ? "MARGIN" : "CNC");
             correlation = correlation(context.getBrokerCredentialsId(),submissionKey,side);
             body = new JSONObject().put("dhanClientId",session.clientId()).put("correlationId",correlation)
                 .put("transactionType",side).put("exchangeSegment",instrument.segment())
-                .put("productType",Boolean.TRUE.equals(trade.getIntraday()) ? "INTRADAY" : instrument.segment().endsWith("FNO") ? "MARGIN" : "CNC")
+                .put("productType",executionProduct(trade,instrument.segment()))
                 .put("orderType",trigger == null ? "LIMIT" : "STOP_LOSS").put("validity","DAY")
                 .put("securityId",instrument.securityId()).put("quantity",quantity).put("disclosedQuantity",0)
                 .put("price",limit).put("triggerPrice",trigger == null ? BigDecimal.ZERO : price(trigger,instrument)).put("afterMarketOrder",false);
@@ -102,6 +103,7 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
         }
         try {
             JSONObject found = lookup(session,CORRELATION_PREFIX+correlation);
+            if ("BUY".equals(side)) recordExecutionProduct(trade,found);
             var result = accepted(found,null,price);
             if (result != null) return placementOutcome(result, session, side);
         } catch (Exception ignored) {}
@@ -155,6 +157,7 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
             if (!DhanInstrumentResolver.segment(trade.getExchange()).equals(row.getString("exchangeSegment"))
                     || !(orderId.equals(trade.getExitOrderId()) ? "SELL" : "BUY").equals(row.getString("transactionType"))) return null;
             JSONObject response=adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
+            if (response != null && !orderId.equals(trade.getExitOrderId())) recordExecutionProduct(trade,row);
             if(response!=null)modificationSnapshot.set(new ModificationSnapshot(trade.getBrokerCredentialsId(),trade.getId(),
                 orderId,session.clientId(),session.token(),snapshotTicker.getAsLong(),row.toString()));
             return response;
@@ -187,10 +190,39 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
         String id = safeId(correlation ? orderId.substring(CORRELATION_PREFIX.length()) : orderId);
         var response = client.exchange("GET","/orders/"+(correlation ? "external/" : "")+id,session.token(),null);
         if (!response.ok()) throw new IllegalArgumentException();
-        JSONObject row = response.json();
-        if (!session.clientId().equals(row.getString("dhanClientId"))
-                || (correlation ? !id.equals(row.getString("correlationId")) : !id.equals(row.getString("orderId")))) throw new IllegalArgumentException();
-        safeId(row.getString("orderId"));return row;
+        // Dhan can return an array even for a single order ID. Never infer identity
+        // from array position: recovery must find exactly one scoped order.
+        JSONTokener parser = new JSONTokener(response.body());
+        Object payload = parser.nextValue();
+        if (parser.nextClean() != 0) throw new IllegalArgumentException();
+        JSONArray rows;
+        if (payload instanceof JSONObject object) rows = new JSONArray().put(object);
+        else if (payload instanceof JSONArray array) rows = array;
+        else throw new IllegalArgumentException();
+        JSONObject match = null;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            if (!id.equals(row.optString(correlation ? "correlationId" : "orderId"))) continue;
+            if (!session.clientId().equals(row.getString("dhanClientId")) || match != null) throw new IllegalArgumentException();
+            safeId(row.getString("orderId"));
+            match = row;
+        }
+        if (match == null) throw new IllegalArgumentException();
+        return match;
+    }
+    private static String executionProduct(TriggeredTradeSetupEntity trade,String segment) {
+        String product=trade.getBrokerExecutionProduct();
+        if (product == null) { // Preserve the original product of pre-policy positions when closing them.
+            return Boolean.TRUE.equals(trade.getIntraday()) ? "INTRADAY" : segment.endsWith("FNO") ? "MARGIN" : "CNC";
+        }
+        if (!Set.of("INTRADAY",segment.endsWith("FNO") ? "MARGIN" : "CNC").contains(product)) throw new IllegalArgumentException();
+        return product;
+    }
+    private static void recordExecutionProduct(TriggeredTradeSetupEntity trade,JSONObject row) {
+        if (!row.has("productType")) return;
+        String product=row.getString("productType");
+        if (!Set.of("INTRADAY",row.getString("exchangeSegment").endsWith("FNO") ? "MARGIN" : "CNC").contains(product)) throw new IllegalArgumentException();
+        trade.setBrokerExecutionProduct(product);
     }
     private void validateOrder(JSONObject row,TriggeredTradeSetupEntity trade,DhanInstrumentResolver.Instrument instrument,String orderId) {
         boolean exit = orderId.equals(trade.getExitOrderId());
