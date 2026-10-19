@@ -209,7 +209,7 @@
       if (!await confirmAction('Cancel this order request?')) return;
       await api('/api/trades/cancel-request/'+row.id,'POST',{}); notify('Request cancelled.'); await loadOrders();
     })));
-    table($('#executions'),[['Instrument','symbol'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Gross P&L',r=>pnlValue(r.pnl),'numeric'],['Costs',r=>money(r.totalTradeCost),'numeric'],['Net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
+    table($('#executions'),[['Instrument','symbol'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Costs',r=>money(r.totalTradeCost),'numeric'],['Net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
       if (['EXECUTED','TARGET_ORDER_PLACED'].includes(row.status)) td.append(button('Close position',async()=>{
         if (!await confirmAction('Submit a live square-off order for this position?')) return;
         await api('/api/trades/square-off/'+row.id,'POST',{}); notify('Square-off requested. Check broker execution status.'); await loadOrders();
@@ -258,6 +258,12 @@
   function financialNumber(value) {
     if(value==null || !['number','string'].includes(typeof value) || (typeof value==='string' && !value.trim()))return null;
     const number=Number(value);return Number.isFinite(number) ? number : null;
+  }
+  function positionPnlValue(row) {
+    if(row.runningPnl==null)return pnlValue(row.pnl);
+    const el=node('div');el.append(pnlValue(row.runningPnl));
+    el.append(node('small','Last price '+money(row.lastKnownPrice)+' · observed '+new Date(row.runningPnlAsOf).toLocaleString('en-IN'),'muted'));
+    el.title=row.runningPnlSource || 'Last known price';return el;
   }
   const currency=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',minimumFractionDigits:2,maximumFractionDigits:2});
   const money = value => financialNumber(value)==null ? '—' : currency.format(financialNumber(value));
@@ -332,6 +338,12 @@
     renderEquityChart(data.byDay || []);
   }
   $('#analyticsForm').addEventListener('submit',event=>{event.preventDefault();busy(event.target.querySelector('button'),loadAnalytics);});
+  let pnlRefreshPending=false;
+  setInterval(async()=>{
+    if(document.hidden || $('#view-orders').hidden || pnlRefreshPending || document.querySelector('dialog[open]'))return;
+    pnlRefreshPending=true;
+    try{await loadOrders();}catch{}finally{pnlRefreshPending=false;}
+  },15000);
   try {
     const me=await api('/api/user/me'); const name=me.displayName || me.username;
     $('#identity').textContent=name; $('#avatar').textContent=name.slice(0,1).toUpperCase(); $('#welcome').textContent='Welcome, '+name.split(' ')[0]; $('#profileEmail').textContent=me.email || me.username;

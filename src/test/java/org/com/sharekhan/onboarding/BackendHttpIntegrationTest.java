@@ -106,6 +106,7 @@ class BackendHttpIntegrationTest {
     @MockBean WebSocketSubscriptionHelper webSocket;
     @MockBean AtrPreviousDayTradeLevelService atr;
     @MockBean GeminiTradeInsightService insights;
+    @MockBean RunningTradePnlService runningTradePnlService;
 
     @BeforeEach void setup() {
         String peer="192.0.2."+PEER.incrementAndGet();
@@ -232,6 +233,22 @@ class BackendHttpIntegrationTest {
             .andExpect(jsonPath("$.content[0].appUserId").value(owner));
         mvc.perform(get("/api/user/onboarding").session(session)).andExpect(jsonPath("$.nextStep").value("COMPLETE"));
         mvc.perform(post("/api/user/brokers/"+id+"/disconnect").session(session).with(csrf())).andExpect(status().isConflict());
+    }
+    @Test void runningPnlIsReadOnlyAndCannotBypassUserScope() throws Exception {
+        var session=registerAndLogin();long owner=users.findByUsername("alex@example.test").orElseThrow().getId();
+        var trade=TriggeredTradeSetupEntity.builder().id(10328L).appUserId(owner).status(TriggeredTradeStatus.EXECUTED)
+            .quantity(65L).actualEntryPrice(195.1).build();
+        when(engine.getRecentExecutionsForUser(eq(owner),any(),any(),eq("own"),any()))
+            .thenReturn(new PageImpl<>(List.of(trade)));
+        when(runningTradePnlService.snapshot(trade)).thenReturn(java.util.Optional.of(new RunningTradePnlService.Snapshot(
+            new java.math.BigDecimal("195"),new java.math.BigDecimal("-6.50"),java.time.Instant.parse("2026-10-19T10:00:00Z"),"Last known price")));
+        mvc.perform(get("/api/orders/executed?userId=999&page=0&size=10").session(session))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.content[0].runningPnl").value(-6.5))
+            .andExpect(jsonPath("$.content[0].lastKnownPrice").value(195))
+            .andExpect(jsonPath("$.content[0].runningPnlAsOf").exists())
+            .andExpect(jsonPath("$.content[0].pnl").isEmpty());
+        verify(engine).getRecentExecutionsForUser(eq(owner),any(),any(),eq("own"),any());
+        assertThat(trade.getPnl()).isNull();
     }
     @Test void invalidBrokerDataAndForeignBrokerCannotReachExecution() throws Exception {
         MockHttpSession session=registerAndLogin();

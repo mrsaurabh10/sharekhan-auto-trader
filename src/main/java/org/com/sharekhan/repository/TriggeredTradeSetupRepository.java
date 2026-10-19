@@ -17,6 +17,16 @@ import java.time.LocalDateTime;
 
 @Repository
 public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTradeSetupEntity, Long> {
+    @Query("""
+        select count(t) from TriggeredTradeSetupEntity t where t.brokerCredentialsId=:credential
+        and upper(t.exchange)=upper(:exchange) and upper(t.symbol)=upper(:symbol)
+        and (t.expiry=:expiry or (t.expiry is null and :expiry is null))
+        and (upper(t.optionType)=upper(:option) or (t.optionType is null and :option is null))
+        and (t.strikePrice=:strike or (t.strikePrice is null and :strike is null)) and t.status in :statuses
+        """)
+    long countOpenContract(@Param("credential") Long credential,@Param("exchange") String exchange,
+        @Param("symbol") String symbol,@Param("expiry") String expiry,@Param("option") String option,
+        @Param("strike") Double strike,@Param("statuses") java.util.Set<TriggeredTradeStatus> statuses);
     List<TriggeredTradeSetupEntity> findByStrategyRunId(String runId);
 
     List<TriggeredTradeSetupEntity> findBySource(String source);

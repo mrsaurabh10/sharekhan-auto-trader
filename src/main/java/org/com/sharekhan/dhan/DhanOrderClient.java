@@ -17,9 +17,10 @@ public class DhanOrderClient {
     }
     /** No automatic retries, redirects, token refresh or response/credential logging. */
     public Response exchange(String method, String path, String token, JSONObject body) throws Exception {
-        if (!path.matches("/orders(?:/(?:external/)?[A-Za-z0-9_-]+)?")) throw new IllegalArgumentException("Invalid Dhan order path");
+        boolean readPositions="GET".equals(method) && "/positions".equals(path) && body==null;
+        if (!readPositions && !path.matches("/orders(?:/(?:external/)?[A-Za-z0-9_-]+)?")) throw new IllegalArgumentException("Invalid Dhan order path");
         var publisher = body == null ? HttpRequest.BodyPublishers.noBody() : HttpRequest.BodyPublishers.ofString(body.toString());
-        var request = HttpRequest.newBuilder(URI.create("https://api.dhan.co/v2" + path)).timeout(Duration.ofSeconds(30))
+        var request = HttpRequest.newBuilder(URI.create("https://api.dhan.co/v2" + path)).timeout(Duration.ofSeconds(readPositions?5:30))
             .header("access-token", token).header("Content-Type","application/json").header("Accept","application/json")
             .method(method, publisher).build();
         try {

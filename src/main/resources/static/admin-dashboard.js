@@ -424,6 +424,9 @@
     const totalOpen = openTrades.length;
     let priced = 0;
     for (const t of openTrades) {
+      if(t.runningPnl!=null && Number.isFinite(Number(t.runningPnl))) {
+        priced++;continue;
+      }
       const key = deriveTradeLtpKey(t);
       const sc = t && (t.scripCode || t.scrip_code || t.scrip || t.tradingScripCode);
       const ltp = resolveCachedLtpValue(key, sc);
@@ -466,6 +469,9 @@
     let running = 0.0;
     let counted = 0;
     for (const t of openTrades) {
+      if(t.runningPnl!=null && Number.isFinite(Number(t.runningPnl))) {
+        running+=Number(t.runningPnl);counted++;continue;
+      }
       const entry = Number(t && (t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : t.entry)));
       const qty = Number(t && t.quantity);
       if (Number.isNaN(entry) || Number.isNaN(qty)) continue;
@@ -1527,6 +1533,13 @@
             pnlTd.setAttribute('data-pnl-key', tradedKey);
             keySet.add(tradedKey);
         }
+        if(LIVE_PNL_STATUSES.has(statusUpper) && t.runningPnl!=null && Number.isFinite(Number(t.runningPnl))) {
+            pnlTd.innerText=Number(t.runningPnl).toFixed(2);updatePnlStyle(pnlTd,t.runningPnl);
+            pnlTd.title=(t.runningPnlSource || 'Last known price')+' · observed '+new Date(t.runningPnlAsOf).toLocaleString('en-IN');
+            if(t.lastKnownPrice!=null)ltpTd.innerText=Number(t.lastKnownPrice).toFixed(2);
+            ltpTd.title=pnlTd.title;
+            pnlTd.dataset.serverPnl='true';ltpTd.dataset.serverPnl='true';
+        }
         applyCachedLtpToCell(ltpTd, tradedKey, rowScripCode);
         applyCachedLtpToCell(spotLtpTd, spotKey, t.spotScripCode || t.spot_scrip_code || t.underlyingScripCode || t.underlying_scrip_code || null);
         applyCachedPnlToElement(pnlTd, tradedKey, rowScripCode);
@@ -1672,7 +1685,7 @@
 
   function applyCachedLtpToCell(el, key, scripCode) {
     try {
-      if (!el) return;
+      if (!el || el.dataset.serverPnl==='true') return;
       const ltpNum = resolveCachedLtpValue(key, scripCode);
       if (!Number.isNaN(ltpNum) && ltpNum != null) {
         el.innerText = Number(ltpNum).toFixed(2);
@@ -1682,7 +1695,7 @@
 
   function applyCachedPnlToElement(el, key, scripCode) {
     try {
-      if (!el) return;
+      if (!el || el.dataset.serverPnl==='true') return;
       const tr = el.closest('tr');
       if (!tr) return;
       const status = (tr.getAttribute('data-status') || '').toUpperCase();
@@ -1722,6 +1735,7 @@
 
       // Update elements bound by key
       document.querySelectorAll('[data-ltp-key]').forEach(function(el) {
+        if(el.dataset.serverPnl==='true')return;
         const key = el.getAttribute('data-ltp-key');
         const tr = el.closest('tr');
         const scripCode = el.getAttribute('data-ltp-scrip') || (tr ? tr.getAttribute('data-scrip-code') : null);
@@ -1776,7 +1790,7 @@
                 const pnlTd = tr.querySelector('[data-pnl-key]');
                 if (pnlTd) {
                     const status = (tr.getAttribute('data-status') || '').toUpperCase();
-                    if (LIVE_PNL_STATUSES.has(status)) {
+                    if (LIVE_PNL_STATUSES.has(status) && pnlTd.dataset.serverPnl!=='true') {
                         const entry = parseFloat(tr.getAttribute('data-entry') || '');
                         const qty = parseFloat(tr.getAttribute('data-qty') || '');
                         if (!Number.isNaN(entry) && !Number.isNaN(qty)) {
@@ -1789,7 +1803,7 @@
 
                 // Update LTP cell (Option LTP)
                 const ltpTd = tr.querySelector('td[data-ltp-key]');
-                if (ltpTd) {
+                if (ltpTd && ltpTd.dataset.serverPnl!=='true') {
                     ltpTd.innerText = val;
                 }
             });
@@ -2599,4 +2613,12 @@
     startAdminWs();
   });
 
+  let pnlRefreshPending=false;
+  setInterval(async function(){
+    if(document.hidden || pnlRefreshPending || !window.selectedUserId || !['trading','simulator'].includes(window.currentUserTab)
+        || !document.querySelector('[data-server-pnl="true"]') || document.querySelector('dialog[open]'))return;
+    pnlRefreshPending=true;
+    try{await loadExecutedForUser(window.selectedUserId,getSelectedStatuses(),currentExecPage,currentTradeScope());}
+    finally{pnlRefreshPending=false;}
+  },15000);
 })();

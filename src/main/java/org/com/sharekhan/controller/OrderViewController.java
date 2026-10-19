@@ -41,6 +41,7 @@ public class OrderViewController {
     @Autowired private BrokerCredentialsRepository brokerCredentialsRepository;
     @Autowired private ObjectMapper objectMapper;
     @Autowired private TradeCostCalculator tradeCostCalculator;
+    @Autowired private org.com.sharekhan.service.RunningTradePnlService runningTradePnlService;
 
     @GetMapping("/requests")
     public ResponseEntity<?> getRequestedOrders(@RequestParam(name = "userId", required = false) Long userId,
@@ -86,6 +87,12 @@ public class OrderViewController {
 
     private Map<String, Object> enrichExecution(TriggeredTradeSetupEntity trade, Long scopedUserId) {
         Map<String, Object> row = objectMapper.convertValue(trade, MAP_TYPE);
+        runningTradePnlService.snapshot(trade).ifPresent(mark->{
+            row.put("lastKnownPrice",mark.price());
+            row.put("runningPnl",mark.runningPnl());
+            row.put("runningPnlAsOf",mark.observedAt());
+            row.put("runningPnlSource",mark.source());
+        });
         TradeCostCalculator.TradeCharges charges = tradeCostCalculator.calculate(trade);
         if (charges != null) {
             row.put("brokerage", charges.brokerage());
