@@ -7,6 +7,14 @@ No live orders or account configuration changes are part of automated tests.
 
 ## Supported execution
 
+Manual Dhan orders in the user portal default to delivery for cash (`CNC`) or
+carry-forward for options (`MARGIN`). Selecting Intraday explicitly uses
+`INTRADAY`. The review dialog shows the selected product. Refreshing account data
+preserves an explicit product choice for the same account; selecting a different
+account applies its default. Strategy subscription settings are unchanged.
+This default applies only to future requests: existing broker orders and positions
+retain their original product and cannot be converted by relabelling database rows.
+
 - Long entries and sell exits for standard NSE/BSE cash equities and NSE/BSE
   equity/index options, using the application's NC/BC/NF/BF exchange mapping.
 - DAY limit orders, and buy stop-limit entries (`STOP_LOSS`) held by Dhan.

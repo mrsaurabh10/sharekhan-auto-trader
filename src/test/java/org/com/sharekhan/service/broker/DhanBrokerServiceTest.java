@@ -170,6 +170,47 @@ class DhanBrokerServiceTest {
         assertThat(full.getString("orderStatus")).isEqualTo("Fully Executed");assertThat(full.getDouble("avgPrice")).isEqualTo(100.5);
         assertThat(service.fetchOrderStatus(trade,context,"12345")).isNull();assertThat(service.fetchOrderStatus(trade,context,"12345")).isNull();
     }
+    @Test void arrayOrderHistoryConfirmsFillAndMatchesIdentityRatherThanFirstRow() throws Exception {
+        var rows = new org.json.JSONArray().put(order("PENDING",0,10).put("orderId","unrelated"))
+            .put(order("TRADED",10,0));
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull()))
+            .thenReturn(new DhanOrderClient.Response(200,rows.toString()));
+        var full=service.fetchOrderStatus(trade,context,"12345").getJSONArray("data").getJSONObject(0);
+        assertThat(full.getString("orderStatus")).isEqualTo("Fully Executed");
+        assertThat(full.getDouble("avgPrice")).isEqualTo(100.5);
+        verify(client,times(1)).exchange(eq("GET"),eq("/orders/12345"),eq("test-token"),isNull());
+        verify(client,never()).exchange(eq("POST"),anyString(),anyString(),any());
+    }
+    @Test void arrayCorrelationRecoveryRetainsExactAccountAndOrder() throws Exception {
+        var rows=new org.json.JSONArray().put(order("TRADED",10,0).put("correlationId","sat-test"));
+        when(client.exchange(eq("GET"),eq("/orders/external/sat-test"),anyString(),isNull()))
+            .thenReturn(new DhanOrderClient.Response(200,rows.toString()));
+        var full=service.fetchOrderStatus(trade,context,"DHAN-CORR-sat-test").getJSONArray("data").getJSONObject(0);
+        assertThat(full.getString("orderId")).isEqualTo("DHAN-CORR-sat-test");
+        assertThat(full.getString("orderStatus")).isEqualTo("Fully Executed");
+    }
+    @Test void invalidOrAmbiguousArraysNeverConfirmExecution() throws Exception {
+        var full=order("TRADED",10,0);
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull())).thenReturn(
+            new DhanOrderClient.Response(200,"[]"),
+            new DhanOrderClient.Response(200,new org.json.JSONArray().put(order("TRADED",10,0).put("orderId","different")).toString()),
+            new DhanOrderClient.Response(200,new org.json.JSONArray().put(order("TRADED",10,0).put("dhanClientId","foreign")).toString()),
+            new DhanOrderClient.Response(200,new org.json.JSONArray().put(full).put(full).toString()),
+            new DhanOrderClient.Response(200,"[null]"),
+            new DhanOrderClient.Response(200,new org.json.JSONArray().put(full).toString()+" trailing"));
+        for(int i=0;i<6;i++) assertThat(service.fetchOrderStatus(trade,context,"12345")).isNull();
+    }
+    @Test void arrayPartialFillRemainsPartialAndDeliveryCashUsesCnc() throws Exception {
+        when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull()))
+            .thenReturn(new DhanOrderClient.Response(200,new org.json.JSONArray().put(order("PART_TRADED",3,7)).toString()));
+        assertThat(service.fetchOrderStatus(trade,context,"12345").getJSONArray("data").getJSONObject(0).getString("orderStatus")).isEqualTo("Partly Executed");
+        trade.setIntraday(false);
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","PENDING")));
+        assertThat(service.placeOrder(trade,context,100).isSuccess()).isTrue();
+        var body=ArgumentCaptor.forClass(JSONObject.class);
+        verify(client).exchange(eq("POST"),eq("/orders"),anyString(),body.capture());
+        assertThat(body.getValue().getString("productType")).isEqualTo("CNC");
+    }
     @Test void modificationUsesOriginalTotalQuantityAndRequiresSameOrderAcknowledgement() throws Exception {
         trade.setExitOrderId("12345");
         when(client.exchange(eq("GET"),eq("/orders/12345"),anyString(),isNull())).thenReturn(response(200,order("PART_TRADED",3,7).put("transactionType","SELL")));

@@ -187,10 +187,25 @@ public class DhanBrokerService implements ModifiableEntryBrokerService, TriggerP
         String id = safeId(correlation ? orderId.substring(CORRELATION_PREFIX.length()) : orderId);
         var response = client.exchange("GET","/orders/"+(correlation ? "external/" : "")+id,session.token(),null);
         if (!response.ok()) throw new IllegalArgumentException();
-        JSONObject row = response.json();
-        if (!session.clientId().equals(row.getString("dhanClientId"))
-                || (correlation ? !id.equals(row.getString("correlationId")) : !id.equals(row.getString("orderId")))) throw new IllegalArgumentException();
-        safeId(row.getString("orderId"));return row;
+        // Dhan can return an array even for a single order ID. Never infer identity
+        // from array position: recovery must find exactly one scoped order.
+        JSONTokener parser = new JSONTokener(response.body());
+        Object payload = parser.nextValue();
+        if (parser.nextClean() != 0) throw new IllegalArgumentException();
+        JSONArray rows;
+        if (payload instanceof JSONObject object) rows = new JSONArray().put(object);
+        else if (payload instanceof JSONArray array) rows = array;
+        else throw new IllegalArgumentException();
+        JSONObject match = null;
+        for (int i = 0; i < rows.length(); i++) {
+            JSONObject row = rows.getJSONObject(i);
+            if (!id.equals(row.optString(correlation ? "correlationId" : "orderId"))) continue;
+            if (!session.clientId().equals(row.getString("dhanClientId")) || match != null) throw new IllegalArgumentException();
+            safeId(row.getString("orderId"));
+            match = row;
+        }
+        if (match == null) throw new IllegalArgumentException();
+        return match;
     }
     private void validateOrder(JSONObject row,TriggeredTradeSetupEntity trade,DhanInstrumentResolver.Instrument instrument,String orderId) {
         boolean exit = orderId.equals(trade.getExitOrderId());
