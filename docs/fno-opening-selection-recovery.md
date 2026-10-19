@@ -1,11 +1,13 @@
-# F&O opening selection and restart recovery
+# F&O and cash opening selection and restart recovery
 
-`FNO_0925_MOVER_ATR_BREAKOUT` continues to select movers at **09:25 IST**.
-It now persists its first opening shortlist to the primary JPA database before
+`FNO_0925_MOVER_ATR_BREAKOUT` and `STOCK_0925_MOVER_ATR_BREAKOUT` select movers at **09:25 IST**.
+Each template persists its first opening shortlist to the primary JPA database before
 qualifying candidates or creating requests. All users and broker subscriptions
 share the same selection for that strategy and trading day. The existing side,
 ranking, top-five limit, directional candle, sizing and exit rules are unchanged.
-The cash-stock mover template is unchanged by this fix.
+Cash retains its buy-only positive-gainer selection and per-stock rupee sizing.
+Each template saves its own independent shortlist; cash never reuses the F&O
+option-side list.
 
 The immutable `mover_selection_snapshot` row stores the ordered symbols, CE/PE
 side and spot instrument identities, with capture start/completion timestamps and

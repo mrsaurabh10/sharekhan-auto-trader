@@ -8,6 +8,8 @@ import java.util.concurrent.*;
 import org.com.sharekhan.entity.*;
 import org.com.sharekhan.repository.*;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -23,7 +25,6 @@ class MoverSelectionSnapshotStoreTest {
     @Autowired EntityManager em;
     @Autowired PlatformTransactionManager transactions;
     final LocalDateTime opening=LocalDateTime.of(2026,10,19,9,25);
-    final String template=Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID;
     @BeforeEach void clean() { repository.deleteAll(); }
     MoverSelectionSnapshotStore store(LocalDateTime now) {
         return new MoverSelectionSnapshotStore(repository,em,transactions,new ObjectMapper(),
@@ -33,7 +34,8 @@ class MoverSelectionSnapshotStoreTest {
         return List.of(new Fno925Candidate(symbol,ScriptMasterEntity.builder().scripCode(123)
                 .tradingSymbol(symbol).exchange("NC").instrumentType("EQ").lotSize(1).build(),side));
     }
-    @Test void restartRestoresOriginalRankOrderSideAndContractWithoutFetchingCurrentMovers() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void restartRestoresOriginalRankOrderSideAndContractWithoutFetchingCurrentMovers(String template) {
         var second = new Fno925Candidate("SECOND",ScriptMasterEntity.builder().scripCode(456)
                 .tradingSymbol("SECOND").exchange("NC").build(),"PE");
         var selected = List.of(candidates("ORIGINAL","PE").getFirst(),second);
@@ -46,29 +48,34 @@ class MoverSelectionSnapshotStoreTest {
         assertThat(saved.getCaptureStartedAt()).isEqualTo(opening);
         assertThat(saved.getCapturedAt()).isEqualTo(opening);
     }
-    @Test void lateStartWithoutOpeningSnapshotDoesNotScanOrSave() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void lateStartWithoutOpeningSnapshotDoesNotScanOrSave(String template) {
         for(var now:List.of(opening.minusMinutes(1),opening.plusMinutes(1),opening.plusHours(2))) {
             assertThat(store(now).loadOrCapture(template,now,()->{throw new AssertionError("Late scan");})).isEmpty();
         }
         assertThat(repository.count()).isZero();
     }
-    @Test void emptyOpeningSelectionStaysEmptyAfterRestart() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void emptyOpeningSelectionStaysEmptyAfterRestart(String template) {
         store(opening).loadOrCapture(template,opening,List::of);
         var later=opening.plusHours(1);
         assertThat(store(later).loadOrCapture(template,later,()->candidates("LATE","CE"))).contains(List.of());
     }
-    @Test void failedFeedCaptureCanRetryWithinWindowButCannotFreezeLaterMovers() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void failedFeedCaptureCanRetryWithinWindowButCannotFreezeLaterMovers(String template) {
         assertThatThrownBy(()->store(opening).loadOrCapture(template,opening,()->{throw new IllegalStateException("feed unavailable");}))
                 .isInstanceOf(IllegalStateException.class);
         assertThat(repository.count()).isZero();
         assertThat(store(opening.plusSeconds(20)).loadOrCapture(template,opening.plusSeconds(20),()->candidates("ABC","CE")))
                 .isPresent();
     }
-    @Test void slowCaptureThatCompletesAfterOpeningWindowIsNotSaved() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void slowCaptureThatCompletesAfterOpeningWindowIsNotSaved(String template) {
         assertThat(store(opening.plusMinutes(1)).loadOrCapture(template,opening,()->candidates("LATE","CE"))).isEmpty();
         assertThat(repository.count()).isZero();
     }
-    @Test void nextDayGetsItsOwnSelectionWithoutReusingYesterday() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void nextDayGetsItsOwnSelectionWithoutReusingYesterday(String template) {
         store(opening).loadOrCapture(template,opening,()->candidates("FIRST","CE"));
         var next=opening.plusDays(1);
         var selected=store(next).loadOrCapture(template,next,()->candidates("SECOND","PE")).orElseThrow();
@@ -76,7 +83,8 @@ class MoverSelectionSnapshotStoreTest {
         assertThat(repository.count()).isEqualTo(2);
         assertThat(store(next.plusHours(2)).loadOrCapture(template,next.plusHours(2),()->List.of())).contains(selected);
     }
-    @Test void concurrentApplicationInstancesUseTheSameFirstCommittedSnapshot() throws Exception {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void concurrentApplicationInstancesUseTheSameFirstCommittedSnapshot(String template) throws Exception {
         var barrier=new CyclicBarrier(2);
         try(var executor=Executors.newFixedThreadPool(2)) {
             List<Future<List<Fno925Candidate>>> results=new ArrayList<>();
@@ -90,12 +98,14 @@ class MoverSelectionSnapshotStoreTest {
             assertThat(repository.count()).isOne();
         }
     }
-    @Test void invalidContractIdentityIsNotPersisted() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void invalidContractIdentityIsNotPersisted(String template) {
         var bad=List.of(new Fno925Candidate("ABC",ScriptMasterEntity.builder().build(),"CE"));
         assertThatThrownBy(()->store(opening).loadOrCapture(template,opening,()->bad)).isInstanceOf(IllegalArgumentException.class);
         assertThat(repository.count()).isZero();
     }
-    @Test void corruptStoredSnapshotStopsWithoutRescanning() {
+    @ParameterizedTest @ValueSource(strings={"FNO_0925_MOVER_ATR_BREAKOUT","STOCK_0925_MOVER_ATR_BREAKOUT"})
+    void corruptStoredSnapshotStopsWithoutRescanning(String template) {
         var tx=new org.springframework.transaction.support.TransactionTemplate(transactions);
         tx.executeWithoutResult(s->em.persist(MoverSelectionSnapshot.builder().id(template+"@"+opening.toLocalDate())
             .templateId(template).tradingDay(opening.toLocalDate()).captureStartedAt(opening).capturedAt(opening)
@@ -103,4 +113,17 @@ class MoverSelectionSnapshotStoreTest {
         assertThatThrownBy(()->store(opening.plusHours(1)).loadOrCapture(template,opening.plusHours(1),()->{throw new AssertionError("rescan");}))
             .isInstanceOf(IllegalStateException.class).hasMessageContaining("refusing to rescan");
     }
+    @Test void cashAndFnoSelectionsOnTheSameDayRemainIndependentAfterRestart() {
+        String fno = Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID;
+        String cash = Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID;
+        var optionList = candidates("OPTION", "PE");
+        var cashList = candidates("CASH", "CE");
+        store(opening).loadOrCapture(fno, opening, () -> optionList);
+        store(opening).loadOrCapture(cash, opening, () -> cashList);
+        var later = opening.plusHours(2);
+        assertThat(store(later).loadOrCapture(fno, later, () -> {throw new AssertionError("rescan");})).contains(optionList);
+        assertThat(store(later).loadOrCapture(cash, later, () -> {throw new AssertionError("rescan");})).contains(cashList);
+        assertThat(repository.count()).isEqualTo(2);
+    }
+
 }

@@ -134,3 +134,15 @@ JavaScript syntax checks passed. No live order, production schema update, server
 restart or deployment was part of this merge. `main` was left unchanged.
 Logs: `/private/tmp/sharekhan-stock-onboarding-focused.log` and
 `/private/tmp/sharekhan-stock-onboarding-regression.log`.
+
+
+## Restart protection
+
+The original 09:25 shortlist is now saved before qualification, independently of
+the F&O strategy, and reused after restarts. A new capture must start and finish
+between 09:25:00 and 09:25:59 IST. A missing opening snapshot after that window
+blocks new requests with a visible waiting reason; later rankings are never used
+as a replacement. An empty saved list stays empty. Existing daily request guards
+continue to prevent repeated entries after restart. Buy-only selection, sizing,
+candle direction and exits are unchanged. See [opening selection recovery](fno-opening-selection-recovery.md)
+for schema, concurrency and release details.
