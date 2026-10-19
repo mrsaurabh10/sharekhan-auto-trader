@@ -49,22 +49,25 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private final ScriptMasterRepository scriptMasterRepository;
     private final MStockGainerLoserService gainerLoserService;
     private final Fno925EntryQualificationService entryQualificationService;
-    private final Map<LocalDate, List<Fno925Candidate>> selectionsByDay = new ConcurrentHashMap<>();
+    private final MoverSelectionSnapshotStore snapshotStore;
     private final Map<RunKey, Set<String>> submittedSymbolsByRun = new ConcurrentHashMap<>();
 
     @Autowired
     public Stock0925MoverAtrBreakoutStrategy(StrategySupport support,
                                             ScriptMasterRepository scriptMasterRepository,
                                             MStockGainerLoserService gainerLoserService,
-                                            Fno925EntryQualificationService entryQualificationService) {
-        this(support, scriptMasterRepository, gainerLoserService, entryQualificationService,
+                                            Fno925EntryQualificationService entryQualificationService,
+                                            MoverSelectionSnapshotStore snapshotStore) {
+        this(support, scriptMasterRepository, gainerLoserService, entryQualificationService, snapshotStore,
                 Clock.system(StrategySupport.MARKET_ZONE));
     }
 
     Stock0925MoverAtrBreakoutStrategy(StrategySupport support, ScriptMasterRepository scriptMasterRepository,
                                      MStockGainerLoserService gainerLoserService,
-                                     Fno925EntryQualificationService entryQualificationService, Clock clock) {
+                                     Fno925EntryQualificationService entryQualificationService,
+                                     MoverSelectionSnapshotStore snapshotStore, Clock clock) {
         this.clock = clock;
+        this.snapshotStore = snapshotStore;
         this.support = support;
         this.scriptMasterRepository = scriptMasterRepository;
         this.gainerLoserService = gainerLoserService;
@@ -88,8 +91,12 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             return support.waiting(METADATA, symbol, "Waiting for the 09:25 stock mover snapshot.");
         }
 
-        List<Fno925Candidate> selections = selectionsByDay.computeIfAbsent(now.toLocalDate(), ignored -> snapshotUniverse());
-        selectionsByDay.keySet().removeIf(day -> day.isBefore(now.toLocalDate()));
+        var snapshot = snapshotStore.loadOrCapture(TEMPLATE_ID, now, this::snapshotUniverse);
+        if (snapshot.isEmpty()) {
+            return support.waiting(METADATA, symbol,
+                    "Missing original 09:25 stock mover snapshot; refusing to select later movers today.");
+        }
+        List<Fno925Candidate> selections = snapshot.get();
         submittedSymbolsByRun.keySet().removeIf(key -> key.day().isBefore(now.toLocalDate()));
         if (selections.isEmpty()) {
             return support.waiting(METADATA, symbol, "No eligible stock movers were available at 09:25; no trade will be created today.");

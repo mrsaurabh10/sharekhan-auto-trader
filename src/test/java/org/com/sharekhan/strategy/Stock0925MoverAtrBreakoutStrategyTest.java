@@ -23,7 +23,8 @@ class Stock0925MoverAtrBreakoutStrategyTest {
     final Fno925EntryQualificationService qualification = mock(Fno925EntryQualificationService.class);
     final LocalDateTime now = LocalDateTime.of(2026, 10, 19, 10, 0);
     final Clock clock = mock(Clock.class);
-    final Stock0925MoverAtrBreakoutStrategy strategy = new Stock0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, clock);
+    final MoverSelectionSnapshotStore snapshots = mock(MoverSelectionSnapshotStore.class);
+    final Stock0925MoverAtrBreakoutStrategy strategy = new Stock0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, snapshots, clock);
     final ScriptMasterEntity spot = ScriptMasterEntity.builder().tradingSymbol("ABC").exchange("NC").scripCode(123).build();
 
     StrategyApplyRequest request(String amount) {
@@ -36,6 +37,12 @@ class Stock0925MoverAtrBreakoutStrategyTest {
                 new StrategyCandle(now.toLocalDate(), LocalTime.of(9,55), 745, 755, 740, 750, 1000L), "MORNING_ORB");
     }
     void setup() {
+        // Model the committed shortlist: later evaluations never invoke the supplier again.
+        java.util.concurrent.atomic.AtomicReference<List<Fno925Candidate>> saved = new java.util.concurrent.atomic.AtomicReference<>();
+        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), any(), any())).thenAnswer(call -> {
+            if (saved.get() == null) saved.set(((java.util.function.Supplier<List<Fno925Candidate>>) call.getArgument(2)).get());
+            return java.util.Optional.of(saved.get());
+        });
         when(clock.getZone()).thenReturn(StrategySupport.MARKET_ZONE);
         when(clock.instant()).thenReturn(now.atZone(StrategySupport.MARKET_ZONE).toInstant());
         when(support.roundPrice(anyDouble())).thenAnswer(c -> c.getArgument(0));
@@ -110,6 +117,43 @@ class Stock0925MoverAtrBreakoutStrategyTest {
         List<Fno925Candidate> selected = ReflectionTestUtils.invokeMethod(strategy,"snapshotUniverse");
         assertThat(selected).extracting(Fno925Candidate::symbol).containsExactly("ABC","B","C","D","E");
         assertThat(selected).allMatch(c -> "CE".equals(c.optionType()));
+    }
+    @Test void restartedCashStrategyUsesOriginalSnapshotWithoutLookingAtCurrentGainers() {
+        setup();
+        var original = new Fno925Candidate("ABC", spot, "CE");
+        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+                .thenReturn(java.util.Optional.of(List.of(original)));
+        var restarted = new Stock0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, snapshots, clock);
+        assertThat(restarted.apply(request("10000")).getStatus()).isEqualTo("triggered");
+        verifyNoInteractions(movers);
+        verify(qualification).qualifyWithDirectionalCandle(original, now);
+        verify(support).executeTriggeredTrade(argThat(t -> "ABC".equals(t.getInstrument()) && "NC".equals(t.getExchange()) && t.getQuantity() == 13));
+    }
+    @Test void missingOpeningSnapshotAfterRestartDoesNotSelectLaterMoversOrSubmit() {
+        setup();
+        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+                .thenReturn(java.util.Optional.empty());
+        assertThat(strategy.apply(request("10000")).getMessage()).contains("Missing original 09:25 stock mover snapshot");
+        verifyNoInteractions(movers, qualification);
+        verify(support, never()).executeTriggeredTrade(any());
+    }
+    @Test void storedEmptyOpeningListDoesNotBecomeANewSelectionAfterRestart() {
+        setup();
+        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+                .thenReturn(java.util.Optional.of(List.of()));
+        assertThat(strategy.apply(request("10000")).getMessage()).contains("No eligible stock movers");
+        verifyNoInteractions(movers, qualification);
+        verify(support, never()).executeTriggeredTrade(any());
+    }
+    @Test void restartedCashStrategyStillHonorsPersistedDailyAttemptGuard() {
+        setup();
+        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+                .thenReturn(java.util.Optional.of(List.of(new Fno925Candidate("ABC", spot, "CE"))));
+        when(support.hasStockMoverRequestOn(anyString(), any(), eq(1L), eq("ABC"))).thenReturn(true);
+        var restarted = new Stock0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, snapshots, clock);
+        restarted.apply(request("10000"));
+        verifyNoInteractions(movers, qualification);
+        verify(support, never()).executeTriggeredTrade(any());
     }
     @ParameterizedTest @ValueSource(strings={"09:24","15:20","15:29"})
     void doesNotEnterOutsideWindow(String clockText) {
