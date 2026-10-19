@@ -813,6 +813,7 @@ public class TradingMessageService {
         t.setTrailingSl(src.getTrailingSl());
         t.setQuantity(src.getQuantity());
         t.setSource(src.getSource());
+        t.setStrategyRunId(src.getStrategyRunId());
         t.setUseSpotPrice(src.getUseSpotPrice());
         t.setUseSpotForEntry(src.getUseSpotForEntry());
         t.setUseSpotForSl(src.getUseSpotForSl());

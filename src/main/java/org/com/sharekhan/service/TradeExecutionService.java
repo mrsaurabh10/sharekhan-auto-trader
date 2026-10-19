@@ -607,6 +607,7 @@ public class TradeExecutionService {
                                                    boolean requireQuantity,
                                                    boolean attemptBrokerSideEntryOrder) {
 
+        if(runCoordinator!=null) runCoordinator.attach(request);
         if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(request.getUserId(), request.getBrokerCredentialsId());
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
         normalizeCashEquityExchange(request);
@@ -788,7 +789,7 @@ public class TradeExecutionService {
                 .useSpotForTarget(useSpotForTarget)
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
-                .source(request.getSource()) // store source
+                .source(request.getSource()).strategyRunId(request.getStrategyRunId()) // store source
                 .brokerProductType(request.getBrokerProductType())
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
@@ -951,6 +952,7 @@ public class TradeExecutionService {
                                                     TriggerPriceEntryBrokerService brokerService,
                                                     boolean allowBigTradePlus) {
         TriggerTradeRequestEntity latest = triggerTradeRequestRepository.findById(requestEntity.getId()).orElse(requestEntity);
+        if(runCoordinator!=null && !runCoordinator.isOpen(latest.getStrategyRunId())) return;
         if (!isBrokerSideEntryTriggerEligible(latest, allowBigTradePlus)) {
             return;
         }
@@ -1214,6 +1216,7 @@ public class TradeExecutionService {
         trade.setUseSpotPrice(requestEntity.getUseSpotPrice());
         trade.setSpotScripCode(requestEntity.getSpotScripCode());
         trade.setSource(requestEntity.getSource());
+        trade.setStrategyRunId(requestEntity.getStrategyRunId());
         trade.setBrokerProductType(requestEntity.getBrokerProductType());
         trade.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
         trade.setGapDayOpen(requestEntity.getGapDayOpen());
@@ -1543,6 +1546,19 @@ public class TradeExecutionService {
         return executed;
     }
 
+    @Autowired(required=false)
+    private org.com.sharekhan.strategy.run.StrategyRunCoordinator runCoordinator;
+
+    /** Generic run exits keep each existing sell ID; no source-based owner matching. */
+    public void squareOffStrategyRunTrade(Long id,String runId,String reason) {
+        var trade=triggeredTradeRepo.findById(id).orElseThrow();
+        if(!Objects.equals(runId,trade.getStrategyRunId())) throw new IllegalArgumentException("Trade does not belong to run");
+        Double price=strategyProfitExitQuote(trade,Instant.now()).map(q -> org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource()) ? q.getBestAsk() : q.getBestBid())
+                .orElseGet(()->resolveEntryReferencePrice(trade.getScripCode(),"strategyRunExit"));
+        if(price==null) throw new IllegalStateException("Fresh traded exit price unavailable");
+        squareOff(trade,price,reason);
+    }
+
     /** Read-only premium lookup for paired-entry preflight. */
     public Double strategyEntryReferencePrice(Integer scripCode) {
         return resolveEntryReferencePrice(scripCode, "expiryStraddlePreflight");
@@ -1578,15 +1594,21 @@ public class TradeExecutionService {
 
     /** Keep pending/partial fills under polling; a cancel acknowledgement is not a terminal fill report. */
     public void cancelTimedStrategyEntry(Long tradeId) {
+        var trade=triggeredTradeRepo.findById(tradeId).orElseThrow();
+        if(!org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource())) return;
+        cancelStrategyRunEntry(tradeId,trade.getStrategyRunId());
+    }
+
+    public void cancelStrategyRunEntry(Long tradeId,String runId) {
         TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(tradeId).orElseThrow();
-        if (!org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource())
-                || trade.getStatus() != TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+        if(!Objects.equals(runId,trade.getStrategyRunId())) throw new IllegalArgumentException("Entry does not belong to run");
+        if (trade.getStatus() != TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
                 || trade.getOrderId() == null || trade.getOrderId().isBlank()) return;
         synchronized (entryDecisionLock(tradeId)) {
             var control = entryChaseControlRepository.findById(tradeId).orElseGet(() -> newEntryControl(trade, false));
             if (control != null) {
                 control.setState(EntryChaseControl.State.CANCEL_PENDING);
-                control.setReason("Expiry straddle session ended; cancel remainder and retain fills");
+                control.setReason("Strategy instance closing; cancel remainder and retain fills");
                 entryChaseControlRepository.save(control);
             }
             trade.setReason("ENTRY_USER_CANCEL_REQUESTED");
@@ -2077,6 +2099,7 @@ public class TradeExecutionService {
                                                         java.time.LocalDateTime triggeredAt,
                                                         boolean chaseEntryUntilExecuted) {
         try {
+            if(runCoordinator!=null && !runCoordinator.isOpen(trigger.getStrategyRunId())) return null;
             // Safety guard: do not attempt broker placement if quantity is null/zero
             if (trigger.getQuantity() == null || trigger.getQuantity() <= 0L) {
                 log.warn("Blocking placement for trigger {} due to non-positive quantity: {}", triggerLogId(trigger), trigger.getQuantity());
@@ -2105,6 +2128,7 @@ public class TradeExecutionService {
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
                 rejected.setSource(trigger.getSource());
+                rejected.setStrategyRunId(trigger.getStrategyRunId());
                 rejected.setBrokerProductType(trigger.getBrokerProductType());
                 try { triggeredTradeRepo.save(rejected); } catch (Exception ignore) { }
                 try {
@@ -2211,6 +2235,7 @@ public class TradeExecutionService {
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
                 rejected.setSource(trigger.getSource());
+                rejected.setStrategyRunId(trigger.getStrategyRunId());
                 rejected.setBrokerProductType(trigger.getBrokerProductType());
                 if (isUsableBrokerOrderId(result.getOrderId())) {
                     rejected.setOrderId(result.getOrderId());
@@ -2282,6 +2307,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             triggeredTradeSetupEntity.setSource(trigger.getSource());
+            triggeredTradeSetupEntity.setStrategyRunId(trigger.getStrategyRunId());
             triggeredTradeSetupEntity.setBrokerProductType(trigger.getBrokerProductType());
             triggeredTradeSetupEntity.setGapProtectionEnabled(trigger.getGapProtectionEnabled());
             triggeredTradeSetupEntity.setGapDayOpen(trigger.getGapDayOpen());
@@ -3049,7 +3075,7 @@ public class TradeExecutionService {
         Double spot = trigger.getSpotScripCode() != null ? ltpCacheService.getLtp(trigger.getSpotScripCode()) : null;
         tradeAuditService.record(TradeAuditEventEntity.builder()
                 .appUserId(trigger.getAppUserId()).triggerRequestId(trigger.getTriggerRequestId()).tradeId(trigger.getId())
-                .source(trigger.getSource()).symbol(trigger.getSymbol()).eventType(eventType).outcome("REJECTED")
+                .strategyRunId(trigger.getStrategyRunId()).source(trigger.getSource()).symbol(trigger.getSymbol()).eventType(eventType).outcome("REJECTED")
                 .reason(reason).optionType(trigger.getOptionType()).expiry(trigger.getExpiry()).strikePrice(trigger.getStrikePrice())
                 .spotPrice(spot)
                 .optionLtp(quote != null ? quote.getLastTradedPrice() : null)
@@ -3069,7 +3095,7 @@ public class TradeExecutionService {
         }
         tradeAuditService.record(TradeAuditEventEntity.builder()
                 .appUserId(trade.getAppUserId()).triggerRequestId(trade.getTriggerRequestId()).tradeId(trade.getId())
-                .source(trade.getSource()).symbol(trade.getSymbol()).eventType("EXIT_ORDER_ATTEMPT").outcome("PENDING")
+                .strategyRunId(trade.getStrategyRunId()).source(trade.getSource()).symbol(trade.getSymbol()).eventType("EXIT_ORDER_ATTEMPT").outcome("PENDING")
                 .reason(diagnostics != null ? diagnostics.exitReason() : null)
                 .optionType(trade.getOptionType()).expiry(trade.getExpiry()).strikePrice(trade.getStrikePrice())
                 .optionLtp(quote != null ? quote.getLastTradedPrice() : null)
@@ -3262,6 +3288,9 @@ public class TradeExecutionService {
                         stopEntryOrderChase(tradeId);
                         return;
                     }
+                    if(runCoordinator!=null && !runCoordinator.isOpen(latest.getStrategyRunId())) {
+                        cancelStrategyRunEntry(latest.getId(),latest.getStrategyRunId());stopEntryOrderChase(tradeId);return;
+                    }
                     String latestOrderId = latest.getOrderId();
                     if (!isUsableBrokerOrderId(latestOrderId)) {
                         stopEntryOrderChase(tradeId);
@@ -3433,6 +3462,7 @@ public class TradeExecutionService {
                 closeEntryDecision(control);
                 return "The order is no longer awaiting an entry action.";
             }
+            if(runCoordinator!=null && !runCoordinator.isOpen(trade.getStrategyRunId()) && !"cancel".equals(action)) return "Strategy instance closing; entry retry disabled.";
             if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource()) && !"cancel".equals(action))
                 return "Timed straddle entries cannot be retried or repriced manually. Waiting for cancellation/fill reconciliation.";
             BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
@@ -4865,7 +4895,7 @@ public class TradeExecutionService {
         leg.setStopLoss(root.getStopLoss()); leg.setTarget1(target); leg.setTrailingSl(root.getTrailingSl());
         leg.setTslEnabled(true); leg.setUseSpotPrice(root.getUseSpotPrice());
         leg.setUseSpotForEntry(root.getUseSpotForEntry()); leg.setUseSpotForSl(false); leg.setUseSpotForTarget(false);
-        leg.setSpotScripCode(root.getSpotScripCode()); leg.setIntraday(root.getIntraday()); leg.setSource(root.getSource());
+        leg.setSpotScripCode(root.getSpotScripCode()); leg.setIntraday(root.getIntraday()); leg.setSource(root.getSource()); leg.setStrategyRunId(root.getStrategyRunId());
         leg.setBrokerExecutionProduct(root.getBrokerExecutionProduct());
         leg.setStatus(TriggeredTradeStatus.EXECUTED); leg.setTriggeredAt(root.getTriggeredAt()); leg.setEntryAt(root.getEntryAt());
         leg.setTargetOrderGroupId(groupId); leg.setTargetStage(stage);
@@ -5884,6 +5914,10 @@ public class TradeExecutionService {
     private TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
                                                             boolean chaseEntryUntilExecuted,
                                                             boolean reportSimulatorWait) {
+        if(runCoordinator!=null && !runCoordinator.isOpen(requestEntity.getStrategyRunId())) {
+            triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(requestEntity.getId(),requestEntity.getStatus().name(),TriggeredTradeStatus.CANCELLED.name(),"STRATEGY_RUN_CLOSED","No entry submitted: strategy instance is closing/closed");
+            return null;
+        }
         if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(requestEntity.getSource())) {
             var entryNow = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
             if (!org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(requestEntity.getSource(),entryNow)) return null;
@@ -6015,6 +6049,7 @@ public class TradeExecutionService {
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
         temp.setSource(requestEntity.getSource());
+        temp.setStrategyRunId(requestEntity.getStrategyRunId());
         // This value decides whether Sharekhan submits the documented BKT
         // BIGTRADEPLUS payload or the normal INVESTMENT order.  Retain it when
         // converting a persisted price-trigger request into a broker trade.

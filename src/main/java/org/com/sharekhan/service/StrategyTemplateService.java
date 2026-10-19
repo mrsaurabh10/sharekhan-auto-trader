@@ -21,6 +21,8 @@ import java.util.stream.Collectors;
 @Service
 public class StrategyTemplateService {
 
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private org.com.sharekhan.strategy.run.StrategyRunCoordinator runCoordinator;
     private final Map<String, StrategyEvaluator> evaluators;
 
     public StrategyTemplateService(List<StrategyEvaluator> evaluators) {
@@ -58,7 +60,8 @@ public class StrategyTemplateService {
         if (evaluator == null) {
             throw new IllegalArgumentException("Unknown strategy template: " + request.getTemplateId());
         }
-        return evaluator.apply(request);
+        request.setRiskSettings(org.com.sharekhan.strategy.run.StrategyRiskSettings.validate(request.getRiskSettings(),request.getLots()));
+        return runCoordinator==null?evaluator.apply(request):runCoordinator.evaluate(request,()->evaluator.apply(request));
     }
 
     private void validate(StrategyApplyRequest request) {

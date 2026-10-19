@@ -19,8 +19,9 @@ On a trading day with CE and PE contracts actually listed for today's expiry:
 At each entry, select the strike nearest the fresh spot price from strikes shared
 by both contracts. An exact tie selects the lower strike. Buy equal lots of the
 same strike/expiry CE and PE. PM selects ATM again, rather than reusing AM's strike.
-There is no stop or trailing stop. An optional combined profit target can close
-both legs before the scheduled exit (see the October 19 profit-target update below).
+Optional shared instance controls can close both legs before the scheduled exit:
+profit target, maximum loss, profit trail and stepped trailing stop. See
+[strategy-runs.md](strategy-runs.md) for current controls and grouped manual close.
 Same-day lifecycle is compulsory;
 the existing delivery/carry-forward broker-product policy remains effective.
 
@@ -52,7 +53,8 @@ The application must be running for either scheduled action.
 ## Release prerequisites
 
 The additive DDL files are `src/main/resources/db/postgresql/expiry-straddle-schema.sql`
-and, after it, `src/main/resources/db/postgresql/straddle-profit-target-schema.sql`.
+and, after it, `src/main/resources/db/postgresql/straddle-profit-target-schema.sql`,
+then `src/main/resources/db/postgresql/strategy-run-schema.sql`.
 It was NOT applied to production. Review existing Hibernate/schema configuration
 before a separately authorized rollout. No production configuration was changed.
 

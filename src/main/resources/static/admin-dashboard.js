@@ -1317,6 +1317,7 @@
     if (typeof page === 'number') currentExecPage = page;
     const tradeScope = scope || currentTradeScope();
     if (!uid) { tbody.innerHTML = '<tr><td colspan="17">No user selected</td></tr>'; updatePaginationUI(null); return; }
+    window.StrategyRunView?.mount(document.getElementById('adminStrategyRuns'),async(url,method,body)=>{if(method)await ensureCsrf();return fetchJson(url,method?{method,body:JSON.stringify(body)}:undefined);},uid);
     loadExecutionSourcesForUser(uid, tradeScope).catch(function(){});
 
     try {
@@ -2324,6 +2325,7 @@
   }
 
   function wireStrategyPanel() {
+    window.StrategyRunView?.riskForm(document.getElementById('adminRunRisk'));
     const btn = document.getElementById('applyStrategyBtn');
     const refreshBtn = document.getElementById('refreshStrategiesBtn');
     const result = document.getElementById('strategyResult');
@@ -2349,8 +2351,10 @@
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
       const profitRow = document.getElementById('strategyProfitTargetRow');
       const profitInput = document.getElementById('strategyProfitTargetPerLot');
-      if (profitRow) profitRow.style.display = timedStraddle ? '' : 'none';
-      if (profitInput) profitInput.disabled = !timedStraddle;
+      if (profitRow) profitRow.style.display = 'none';
+      if (profitInput) {profitInput.disabled = true;profitInput.value='';}
+      window.StrategyRunView?.resetRisk(document.getElementById('adminRunRisk'));
+      const mode=document.querySelector('#adminRunRisk [data-risk-field=amountMode]');if(mode)mode.value=timedStraddle?'PER_LOT':'TOTAL';
       const sameDayInput = document.getElementById('strategyIntraday');
       if (sameDayInput) { sameDayInput.disabled = timedStraddle; if (timedStraddle) sameDayInput.checked = true; }
       const automatic = automaticUniverseTemplate();
@@ -2399,6 +2403,8 @@
       const stockMover = isStockMover();
       const investmentText = String((document.getElementById('strategyInvestmentPerStock') || {}).value || '').trim();
       const investmentPerStock = Number(investmentText);
+      let riskSettings;
+      try {riskSettings=window.StrategyRunView?.readRisk(document.getElementById('adminRunRisk')) || null;} catch(error) {if(result)result.innerText=error.message;return;}
       if (stockMover && (!/^\d+(\.\d{1,2})?$/.test(investmentText) || !Number.isFinite(investmentPerStock) || investmentPerStock <= 0 || investmentPerStock > 999999999.99)) {
         if (result) result.innerText = 'Enter a positive investment per stock with up to two decimal places.';
         return;
@@ -2424,7 +2430,7 @@
         for (const configuration of configurations) {
           responses.push(await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify({
             templateId, symbol: configuration.symbol, lots: stockMover ? null : configuration.lots,
-            investmentPerStock: stockMover ? investmentPerStock : null, profitTargetPerLot, intraday,
+            investmentPerStock: stockMover ? investmentPerStock : null, profitTargetPerLot, riskSettings, intraday,
             userId: selectedStrategyUserId, brokerCredentialsId, source: 'strategy:' + templateId
           }) }));
         }

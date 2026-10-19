@@ -5,6 +5,8 @@ import lombok.Data;
 
 @Data
 public class StrategyApplyRequest {
+    @com.fasterxml.jackson.annotation.JsonIgnore private Long subscriptionId;
+    private org.com.sharekhan.strategy.run.StrategyRiskSettings riskSettings;
     private String templateId;
     private String symbol;
     private Integer lots;

@@ -24,5 +24,6 @@ public class ExpiryStraddleSession {
     @Column(nullable=false) private boolean abortRequested;
     @Column(precision=19,scale=2) private java.math.BigDecimal profitTargetPerLot;
     @Column(nullable=false) private boolean profitExitRequested;
+    @Column(length=64) private String strategyRunId;
     @Column(length=500) private String message;
 }

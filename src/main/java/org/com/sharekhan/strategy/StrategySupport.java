@@ -251,6 +251,7 @@ public class StrategySupport {
         if (tradeAuditService == null) return;
         tradeAuditService.record(TradeAuditEventEntity.builder()
                 .appUserId(request != null ? request.getUserId() : null)
+                .strategyRunId(tradeRequest != null ? tradeRequest.getStrategyRunId() : null)
                 .triggerRequestId(tradeRequest != null ? tradeRequest.getId() : null)
                 .strategyId(metadata != null ? metadata.id() : null)
                 .source(trigger != null ? trigger.getSource() : request != null ? request.getSource() : null)

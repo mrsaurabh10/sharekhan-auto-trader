@@ -26,6 +26,7 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
     private final TradeExecutionService execution;
     private final LtpCacheService prices;
     private final NseMarketCalendar calendar;
+    @Autowired(required=false) private org.com.sharekhan.strategy.run.StrategyRunCoordinator runCoordinator;
     private final Clock clock;
     @Autowired
     public ExpiryLongStraddleStrategy(StrategySupport support,ScriptMasterRepository scripts,
@@ -99,6 +100,7 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
         session.setExpectedQuantity((long)lots * lotSize);
         if(!slot.get().entryWindow(LocalDateTime.now(clock).toLocalTime()) || !now.toLocalDate().equals(LocalDate.now(clock)))
             return support.waiting(metadata(),symbol,"Entry minute elapsed during quote preparation; session skipped");
+        if(runCoordinator!=null) session.setStrategyRunId(runCoordinator.ensureCurrentRun());
         if(!store.claim(session)) return support.waiting(metadata(),symbol,"This expiry session is already claimed");
         TriggerTradeRequestEntity first=null;
         try {
@@ -142,6 +144,7 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
         }
     }
     void manageSession(ExpiryStraddleSession session,LocalDateTime now) {
+        if(session.getStrategyRunId()!=null && runCoordinator!=null && !runCoordinator.isOpen(session.getStrategyRunId())) return;
         var legs=trades.findBySource(source(session));
         boolean entryGraceOver=!now.isBefore(session.getClaimedAt().withSecond(0).withNano(0).plusMinutes(1));
         boolean balanced=legs.size()==2 && legs.stream().allMatch(t->t.getStatus()==TriggeredTradeStatus.EXECUTED)
@@ -149,7 +152,7 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
                 && Objects.equals(legs.get(0).getQuantity(),session.getExpectedQuantity())
                 && legs.stream().map(TriggeredTradeSetupEntity::getOptionType).collect(java.util.stream.Collectors.toSet()).equals(Set.of("CE","PE"));
         if(balanced && !session.isAbortRequested() && !session.isProfitExitRequested()
-                && now.isBefore(session.getExitAt()) && session.getProfitTargetPerLot()!=null) {
+                && session.getStrategyRunId()==null && now.isBefore(session.getExitAt()) && session.getProfitTargetPerLot()!=null) {
             var combined=combinedBidProfit(legs,now.atZone(StrategySupport.MARKET_ZONE).toInstant());
             var target=session.getProfitTargetPerLot().multiply(java.math.BigDecimal.valueOf(session.getLots()));
             if(combined.isPresent() && combined.get().compareTo(target)>=0) {
@@ -168,6 +171,9 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
             sessions.findById(session.getId()).ifPresent(saved -> session.setProfitExitRequested(saved.isProfitExitRequested()));
         }
         if(!session.isAbortRequested() && !session.isProfitExitRequested() && now.isBefore(session.getExitAt())) return;
+        if(session.getStrategyRunId()!=null && runCoordinator!=null) {
+            runCoordinator.requestClose(session.getStrategyRunId(),session.isAbortRequested()?"STRATEGY_ENTRY_ABORT":"STRATEGY_TIMED_EXIT");return;
+        }
         for(var trade:legs) {
             try {
                 if(trade.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)

@@ -1,0 +1,77 @@
+package org.com.sharekhan.strategy.run;
+import org.com.sharekhan.entity.*;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
+import org.com.sharekhan.repository.*;
+import org.com.sharekhan.service.*;
+import org.com.sharekhan.cache.QuoteCacheService;
+import org.junit.jupiter.api.*;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.data.domain.*;
+import java.time.*;
+import java.util.*;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
+import static org.assertj.core.api.Assertions.*;
+class StrategyRunServiceTest {
+    final StrategyRunRepository runs=mock(StrategyRunRepository.class);
+    final TriggeredTradeSetupRepository trades=mock(TriggeredTradeSetupRepository.class);
+    final TriggerTradeRequestRepository requests=mock(TriggerTradeRequestRepository.class);
+    final TradeExecutionService execution=mock(TradeExecutionService.class);
+    final StrategySubscriptionService subscriptions=mock(StrategySubscriptionService.class);
+    final StrategyRunService service=new StrategyRunService(runs,trades,requests,execution,subscriptions);
+    final StrategyRun am=StrategyRun.builder().id("am").templateId("EXPIRY_LONG_STRADDLE").appUserId(1L).brokerCredentialsId(2L).subscriptionId(3L).instance("AM").status("OPEN").tradingDay(LocalDate.now()).createdAt(LocalDateTime.now()).build();
+    TriggeredTradeSetupEntity leg(long id,TriggeredTradeStatus status) {return TriggeredTradeSetupEntity.builder().id(id).strategyRunId("am").appUserId(1L).brokerCredentialsId(2L).optionType(id==1?"CE":"PE").quantity(65L).actualEntryPrice(100d).status(status).build();}
+    @BeforeEach void setup() {
+        when(runs.findById("am")).thenReturn(Optional.of(am));
+        when(runs.requestClose(eq("am"),anyString(),any())).thenAnswer(call->{am.setStatus("CLOSING");am.setExitReason(call.getArgument(1));return 1;});
+    }
+    @Test void oneClickLatchesCloseBeforeEitherExitAndOnlyTouchesThisRun() {
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(leg(1,TriggeredTradeStatus.EXECUTED),leg(2,TriggeredTradeStatus.EXECUTED)));
+        service.close("am",1L,false);
+        var order=inOrder(runs,execution);order.verify(runs).requestClose(eq("am"),eq("STRATEGY_MANUAL_CLOSE"),any());
+        order.verify(execution).squareOffStrategyRunTrade(1L,"am","STRATEGY_MANUAL_CLOSE");order.verify(execution).squareOffStrategyRunTrade(2L,"am","STRATEGY_MANUAL_CLOSE");
+        verify(trades,never()).findByStrategyRunId("pm");verifyNoInteractions(subscriptions);verify(runs,never()).markClosed(anyString(),any());
+    }
+    @Test void repeatedCloseUsesExistingRunAndOneFailedExitDoesNotBlockOtherLeg() {
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(leg(1,TriggeredTradeStatus.EXIT_ORDER_PLACED),leg(2,TriggeredTradeStatus.EXECUTED)));
+        doThrow(new IllegalStateException("timeout")).when(execution).squareOffStrategyRunTrade(eq(1L),eq("am"),anyString());
+        service.close("am",1L,false);service.close("am",1L,false);
+        verify(execution,times(2)).squareOffStrategyRunTrade(2L,"am","STRATEGY_MANUAL_CLOSE");verify(runs,never()).markClosed(anyString(),any());
+    }
+    @Test void crossUserOrCorruptMembershipCannotCloseForeignPositions() {
+        assertThatThrownBy(()->service.close("am",9L,false)).isInstanceOf(AccessDeniedException.class);verifyNoInteractions(execution);
+        var foreign=leg(1,TriggeredTradeStatus.EXECUTED);foreign.setAppUserId(9L);when(trades.findByStrategyRunId("am")).thenReturn(List.of(foreign));
+        assertThatThrownBy(()->service.close("am",1L,false)).isInstanceOf(IllegalStateException.class);verifyNoInteractions(execution);
+    }
+    @Test void pendingEntryCancellationDoesNotInventFlatAndLateFillIsExited() {
+        var pending=leg(1,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);when(trades.findByStrategyRunId("am")).thenReturn(List.of(pending));
+        service.close("am",1L,false);verify(execution).cancelStrategyRunEntry(1L,"am");verify(runs,never()).markClosed(anyString(),any());
+        pending.setStatus(TriggeredTradeStatus.EXECUTED);service.close("am",1L,false);verify(execution).squareOffStrategyRunTrade(1L,"am","STRATEGY_MANUAL_CLOSE");
+    }
+    @Test void unsubmittedRequestCancelledButUnknownSubmissionKeepsClosing() {
+        var request=TriggerTradeRequestEntity.builder().id(4L).strategyRunId("am").appUserId(1L).brokerCredentialsId(2L).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build();
+        when(requests.findByStrategyRunId("am")).thenReturn(List.of(request));service.close("am",1L,false);
+        verify(requests).claimIfStatusEqualsWithOutcome(eq(4L),eq("PLACED_PENDING_CONFIRMATION"),eq("CANCELLED"),eq("STRATEGY_RUN_CLOSED"),anyString());
+        request.setStatus(TriggeredTradeStatus.FAILED);request.setReason("ENTRY_SUBMISSION_STATE_UNKNOWN");service.close("am",1L,false);verify(runs,never()).markClosed(anyString(),any());
+    }
+    @Test void onlyConfirmedFlatMembershipClosesRun() {
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(leg(1,TriggeredTradeStatus.EXITED_SUCCESS),leg(2,TriggeredTradeStatus.CANCELLED)));
+        service.close("am",1L,false);verify(runs).markClosed(eq("am"),any());verify(execution,never()).squareOffStrategyRunTrade(anyLong(),anyString(),anyString());
+    }
+    @Test void allAndPausePausesBeforeRequestingAnyRunClose() {
+        when(runs.findBySubscriptionIdAndStatusIn(eq(3L),anyList())).thenReturn(List.of(am));service.closeAllAndPause(3L,1L,false);
+        var order=inOrder(subscriptions,runs);order.verify(subscriptions).cancel(3L,1L,false);order.verify(runs).requestClose(eq("am"),eq("STRATEGY_CLOSE_ALL"),any());
+    }
+    @Test void aggregateCombinesRealizedAndFullOpenLegsBeforeRunPagination() {
+        var closed=leg(1,TriggeredTradeStatus.EXITED_SUCCESS);closed.setExitPrice(110d);closed.setPnl(650d);
+        var open=leg(2,TriggeredTradeStatus.EXECUTED);var now=Instant.now();
+        when(execution.strategyProfitExitQuote(eq(open),any())).thenReturn(Optional.of(QuoteCacheService.QuoteSnapshot.builder().bestBid(120d).bestAsk(121d).lastBookAt(now).build()));
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(closed,open));
+        when(runs.findByAppUserIdOrderByCreatedAtDesc(eq(1L),any())).thenReturn(new PageImpl<>(List.of(am)));
+        var view=service.list(1L,false,0,10).getContent().getFirst();
+        assertThat(view.pnl().realizedGross()).isEqualByComparingTo("650");assertThat(view.pnl().openGross()).isEqualByComparingTo("1300");assertThat(view.pnl().totalGross()).isEqualByComparingTo("1950");assertThat(view.positions()).hasSize(2);
+    }
+    @Test void unknownQuoteDoesNotDisplayFalseZeroOrActivateRisk() {
+        var value=service.pnl(List.of(leg(1,TriggeredTradeStatus.EXECUTED)),Instant.now());assertThat(value.totalGross()).isNull();assertThat(value.marksFresh()).isFalse();
+    }
+}

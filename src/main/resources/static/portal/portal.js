@@ -155,13 +155,16 @@
     state.templates.forEach(template => {
       const card = node('article',null,'card'); card.append(node('div','STRATEGY','eyebrow'),node('h2',template.name),node('p',template.description));
       const el = button('Configure subscription →',async () => {
+        window.StrategyRunView?.riskForm($('#subscriptionRunRisk'));
+        window.StrategyRunView?.resetRisk($('#subscriptionRunRisk'));
         const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
         f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE';
         if (f.elements.intraday.disabled) f.elements.intraday.checked = true;
         const straddle = template.id === 'EXPIRY_LONG_STRADDLE';
-        $('#subscriptionProfitTargetRow').hidden = !straddle;
-        f.elements.profitTargetPerLot.disabled = !straddle;
+        $('#subscriptionProfitTargetRow').hidden = true;
+        f.elements.profitTargetPerLot.disabled = true;
+        $('#subscriptionRunRisk').querySelector('[data-risk-field=amountMode]').value=straddle ? 'PER_LOT' : 'TOTAL';
         const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
         f.elements.symbol.value = automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
         f.elements.symbol.readOnly = automatic;
@@ -195,9 +198,11 @@
       if (!/^\d+(\.\d{1,2})?$/.test(amount) || Number(amount) <= 0 || Number(amount) > 999999999.99) throw new Error('Enter a positive investment per stock with up to two decimal places.');
       body.investmentPerStock = Number(amount); body.lots = null;
     } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
+    body.riskSettings=window.StrategyRunView?.readRisk($('#subscriptionRunRisk')) || null;
     await api('/api/strategies/start','POST',body); $('#strategyDialog').close(); notify('Strategy subscription activated.'); await loadStrategies(); await loadOrders();
   });});
   async function loadOrders() {
+    window.StrategyRunView?.mount($('#strategyRuns'),api);
     const [requests,executions]=await Promise.all([api('/api/orders/requests?page='+state.requestPage+'&size=10'),api('/api/orders/executed?page='+state.executionPage+'&size=10&'+new URLSearchParams([...new FormData($('#executionFilters'))].filter(([,v])=>v!=='')))]);
     state.requests=requests.content || requests; state.executions=executions.content || executions; state.requestTotal=requests.totalElements;
     table($('#orderRequests'),orderColumns,state.requests,(row,td)=>td.append(button('Cancel request',async()=>{

@@ -20,11 +20,11 @@ import java.util.List;
 public class PostgresAuditEventStore implements AuditEventStore {
     private static final String INSERT = """
             INSERT INTO trade_audit_events (
-                occurred_at, app_user_id, trigger_request_id, trade_id, strategy_id, source, symbol,
+                occurred_at, app_user_id, trigger_request_id, trade_id, strategy_id, strategy_run_id, source, symbol,
                 event_type, outcome, reason, option_type, expiry, strike_price, spot_price,
                 option_ltp, best_bid, best_ask, details
             ) VALUES (
-                :occurredAt, :appUserId, :triggerRequestId, :tradeId, :strategyId, :source, :symbol,
+                :occurredAt, :appUserId, :triggerRequestId, :tradeId, :strategyId, :strategyRunId, :source, :symbol,
                 :eventType, :outcome, :reason, :optionType, :expiry, :strikePrice, :spotPrice,
                 :optionLtp, :bestBid, :bestAsk, :details
             ) RETURNING id
@@ -32,11 +32,11 @@ public class PostgresAuditEventStore implements AuditEventStore {
 
     private static final String INSERT_WITH_ID = """
             INSERT INTO trade_audit_events (
-                id, occurred_at, app_user_id, trigger_request_id, trade_id, strategy_id, source, symbol,
+                id, occurred_at, app_user_id, trigger_request_id, trade_id, strategy_id, strategy_run_id, source, symbol,
                 event_type, outcome, reason, option_type, expiry, strike_price, spot_price,
                 option_ltp, best_bid, best_ask, details
             ) OVERRIDING SYSTEM VALUE VALUES (
-                :id, :occurredAt, :appUserId, :triggerRequestId, :tradeId, :strategyId, :source, :symbol,
+                :id, :occurredAt, :appUserId, :triggerRequestId, :tradeId, :strategyId, :strategyRunId, :source, :symbol,
                 :eventType, :outcome, :reason, :optionType, :expiry, :strikePrice, :spotPrice,
                 :optionLtp, :bestBid, :bestAsk, :details
             ) ON CONFLICT (id) DO NOTHING
@@ -115,6 +115,7 @@ public class PostgresAuditEventStore implements AuditEventStore {
                 .addValue("triggerRequestId", event.getTriggerRequestId())
                 .addValue("tradeId", event.getTradeId())
                 .addValue("strategyId", event.getStrategyId())
+                .addValue("strategyRunId", event.getStrategyRunId())
                 .addValue("source", event.getSource())
                 .addValue("symbol", event.getSymbol())
                 .addValue("eventType", event.getEventType())
@@ -144,6 +145,7 @@ public class PostgresAuditEventStore implements AuditEventStore {
                     .triggerRequestId(resultSet.getObject("trigger_request_id", Long.class))
                     .tradeId(resultSet.getObject("trade_id", Long.class))
                     .strategyId(resultSet.getString("strategy_id"))
+                    .strategyRunId(resultSet.getString("strategy_run_id"))
                     .source(resultSet.getString("source"))
                     .symbol(resultSet.getString("symbol"))
                     .eventType(resultSet.getString("event_type"))

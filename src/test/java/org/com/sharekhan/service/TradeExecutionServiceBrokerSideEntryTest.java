@@ -416,6 +416,20 @@ class TradeExecutionServiceBrokerSideEntryTest {
         verify(ctx.triggeredRepo).save(finalLeg);
     }
 
+    @Test void strategyRunMembershipSurvivesBrokerPendingEntryAndClosingBlocksSubmission() {
+        TestContext ctx=new TestContext(pending("run-order"));
+        var coordinator=mock(org.com.sharekhan.strategy.run.StrategyRunCoordinator.class);
+        ReflectionTestUtils.setField(ctx.service,"runCoordinator",coordinator);
+        doAnswer(call->{((TriggerRequest)call.getArgument(0)).setStrategyRunId("run-am");return null;}).when(coordinator).attach(any());
+        when(coordinator.isOpen("run-am")).thenReturn(true);
+        var request=ctx.service.executeTrade(optionRequest());
+        assertThat(request.getStrategyRunId()).isEqualTo("run-am");
+        assertThat(ctx.savedTrade.get().getStrategyRunId()).isEqualTo("run-am");
+        when(coordinator.isOpen("run-am")).thenReturn(false);
+        assertThat(ctx.service.executeTradeFromEntity(request)).isNull();
+        verify(ctx.broker,times(1)).placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble());
+    }
+
     @Test
     void acceptedBrokerSideEntryTriggerCreatesPendingTradeAndStartsPolling() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder()
