@@ -108,7 +108,7 @@ class TokenStoreServiceTest {
         private Instant expiry;
 
         private RecordingPersistenceService() {
-            super(null, null, null);
+            super(null, null, null, null);
         }
 
         @Override

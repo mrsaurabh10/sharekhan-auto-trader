@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.entity.AccessTokenEntity;
 import org.com.sharekhan.repository.AccessTokenRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
+import org.com.sharekhan.onboarding.BrokerConnectionRepository;
 import org.com.sharekhan.util.CryptoService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +21,7 @@ public class AccessTokenPersistenceService {
     private final AccessTokenRepository repository;
     private final CryptoService cryptoService;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
+    private final BrokerConnectionRepository connections;
 
     @Transactional(readOnly = true)
     public AccessTokenEntity findLatestByBroker(String brokerDisplayName) {
@@ -96,6 +98,7 @@ public class AccessTokenPersistenceService {
                 .brokerCredentialsId(brokerCredentialsId)
                 .build();
         repository.save(ent);
+        renewConnection(brokerDisplayName, brokerCredentialsId, token, expiry);
     }
 
     // Per-customer convenience: map customerId -> brokerCredentials and persist token for each matching credentials row
@@ -121,7 +124,13 @@ public class AccessTokenPersistenceService {
                     .userId(userId)
                     .build();
             repository.save(ent);
+            renewConnection(brokerDisplayName, c.getId(), token, expiry);
         }
+    }
+
+    private void renewConnection(String broker, Long credentialId, String token, Instant expiry) {
+        if (token == null || token.isBlank() || expiry == null || !expiry.isAfter(Instant.now())) return;
+        connections.renewVerifiedConnection(credentialId, broker, expiry, Instant.EPOCH);
     }
 
     // Per-user storage (app user id)
