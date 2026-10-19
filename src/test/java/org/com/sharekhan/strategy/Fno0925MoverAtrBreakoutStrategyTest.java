@@ -30,9 +30,12 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         ScriptMasterRepository scripts = mock(ScriptMasterRepository.class);
         MStockGainerLoserService movers = mock(MStockGainerLoserService.class);
         Fno925EntryQualificationService qualification = mock(Fno925EntryQualificationService.class);
+        MoverSelectionSnapshotStore snapshots = mock(MoverSelectionSnapshotStore.class);
+        when(snapshots.loadOrCapture(anyString(), any(), any())).thenAnswer(call ->
+                java.util.Optional.of(((java.util.function.Supplier<List<Fno925Candidate>>)call.getArgument(2)).get()));
         LocalDateTime now = LocalDateTime.of(2026, 10, 19, 10, 0);
         Clock clock = Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(), StrategySupport.MARKET_ZONE);
-        Fno0925MoverAtrBreakoutStrategy strategy = new Fno0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, clock);
+        Fno0925MoverAtrBreakoutStrategy strategy = new Fno0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, snapshots, clock);
         ScriptMasterEntity spot = ScriptMasterEntity.builder().tradingSymbol("TCS").scripCode(11536).exchange("NC").build();
         when(scripts.findDistinctOptionUnderlyingSymbols()).thenReturn(List.of("TCS"));
         when(movers.topGainers()).thenReturn(List.of(new MStockGainerLoserService.Mover("TCS", 107d, 5d)));
@@ -69,6 +72,44 @@ class Fno0925MoverAtrBreakoutStrategyTest {
     }
 
     @Test
+    void lateStartWithMissingSnapshotNeverCallsLiveMoverFeedOrCreatesRequest() {
+        var support = mock(StrategySupport.class);
+        var movers = mock(MStockGainerLoserService.class);
+        var snapshots = mock(MoverSelectionSnapshotStore.class);
+        var qualification = mock(Fno925EntryQualificationService.class);
+        var now = LocalDateTime.of(2026,10,19,11,0);
+        when(snapshots.loadOrCapture(anyString(),eq(now),any())).thenReturn(java.util.Optional.empty());
+        when(support.waiting(any(),any(),anyString())).thenAnswer(c -> StrategyApplyResponse.builder()
+                .status("waiting").message(c.getArgument(2)).build());
+        var strategy = new Fno0925MoverAtrBreakoutStrategy(support,mock(ScriptMasterRepository.class),
+                movers,qualification,snapshots,Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        assertThat(strategy.apply(new StrategyApplyRequest()).getMessage()).contains("Missing original 09:25");
+        verifyNoInteractions(movers,qualification);
+        verify(support,never()).executeTriggeredTrade(any());
+    }
+
+    @Test
+    void restartedStrategyEvaluatesStoredPeShortlistWithoutConsultingLiveRankings() {
+        var support = mock(StrategySupport.class);
+        var movers = mock(MStockGainerLoserService.class);
+        var snapshots = mock(MoverSelectionSnapshotStore.class);
+        var qualification = mock(Fno925EntryQualificationService.class);
+        var now = LocalDateTime.of(2026,10,19,11,0);
+        var original = new Fno925Candidate("ORIGINAL",ScriptMasterEntity.builder()
+                .tradingSymbol("ORIGINAL").exchange("NC").scripCode(123).build(),"PE");
+        when(snapshots.loadOrCapture(anyString(),eq(now),any())).thenReturn(java.util.Optional.of(List.of(original)));
+        when(qualification.qualifyWithDirectionalCandle(original,now))
+                .thenReturn(Fno925EntryQualificationService.Qualification.waiting("Awaiting bearish confirmation"));
+        when(support.waiting(any(),any(),anyString())).thenAnswer(c -> StrategyApplyResponse.builder()
+                .status("waiting").message(c.getArgument(2)).build());
+        var strategy = new Fno0925MoverAtrBreakoutStrategy(support,mock(ScriptMasterRepository.class),
+                movers,qualification,snapshots,Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        assertThat(strategy.apply(new StrategyApplyRequest()).getMessage()).contains("ORIGINAL");
+        verify(qualification).qualifyWithDirectionalCandle(original,now);
+        verifyNoInteractions(movers);
+    }
+
+    @Test
     void usesAtrTargetsAndTheFartherOfAtrOrStructuralStopForPe() {
         StrategySupport support = mock(StrategySupport.class);
         when(support.roundPrice(anyDouble())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -79,7 +120,7 @@ class Fno0925MoverAtrBreakoutStrategyTest {
 
         Fno0925MoverAtrBreakoutStrategy strategy = new Fno0925MoverAtrBreakoutStrategy(
                 support, mock(ScriptMasterRepository.class), mock(MStockGainerLoserService.class),
-                mock(Fno925EntryQualificationService.class));
+                mock(Fno925EntryQualificationService.class), mock(MoverSelectionSnapshotStore.class));
         Fno925Candidate candidate = new Fno925Candidate("ADANIPORTS", ScriptMasterEntity.builder().build(), "PE");
         Fno925EntryQualificationService.Signal signal = new Fno925EntryQualificationService.Signal(
                 1690d, 1691.25d, 4d, 0d, 0d, null, "MORNING_ORB");
