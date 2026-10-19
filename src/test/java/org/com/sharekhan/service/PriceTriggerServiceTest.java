@@ -41,6 +41,17 @@ import static org.mockito.Mockito.when;
 
 class PriceTriggerServiceTest {
 
+    @Test void timedStraddleRequestsCannotBeTriggeredByGenericSpotOrOptionTicks() {
+        var timed=spy(service);doReturn(LocalDateTime.of(2026,10,13,9,30)).when(timed).nowIst();
+        var request=TriggerTradeRequestEntity.builder().id(888L).scripCode(15332).entryPrice(100d)
+                .source("expiry-straddle:2026-10-13:1:2:NIFTY:AM").status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build();
+        when(triggerRepo.findByScripCodeAndStatus(15332,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)).thenReturn(List.of(request));
+        when(triggerRepo.findBySpotScripCodeAndStatus(15332,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)).thenReturn(List.of(request));
+        timed.evaluatePriceTrigger(15332,110d);
+        verify(tradeExecutionService,never()).executeTradeFromEntity(any());
+        verify(orderExecutionDispatcher,never()).submit(anyString(),any(Runnable.class));
+    }
+
     @Test void cashShortTriggersOnlyBelowItsEntry() {
         PriceTriggerService timed = spy(service);
         doReturn(LocalDateTime.of(2026,9,11,10,0)).when(timed).nowIst();

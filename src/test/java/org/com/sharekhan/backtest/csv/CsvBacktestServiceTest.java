@@ -27,4 +27,15 @@ class CsvBacktestServiceTest {
         var result=service.run(first.getId(),LocalDate.of(2026,10,1),LocalDate.of(2026,10,1),2,0,0,LocalTime.of(15,20));
         assertThat(result.report().dataQuality().candles()).isEqualTo(75);assertThat(result.pnlUnit()).contains("not option");
     }
+    @Test void straddleStudyReusesStoredSpotBarsAndHonorsExplicitDatesAndLots() throws Exception {
+        var text=new StringBuilder("date,open,high,low,close,volume\n");
+        for(int i=0;i<75;i++) text.append("2026-10-13 "+LocalTime.of(9,15).plusMinutes(i*5L)+":00,"+(25000+i)+","+(25002+i)+","+(24999+i)+","+(25001+i)+",0\n");
+        var dataset=service.importCsv(new ByteArrayInputStream(text.toString().getBytes(StandardCharsets.UTF_8)),"nifty.csv","NIFTY",5);
+        var report=service.runExpiryStraddle(dataset.getId(),null,null,2,java.util.List.of(LocalDate.of(2026,10,13)));
+        assertThat(report.lots()).isEqualTo(2);assertThat(report.observations()).hasSize(2);
+        assertThat(report.observations()).allSatisfy(row->assertThat(row.signedPoints()).isEqualTo(12));
+        assertThat(report.unit()).contains("not option P&L");
+        assertThat(service.runExpiryStraddle(dataset.getId(),null,null,1,null).observations()).hasSize(2);
+        assertThatThrownBy(()->service.runExpiryStraddle(dataset.getId(),LocalDate.of(2026,10,14),LocalDate.of(2026,10,13),1,null)).isInstanceOf(IllegalArgumentException.class);
+    }
 }

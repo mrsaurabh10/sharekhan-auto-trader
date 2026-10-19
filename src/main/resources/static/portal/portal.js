@@ -157,8 +157,10 @@
       const el = button('Configure subscription →',async () => {
         const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
+        f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE';
+        if (f.elements.intraday.disabled) f.elements.intraday.checked = true;
         const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
-        f.elements.symbol.value = automatic ? 'FNO_UNIVERSE' : '';
+        f.elements.symbol.value = automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
         f.elements.symbol.readOnly = automatic;
         $('#subscriptionLotsRow').hidden = stockMover;
         f.elements.lots.disabled = stockMover;

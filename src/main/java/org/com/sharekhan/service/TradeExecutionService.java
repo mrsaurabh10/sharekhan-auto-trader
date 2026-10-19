@@ -1542,6 +1542,43 @@ public class TradeExecutionService {
         return executed;
     }
 
+    /** Read-only premium lookup for paired-entry preflight. */
+    public Double strategyEntryReferencePrice(Integer scripCode) {
+        return resolveEntryReferencePrice(scripCode, "expiryStraddlePreflight");
+    }
+
+    public void squareOffTimedStrategyTrade(Long tradeId) {
+        var trade = triggeredTradeRepo.findById(tradeId).orElseThrow();
+        if (!org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource()))
+            throw new IllegalArgumentException("Not an expiry straddle leg");
+        Double price = resolveEntryReferencePrice(trade.getScripCode(), "expiryStraddleTimedExit");
+        if (price == null) throw new IllegalStateException("Option price unavailable for timed square-off");
+        squareOff(trade, price, "EXPIRY_STRADDLE_TIMED_EXIT");
+    }
+
+    /** Keep pending/partial fills under polling; a cancel acknowledgement is not a terminal fill report. */
+    public void cancelTimedStrategyEntry(Long tradeId) {
+        TriggeredTradeSetupEntity trade = triggeredTradeRepo.findById(tradeId).orElseThrow();
+        if (!org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource())
+                || trade.getStatus() != TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                || trade.getOrderId() == null || trade.getOrderId().isBlank()) return;
+        synchronized (entryDecisionLock(tradeId)) {
+            var control = entryChaseControlRepository.findById(tradeId).orElseGet(() -> newEntryControl(trade, false));
+            if (control != null) {
+                control.setState(EntryChaseControl.State.CANCEL_PENDING);
+                control.setReason("Expiry straddle session ended; cancel remainder and retain fills");
+                entryChaseControlRepository.save(control);
+            }
+            trade.setReason("ENTRY_USER_CANCEL_REQUESTED");
+            triggeredTradeRepo.save(trade);
+            BrokerContext context = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+            if (context == null || context.getBrokerName() == null) throw new IllegalStateException("Broker unavailable for timed entry cancellation");
+            BrokerService service = brokerServiceFactory.getService(context.getBrokerName());
+            if (!(service instanceof ModifiableEntryBrokerService broker)) throw new IllegalStateException("Broker cannot cancel timed entry");
+            broker.cancelEntryOrder(trade, context, trade.getOrderId());
+        }
+    }
+
     public TriggerTradeRequestEntity executeTriggeredTrade(TriggerRequest request) {
         if (request == null) {
             throw new InvalidTradeRequestException("Trade request cannot be null");
@@ -3174,6 +3211,12 @@ public class TradeExecutionService {
                         return;
                     }
 
+                    if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(latest.getSource())
+                            && !org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(latest.getSource(), LocalDateTime.now(ZoneId.of("Asia/Kolkata")))) {
+                        cancelTimedStrategyEntry(tradeId);
+                        stopEntryOrderChase(tradeId);
+                        return;
+                    }
                     String latestOrderId = latest.getOrderId();
                     if (!isUsableBrokerOrderId(latestOrderId)) {
                         stopEntryOrderChase(tradeId);
@@ -3345,6 +3388,8 @@ public class TradeExecutionService {
                 closeEntryDecision(control);
                 return "The order is no longer awaiting an entry action.";
             }
+            if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource()) && !"cancel".equals(action))
+                return "Timed straddle entries cannot be retried or repriced manually. Waiting for cancellation/fill reconciliation.";
             BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
             if (!isBrokerContextUsable(ctx)
                     || !(brokerServiceFactory.getService(ctx.getBrokerName()) instanceof ModifiableEntryBrokerService broker)) {
@@ -5788,6 +5833,10 @@ public class TradeExecutionService {
 
     public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
                                                             boolean chaseEntryUntilExecuted) {
+        if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(requestEntity.getSource())) {
+            var entryNow = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
+            if (!org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(requestEntity.getSource(),entryNow)) return null;
+        }
         if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(requestEntity.getAppUserId(), requestEntity.getBrokerCredentialsId());
         if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
             log.info("Blocking queued intraday entry request {} after the {} IST cutoff",

@@ -2346,6 +2346,9 @@
     };
     const updateSymbolInput = function () {
       if (!symbolInput) return;
+      const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
+      const sameDayInput = document.getElementById('strategyIntraday');
+      if (sameDayInput) { sameDayInput.disabled = timedStraddle; if (timedStraddle) sameDayInput.checked = true; }
       const automatic = automaticUniverseTemplate();
       const btp = isSpotBigTradePlus();
       symbolInput.disabled = automatic;
@@ -2356,7 +2359,7 @@
       if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';
       if (lotsInput && (btp || isStockMover())) lotsInput.closest('.form-row').style.display = 'none';
       else if (lotsInput) lotsInput.closest('.form-row').style.display = '';
-      symbolInput.value = automatic ? '' : symbolInput.value;
+      symbolInput.value = automatic ? '' : String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE' && !symbolInput.value.trim() ? 'NIFTY' : symbolInput.value;
       symbolInput.placeholder = automatic
         ? 'Selected automatically from the F&O stock universe'
         : 'e.g. NIFTY, RELIANCE; use commas/new lines for manual F&O lists';

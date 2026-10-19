@@ -26,4 +26,15 @@ class CsvBacktestControllerTest {
                 .andExpect(status().isOk());
         verify(service).run("dataset-id",null,null,2,0,0,LocalTime.of(15,20));
     }
+    @Test void straddleEndpointRequiresAdminTokenAndForwardsExplicitExpiryDates() throws Exception {
+        var service=mock(CsvBacktestService.class);var controller=new CsvBacktestController(service);
+        ReflectionTestUtils.setField(controller,"adminToken","test-secret");
+        var mvc=MockMvcBuilders.standaloneSetup(controller).build();
+        mvc.perform(post("/api/backtests/csv/datasets/id/expiry-straddle").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());verifyNoInteractions(service);
+        mvc.perform(post("/api/backtests/csv/datasets/id/expiry-straddle").header("X-Admin-Token","test-secret")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"lots\":2,\"expiryDates\":[\"2026-10-13\"]}"))
+                .andExpect(status().isOk());
+        verify(service).runExpiryStraddle("id",null,null,2,java.util.List.of(java.time.LocalDate.of(2026,10,13)));
+    }
 }

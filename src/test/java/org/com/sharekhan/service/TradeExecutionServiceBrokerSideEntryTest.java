@@ -1100,6 +1100,28 @@ class TradeExecutionServiceBrokerSideEntryTest {
         verify(ctx.broker).modifyEntryOrder(any(), any(), anyString(), anyDouble());
     }
 
+    @Test
+    void timedStraddleCancellationKeepsPendingExposureAndDisablesUserRetry() {
+        TestContext ctx = pausedEntry();
+        var trade=ctx.savedTrade.get();trade.setSource("expiry-straddle:2026-10-13:9:55:NIFTY:AM");
+        ctx.service.cancelTimedStrategyEntry(88L);
+        verify(ctx.broker).cancelEntryOrder(eq(trade),any(),eq("ACTION-1"));
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(trade.getQuantity()).isEqualTo(50L);
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CANCEL_PENDING);
+        ctx.controls.get(88L).setState(EntryChaseControl.State.PAUSED);
+        assertThat(ctx.service.handleEntryAction(88L,ctx.controls.get(88L).getDecisionToken(),"retry")).contains("cannot be retried");
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+    }
+
+    @Test
+    void staleSavedStraddleCannotExecuteEvenWhenReplayedDirectly() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        var request=TriggerTradeRequestEntity.builder().source("expiry-straddle:2000-01-01:9:55:NIFTY:AM").build();
+        assertThat(ctx.service.executeTradeFromEntity(request)).isNull();
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+    }
+
     private static class TestContext {
         private final TriggerTradeRequestRepository triggerRepo = mock(TriggerTradeRequestRepository.class);
         private final TriggeredTradeSetupRepository triggeredRepo = mock(TriggeredTradeSetupRepository.class);

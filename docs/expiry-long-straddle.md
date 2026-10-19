@@ -1,0 +1,154 @@
+# Expiry long straddle
+
+Implemented 2026-10-19 on `codex/expiry-long-straddle`, based on main `e6fc185`.
+Not deployed, subscribed, or activated by this work.
+
+## Trading behavior
+
+Template ID `EXPIRY_LONG_STRADDLE` appears in the existing strategy catalog.
+Inputs: one underlying symbol (default NIFTY), lots (default 1, positive integer
+up to 1000, **per leg**) and the existing account/broker selection.
+
+On a trading day with CE and PE contracts actually listed for today's expiry:
+
+| Session | Buy | Sell both |
+| --- | --- | --- |
+| AM | 09:30 IST | 10:30 IST |
+| PM | 13:30 IST | 14:30 IST |
+
+At each entry, select the strike nearest the fresh spot price from strikes shared
+by both contracts. An exact tie selects the lower strike. Buy equal lots of the
+same strike/expiry CE and PE. PM selects ATM again, rather than reusing AM's strike.
+There is no stop, target or trailing stop. Same-day lifecycle is compulsory;
+the existing delivery/carry-forward broker-product policy remains effective.
+
+Orders are separate legs, not an atomic exchange combination. Both premium
+lookups and matching master lot sizes must pass before claiming a session.
+Only the scheduled entry minute is eligible; a missed session is skipped.
+A committed insert-only session claim per date/user/broker/symbol/slot blocks
+repeated polls, restarts, concurrent instances, and cancel/re-enroll duplicates.
+Its unique source is retained on all leg requests/executions so recovery does not
+rely on successful return from broker submission. If submission fails, the session
+aborts. If both full-sized legs are not confirmed by the end of the entry minute,
+the session also aborts: cancel unfilled remainders and square off confirmed fills.
+No automatic replacement or retry of the paired entry is allowed.
+
+Exits run independently of subscription cancellation and onboarding readiness.
+Pending orders stay under broker polling after cancellation; a cancellation call
+is not treated as proof of no fill. Late confirmed fills are closed on subsequent
+exit scans. Existing sell IDs remain authoritative and use the existing same-order
+exit chase. PM is blocked while an earlier pair has unresolved exposure or an
+incomplete/unknown submission. Manual retry/market buttons cannot extend timed
+entries, and generic price-trigger ticks cannot rearm these strategy requests.
+
+Timed exits are order submissions, not guaranteed executions. Missing prices,
+broker outages, uncertain/partial status and existing exit-failure limitations
+still require monitoring/reconciliation. Exits retry on market-time minute scans;
+this does not guarantee fills at the exact clock time. Session history is retained.
+The application must be running for either scheduled action.
+
+## Release prerequisites
+
+The additive DDL is `src/main/resources/db/postgresql/expiry-straddle-schema.sql`.
+It was NOT applied to production. Review existing Hibernate/schema configuration
+before a separately authorized rollout. No production configuration was changed.
+
+Read-only inspection on October 19 found today's four contracts in the Shoonya
+master (23000 CE/PE tokens 47161/47162; 22850 CE/PE 47155/47156; lot size 65), but
+not in the Sharekhan or MStock master tables. This strategy deliberately fails
+closed when its execution master lacks the same-day contracts. Verify master
+freshness and broker contract mapping before activation; no runtime master refresh
+was performed in this task.
+
+## Stored-data spot study
+
+`POST /api/backtests/csv/datasets/{id}/expiry-straddle` uses the existing saved CSV
+candles and admin-token authorization. Body:
+
+```json
+{"from":"2026-01-01","to":"2026-10-19","lots":1,"expiryDates":["2026-10-13","2026-10-19"]}
+```
+
+Omit `expiryDates` to use a nominal NIFTY schedule: monthly last Thursday before
+weekly options launched on February 11, 2019; weekly Thursday thereafter through
+August 2025; Tuesday from September 2025. Other symbols require explicit dates.
+**This fallback is not a fully verified historical expiry calendar.** It does not
+infer holiday shifts from missing candles. Supply verified actual dates for those
+expiries. A range with no stored data is rejected. Missing exact entry/exit bars
+are skipped; incomplete interior windows keep the endpoint move but withhold ranges.
+
+The study uses the five-minute candle **open** at each scheduled boundary. It
+reports signed change, absolute change, holding-window high/low and range; it
+excludes the exit candle's later high/low. These are index points, never CE/PE
+premium P&L, rupee profit, an option win rate, or multiplied by lots.
+
+Offline runner, without Spring/broker access:
+
+```sh
+java -cp target/classes org.com.sharekhan.backtest.straddle.ExpiryStraddleBacktestMain INPUT_CSV OUTPUT_DIRECTORY [VERIFIED_EXTRA_EXPIRY_DATE]
+```
+
+On October 19 the read-only production export included 209744 imported NIFTY
+candles (Jan 9, 2015–May 18, 2026), plus 675 archived candles (Oct 7–19, 2026).
+The intervening gap is real coverage missing from these tables. Original imported
+CSV vendor provenance was not independently verified. No complete intraday
+option-premium dataset was found in these candle tables.
+
+The nominal-calendar study has 408 dates / 816 full windows; 84 sessions on
+42 nominal dates were excluded for missing endpoints (including holidays and the
+data gap). AM mean absolute move 37.50 points, PM 32.75; medians 26.48 / 21.32;
+mean holding ranges 73.17 / 65.25. These averages mix index price/volatility regimes.
+Per-year results and data provenance are retained with the local report.
+
+Today's actual expiry is Monday October 19 because Tuesday October 20 is Dussehra.
+It is excluded by the nominal-only run and can be added explicitly. Stored spot
+opens: AM 22981.65→23104.35 (+122.70); PM 22861.75→22856.55 (−5.20).
+ATM strikes: 23000 in AM, 22850 in PM. A one-lot option calculation requires the
+CE and PE premiums at both boundaries, with quantity 65 per leg. Closing snapshots
+cannot substitute for 09:30/10:30/13:30/14:30 option prices.
+
+Calendar sources:
+- [NSE weekly option launch](https://nsearchives.nseindia.com/content/circulars/FAOP39894.pdf)
+- [NSE expiry-day revision](https://nsearchives.nseindia.com/content/circulars/FAOP68747.pdf)
+- [NSE holidays](https://www.nseindia.com/resources/exchange-communication-holidays?apiversion=v2)
+
+## Validation
+
+160 selected tests passed, no failures/errors/skips, covering new rules, paired
+entry, independent PM session, missing/stale inputs, failure unwind, pending-order
+cancellation, late fills, restart exits, SQL-backed claim persistence/concurrency,
+CSV reuse, endpoint authorization, generic trigger isolation, subscription daily
+continuation, and existing entry/exit regressions. Maven package passed.
+No live order, broker login/refresh, deployment or production schema change.
+
+## October 19 option-price replay (completed)
+
+After the user authorized retrying the previously blocked broker-session read,
+fetched four one-minute series from Shoonya TPSeries using the existing session.
+No login/token refresh or trade was performed; key/session material stayed in
+server process memory. Returned 375 candles for each of tokens 47161,47162,47155,
+47156. Initial URL-encoded form and JSON requests returned HTTP400; raw `jData=`
+with Bearer auth, matching the existing application integration, returned candles.
+
+One lot = 65 units **of each leg**; fills use exact one-minute candle opens:
+
+| Session | Strike | CE buy → sell | PE buy → sell | Pair points | Gross INR |
+| --- | --- | --- | --- | --- | --- |
+| 09:30–10:30 | 23000 | 61.80 → 131.10 | 100.95 → 26.10 | -5.55 | -360.75 |
+| 13:30–14:30 | 22850 | 44.05 → 34.55 | 47.50 → 33.90 | -23.10 | -1501.50 |
+| Total | | | | -28.65 | **-1862.25** |
+
+These are hypothetical gross results; commissions, taxes, spreads and slippage
+are excluded. No claim of executable fills or actual account performance.
+The morning call gain (4504.50) was outweighed by put loss (-4865.25).
+
+Reusable offline report calculator: `tools/expiry-straddle-option-report.py`.
+It accepts the saved spot CSV and sanitized option-candle JSON, checks same-day
+expiry, recomputes ATM for each session (NIFTY 50-point strike grid), requires both
+exact option boundaries, and calculates decimal premium/quantity results. Six
+Python tests pass, covering arithmetic, lot scaling and missing/invalid inputs.
+No credentials or network capability are part of the calculator.
+
+The secondary spot run adds today's independently verified holiday-adjusted expiry
+to the nominal schedule: 409 dates / 818 sessions, AM mean absolute 37.71 and PM
+32.68 points; nominal-only results above remain separately retained.

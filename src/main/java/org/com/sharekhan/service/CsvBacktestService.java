@@ -53,6 +53,23 @@ public class CsvBacktestService {
     }
     @Transactional(readOnly=true)
     public List<CsvBacktestDatasetEntity> list() {return datasets.findAllByOrderByImportedAtDesc();}
+    @Transactional(readOnly=true)
+    public org.com.sharekhan.backtest.straddle.ExpiryStraddleBacktest.Report runExpiryStraddle(
+            String id,LocalDate from,LocalDate to,Integer lots,List<LocalDate> expiryDates) {
+        var dataset=datasets.findById(id).orElseThrow(()->new IllegalArgumentException("Unknown dataset"));
+        LocalDate start=from==null?dataset.getFirstDate():from,end=to==null?dataset.getLastDate():to;
+        if(start.isAfter(end)) throw new IllegalArgumentException("from must not exceed to");
+        if((expiryDates==null || expiryDates.isEmpty()) && !"NIFTY".equals(dataset.getSymbol()))
+            throw new IllegalArgumentException("Explicit expiryDates required for symbols other than NIFTY");
+        var bars=jdbc.query("select candle_time,open_price,high_price,low_price,close_price,volume from csv_backtest_candles where dataset_id=? and candle_time>=? and candle_time<? order by candle_time",
+                (row,index)->new StrategyCandle(row.getTimestamp(1).toLocalDateTime().toLocalDate(),row.getTimestamp(1).toLocalDateTime().toLocalTime(),
+                        row.getDouble(2),row.getDouble(3),row.getDouble(4),row.getDouble(5),row.getLong(6)),
+                id,Timestamp.valueOf(start.atStartOfDay()),Timestamp.valueOf(end.plusDays(1).atStartOfDay()));
+        boolean explicit=expiryDates!=null && !expiryDates.isEmpty();
+        return new org.com.sharekhan.backtest.straddle.ExpiryStraddleBacktest().run(dataset.getSymbol(),lots,bars,
+                explicit?expiryDates:org.com.sharekhan.backtest.straddle.NiftyExpiryCalendar.nominal(start,end),
+                explicit?"Caller supplied expiry dates":"Nominal NIFTY schedule only; holiday-shifted expiries omitted, missing timestamps skipped; not a fully verified historical contract calendar");
+    }
     public record Result(String datasetId,String pnlUnit,SupertrendStrategyProperties rules,SupertrendCsvBacktest.Report report) { }
     @Transactional(readOnly=true)
     public Result run(String id,LocalDate from,LocalDate to,double targetR,double slippagePoints,double costPoints,LocalTime squareOff) {

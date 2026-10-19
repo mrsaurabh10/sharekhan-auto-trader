@@ -109,6 +109,7 @@ public class PriceTriggerService {
             );
 
             for (TriggerTradeRequestEntity trigger : candidates) {
+                if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trigger.getSource())) continue;
                 if (entryExecutionOwnsOrHasPersistedTrade(trigger)) {
                     continue;
                 }
@@ -157,6 +158,7 @@ public class PriceTriggerService {
             );
 
             for (TriggerTradeRequestEntity trigger : spotCandidates) {
+                if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trigger.getSource())) continue;
                 if (entryExecutionOwnsOrHasPersistedTrade(trigger)) {
                     continue;
                 }

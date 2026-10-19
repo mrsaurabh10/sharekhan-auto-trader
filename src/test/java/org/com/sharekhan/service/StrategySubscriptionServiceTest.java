@@ -13,6 +13,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 
 class StrategySubscriptionServiceTest {
+    @org.junit.jupiter.api.Test void straddleDefaultsNiftyAndContinuesAfterMorningEntry() {
+        var repo=mock(StrategySubscriptionRepository.class);var evaluator=mock(StrategyTemplateService.class);
+        when(evaluator.supports(anyString())).thenReturn(true);when(repo.save(any())).thenAnswer(c->c.getArgument(0));
+        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));
+        var request=new StrategyApplyRequest();request.setTemplateId("EXPIRY_LONG_STRADDLE");request.setUserId(1L);request.setBrokerCredentialsId(2L);
+        var subscription=service.start(request);
+        assertThat(subscription.getSymbol()).isEqualTo("NIFTY");assertThat(subscription.getLots()).isOne();assertThat(subscription.getIntraday()).isTrue();
+        when(evaluator.apply(any())).thenReturn(StrategyApplyResponse.builder().status("triggered").message("pair submitted").build());
+        subscription.setCompletedAt(java.time.LocalDateTime.now());
+        service.evaluate(subscription);service.evaluate(subscription);
+        verify(evaluator,times(2)).apply(any());assertThat(subscription.getCompletedAt()).isNull();
+    }
     @ParameterizedTest
     @ValueSource(strings={"SPOT_ATR_PDH_BIGTRADEPLUS", "SPOT_ATR_PDL_BIGTRADEPLUS"})
     void preparesBothBtpDirectionsImmediatelyAndReevaluatesExistingUnevaluatedRuns(String template) {

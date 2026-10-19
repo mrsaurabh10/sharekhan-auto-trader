@@ -133,6 +133,14 @@ public class StrategySubscriptionService {
         }
     }
 
+    @Scheduled(cron = "0 30 9,13 * * MON-FRI", zone = "Asia/Kolkata")
+    public void enterExpiryStraddleSessions() {
+        if (!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) return;
+        repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
+                .filter(s -> org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(s.getTemplateId()))
+                .forEach(this::evaluate);
+    }
+
     /** The mover universe must be frozen at the stated market time, not at the next polling tick. */
     @Scheduled(cron = "0 25 9 * * MON-FRI", zone = "Asia/Kolkata")
     public void snapshotFno0925MoverStrategies() {
@@ -225,6 +233,11 @@ public class StrategySubscriptionService {
         if (request.getSymbol() != null && request.getSymbol().length() > 255) {
             throw new IllegalArgumentException("Instrument list is too long (maximum 255 characters)");
         }
+        if (org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
+            request.setSymbol(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.symbol(request.getSymbol()));
+            request.setLots(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.lots(request.getLots()));
+            request.setIntraday(true);
+        }
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
         }
@@ -277,6 +290,7 @@ public class StrategySubscriptionService {
 
     private boolean isContinuousFnoTemplate(String templateId) {
         return isAutomaticUniverseTemplate(templateId)
+                || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || isManualFnoTemplate(templateId);
     }
 

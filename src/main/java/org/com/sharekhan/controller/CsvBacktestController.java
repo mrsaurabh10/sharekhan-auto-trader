@@ -32,5 +32,13 @@ public class CsvBacktestController {
                 request.slippagePoints()==null?0:request.slippagePoints(),request.costPoints()==null?0:request.costPoints(),request.squareOff()==null?LocalTime.of(15,20):request.squareOff()));}
         catch(IllegalArgumentException e){return ResponseEntity.badRequest().body(Map.of("error",e.getMessage()));}
     }
+    public record StraddleRunRequest(LocalDate from,LocalDate to,Integer lots,java.util.List<LocalDate> expiryDates) { }
+    @PostMapping("/datasets/{id}/expiry-straddle")
+    public ResponseEntity<?> straddle(@RequestHeader(value="X-Admin-Token",required=false) String token,
+                                      @PathVariable String id,@RequestBody StraddleRunRequest request) {
+        if(!authorized(token)) return ResponseEntity.status(403).build();
+        try { return ResponseEntity.ok(service.runExpiryStraddle(id,request.from(),request.to(),request.lots(),request.expiryDates())); }
+        catch(IllegalArgumentException e) { return ResponseEntity.badRequest().body(Map.of("error",e.getMessage())); }
+    }
     private boolean authorized(String token) {return adminToken!=null&&!adminToken.isBlank()&&adminToken.equals(token);}
 }
