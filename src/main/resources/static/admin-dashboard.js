@@ -1189,7 +1189,7 @@
         const createdAt = r.createdAt || r.created_at || null;
 
         // Action cell
-        const actionCell = document.createElement('td');
+        const actionCell = document.createElement('td'); actionCell.className='trade-actions-cell';
         const auditBtn = document.createElement('button'); auditBtn.className = 'btn small'; auditBtn.style.marginRight = '6px'; auditBtn.innerText = 'Audit';
         auditBtn.addEventListener('click', function () { openTradeAuditDialog('Audit — Request ' + id, { triggerRequestId: id }); }); actionCell.appendChild(auditBtn);
         const editBtn = document.createElement('button'); editBtn.className = 'btn small'; editBtn.style.marginRight = '6px'; editBtn.innerText = 'Edit';
@@ -1231,7 +1231,7 @@
         }
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
-                       '<td>' + escapeHtml(formatAnalyticsDateTime(createdAt)) + '</td>' +
+                       '<td class="trade-date-cell">' + escapeHtml(formatAnalyticsDateTime(createdAt)) + '</td>' +
                        tradeScopeCellHtml(r) +
                        '<td><button type="button" class="symbol-chart-link" title="Open request chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
@@ -1241,7 +1241,11 @@
                        '<td>' + escapeHtml(String(sl)) + '</td>' +
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
                        '<td>' + escapeHtml(String(qty)) + '</td>' +
-                       '<td>' + escapeHtml(String(status)) + '</td>';
+                       '<td class="trade-status-cell">' + escapeHtml(String(status)) + '</td>';
+        if(window.StrategyRunView) {
+          tr.querySelector('.trade-date-cell').replaceChildren(window.StrategyRunView.timestamp(createdAt));
+          tr.querySelector('.trade-status-cell').replaceChildren(window.StrategyRunView.statusTag(status));
+        }
         tr.appendChild(actionCell);
 
         const chartBtn = tr.querySelector('.symbol-chart-link');
@@ -1376,7 +1380,7 @@
         const statusUpper = String(status).toUpperCase();
         const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
 
-        const actionCell = document.createElement('td');
+        const actionCell = document.createElement('td'); actionCell.className='trade-actions-cell';
         const auditBtn = document.createElement('button'); auditBtn.className = 'btn small'; auditBtn.style.marginRight = '4px'; auditBtn.innerText = 'Audit';
         auditBtn.addEventListener('click', function () {
           const requestId = t.triggerRequestId != null ? t.triggerRequestId : (t.trigger_request_id != null ? t.trigger_request_id : null);
@@ -1466,10 +1470,10 @@
         actionCell.appendChild(auditBtn);
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
-                       '<td>' + escapeHtml(formatAnalyticsDateTime(setupDate)) + '</td>' +
+                       '<td class="trade-date-cell">' + escapeHtml(formatAnalyticsDateTime(setupDate)) + '</td>' +
                        tradeScopeCellHtml(t) +
-                       '<td><span class="source-tag">' + escapeHtml(String(source)) + '</span></td>' +
-                       '<td>' + escapeHtml(String(status)) + '</td>' +
+                       '<td class="trade-source-cell"></td>' +
+                       '<td class="trade-status-cell">' + escapeHtml(String(status)) + '</td>' +
                        '<td><button type="button" class="symbol-chart-link" title="Open trading setup chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +
                        '<td>' + escapeHtml(String(strike || '-')) + '</td>' +
@@ -1478,6 +1482,11 @@
                        '<td>' + escapeHtml(String(sl)) + '</td>' +
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
                        '<td>' + escapeHtml(String(qty)) + '</td>';
+        if(window.StrategyRunView) {
+          tr.querySelector('.trade-date-cell').replaceChildren(window.StrategyRunView.timestamp(setupDate));
+          tr.querySelector('.trade-status-cell').replaceChildren(window.StrategyRunView.statusTag(status));
+          tr.querySelector('.trade-source-cell').append(window.StrategyRunView.sourceTag(source));
+        } else tr.querySelector('.trade-source-cell').textContent=source;
         tr.appendChild(actionCell);
 
         const chartBtn = tr.querySelector('.symbol-chart-link');

@@ -4,9 +4,35 @@
   const node=(tag,text,cls)=>{const e=document.createElement(tag);if(text!=null)e.textContent=text;if(cls)e.className=cls;return e;};
   const money=value=>value==null?'Unavailable':'₹'+Number(value).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
   const sourceName=value=>typeof value==='string' && value.trim() ? value.trim() : 'Unspecified';
+  function sourceLabel(value) {
+    const source=sourceName(value);
+    const labels={FNO_0925_MOVER_ATR_BREAKOUT:'F&O 09:25',STOCK_0925_MOVER_ATR_BREAKOUT:'Stocks 09:25',EXPIRY_LONG_STRADDLE:'Expiry straddle'};
+    if(source.startsWith('strategy:')) return labels[source.slice(9)] || source.slice(9).replaceAll('_',' ');
+    if(source.startsWith('expiry-straddle:')) {
+      const slot=source.split(':').at(-1);return 'Expiry straddle'+(['AM','PM'].includes(slot) ? ' · '+slot : '');
+    }
+    return source;
+  }
   function sourceTag(value) {
-    const label=sourceName(value),tag=node('span',label,'source-tag');
-    tag.title='Source: '+label;return tag;
+    const full=sourceName(value),tag=node('span',sourceLabel(full),'source-tag');
+    tag.title='Source: '+full;tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
+    tag.onfocus=()=>{tag.textContent=full;};tag.onblur=()=>{tag.textContent=sourceLabel(full);};return tag;
+  }
+  function statusTag(value) {
+    const full=String(value || 'PENDING');
+    const labels={EXITED_SUCCESS:'Exited',COMPLETED:'Completed',EXECUTED:'Open',PLACED_PENDING_CONFIRMATION:'Pending',ENTRY_SUBMITTING:'Submitting',
+      EXIT_ORDER_PLACED:'Exit pending',TARGET_ORDER_PLACED:'Target set',EXIT_TRIGGERED:'Closing',EXIT_FAILED:'Exit failed',REJECTED:'Rejected',CANCELLED:'Cancelled',FAILED:'Failed',TRIGGERED:'Triggered',ACTIVE:'Active'};
+    const tone=/FAILED|REJECTED|CANCELLED/.test(full)?'status-bad':/EXECUTED|COMPLETED|SUCCESS|ACTIVE/.test(full)?'status-good':'status-wait';
+    const tag=node('span',labels[full] || full.replaceAll('_',' '),'status-pill compact-trade-status '+tone);
+    tag.title='Status: '+full;tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
+    tag.onfocus=()=>{tag.textContent=full;};tag.onblur=()=>{tag.textContent=labels[full] || full.replaceAll('_',' ');};return tag;
+  }
+  function timestamp(value) {
+    const full=String(value || ''),match=full.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2}:\d{2})/);
+    if(!match)return node('span',full || '—');
+    const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const date=node('time',null,'trade-timestamp');date.dateTime=full.replace(' ','T');date.title=full;date.setAttribute('aria-label',full);date.tabIndex=0;
+    date.append(node('span',match[4],'trade-time'),node('span',Number(match[3])+' '+(months[Number(match[2])-1] || match[2])+' '+match[1],'trade-date'));return date;
   }
   async function mount(container,api,userId) {
     if(!container)return;
@@ -78,5 +104,5 @@
     return enabled?risk:null;
   }
   function resetRisk(container) {if(container)for(const input of container.querySelectorAll('[data-risk-field]'))if(input.tagName==='SELECT')input.value='TOTAL';else input.value='';}
-  window.StrategyRunView={mount,riskForm,readRisk,resetRisk,sourceTag};
+  window.StrategyRunView={mount,riskForm,readRisk,resetRisk,sourceTag,statusTag,timestamp};
 })();

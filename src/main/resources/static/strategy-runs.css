@@ -9,6 +9,23 @@
 [data-run-risk] fieldset{border:1px solid #d7dfef;border-radius:10px;padding:12px;min-width:0}[data-run-risk] small{display:block;margin-top:10px;line-height:1.6}
 @media(max-width:600px){.run-risk-grid{grid-template-columns:1fr}.strategy-run{padding:10px}.run-pnl{flex-direction:column;gap:6px}}
 
-.source-tag{display:inline-block;max-width:100%;padding:3px 9px;border:1px solid #c7d6f2;border-radius:999px;background:#eaf1ff;color:#234879;font-size:12px;font-weight:600;line-height:1.5;white-space:normal;overflow-wrap:anywhere;vertical-align:middle}
+.source-tag{display:inline-block;max-width:180px;padding:2px 7px;border:1px solid #d9e3f5;border-radius:5px;background:#f0f5ff;color:#35537d;font-size:11px;font-weight:600;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
 .run-sources{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
-td .source-tag{min-width:140px;max-width:260px}
+td .source-tag{min-width:0;max-width:130px}
+.trade-timestamp{display:grid;gap:2px;line-height:1.2;font-variant-numeric:tabular-nums;white-space:nowrap}
+.trade-time{font-size:12px;font-weight:550}.trade-date{font-size:10px;color:#748198}
+td .compact-trade-status{font-size:10px;font-weight:650;line-height:18px;padding:2px 6px;border-radius:5px;letter-spacing:0;white-space:nowrap}
+.compact-trade-status.status-good{background:#e6f5ed;color:#087b65}.compact-trade-status.status-bad{background:#fff0ef;color:#a12a2a}.compact-trade-status.status-wait{background:#fff4dc;color:#95661c}
+:is(#user-executed-table,#user-requests-table) :is(td,th){padding:7px 8px!important;line-height:1.3;font-size:12px;white-space:nowrap}
+:is(#user-executed-table,#user-requests-table) th{font-size:10px;letter-spacing:.35px}
+:is(#user-executed-table,#user-requests-table) td .trade-scope-badge{padding:2px 6px;font-size:10px;line-height:18px;letter-spacing:0}
+:is(#user-executed-table,#user-requests-table) td :is(button,.btn){width:auto;min-width:0;min-height:26px;padding:3px 7px!important;font-size:11px;border-radius:5px;margin-block:2px}
+:is(#user-executed-table,#user-requests-table) td .symbol-chart-link{padding:0!important;min-height:0;font-size:12px}
+#user-executed-table td:nth-child(n+10):not(:nth-child(14)),#user-requests-table td:nth-child(n+8):nth-child(-n+11){text-align:right;font-variant-numeric:tabular-nums}
+#user-executed-table th:nth-child(n+10):not(:nth-child(14)),#user-requests-table th:nth-child(n+8):nth-child(-n+11){text-align:right}
+:is(#executions,#orderRequests) :is(td,th){padding:8px 9px}
+:is(.source-tag,.compact-trade-status,.trade-timestamp):focus-visible{outline:2px solid #809ce8;outline-offset:2px}
+@media(pointer:coarse){:is(#user-executed-table,#user-requests-table) td :is(button,.btn){min-height:34px}}
+
+:is(#user-executed-table,#user-requests-table) td.trade-actions-cell{min-width:65px;max-width:175px;white-space:normal!important}
+.source-tag:focus{max-width:290px;white-space:normal;overflow-wrap:anywhere}

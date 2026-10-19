@@ -8,6 +8,7 @@ const root = path.resolve(__dirname,'../..');
 const account = id => ({id,brokerName:'Dhan',clientCode:'Sample '+id,connected:true,active:true,tradingEnabled:true});
 const records = ['ACTIVE','TRIGGERED','CANCELLED'].map((status,i)=>({id:i+1,templateId:'Stock mover',symbol:status,status,brokerCredentialsId:7}));
 const sourceLabel='expiry-straddle:2026-10-19:1:7:NIFTY:AM';
+const compactSourceLabel='Expiry straddle · AM';
 const unsafeSource='<img src=x onerror=alert(1)>';
 const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description:'Mock straddle'},{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',description:'Mock stock'},{id:'ST_RSI_EMA_ADX_CE',name:'Other option',description:'Mock option'}];
 (async()=>{
@@ -48,7 +49,17 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
         if(endpoint==='/api/strategies/start') {
           starts.push(route.request().postDataJSON());return rejectStart?json({message:'Mock broker unavailable'},503):json({id:4,status:'ACTIVE'});
         }
-        if(endpoint==='/api/orders/requests'||endpoint==='/api/orders/executed')return json({content:[{id:99,symbol:'NIFTY',quantity:65,entryPrice:100,status:'FAILED',source:unsafeSource}],totalElements:1,number:0,totalPages:1,first:true,last:true});
+        if(endpoint==='/api/orders/requests')return json({content:[{id:99,symbol:'NIFTY',quantity:65,entryPrice:100,status:'FAILED',source:unsafeSource}],totalElements:1,number:0,totalPages:1,first:true,last:true});
+        if(endpoint==='/api/orders/executed') {
+          const trades=[['AXISBANK','FNO',1240,'PE',1235.1,1241.5,1227.32,625],['POLYCAB','FNO',8100,'PE',8050.5,8088,8000.9,125],
+            ['UNIONBANK','STOCK',null,null,176.64,175.76,179,5],['UNIONBANK','STOCK',null,null,176.64,175.76,178.41,3],['UNIONBANK','STOCK',null,null,176.64,175.76,177.82,3],
+            ['HAVELLS','awr',1120,'CE',29.6,29.6,34,500],['HAVELLS','awr',1120,'CE',29.6,25.1,31.75,500],['M&M','awr',2900,'CE',51.1,51.1,63.5,200]]
+            .map(([symbol,source,strikePrice,optionType,entryPrice,stopLoss,target1,quantity],i)=>({id:10326-i,symbol,
+              source:source==='awr'?source:'strategy:'+source+'_0925_MOVER_ATR_BREAKOUT',strikePrice,optionType,entryPrice,stopLoss,target1,quantity,
+              exchange:source==='STOCK'?'NC':'NF',status:'EXITED_SUCCESS',triggeredAt:'2026-10-19T12:36:05',pnl:0}));
+          trades.push({id:99,symbol:'NIFTY',quantity:65,entryPrice:100,status:'FAILED',source:unsafeSource});
+          return json({content:trades,totalElements:trades.length,number:0,totalPages:1,first:true,last:true});
+        }
         if(endpoint.startsWith('/api/scripts/instruments/'))return json({instruments:['TCS','NIFTY']});
         if(endpoint==='/api/scripts/strikes')return json({strikes:[25000]});
         if(endpoint==='/api/scripts/expiries')return json({expiries:['29/10/2026']});
@@ -68,8 +79,8 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     await form.locator('button[type=submit]').click();await p.waitForFunction(()=>!document.querySelector('#strategyDialog').open);
     assert.equal(starts[0].riskSettings.profitTarget,2000);assert.equal(starts[0].riskSettings.maxLoss,1000);assert.equal(starts[0].riskSettings.amountMode,'PER_LOT');assert.equal(starts[0].lots,2);
     await p.locator('[data-view=orders]').click();
-    assert.deepEqual(await p.locator('#strategyRuns summary .source-tag').allTextContents(),[sourceLabel,unsafeSource,'Unspecified']);
-    assert.equal(await p.locator('#executions .source-tag').textContent(),unsafeSource);
+    assert.deepEqual(await p.locator('#strategyRuns summary .source-tag').allTextContents(),[compactSourceLabel,unsafeSource,'Unspecified']);
+    assert.equal(await p.locator('#executions .source-tag').last().textContent(),unsafeSource);
     assert.equal(await p.locator('#orderRequests .source-tag').textContent(),unsafeSource);
     assert.equal(await p.locator('#strategyRuns img, #executions img').count(),0);
     await p.locator('#strategyRuns details').first().locator('summary').click();
@@ -86,9 +97,25 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     await a.locator('#strategyBroker').selectOption('7');await a.locator('#applyStrategyBtn').click();
     await a.waitForFunction(()=>document.querySelector('#strategyResult').textContent.includes('STARTED'));
     assert.equal(admin.starts[0].riskSettings.profitTarget,2000);assert.equal(admin.starts[0].riskSettings.amountMode,'PER_LOT');assert.equal(admin.starts[0].lots,3);
-    assert.deepEqual(await a.locator('#adminStrategyRuns summary .source-tag').allTextContents(),[sourceLabel,unsafeSource,'Unspecified']);
-    assert.equal(await a.locator('#user-executed-table .source-tag').textContent(),unsafeSource);
+    assert.deepEqual(await a.locator('#adminStrategyRuns summary .source-tag').allTextContents(),[compactSourceLabel,unsafeSource,'Unspecified']);
+    assert.equal(await a.locator('#user-executed-table .source-tag').last().textContent(),unsafeSource);
     assert.equal(await a.locator('#user-executed-table img').count(),0);
+    assert.equal(await a.locator('#user-executed-table .source-tag').first().textContent(),'F&O 09:25');
+    assert.equal(await a.locator('#user-executed-table .source-tag').first().getAttribute('title'),'Source: strategy:FNO_0925_MOVER_ATR_BREAKOUT');
+    assert.equal(await a.locator('#user-executed-table .compact-trade-status').first().textContent(),'Exited');
+    assert.equal(await a.locator('#user-executed-table .compact-trade-status').first().getAttribute('title'),'Status: EXITED_SUCCESS');
+    const layout=await a.locator('#user-executed-table tbody tr').first().evaluate(row=>({height:row.getBoundingClientRect().height,auditWidth:row.querySelector('button.btn.small').getBoundingClientRect().width,sourceWhiteSpace:getComputedStyle(row.querySelector('.source-tag')).whiteSpace}));
+    assert.ok(layout.height<=52,'Compact desktop row height: '+layout.height);assert.ok(layout.auditWidth<80);assert.equal(layout.sourceWhiteSpace,'nowrap');
+    console.log('Compact desktop layout:',layout);
+    const source=a.locator('#user-executed-table .source-tag').first();await source.focus();
+    assert.equal(await source.textContent(),'strategy:FNO_0925_MOVER_ATR_BREAKOUT');await source.evaluate(el=>el.blur());
+    assert.equal(await source.textContent(),'F&O 09:25');
+    const status=a.locator('#user-executed-table .compact-trade-status').first();await status.focus();
+    assert.equal(await status.textContent(),'EXITED_SUCCESS');await status.evaluate(el=>el.blur());
+    await a.setViewportSize({width:1800,height:1000});
+    const previewStyle=await a.addStyleTag({content:'#user-executed-table tbody tr:last-child{display:none}'});
+    await a.locator('#user-executed-table').screenshot({path:path.join(require('node:os').tmpdir(),'compact-trades-desktop.png')});
+    await previewStyle.evaluate(el=>el.remove());
     await a.locator('#adminStrategyRuns details').first().locator('summary').click();
     await a.locator('#adminStrategyRuns details').first().getByRole('button',{name:'Close this instance',exact:true}).click();
     await a.waitForFunction(()=>document.querySelector('#adminStrategyRuns summary').textContent.includes('CLOSING'));
@@ -99,6 +126,6 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     await p.setViewportSize({width:390,height:844});
     await p.locator('#strategyRuns details').first().locator('summary').click();
     await p.screenshot({path:path.join(require('node:os').tmpdir(),'strategy-runs-portal-mobile.png'),fullPage:true});
-    console.log('PASS: source tags (deduplicated/multiple/missing/literal HTML) on grouped and individual portal/admin trades, shared per-lot risk payloads, complete grouped legs, single-click AM-only close, CLOSING acknowledgement, PM retained, missing P&L unavailable, portal/admin/mobile, no page errors; all API calls mocked');
+    console.log('PASS: compact rows/source labels/status/date/actions and source tags (deduplicated/multiple/missing/literal HTML) on grouped and individual portal/admin trades, shared per-lot risk payloads, complete grouped legs, single-click AM-only close, CLOSING acknowledgement, PM retained, missing P&L unavailable, portal/admin/mobile, no page errors; all API calls mocked');
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

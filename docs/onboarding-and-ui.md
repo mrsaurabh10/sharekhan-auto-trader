@@ -254,3 +254,20 @@ verification to the actual token expiry. Authentication failures still require
 attention; this change does not bypass expiry checks or replay missed signals.
 Existing stale verification is repaired on the next successful token refresh; an
 explicit reconnect remains an immediate recovery option after release.
+
+### Compact trade tables — October 19, 2026
+
+Admin request/execution rows use tighter spacing, compact two-line timestamps,
+right-aligned prices and quantities, and content-width action buttons. The shared
+`small` form-control width no longer stretches table buttons. Source tags use
+short display labels (F&O 09:25, Stocks 09:25, Expiry straddle AM/PM) and truncate
+unknown long values onto one line. Full recorded sources and status enums remain
+in accessible labels/tooltips and expand on keyboard focus. Friendly statuses such
+as Exited and Pending change display only; filters, stored statuses, quote/P&L
+updates and close behavior retain their existing values. Extra actions wrap within
+a bounded cell; responsive tables retain horizontal scrolling.
+
+The shared source/status display is also used in the personal order/execution
+view. Asset version `20261019-compact-trades` refreshes both dashboard variants and
+the portal. Mock Chrome verification includes realistic closed-trade rows, source
+and status focus/blur, literal HTML sources, mobile and existing close controls.
