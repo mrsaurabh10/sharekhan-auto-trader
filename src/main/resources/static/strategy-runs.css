@@ -1,0 +1,10 @@
+.strategy-run{margin:12px 0;padding:14px;border:1px solid #d7dfef;border-radius:12px;background:#f8faff;color:#17263f}
+.strategy-run summary{cursor:pointer;font-weight:650;line-height:1.6;overflow-wrap:anywhere}
+.strategy-run .actions{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.strategy-run button{padding:8px 12px;border-radius:8px;border:1px solid #ccd6e8;background:#fff;color:#17263f;cursor:pointer}
+.strategy-run button.danger{color:#b42318;border-color:#f0b3ad}.strategy-run button:disabled{opacity:.55;cursor:default}
+.run-pnl{display:flex;flex-wrap:wrap;gap:10px 18px;font-variant-numeric:tabular-nums;font-size:.9rem}
+.strategy-run .table-wrap{overflow-x:auto}.strategy-run table{width:100%;border-collapse:collapse}.strategy-run td,.strategy-run th{padding:8px;text-align:left;border-bottom:1px solid #d7dfef;white-space:nowrap}
+.run-risk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.run-risk-grid label{display:flex;flex-direction:column;gap:5px}
+[data-run-risk] fieldset{border:1px solid #d7dfef;border-radius:10px;padding:12px;min-width:0}[data-run-risk] small{display:block;margin-top:10px;line-height:1.6}
+@media(max-width:600px){.run-risk-grid{grid-template-columns:1fr}.strategy-run{padding:10px}.run-pnl{flex-direction:column;gap:6px}}

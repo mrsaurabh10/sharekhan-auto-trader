@@ -1439,6 +1439,7 @@ public class PriceTriggerService {
             remainingTrade.setUseSpotForTarget(trade.getUseSpotForTarget());
             remainingTrade.setSpotScripCode(trade.getSpotScripCode());
             remainingTrade.setSource(trade.getSource());
+            remainingTrade.setStrategyRunId(trade.getStrategyRunId());
             
             // Append suffix to orderId to avoid unique constraint violation
             if (trade.getOrderId() != null) {

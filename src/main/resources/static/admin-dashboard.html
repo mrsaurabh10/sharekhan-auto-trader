@@ -110,6 +110,8 @@
     <link rel="stylesheet" href="/portal/theme.css">
     <link rel="stylesheet" href="/portal/admin-layout.css?v=2">
     <script src="/portal/legacy-theme.js" defer></script>
+<link rel="stylesheet" href="/strategy-runs.css?v=1">
+<script src="/strategy-runs.js?v=1" defer></script>
 </head>
 <body class="legacy-workspace admin-layout">
 <header class="admin-header">
@@ -184,6 +186,7 @@
                             <textarea id="strategySymbolQuantities" rows="3" placeholder="SBIN:900&#10;RELIANCE:300"></textarea>
                             <div class="hint">One row per stock: SYMBOL:QUANTITY. Three BIGTRADEPLUS brackets are created for each stock.</div>
                         </div>
+                        <div id="adminRunRisk" class="grid-span-all" data-run-risk></div>
                         <div class="form-row"><label class="inline small" for="strategyIntraday">Same-day exit by app</label>
                             <input id="strategyIntraday" type="checkbox" checked aria-label="App-managed same-day strategy exit">
                         </div>
@@ -356,6 +359,8 @@
                     <div><span class="pnl-summary-label">Today Booked PNL:</span><span id="todayBookedPnl" class="pnl-summary-value">-</span></div>
                     <div id="todayPnlSummaryNote" class="pnl-summary-note">Uses today's trades, independent of status filter.</div>
                 </div>
+                <div id="adminStrategyRuns"></div>
+                <h4>Individual executions, including manual and historical trades</h4>
                 <table id="user-executed-table" style="width:100%;border-collapse:collapse" border="1">
                     <thead><tr><th>ID</th><th>Date</th><th>Type</th><th>Source</th><th>Status</th><th>Symbol</th><th>Exchange</th><th>Strike</th><th>Option Type</th><th>Entry</th><th>SL</th><th>T1</th><th>Qty</th><th>Action</th><th>LTP</th><th>Spot LTP</th><th>Gross PNL</th></tr></thead>
                     <tbody></tbody>
@@ -495,6 +500,6 @@
 </div>
 
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
-<script src="/admin-dashboard.js?v=37" defer></script>
+<script src="/admin-dashboard.js?v=38" defer></script>
 </body>
 </html>

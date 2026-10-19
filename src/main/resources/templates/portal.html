@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AutoTrader · Your trading workspace</title>
 <link rel="stylesheet" href="/portal/portal.css?v=20261017-pnl">
+<link rel="stylesheet" href="/strategy-runs.css?v=1">
+<script src="/strategy-runs.js?v=1" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -250,6 +252,8 @@
 </div>
 <div class="card section-gap">
 <h2>Executions &amp; positions</h2>
+<div id="strategyRuns"></div>
+<h3>Individual executions, including manual and historical trades</h3>
 <form id="executionFilters" class="analytics-filters">
 <label>Status<select name="status">
 <option value="">All statuses</option>
@@ -390,6 +394,7 @@
 <input name="investmentPerStock" type="number" min="0.01" max="999999999.99" step="0.01" placeholder="e.g. 10000" disabled>
 <small>Up to five stocks. Whole shares are sized at the signal price; charges and fill-price changes are extra.</small>
 </label>
+<div id="subscriptionRunRisk" class="full" data-run-risk></div>
 <label class="check">
 <input name="intraday" type="checkbox" checked>Same-day exit managed by app</label>
 <label class="check">
@@ -425,7 +430,7 @@
 </div>
 </form>
 </dialog>
-<script src="/portal/portal.js?v=20261019-straddle-profit" defer>
+<script src="/portal/portal.js?v=20261019-strategy-runs" defer>
 </script>
 </body>
 </html>

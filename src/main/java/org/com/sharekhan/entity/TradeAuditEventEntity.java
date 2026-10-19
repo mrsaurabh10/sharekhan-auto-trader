@@ -18,6 +18,9 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class TradeAuditEventEntity {
+    @Column(name="strategy_run_id",length=64)
+    private String strategyRunId;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

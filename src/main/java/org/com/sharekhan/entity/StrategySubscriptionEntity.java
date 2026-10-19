@@ -29,6 +29,8 @@ public class StrategySubscriptionEntity {
     private java.math.BigDecimal investmentPerStock;
     @Column(precision = 19, scale = 2)
     private java.math.BigDecimal profitTargetPerLot;
+    @Embedded
+    private org.com.sharekhan.strategy.run.StrategyRiskSettings riskSettings;
     private Boolean intraday;
     private Long appUserId;
     private Long brokerCredentialsId;

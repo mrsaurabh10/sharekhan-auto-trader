@@ -26,3 +26,5 @@ CREATE INDEX IF NOT EXISTS idx_trade_audit_request
     ON trade_audit_events (trigger_request_id);
 CREATE INDEX IF NOT EXISTS idx_trade_audit_trade
     ON trade_audit_events (trade_id);
+
+ALTER TABLE trade_audit_events ADD COLUMN IF NOT EXISTS strategy_run_id VARCHAR(64);

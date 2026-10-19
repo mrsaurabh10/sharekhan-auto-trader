@@ -41,7 +41,7 @@ public class SecurityConfig {
                         .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll()
                         .requestMatchers("/portal", "/portal/").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/", "/login", "/account", "/portal/**", "/error", "/api/account/**", "/api/auth/csrf-token").permitAll()
-                        .requestMatchers("/admin/login", "/css/**", "/js/**", "/images/**").permitAll()
+                        .requestMatchers("/admin/login", "/css/**", "/js/**", "/images/**", "/strategy-runs.js", "/strategy-runs.css").permitAll()
                         .requestMatchers("/h2-console/**").denyAll()
                         .requestMatchers("/api/trades/trigger-all", "/api/trades/close-all", "/api/trades/close-all/**",
                             "/api/backtests/**", "/api/sharekhan/historical/**").permitAll()

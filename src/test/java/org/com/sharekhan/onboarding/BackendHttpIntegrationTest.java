@@ -58,7 +58,9 @@ class BackendHttpIntegrationTest {
         UserConfigService.class, UserTradingAccess.class, BrokerConnectionService.class, BrokerCredentialsService.class,
         OnboardingStatusService.class, CryptoService.class, AccessTokenPersistenceService.class, PortalExceptionHandler.class,
         StrategyTemplateService.class, StrategySubscriptionService.class, StrategyEnrollmentService.class, NseMarketCalendar.class,
-        TradingRequestService.class, TradeCostCalculator.class, TradeAnalyticsService.class})
+        TradingRequestService.class, TradeCostCalculator.class, TradeAnalyticsService.class,
+        StrategyRunController.class, org.com.sharekhan.strategy.run.StrategyRunService.class,
+        org.com.sharekhan.strategy.run.StrategyRunCoordinator.class})
     static class Backend {
         @Bean StrategyEvaluator stockStrategy() {
             return new StrategyEvaluator() {
@@ -88,10 +90,12 @@ class BackendHttpIntegrationTest {
     @Autowired BrokerConnectionRepository connections;
     @Autowired AccessTokenRepository tokens;
     @Autowired StrategySubscriptionRepository subscriptions;
+    @Autowired StrategyRunRepository runs;
     @Autowired TriggerTradeRequestRepository requests;
     @Autowired TriggeredTradeSetupRepository trades;
     @Autowired CryptoService crypto;
     @Autowired StrategyEnrollmentService enrollment;
+    @Autowired org.com.sharekhan.strategy.run.StrategyRunCoordinator coordinator;
     @MockBean AccountMailService mail;
     @MockBean SharekhanAuthProvider provider;
     @MockBean DhanAuthProvider dhan;
@@ -108,7 +112,7 @@ class BackendHttpIntegrationTest {
         mvc=org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(context)
             .apply(org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity())
             .defaultRequest(get("/").with(request->{request.setRemoteAddr(peer);return request;})).build();
-        trades.deleteAll(); requests.deleteAll(); subscriptions.deleteAll(); tokens.deleteAll();
+        trades.deleteAll(); requests.deleteAll(); runs.deleteAll(); subscriptions.deleteAll(); tokens.deleteAll();
         connections.deleteAll(); brokers.deleteAll(); profiles.deleteAll(); users.deleteAll();
         when(mail.configured()).thenReturn(true);
         when(provider.loginAndFetchToken(any(BrokerCredentialsEntity.class))).thenReturn(new AuthTokenResult("test-token-not-live",3600));
@@ -252,6 +256,8 @@ class BackendHttpIntegrationTest {
         assertThat(brokers.count()).isZero();
     }
     @Test void personalAnalyticsExcludesAnotherUsersTradesEvenWithSpoofedScope() throws Exception {
+        mvc.perform(get("/strategy-runs.js")).andExpect(status().isOk());
+        mvc.perform(get("/strategy-runs.css")).andExpect(status().isOk());
         MockHttpSession session=registerAndLogin();
         long owner=users.findByUsername("alex@example.test").orElseThrow().getId();
         trades.saveAndFlush(closedTrade(owner,"OWN",100.0));trades.saveAndFlush(closedTrade(owner+999,"FOREIGN",9000.0));
@@ -330,6 +336,69 @@ class BackendHttpIntegrationTest {
         mvc.perform(get("/api/strategies/subscriptions?status=ALL").session(session))
             .andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(3));
         mvc.perform(get("/api/strategies/subscriptions?status=invalid").session(session)).andExpect(status().isBadRequest());
+    }
+
+    @Test void strategyInstanceCloseIsScopedCsrfProtectedAndDoesNotPauseFutureRuns() throws Exception {
+        mvc.perform(get("/strategy-runs.js")).andExpect(status().isOk());
+        mvc.perform(get("/strategy-runs.css")).andExpect(status().isOk());
+        MockHttpSession session=registerAndLogin();
+        long owner=users.findByUsername("alex@example.test").orElseThrow().getId();
+        long broker=createBroker(session);
+        var sub=subscriptions.saveAndFlush(StrategySubscriptionEntity.builder().appUserId(owner).brokerCredentialsId(broker)
+                .templateId("EXPIRY_LONG_STRADDLE").symbol("NIFTY").status("ACTIVE").build());
+        for(String instance:List.of("AM","PM","FOREIGN")) {
+            runs.saveAndFlush(StrategyRun.builder().id(instance).appUserId(instance.equals("FOREIGN")?owner+1000:owner)
+                .brokerCredentialsId(broker).subscriptionId(instance.equals("FOREIGN")?null:sub.getId()).templateId("EXPIRY_LONG_STRADDLE").symbol("NIFTY")
+                .instance(instance).tradingDay(java.time.LocalDate.now()).createdAt(LocalDateTime.now()).status("OPEN").build());
+        }
+        // A broker order still awaiting confirmation must keep AM in CLOSING.
+        requests.saveAndFlush(TriggerTradeRequestEntity.builder().strategyRunId("AM").appUserId(owner).brokerCredentialsId(broker)
+            .status(TriggeredTradeStatus.TRIGGERED).symbol("NIFTY").build());
+        mvc.perform(get("/api/strategies/runs")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/strategies/runs?userId="+(owner+1000)).session(session))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.content.length()").value(2));
+        mvc.perform(post("/api/strategies/runs/AM/close").session(session)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/strategies/runs/FOREIGN/close").session(session).with(csrf())).andExpect(status().isForbidden());
+        mvc.perform(post("/api/strategies/runs/AM/close").session(session).with(csrf()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.run.status").value("CLOSING"));
+        mvc.perform(post("/api/strategies/runs/AM/close").session(session).with(csrf())).andExpect(status().isOk());
+        assertThat(runs.findById("AM").orElseThrow().getExitReason()).isEqualTo("STRATEGY_MANUAL_CLOSE");
+        assertThat(runs.findById("PM").orElseThrow().getStatus()).isEqualTo("OPEN");
+        assertThat(subscriptions.findById(sub.getId()).orElseThrow().getStatus()).isEqualTo("ACTIVE");
+        assertThat(runs.findById("FOREIGN").orElseThrow().getStatus()).isEqualTo("OPEN");
+        assertThat(runs.advanceRisk("PM",new java.math.BigDecimal("3000"),new java.math.BigDecimal("2000"))).isEqualTo(1);
+        assertThat(runs.advanceRisk("PM",new java.math.BigDecimal("2500"),new java.math.BigDecimal("1500"))).isZero();
+        assertThat(runs.findById("PM").orElseThrow().getStopFloor()).isEqualByComparingTo("2000");
+        assertThat(runs.requestClose("PM","FIRST_REASON",LocalDateTime.now())).isEqualTo(1);
+        assertThat(runs.requestClose("PM","SECOND_REASON",LocalDateTime.now())).isZero();
+        assertThat(runs.findById("PM").orElseThrow().getExitReason()).isEqualTo("FIRST_REASON");
+        assertThat(runs.markClosed("PM",LocalDateTime.now())).isEqualTo(1);
+        assertThat(runs.advanceRisk("PM",new java.math.BigDecimal("4000"),new java.math.BigDecimal("3000"))).isZero();
+        var stale=subscriptions.findById(sub.getId()).orElseThrow();
+        mvc.perform(post("/api/strategies/subscriptions/"+sub.getId()+"/close-and-pause").session(session).with(csrf()))
+            .andExpect(status().isAccepted());
+        stale.setLastMessage("Stale evaluation should not undo pause");stale.setLastEvaluatedAt(LocalDateTime.now());
+        assertThat(subscriptions.recordEvaluationIfActive(stale)).isZero();
+        assertThat(subscriptions.findById(sub.getId()).orElseThrow().getStatus()).isEqualTo("CANCELLED");
+    }
+
+    @Test void strategyInstanceCreationCommitsSnapshotAndBlocksReentryAfterClose() throws Exception {
+        var session=registerAndLogin();long owner=users.findByUsername("alex@example.test").orElseThrow().getId();long broker=createBroker(session);
+        var sub=subscriptions.saveAndFlush(StrategySubscriptionEntity.builder().appUserId(owner).brokerCredentialsId(broker)
+            .templateId("TEST_BREAKOUT").symbol("NIFTY").status("ACTIVE").lots(2).build());
+        var input=new StrategyApplyRequest();input.setUserId(owner);input.setBrokerCredentialsId(broker);input.setSubscriptionId(sub.getId());
+        input.setTemplateId("TEST_BREAKOUT");input.setSymbol("NIFTY");input.setLots(2);
+        var rules=new org.com.sharekhan.strategy.run.StrategyRiskSettings();rules.setProfitTarget(new java.math.BigDecimal("2000"));
+        rules.setAmountMode(org.com.sharekhan.strategy.run.StrategyRiskSettings.AmountMode.PER_LOT);input.setRiskSettings(rules);
+        var entry=new TriggerRequest();entry.setUserId(owner);entry.setBrokerCredentialsId(broker);
+        coordinator.evaluate(input,()->{coordinator.attach(entry);return null;});
+        var saved=runs.findById(entry.getStrategyRunId()).orElseThrow();
+        assertThat(saved.getRiskSettings().getProfitTarget()).isEqualByComparingTo("2000");assertThat(saved.getLots()).isEqualTo(2);
+        assertThat(subscriptions.recordEvaluationIfActive(sub)).isEqualTo(1);
+        mvc.perform(post("/api/strategies/runs/"+saved.getId()+"/close").session(session).with(csrf()))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.run.status").value("CLOSED"));
+        coordinator.evaluate(input,()->{throw new AssertionError("Closed instance must not evaluate again");});
+        assertThat(runs.count()).isEqualTo(1);
     }
 
     private MockHttpSession registerAndLogin() throws Exception {

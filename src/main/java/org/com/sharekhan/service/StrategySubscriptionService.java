@@ -162,7 +162,7 @@ public class StrategySubscriptionService {
                 subscription.setLastEvaluatedAt(LocalDateTime.now(MARKET_ZONE));
                 subscription.setLastEvaluationStatus("waiting");
                 subscription.setLastMessage("Strategy already triggered today; it will reset for the next trading day unless cancelled.");
-                repository.save(subscription);
+                repository.recordEvaluationIfActive(subscription);
                 return;
             }
 
@@ -172,6 +172,8 @@ public class StrategySubscriptionService {
 
             StrategyApplyRequest request = new StrategyApplyRequest();
             request.setTemplateId(subscription.getTemplateId());
+            request.setSubscriptionId(subscription.getId());
+            request.setRiskSettings(subscription.getRiskSettings());
             request.setSymbol(subscription.getSymbol());
             request.setLots(subscription.getLots());
             request.setProfitTargetPerLot(subscription.getProfitTargetPerLot());
@@ -196,12 +198,12 @@ public class StrategySubscriptionService {
                 subscription.setStatus(ACTIVE);
                 subscription.setCompletedAt(null);
             }
-            repository.save(subscription);
+            repository.recordEvaluationIfActive(subscription);
         } catch (Exception e) {
             subscription.setLastEvaluatedAt(LocalDateTime.now());
             subscription.setLastEvaluationStatus("error");
             subscription.setLastMessage(e.getMessage());
-            repository.save(subscription);
+            repository.recordEvaluationIfActive(subscription);
             log.warn("Strategy subscription {} evaluation failed: {}", subscription.getId(), e.getMessage());
         }
     }
@@ -246,6 +248,7 @@ public class StrategySubscriptionService {
         if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
         }
+        request.setRiskSettings(org.com.sharekhan.strategy.run.StrategyRiskSettings.validate(request.getRiskSettings(),request.getLots()));
         if (request.getUserId() == null) {
             throw new IllegalArgumentException("userId is required to start a background strategy");
         }
