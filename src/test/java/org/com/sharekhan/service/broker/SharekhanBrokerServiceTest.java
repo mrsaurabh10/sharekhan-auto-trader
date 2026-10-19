@@ -202,7 +202,7 @@ class SharekhanBrokerServiceTest {
         var sdk = org.mockito.Mockito.mock(com.sharekhan.SharekhanConnect.class);
         var context = new BrokerContext(1L, "key", "CLIENT", "Sharekhan", 2L);
         var trade = TriggeredTradeSetupEntity.builder().symbol("MAXHEALTH").scripCode(22377).exchange("NC")
-                .quantity(4L).entryPrice(1038.74).build();
+                .quantity(4L).entryPrice(1038.74).intraday(true).build();
         org.mockito.Mockito.when(repository.findById(22377)).thenReturn(java.util.Optional.of(
                 org.com.sharekhan.entity.ScriptMasterEntity.builder().exchange("NC").tickSize(0.1).build()));
         org.mockito.Mockito.when(sdk.placeOrder(org.mockito.ArgumentMatchers.any()))
@@ -219,6 +219,9 @@ class SharekhanBrokerServiceTest {
         assertThat(captor.getAllValues().get(0).triggerPrice).isEqualTo("1038.8");
         assertThat(captor.getAllValues().get(0).price).isEqualTo("1038.8");
         assertThat(captor.getAllValues().get(1).price).isEqualTo("1038.8");
+        assertThat(captor.getAllValues()).allSatisfy(order->assertThat(order.productType).isEqualTo("INVESTMENT"));
+        assertThat(trade.getBrokerExecutionProduct()).isEqualTo("INVESTMENT");
+        assertThat(trade.getIntraday()).isTrue();
         org.mockito.Mockito.verify(sdk).modifyorder(captor.capture());
         assertThat(captor.getValue().price).isEqualTo("1038.8");
     }

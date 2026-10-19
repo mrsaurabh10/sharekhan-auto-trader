@@ -49,7 +49,9 @@ class DhanBrokerServiceTest {
         assertThat(body.getValue().getString("securityId")).isEqualTo("11536");
         assertThat(body.getValue().getLong("quantity")).isEqualTo(10);
         assertThat(body.getValue().getString("transactionType")).isEqualTo("BUY");
-        assertThat(body.getValue().getString("productType")).isEqualTo("INTRADAY");
+        assertThat(body.getValue().getString("productType")).isEqualTo("CNC");
+        assertThat(trade.getIntraday()).isTrue(); // App-managed same-day exit is independent.
+        assertThat(trade.getBrokerExecutionProduct()).isEqualTo("CNC");
         var ordered=inOrder(claims,client);ordered.verify(claims).claim(anyString(),eq(7L),eq("TRADE:12"),eq("BUY"));ordered.verify(client).exchange(eq("POST"),anyString(),anyString(),any());
     }
     @Test void entryCanUseDurableRequestBeforeTradeRowExistsAndReentryHasDistinctScope() throws Exception {
@@ -69,7 +71,7 @@ class DhanBrokerServiceTest {
         assertThat(body.getValue().getString("transactionType")).isEqualTo("SELL");
     }
     @Test void optionStopLimitUsesMarginAndNeverMultipliesUnitsAgain() throws Exception {
-        trade.setExchange("NF");trade.setQuantity(50L);trade.setIntraday(false);
+        trade.setExchange("NF");trade.setQuantity(50L);trade.setIntraday(true);
         when(instruments.resolve(trade)).thenReturn(new DhanInstrumentResolver.Instrument("NSE_FNO","999",25,new BigDecimal("0.05"),1000));
         when(client.exchange(eq("POST"),anyString(),anyString(),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","PENDING")));
         assertThat(service.placeTriggerPriceEntryOrder(trade,context,100,100.5).isSuccess()).isTrue();
@@ -77,6 +79,20 @@ class DhanBrokerServiceTest {
         assertThat(body.getValue().getLong("quantity")).isEqualTo(50);assertThat(body.getValue().getString("orderType")).isEqualTo("STOP_LOSS");
         assertThat(body.getValue().getString("productType")).isEqualTo("MARGIN");
         assertThat(body.getValue().getDouble("triggerPrice")).isEqualTo(100);
+    }
+    @Test void newSameDayEntryAndExitBothUseDeliveryWhileLegacyExitRetainsOriginalProduct() throws Exception {
+        when(client.exchange(eq("POST"),eq("/orders"),eq("test-token"),any()))
+            .thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","PENDING")));
+        assertThat(service.placeOrder(trade,context,100).isSuccess()).isTrue();
+        assertThat(service.placeExitOrder(trade,context,101).isSuccess()).isTrue();
+        var body=ArgumentCaptor.forClass(JSONObject.class);
+        verify(client,times(2)).exchange(eq("POST"),eq("/orders"),anyString(),body.capture());
+        assertThat(body.getAllValues()).allSatisfy(row->assertThat(row.getString("productType")).isEqualTo("CNC"));
+        assertThat(trade.getIntraday()).isTrue();
+        trade.setBrokerExecutionProduct(null); // An existing pre-policy intraday position.
+        assertThat(service.placeExitOrder(trade,context,101).isSuccess()).isTrue();
+        verify(client,times(3)).exchange(eq("POST"),eq("/orders"),anyString(),body.capture());
+        assertThat(body.getValue().getString("productType")).isEqualTo("INTRADAY");
     }
     @Test void blocksInvalidTicksLotsFreezeAndProductsBeforeClaimOrHttp() {
         assertThat(service.placeOrder(trade,context,100.03).isSuccess()).isFalse();
@@ -118,6 +134,22 @@ class DhanBrokerServiceTest {
         assertThat(result.getStatus()).isEqualTo("Rejected");
         assertThat(result.getRejectionReason()).contains("HTTP 400").doesNotContain("private broker response");
         verify(client,never()).exchange(eq("GET"),anyString(),anyString(),any());
+    }
+    @Test void recoveredLegacyClaimRetainsActualBrokerProductRatherThanNewEntryPolicy() throws Exception {
+        doThrow(new DuplicateKeyException("duplicate")).when(claims).claim(anyString(),anyLong(),anyString(),eq("BUY"));
+        when(client.exchange(eq("GET"),anyString(),anyString(),isNull())).thenAnswer(call->{
+            String path=call.getArgument(1);
+            return response(200,order("TRADED",10,0).put("productType","INTRADAY")
+                .put("correlationId",path.substring(path.lastIndexOf('/')+1)));
+        });
+        assertThat(service.placeOrder(trade,context,100).getOrderId()).isEqualTo("12345");
+        assertThat(trade.getBrokerExecutionProduct()).isEqualTo("INTRADAY");
+        verify(client,never()).exchange(eq("POST"),anyString(),anyString(),any());
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any())).thenReturn(response(200,new JSONObject().put("orderId","exit123").put("orderStatus","PENDING")));
+        assertThat(service.placeExitOrder(trade,context,101).isSuccess()).isTrue();
+        var body=ArgumentCaptor.forClass(JSONObject.class);
+        verify(client).exchange(eq("POST"),eq("/orders"),anyString(),body.capture());
+        assertThat(body.getValue().getString("productType")).isEqualTo("INTRADAY");
     }
     @Test void rejectedAcknowledgementBecomesTerminalWhenOrderLookupConfirmsZeroFills() throws Exception {
         when(client.exchange(eq("POST"),eq("/orders"),anyString(),any()))

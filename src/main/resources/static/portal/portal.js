@@ -51,15 +51,6 @@
   const orderColumns = [['Instrument', 'symbol'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => badge(row.status || 'PENDING')], ['Source', 'source']];
   function readyBrokers() { return state.brokers.filter(b => ['Sharekhan','Dhan'].includes(b.brokerName) && b.connected && b.active && b.tradingEnabled); }
   function brokerLabel(b) { return b.brokerName + ' · ' + (b.clientCode || 'Account ' + b.id); }
-  let orderProductBroker;
-  function updateOrderProductDefault() {
-    const selected = $('#orderBroker').value;
-    if (selected === orderProductBroker) return;
-    orderProductBroker = selected;
-    const broker = state.brokers.find(b => String(b.id) === selected);
-    $('#orderForm').elements.intraday.checked = broker?.brokerName !== 'Dhan';
-  }
-  $('#orderBroker').addEventListener('change', updateOrderProductDefault);
   function refreshSelectors() {
     for (const selector of ['#orderBroker', '#strategyBroker']) {
       const el = $(selector), previous = el.value; el.replaceChildren();
@@ -68,7 +59,6 @@
       brokers.forEach(b => el.append(new Option(brokerLabel(b), b.id, brokers.length===1)));
       el.value=brokers.some(b=>String(b.id)===previous) ? previous : brokers.length===1 ? String(brokers[0].id) : '';
     }
-    updateOrderProductDefault();
     const ab=$('#analyticsBroker'); const selected=ab.value; ab.replaceChildren(new Option('All my brokers',''), ...state.brokers.map(b=>new Option(brokerLabel(b),b.id))); ab.value=selected;
     $('#strategyGate').hidden = readyBrokers().length > 0;
     $('#strategyDialogGate').hidden=readyBrokers().length > 0;
@@ -242,7 +232,7 @@
     if (['NC','BC'].includes(body.exchange)) { body.strikePrice=null; body.optionType=null; body.expiry=null; }
     body.intraday=f.elements.intraday.checked; body.action='BUY';
     pendingOrder=body; $('#orderSummary').replaceChildren();
-    for (const [label,value] of [['Broker',f.elements.brokerCredentialsId.selectedOptions[0].textContent],['Instrument',body.instrument],['Exchange',body.exchange],['Contract',body.optionType],['Strike',body.strikePrice],['Expiry',body.expiry],[body.optionType ? 'Lots' : 'Shares',body.quantity],['Entry ₹',body.entryPrice],['Stop-loss ₹',body.stopLoss],['Target 1 ₹',body.target1],['Target 2 ₹',body.target2],['Target 3 ₹',body.target3],['Product',body.intraday?'Intraday':body.optionType?'Carry-forward':'Delivery']]) if(value!=null) $('#orderSummary').append(node('dt',label),node('dd',value));
+    for (const [label,value] of [['Broker',f.elements.brokerCredentialsId.selectedOptions[0].textContent],['Instrument',body.instrument],['Exchange',body.exchange],['Contract',body.optionType],['Strike',body.strikePrice],['Expiry',body.expiry],[body.optionType ? 'Lots' : 'Shares',body.quantity],['Entry ₹',body.entryPrice],['Stop-loss ₹',body.stopLoss],['Target 1 ₹',body.target1],['Target 2 ₹',body.target2],['Target 3 ₹',body.target3],['Broker product',body.optionType?'Carry-forward':'Delivery'],['Same-day exit by app',body.intraday?'Enabled':'Disabled']]) if(value!=null) $('#orderSummary').append(node('dt',label),node('dd',value));
     $('#confirmOrder').reset(); $('#reviewDialog').showModal();
   });
   $('#confirmOrder').addEventListener('submit',event=>{event.preventDefault(); busy(event.target.querySelector('button[type=submit]'),async()=>{
