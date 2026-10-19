@@ -3,6 +3,11 @@
   'use strict';
   const node=(tag,text,cls)=>{const e=document.createElement(tag);if(text!=null)e.textContent=text;if(cls)e.className=cls;return e;};
   const money=value=>value==null?'Unavailable':'₹'+Number(value).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const sourceName=value=>typeof value==='string' && value.trim() ? value.trim() : 'Unspecified';
+  function sourceTag(value) {
+    const label=sourceName(value),tag=node('span',label,'source-tag');
+    tag.title='Source: '+label;return tag;
+  }
   async function mount(container,api,userId) {
     if(!container)return;
     const token={};container.runViewToken=token;let page=0;
@@ -17,6 +22,9 @@
         for(const view of result.content) {
           const run=view.run,pnl=view.pnl,details=node('details',null,'strategy-run');
           const summary=node('summary',run.templateId+' · '+run.tradingDay+' '+run.instance+' · '+run.status+' · '+money(pnl.totalGross));details.append(summary);
+          const sources=node('span',null,'run-sources');sources.setAttribute('aria-label','Trade sources');
+          for(const source of new Set(view.positions.length ? view.positions.map(leg=>sourceName(leg.source)) : ['Unspecified'])) sources.append(sourceTag(source));
+          summary.append(sources);
           details.append(node('p','Run '+run.id.slice(0,10)+' · '+run.symbol+' · broker #'+run.brokerCredentialsId+' · '+pnl.openPositions+' open · '+view.requests+' requests','muted'));
           const values=node('div',null,'run-pnl');
           for(const [label,value] of [['Realized gross',pnl.realizedGross],['Open gross',pnl.openGross],['Combined gross',pnl.totalGross],['Estimated charges',pnl.estimatedCosts],['Estimated net',pnl.estimatedNet],['Peak gross',run.peakPnl],['Active stop floor',run.stopFloor]]) values.append(node('span',label+': '+money(value)));
@@ -37,9 +45,9 @@
           }
           details.append(actions);
           const wrap=node('div',null,'table-wrap'),table=node('table'),head=node('tr');
-          for(const label of ['Trade','Symbol','Leg','Quantity','Actual entry','Exit','Status','Gross P&L'])head.append(node('th',label));
+          for(const label of ['Trade','Symbol','Leg','Quantity','Actual entry','Exit','Status','Gross P&L','Source'])head.append(node('th',label));
           table.append(head);
-          for(const leg of view.positions) {const row=node('tr');for(const value of [leg.id,leg.symbol,[leg.strikePrice,leg.optionType,leg.expiry].filter(Boolean).join(' '),leg.quantity,money(leg.actualEntryPrice),money(leg.exitPrice),leg.status,money(leg.pnl)])row.append(node('td',value));table.append(row);}
+          for(const leg of view.positions) {const row=node('tr');for(const value of [leg.id,leg.symbol,[leg.strikePrice,leg.optionType,leg.expiry].filter(Boolean).join(' '),leg.quantity,money(leg.actualEntryPrice),money(leg.exitPrice),leg.status,money(leg.pnl)])row.append(node('td',value));const sourceCell=node('td');sourceCell.append(sourceTag(leg.source));row.append(sourceCell);table.append(row);}
           wrap.append(table);details.append(wrap);container.append(details);
         }
         if(!result.content.length)container.append(node('p','No tracked strategy instances yet. New strategy entries will appear here.','muted'));
@@ -70,5 +78,5 @@
     return enabled?risk:null;
   }
   function resetRisk(container) {if(container)for(const input of container.querySelectorAll('[data-risk-field]'))if(input.tagName==='SELECT')input.value='TOTAL';else input.value='';}
-  window.StrategyRunView={mount,riskForm,readRisk,resetRisk};
+  window.StrategyRunView={mount,riskForm,readRisk,resetRisk,sourceTag};
 })();

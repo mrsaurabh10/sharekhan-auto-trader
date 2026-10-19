@@ -1371,7 +1371,7 @@
         const t1 = t.target1 != null ? t.target1 : (t.t1 || '-');
         const qty = t.quantity != null ? t.quantity : (t.qty || '-');
         const status = t.status || '-';
-        const source = t.source || '-';
+        const source = typeof t.source === 'string' && t.source.trim() ? t.source.trim() : 'Unspecified';
         const setupDate = t.triggeredAt || t.triggered_at || t.entryAt || t.entry_at || null;
         const statusUpper = String(status).toUpperCase();
         const pnlEntry = t.actualEntryPrice != null ? t.actualEntryPrice : (t.entryPrice != null ? t.entryPrice : (t.entry || null));
@@ -1468,7 +1468,7 @@
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
                        '<td>' + escapeHtml(formatAnalyticsDateTime(setupDate)) + '</td>' +
                        tradeScopeCellHtml(t) +
-                       '<td>' + escapeHtml(String(source)) + '</td>' +
+                       '<td><span class="source-tag">' + escapeHtml(String(source)) + '</span></td>' +
                        '<td>' + escapeHtml(String(status)) + '</td>' +
                        '<td><button type="button" class="symbol-chart-link" title="Open trading setup chart">' + escapeHtml(String(symbol)) + '</button></td>' +
                        '<td>' + escapeHtml(String(exchange || '-')) + '</td>' +

@@ -7,6 +7,8 @@ const path = require('node:path');
 const root = path.resolve(__dirname,'../..');
 const account = id => ({id,brokerName:'Dhan',clientCode:'Sample '+id,connected:true,active:true,tradingEnabled:true});
 const records = ['ACTIVE','TRIGGERED','CANCELLED'].map((status,i)=>({id:i+1,templateId:'Stock mover',symbol:status,status,brokerCredentialsId:7}));
+const sourceLabel='expiry-straddle:2026-10-19:1:7:NIFTY:AM';
+const unsafeSource='<img src=x onerror=alert(1)>';
 const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description:'Mock straddle'},{id:'STOCK_0925_MOVER_ATR_BREAKOUT',name:'Stock mover',description:'Mock stock'},{id:'ST_RSI_EMA_ADX_CE',name:'Other option',description:'Mock option'}];
 (async()=>{
   const browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE_PATH ? {executablePath:process.env.BROWSER_EXECUTABLE_PATH}: {})});
@@ -16,7 +18,7 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
       const errors=[];page.on('pageerror',e=>errors.push(e.message));
       const starts=[],closes=[];let rejectStart=false;
       const run=(id,instance)=>({run:{id,templateId:'EXPIRY_LONG_STRADDLE',tradingDay:'2026-10-19',instance,status:'OPEN',symbol:'NIFTY',brokerCredentialsId:7,subscriptionId:4},pnl:{realizedGross:0,openGross:2000,totalGross:2000,marksFresh:true,openPositions:2},positions:[{id:11,symbol:'NIFTY',optionType:'CE',quantity:65,status:'EXECUTED',actualEntryPrice:100},{id:12,symbol:'NIFTY',optionType:'PE',quantity:65,status:'EXECUTED',actualEntryPrice:100}],requests:2});
-      const groups=[run('run-am','AM'),run('run-pm','PM')];groups[1].pnl.marksFresh=false;groups[1].pnl.totalGross=null;
+      const groups=[run('run-am','AM'),run('run-pm','PM')];groups[1].pnl.marksFresh=false;groups[1].pnl.totalGross=null;groups[0].positions.forEach(leg=>leg.source=sourceLabel);groups[1].positions[0].source=unsafeSource;
       let analytics={
         summary:{effectiveRealizedPnl:-320.5,realizedPnl:1000,totalTradeCost:1320.5,totalClosedTrades:5,winRate:60,openTrades:2},
         bySymbol:[{symbol:'PROFIT',closedCount:3,realizedPnl:1250,winRate:100},{symbol:'LOSS',closedCount:2,realizedPnl:-250,winRate:0},{symbol:'ZERO',closedCount:1,realizedPnl:0,winRate:50},{symbol:'MISSING',closedCount:0,realizedPnl:null,winRate:null},{symbol:'INVALID',closedCount:0,realizedPnl:'invalid',winRate:null}],
@@ -46,7 +48,7 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
         if(endpoint==='/api/strategies/start') {
           starts.push(route.request().postDataJSON());return rejectStart?json({message:'Mock broker unavailable'},503):json({id:4,status:'ACTIVE'});
         }
-        if(endpoint==='/api/orders/requests'||endpoint==='/api/orders/executed')return json({content:[],totalElements:0,number:0,totalPages:1,first:true,last:true});
+        if(endpoint==='/api/orders/requests'||endpoint==='/api/orders/executed')return json({content:[{id:99,symbol:'NIFTY',quantity:65,entryPrice:100,status:'FAILED',source:unsafeSource}],totalElements:1,number:0,totalPages:1,first:true,last:true});
         if(endpoint.startsWith('/api/scripts/instruments/'))return json({instruments:['TCS','NIFTY']});
         if(endpoint==='/api/scripts/strikes')return json({strikes:[25000]});
         if(endpoint==='/api/scripts/expiries')return json({expiries:['29/10/2026']});
@@ -66,12 +68,16 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     await form.locator('button[type=submit]').click();await p.waitForFunction(()=>!document.querySelector('#strategyDialog').open);
     assert.equal(starts[0].riskSettings.profitTarget,2000);assert.equal(starts[0].riskSettings.maxLoss,1000);assert.equal(starts[0].riskSettings.amountMode,'PER_LOT');assert.equal(starts[0].lots,2);
     await p.locator('[data-view=orders]').click();
+    assert.deepEqual(await p.locator('#strategyRuns summary .source-tag').allTextContents(),[sourceLabel,unsafeSource,'Unspecified']);
+    assert.equal(await p.locator('#executions .source-tag').textContent(),unsafeSource);
+    assert.equal(await p.locator('#orderRequests .source-tag').textContent(),unsafeSource);
+    assert.equal(await p.locator('#strategyRuns img, #executions img').count(),0);
     await p.locator('#strategyRuns details').first().locator('summary').click();
-    assert.equal(await p.locator('#strategyRuns details').first().locator('td').count(),16);
+    assert.equal(await p.locator('#strategyRuns details').first().locator('td').count(),18);
     await p.locator('#strategyRuns details').first().getByRole('button',{name:'Close this instance',exact:true}).click();
     await p.waitForFunction(()=>document.querySelector('#strategyRuns summary').textContent.includes('CLOSING'));
     assert.deepEqual(closes,['/api/strategies/runs/run-am/close']);
-    assert.equal(await p.locator('#strategyRuns details').nth(1).locator('summary').textContent(),'EXPIRY_LONG_STRADDLE · 2026-10-19 PM · OPEN · Unavailable');
+    assert.ok((await p.locator('#strategyRuns details').nth(1).locator('summary').textContent()).startsWith('EXPIRY_LONG_STRADDLE · 2026-10-19 PM · OPEN · Unavailable'));
     assert.deepEqual(errors,[]);
     const admin=await fixture([account(7)],true);const a=admin.page;
     await a.locator('#userTabs button').first().click();
@@ -80,6 +86,9 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     await a.locator('#strategyBroker').selectOption('7');await a.locator('#applyStrategyBtn').click();
     await a.waitForFunction(()=>document.querySelector('#strategyResult').textContent.includes('STARTED'));
     assert.equal(admin.starts[0].riskSettings.profitTarget,2000);assert.equal(admin.starts[0].riskSettings.amountMode,'PER_LOT');assert.equal(admin.starts[0].lots,3);
+    assert.deepEqual(await a.locator('#adminStrategyRuns summary .source-tag').allTextContents(),[sourceLabel,unsafeSource,'Unspecified']);
+    assert.equal(await a.locator('#user-executed-table .source-tag').textContent(),unsafeSource);
+    assert.equal(await a.locator('#user-executed-table img').count(),0);
     await a.locator('#adminStrategyRuns details').first().locator('summary').click();
     await a.locator('#adminStrategyRuns details').first().getByRole('button',{name:'Close this instance',exact:true}).click();
     await a.waitForFunction(()=>document.querySelector('#adminStrategyRuns summary').textContent.includes('CLOSING'));
@@ -90,6 +99,6 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     await p.setViewportSize({width:390,height:844});
     await p.locator('#strategyRuns details').first().locator('summary').click();
     await p.screenshot({path:path.join(require('node:os').tmpdir(),'strategy-runs-portal-mobile.png'),fullPage:true});
-    console.log('PASS: shared per-lot risk payloads, complete grouped legs, single-click AM-only close, CLOSING acknowledgement, PM retained, missing P&L unavailable, portal/admin/mobile, no page errors; all API calls mocked');
+    console.log('PASS: source tags (deduplicated/multiple/missing/literal HTML) on grouped and individual portal/admin trades, shared per-lot risk payloads, complete grouped legs, single-click AM-only close, CLOSING acknowledgement, PM retained, missing P&L unavailable, portal/admin/mobile, no page errors; all API calls mocked');
   } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

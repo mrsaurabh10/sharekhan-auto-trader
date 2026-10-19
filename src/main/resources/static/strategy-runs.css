@@ -8,3 +8,7 @@
 .run-risk-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.run-risk-grid label{display:flex;flex-direction:column;gap:5px}
 [data-run-risk] fieldset{border:1px solid #d7dfef;border-radius:10px;padding:12px;min-width:0}[data-run-risk] small{display:block;margin-top:10px;line-height:1.6}
 @media(max-width:600px){.run-risk-grid{grid-template-columns:1fr}.strategy-run{padding:10px}.run-pnl{flex-direction:column;gap:6px}}
+
+.source-tag{display:inline-block;max-width:100%;padding:3px 9px;border:1px solid #c7d6f2;border-radius:999px;background:#eaf1ff;color:#234879;font-size:12px;font-weight:600;line-height:1.5;white-space:normal;overflow-wrap:anywhere;vertical-align:middle}
+.run-sources{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+td .source-tag{min-width:140px;max-width:260px}

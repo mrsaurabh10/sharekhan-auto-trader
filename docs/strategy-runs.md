@@ -16,6 +16,10 @@ instances, complete child trades, realized/open/combined gross P&L, estimated
 charges/net, peak and active stop floor. Pagination selects runs before loading
 all their legs. Manual and historical unlinked trades remain in individual tables.
 Older records are not automatically assigned to runs from source labels.
+Source tags show each distinct recorded trade source in a run header and each
+leg's source in its row. Personal requests/executions and admin execution rows
+use the same badge style. Missing sources display Unspecified, without inferring
+a source from the strategy name.
 
 **Close this instance** sends one action, with no second confirmation dialog.
 It first persists OPEN → CLOSING, blocks further entries/retries for that run,
