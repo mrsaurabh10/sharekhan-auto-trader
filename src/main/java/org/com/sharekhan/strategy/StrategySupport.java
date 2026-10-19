@@ -465,13 +465,16 @@ public class StrategySupport {
                 source.trim(), symbol.trim(), appUserId, start, start.plusDays(1)) > 0;
     }
 
-    /** Includes failed/rejected attempts, so restarts cannot spend a stock's daily budget twice. */
+    /** Real/ambiguous attempts consume the day; explicit pre-placement waits do not. */
     public boolean hasStockMoverRequestOn(String source, LocalDate day, Long userId, String symbol) {
         if (userId == null) return false;
         ScriptMasterEntity spot = resolveSpotScript(symbol);
         List<TriggerTradeRequestEntity> rows = triggerTradeRequestRepository.findDailySourceInstrumentRequests(
                 source, spot.getScripCode(), userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay());
-        return (rows != null && !rows.isEmpty()) || hasEntryForSymbolOn(source, day, userId, symbol);
+        return (rows != null && rows.stream().anyMatch(row ->
+                !(org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED.equals(row.getStatus())
+                    && org.com.sharekhan.exception.EntryNotReadyException.NO_ORDER_REASON.equals(row.getReason()))))
+                || hasEntryForSymbolOn(source, day, userId, symbol);
     }
 
     public ScriptMasterEntity resolveSpotScript(String symbol) {

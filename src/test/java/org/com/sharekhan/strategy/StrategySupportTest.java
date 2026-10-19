@@ -29,6 +29,30 @@ import static org.mockito.Mockito.when;
 class StrategySupportTest {
 
     @Test
+    void onlyExplicitNoOrderWaitsReleaseCashDailyGuardAndOtherFailuresRemainBlocked() {
+        var scripts = mock(ScriptMasterRepository.class);
+        var requests = mock(TriggerTradeRequestRepository.class);
+        var support = new StrategySupport(scripts, mock(MStockInstrumentResolver.class),
+                mock(MStockInstrumentRepository.class), mock(MStockIntradayCandleService.class),
+                mock(SharekhanHistoricalService.class), mock(TradeExecutionService.class), requests,
+                mock(StrategyCandleHistoryService.class));
+        when(scripts.findByExchangeIgnoreCase("NC"))
+                .thenReturn(List.of(spotScript("UNIONBANK", "NC", 10753)));
+        var wait = org.com.sharekhan.entity.TriggerTradeRequestEntity.builder()
+                .reason(org.com.sharekhan.exception.EntryNotReadyException.NO_ORDER_REASON)
+                .status(org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED).build();
+        when(requests.findDailySourceInstrumentRequests(any(), any(), any(), any(), any())).thenReturn(List.of(wait));
+        assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isFalse();
+        wait.setStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED);
+        assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isTrue();
+        wait.setStatus(org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED);
+        wait.setReason("ENTRY_EXECUTION_UNAVAILABLE");
+        assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isTrue();
+        wait.setReason(null);
+        assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isTrue();
+    }
+
+    @Test
     void bootstrapsIndicatorHistoryFromSharekhanAndPreservesLocallyCapturedPrices() {
         MStockIntradayCandleService intraday = mock(MStockIntradayCandleService.class);
         SharekhanHistoricalService historical = mock(SharekhanHistoricalService.class);

@@ -25,6 +25,37 @@ import static org.mockito.Mockito.*;
 class Fno0925MoverAtrBreakoutStrategyTest {
 
     @Test
+    void simulatorPrePlacementWaitDoesNotPreventNextFnoCandidateOrLaterRetry() {
+        var support = mock(StrategySupport.class);
+        var snapshots = mock(MoverSelectionSnapshotStore.class);
+        var qualification = mock(Fno925EntryQualificationService.class);
+        var now = LocalDateTime.of(2026,10,19,12,0);
+        var spot = ScriptMasterEntity.builder().tradingSymbol("FIRST").exchange("NC").scripCode(123).build();
+        var first = new Fno925Candidate("FIRST", spot, "PE");
+        var second = new Fno925Candidate("SECOND", spot, "PE");
+        when(snapshots.loadOrCapture(anyString(), eq(now), any())).thenReturn(java.util.Optional.of(List.of(first, second)));
+        var candle = new StrategyCandle(now.toLocalDate(), now.toLocalTime().minusMinutes(5), 108,110,105,106,1000L);
+        var signal = new Fno925EntryQualificationService.Signal(106,110,4,110,105,candle,"VWAP_RECLAIM_BASE_BREAKOUT");
+        when(qualification.qualifyWithDirectionalCandle(any(), eq(now)))
+                .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+        when(support.roundPrice(anyDouble())).thenAnswer(c -> c.getArgument(0));
+        when(support.preferredFnoExpiry(anyString(), anyString())).thenReturn("27/10/2026");
+        when(support.resolveFnoEntryContract(any(), any(), any(), any(), anyDouble()))
+                .thenReturn(new StrategySupport.FnoOptionContract("27/10/2026",100d));
+        when(support.executeTriggeredTrade(any()))
+                .thenThrow(new org.com.sharekhan.exception.EntryNotReadyException("Waiting for simulator price"))
+                .thenReturn(TriggerTradeRequestEntity.builder().id(10L).build())
+                .thenReturn(TriggerTradeRequestEntity.builder().id(11L).build());
+        var strategy = new Fno0925MoverAtrBreakoutStrategy(support, mock(ScriptMasterRepository.class),
+                mock(MStockGainerLoserService.class), qualification, snapshots,
+                Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        var request = new StrategyApplyRequest(); request.setUserId(3L); request.setBrokerCredentialsId(4L); request.setLots(1);
+        assertThat(strategy.apply(request).getSymbol()).isEqualTo("SECOND");
+        assertThat(strategy.apply(request).getSymbol()).isEqualTo("FIRST");
+        verify(support, times(3)).executeTriggeredTrade(any());
+    }
+
+    @Test
     void directionRejectionDoesNotSubmitOrConsumeTheCandidatesDailyEntry() {
         StrategySupport support = mock(StrategySupport.class);
         ScriptMasterRepository scripts = mock(ScriptMasterRepository.class);

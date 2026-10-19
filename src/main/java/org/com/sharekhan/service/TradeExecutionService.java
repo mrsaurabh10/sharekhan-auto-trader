@@ -1,5 +1,6 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.exception.EntryNotReadyException;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
 import com.sharekhan.model.OrderParams;
 import com.sharekhan.SharekhanConnect;
@@ -1611,6 +1612,10 @@ public class TradeExecutionService {
         if (!isNoStrikeExchange) {
             Double optionLtp = resolveEntryReferencePrice(script.getScripCode(), "executeTriggeredTrade");
             if (optionLtp == null) {
+                if (request.getBrokerCredentialsId() != null && brokerCredentialsRepository.findById(request.getBrokerCredentialsId())
+                        .filter(c -> java.util.Objects.equals(c.getAppUserId(), request.getUserId()))
+                        .filter(c -> Broker.SIMULATOR.getDisplayName().equalsIgnoreCase(c.getBrokerName())).isPresent())
+                    throw new EntryNotReadyException("Simulator waiting for option LTP; no request or order submitted.");
                 throw new InvalidTradeRequestException("Option LTP unavailable for immediate strategy execution; will retry on next evaluation");
             }
         }
@@ -1628,7 +1633,28 @@ public class TradeExecutionService {
             }
         }
 
-        TriggeredTradeSetupEntity executed = executeTradeFromEntity(saved);
+        TriggeredTradeSetupEntity executed;
+        try {
+            executed = executeTradeFromEntity(saved, false, true);
+        } catch (EntryNotReadyException waiting) {
+            // This exception is raised only before broker placement. Keep an explicit
+            // terminal no-order record, not an executable queued request or an ambiguous failure.
+            int recorded = triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.REJECTED.name(),
+                    EntryNotReadyException.NO_ORDER_REASON, waiting.getMessage());
+            if (recorded != 1) throw new InvalidTradeRequestException(
+                    "Strategy request state changed while recording a simulator pre-placement wait");
+            saved.setStatus(TriggeredTradeStatus.REJECTED);
+            saved.setReason(EntryNotReadyException.NO_ORDER_REASON);
+            saved.setComment(waiting.getMessage());
+            if (tradeAuditService != null) tradeAuditService.record(
+                    org.com.sharekhan.entity.TradeAuditEventEntity.builder()
+                            .occurredAt(LocalDateTime.now()).appUserId(saved.getAppUserId())
+                            .triggerRequestId(saved.getId()).symbol(saved.getSymbol()).source(saved.getSource())
+                            .eventType("ENTRY_WAITING").outcome("WAITING")
+                            .reason(EntryNotReadyException.NO_ORDER_REASON).details(waiting.getMessage()).build());
+            throw waiting;
+        }
         if (executed == null) {
             triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(saved.getId(),
                     TriggeredTradeStatus.TRIGGERED.name(),
@@ -5852,6 +5878,12 @@ public class TradeExecutionService {
 
     public TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
                                                             boolean chaseEntryUntilExecuted) {
+        return executeTradeFromEntity(requestEntity, chaseEntryUntilExecuted, false);
+    }
+
+    private TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
+                                                            boolean chaseEntryUntilExecuted,
+                                                            boolean reportSimulatorWait) {
         if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(requestEntity.getSource())) {
             var entryNow = LocalDateTime.now(ZoneId.of("Asia/Kolkata"));
             if (!org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(requestEntity.getSource(),entryNow)) return null;
@@ -5907,12 +5939,16 @@ public class TradeExecutionService {
 
             if (ltp == null) {
                 log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());
+                if (reportSimulatorWait && isSimulatorBrokerRequest(requestEntity))
+                    throw new EntryNotReadyException("Simulator waiting for a usable traded LTP; no order submitted.");
                 return null; // Signal to the caller to skip and re-try later for equities.
             }
 
             if (!hasUsableTradedEntryPrice(requestEntity, ltp)) {
                 log.warn("Entry delayed for trigger request {} because traded LTP {} looks like spot, not the traded option LTP. Waiting for correct option LTP.",
                         requestEntity.getId(), ltp);
+                if (reportSimulatorWait && isSimulatorBrokerRequest(requestEntity))
+                    throw new EntryNotReadyException("Simulator waiting for an option premium rather than a spot reference; no order submitted.");
                 return null;
             }
         }
@@ -5947,6 +5983,8 @@ public class TradeExecutionService {
                 && ltp + 0.000001d < requestEntity.getEntryPrice()) {
             log.info("Simulator entry request {} remains pending: option LTP {} is below buy-above entry {}.",
                     requestEntity.getId(), formatPrice(ltp), formatPrice(requestEntity.getEntryPrice()));
+            if (reportSimulatorWait)
+                throw new EntryNotReadyException("Simulator waiting for traded LTP to reach the buy trigger; no order submitted.");
             return null;
         }
 

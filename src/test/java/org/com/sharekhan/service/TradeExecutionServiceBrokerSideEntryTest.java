@@ -58,6 +58,55 @@ import static org.mockito.Mockito.when;
 
 class TradeExecutionServiceBrokerSideEntryTest {
     @Test
+    void immediateSimulatorCashWaitIsExplicitNoOrderRatherThanExecutionUnavailable() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker();
+        var service = ctx.service;
+        var saved = triggerRequestEntity();
+        saved.setSymbol("UNIONBANK"); saved.setExchange("NC"); saved.setOptionType(null);
+        saved.setStrikePrice(null); saved.setExpiry(null); saved.setEntryPrice(176.64);
+        saved.setSource("strategy:STOCK_0925_MOVER_ATR_BREAKOUT");
+        saved.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        ctx.savedRequest.set(saved);
+        when(ctx.scriptRepo.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("NC", "UNIONBANK"))
+                .thenReturn(Optional.of(ScriptMasterEntity.builder().scripCode(123456).exchange("NC").tradingSymbol("UNIONBANK").build()));
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(176.50);
+        when(ctx.triggerRepo.claimIfStatusEquals(77L, "PLACED_PENDING_CONFIRMATION", "TRIGGERED")).thenReturn(1);
+        when(ctx.triggerRepo.claimIfStatusEqualsWithOutcome(eq(77L), eq("TRIGGERED"), eq("REJECTED"),
+                eq(org.com.sharekhan.exception.EntryNotReadyException.NO_ORDER_REASON), anyString())).thenReturn(1);
+        TriggerRequest input = new TriggerRequest(); input.setInstrument("UNIONBANK"); input.setExchange("NC");
+        input.setEntryPrice(176.64); input.setQuantity(11); input.setBrokerCredentialsId(55L); input.setUserId(9L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.executeTriggeredTrade(input))
+                .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class).hasMessageContaining("buy trigger");
+        assertThat(ctx.savedRequest.get().getReason()).isEqualTo(org.com.sharekhan.exception.EntryNotReadyException.NO_ORDER_REASON);
+        assertThat(ctx.savedRequest.get().getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        verify(ctx.broker, never()).placeOrder(any(), any(), anyDouble());
+        verify(ctx.triggeredRepo, never()).save(any());
+    }
+
+    @Test
+    void missingSimulatorOptionPriceWaitsBeforeSavingAnyRequest() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker();
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ctx.service.executeTriggeredTrade(optionRequest()))
+                .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class)
+                .hasMessageContaining("no request or order submitted");
+        verify(ctx.triggerRepo, never()).save(any());
+        verify(ctx.broker, never()).placeOrder(any(), any(), anyDouble());
+    }
+
+    @Test
+    void simulatorQueuedWaitStillStaysPendingAndNeverFillsBelowTrigger() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker();
+        var request = triggerRequestEntity(); request.setEntryPrice(20d);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10d);
+        assertThat(ctx.service.executeTradeFromEntity(request)).isNull();
+        verify(ctx.broker, never()).placeOrder(any(), any(), anyDouble());
+        verify(ctx.triggeredRepo, never()).save(any());
+    }
+
+    @Test
     void dhanContextRequiresScopedClientIdentityButNotSharekhanCustomerOrApiKey() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         var dhan = new BrokerContext(null,null,"1000000001","Dhan",55L);
@@ -435,7 +484,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggerTradeRequestEntity saved = ctx.service.executeTrade(optionRequest());
 
-        assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        assertThat(ctx.savedRequest.get().getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
         assertThat(saved.getReason()).isEqualTo("Dhan rejected order (HTTP 400)");
         assertThat(saved.getComment()).contains("automatic retry is disabled");
         verify(ctx.triggerRepo, never()).claimIfStatusEquals(77L, "ENTRY_SUBMITTING", "PLACED_PENDING_CONFIRMATION");

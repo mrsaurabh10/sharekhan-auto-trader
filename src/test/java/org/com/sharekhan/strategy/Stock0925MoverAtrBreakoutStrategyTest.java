@@ -53,6 +53,27 @@ class Stock0925MoverAtrBreakoutStrategyTest {
         when(support.executeTriggeredTrade(any())).thenReturn(TriggerTradeRequestEntity.builder().id(10L).build());
         when(support.waiting(any(), any(), anyString())).thenAnswer(c -> StrategyApplyResponse.builder().status("waiting").message(c.getArgument(2)).build());
     }
+    @Test void simulatorPrePlacementWaitDoesNotConsumeTheSymbolAndLaterSignalCanExecute() {
+        setup();
+        when(support.executeTriggeredTrade(any()))
+                .thenThrow(new org.com.sharekhan.exception.EntryNotReadyException("Waiting for simulator buy trigger"))
+                .thenReturn(TriggerTradeRequestEntity.builder().id(10L).build());
+        assertThat(strategy.apply(request("10000")).getMessage()).contains("Waiting for simulator buy trigger");
+        assertThat(strategy.apply(request("10000")).getStatus()).isEqualTo("triggered");
+        verify(support, times(2)).executeTriggeredTrade(any());
+        verify(support, times(1)).auditTradeRequest(any(), any(), eq("ABC"), eq("CREATED"), any(), any());
+    }
+
+    @Test void prePlacementWaitDoesNotPreventOtherCashCandidatesFromExecuting() {
+        setup();
+        var other = new Fno925Candidate("OTHER", ScriptMasterEntity.builder().exchange("NC").tradingSymbol("OTHER").scripCode(456).build(), "CE");
+        when(snapshots.loadOrCapture(anyString(), any(), any())).thenReturn(java.util.Optional.of(List.of(new Fno925Candidate("ABC", spot, "CE"), other)));
+        when(support.executeTriggeredTrade(argThat(t -> t != null && "ABC".equals(t.getInstrument()))))
+                .thenThrow(new org.com.sharekhan.exception.EntryNotReadyException("Waiting for price"));
+        assertThat(strategy.apply(request("10000")).getSymbol()).isEqualTo("OTHER");
+        verify(support).executeTriggeredTrade(argThat(t -> "OTHER".equals(t.getInstrument())));
+    }
+
     @Test void buysWholeCashSharesWithAtrExitsAndNoOptionContract() {
         setup();
         {
