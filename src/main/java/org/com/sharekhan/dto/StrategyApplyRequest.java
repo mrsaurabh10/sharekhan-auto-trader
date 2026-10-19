@@ -9,6 +9,7 @@ public class StrategyApplyRequest {
     private String symbol;
     private Integer lots;
     private java.math.BigDecimal investmentPerStock;
+    private java.math.BigDecimal profitTargetPerLot;
     private Boolean intraday;
     private Long userId;
     private Long brokerCredentialsId;

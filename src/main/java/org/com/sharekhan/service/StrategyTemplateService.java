@@ -71,6 +71,7 @@ public class StrategyTemplateService {
         if (org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             request.setSymbol(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.symbol(request.getSymbol()));
             request.setLots(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.lots(request.getLots()));
+            request.setProfitTargetPerLot(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.profitTarget(request.getProfitTargetPerLot()));
             request.setIntraday(true);
         }
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {

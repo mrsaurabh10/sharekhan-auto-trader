@@ -1122,6 +1122,24 @@ class TradeExecutionServiceBrokerSideEntryTest {
         verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
     }
 
+    @Test
+    void combinedProfitMarksRequireFreshUncrossedBooksAndLtpOnlyUpdatesCannotRefreshThem() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        var trade=TriggeredTradeSetupEntity.builder().scripCode(123456).actualEntryPrice(100d).optionType("CE").build();
+        var now=Instant.parse("2026-10-13T04:30:00Z");
+        for(var timestamp:List.of(now.minusSeconds(6),now.plusSeconds(1))) {
+            when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(QuoteCacheService.QuoteSnapshot.builder()
+                    .bestBid(130d).bestAsk(131d).lastBookAt(timestamp).lastLtpAt(now).updatedAt(now).build()));
+            assertThat(ctx.service.strategyProfitExitQuote(trade,now)).isEmpty();
+        }
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(QuoteCacheService.QuoteSnapshot.builder()
+                .bestBid(130d).bestAsk(129d).lastBookAt(now).build()));
+        assertThat(ctx.service.strategyProfitExitQuote(trade,now)).isEmpty();
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(QuoteCacheService.QuoteSnapshot.builder()
+                .bestBid(130d).bestAsk(131d).lastBookAt(now).build()));
+        assertThat(ctx.service.strategyProfitExitQuote(trade,now)).isPresent();
+    }
+
     private static class TestContext {
         private final TriggerTradeRequestRepository triggerRepo = mock(TriggerTradeRequestRepository.class);
         private final TriggeredTradeSetupRepository triggeredRepo = mock(TriggeredTradeSetupRepository.class);

@@ -22,5 +22,7 @@ public class ExpiryStraddleSession {
     @Column(nullable=false) private LocalDateTime claimedAt;
     // Failure closes any filled leg early; late fills remain discoverable by the unique source.
     @Column(nullable=false) private boolean abortRequested;
+    @Column(precision=19,scale=2) private java.math.BigDecimal profitTargetPerLot;
+    @Column(nullable=false) private boolean profitExitRequested;
     @Column(length=500) private String message;
 }

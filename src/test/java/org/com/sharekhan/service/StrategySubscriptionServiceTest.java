@@ -25,6 +25,23 @@ class StrategySubscriptionServiceTest {
         service.evaluate(subscription);service.evaluate(subscription);
         verify(evaluator,times(2)).apply(any());assertThat(subscription.getCompletedAt()).isNull();
     }
+    @org.junit.jupiter.api.Test void straddleTargetSavesReplaysAndUpdatesForFutureSessions() {
+        var repo=mock(StrategySubscriptionRepository.class);var evaluator=mock(StrategyTemplateService.class);
+        when(evaluator.supports(anyString())).thenReturn(true);when(repo.save(any())).thenAnswer(c->c.getArgument(0));
+        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));
+        var request=new StrategyApplyRequest();request.setTemplateId("EXPIRY_LONG_STRADDLE");request.setUserId(1L);request.setBrokerCredentialsId(2L);
+        request.setProfitTargetPerLot(new java.math.BigDecimal("2000"));request.setLots(2);
+        var subscription=service.start(request);assertThat(subscription.getProfitTargetPerLot()).isEqualByComparingTo("2000");
+        when(evaluator.apply(any())).thenReturn(StrategyApplyResponse.builder().status("waiting").message("waiting").build());
+        service.evaluate(subscription);
+        verify(evaluator).apply(argThat(r->r.getProfitTargetPerLot().compareTo(new java.math.BigDecimal("2000"))==0 && r.getLots()==2));
+        when(repo.findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(anyList(),anyString(),anyString(),anyLong())).thenReturn(List.of(subscription));
+        request.setProfitTargetPerLot(new java.math.BigDecimal("2500"));request.setLots(3);
+        assertThat(service.start(request)).isSameAs(subscription);assertThat(subscription.getProfitTargetPerLot()).isEqualByComparingTo("2500");assertThat(subscription.getLots()).isEqualTo(3);
+        request.setProfitTargetPerLot(java.math.BigDecimal.ZERO);service.start(request);assertThat(subscription.getProfitTargetPerLot()).isNull();
+        request.setProfitTargetPerLot(new java.math.BigDecimal("-2"));
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->service.start(request)).isInstanceOf(IllegalArgumentException.class);
+    }
     @ParameterizedTest
     @ValueSource(strings={"SPOT_ATR_PDH_BIGTRADEPLUS", "SPOT_ATR_PDL_BIGTRADEPLUS"})
     void preparesBothBtpDirectionsImmediatelyAndReevaluatesExistingUnevaluatedRuns(String template) {

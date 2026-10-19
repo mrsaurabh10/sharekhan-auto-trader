@@ -174,6 +174,7 @@ public class StrategySubscriptionService {
             request.setTemplateId(subscription.getTemplateId());
             request.setSymbol(subscription.getSymbol());
             request.setLots(subscription.getLots());
+            request.setProfitTargetPerLot(subscription.getProfitTargetPerLot());
             request.setInvestmentPerStock(subscription.getInvestmentPerStock());
             request.setIntraday(subscription.getIntraday());
             request.setUserId(subscription.getAppUserId());
@@ -236,6 +237,7 @@ public class StrategySubscriptionService {
         if (org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             request.setSymbol(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.symbol(request.getSymbol()));
             request.setLots(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.lots(request.getLots()));
+            request.setProfitTargetPerLot(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.profitTarget(request.getProfitTargetPerLot()));
             request.setIntraday(true);
         }
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {

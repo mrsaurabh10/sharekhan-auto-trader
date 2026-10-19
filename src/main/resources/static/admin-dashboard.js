@@ -2347,6 +2347,10 @@
     const updateSymbolInput = function () {
       if (!symbolInput) return;
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
+      const profitRow = document.getElementById('strategyProfitTargetRow');
+      const profitInput = document.getElementById('strategyProfitTargetPerLot');
+      if (profitRow) profitRow.style.display = timedStraddle ? '' : 'none';
+      if (profitInput) profitInput.disabled = !timedStraddle;
       const sameDayInput = document.getElementById('strategyIntraday');
       if (sameDayInput) { sameDayInput.disabled = timedStraddle; if (timedStraddle) sameDayInput.checked = true; }
       const automatic = automaticUniverseTemplate();
@@ -2386,6 +2390,12 @@
       const intraday = !!(document.getElementById('strategyIntraday') && document.getElementById('strategyIntraday').checked);
       if (!templateId) { if (result) result.innerText = 'Select a strategy template.'; return; }
       const btp = isSpotBigTradePlus();
+      const profitText = String((document.getElementById('strategyProfitTargetPerLot') || {}).value || '').trim();
+      const profitTargetPerLot = templateId === 'EXPIRY_LONG_STRADDLE' && profitText && Number(profitText) > 0 ? Number(profitText) : null;
+      if (templateId === 'EXPIRY_LONG_STRADDLE' && profitText && (!/^\d+(\.\d{1,2})?$/.test(profitText) || Number(profitText) > 999999999.99)) {
+        if (result) result.innerText = 'Enter a nonnegative profit target with up to two decimal places.';
+        return;
+      }
       const stockMover = isStockMover();
       const investmentText = String((document.getElementById('strategyInvestmentPerStock') || {}).value || '').trim();
       const investmentPerStock = Number(investmentText);
@@ -2414,7 +2424,7 @@
         for (const configuration of configurations) {
           responses.push(await fetchJson('/api/strategies/start', { method: 'POST', body: JSON.stringify({
             templateId, symbol: configuration.symbol, lots: stockMover ? null : configuration.lots,
-            investmentPerStock: stockMover ? investmentPerStock : null, intraday,
+            investmentPerStock: stockMover ? investmentPerStock : null, profitTargetPerLot, intraday,
             userId: selectedStrategyUserId, brokerCredentialsId, source: 'strategy:' + templateId
           }) }));
         }
@@ -2454,7 +2464,7 @@
         tr.innerHTML = '<td>' + escapeHtml(row.id) + '</td>' +
           '<td>' + escapeHtml(row.templateId || '-') + '<br><small>Broker #' + escapeHtml(row.brokerCredentialsId || '-') + '</small></td>' +
           '<td>' + escapeHtml(row.symbol || '-') + '</td>' +
-          '<td>' + escapeHtml(row.investmentPerStock != null ? '₹' + row.investmentPerStock + ' / stock' : (row.lots != null ? row.lots : '-')) + '</td>' +
+          '<td>' + escapeHtml(row.investmentPerStock != null ? '₹' + row.investmentPerStock + ' / stock' : (row.lots != null ? row.lots : '-') + (row.profitTargetPerLot ? ' lots · profit target ₹' + row.profitTargetPerLot + ' / lot / session (₹' + (row.profitTargetPerLot * row.lots).toFixed(2) + ' total)' : '')) + '</td>' +
           '<td>' + escapeHtml(row.status || '-') + '</td>' +
           '<td>' + escapeHtml(row.lastEvaluatedAt || '-') + '</td>' +
           '<td>' + escapeHtml(row.lastMessage || '-') + '</td>' +

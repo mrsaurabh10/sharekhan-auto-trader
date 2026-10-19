@@ -24,6 +24,13 @@ public final class ExpiryStraddleRules {
         if (!value.matches("[A-Z][A-Z0-9]{0,15}")) throw new IllegalArgumentException("Enter one underlying symbol");
         return value;
     }
+    /** Null/zero disables profit booking; amounts are rupees per lot, per session. */
+    public static java.math.BigDecimal profitTarget(java.math.BigDecimal amount) {
+        if(amount==null || amount.signum()==0) return null;
+        if(amount.signum()<0 || amount.stripTrailingZeros().scale()>2 || amount.compareTo(new java.math.BigDecimal("999999999.99"))>0)
+            throw new IllegalArgumentException("Profit target per lot must be positive rupees with at most two decimals, or blank/zero to disable");
+        return amount.setScale(2);
+    }
     public static int lots(Integer value) {
         int lots = value == null ? 1 : value;
         if (lots < 1 || lots > 1000) throw new IllegalArgumentException("Choose between 1 and 1000 lots");

@@ -43,13 +43,14 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
     }
     @Override public StrategyMetadata metadata() {
         return new StrategyMetadata(ExpiryStraddleRules.TEMPLATE_ID,"Expiry day long straddle",
-                "Buy ATM CE + PE on listed expiry days at 09:30 and 13:30 IST; close both at 10:30 and 14:30. Symbol defaults to NIFTY; lots per leg. No stop or profit target.","CE+PE");
+                "Buy ATM CE + PE on listed expiry days at 09:30 and 13:30 IST; close both at 10:30 and 14:30. Symbol defaults to NIFTY; lots per leg. Optional combined profit target in rupees per lot per session; no stop.","CE+PE");
     }
     public static boolean owns(String source) { return source!=null && source.startsWith(SOURCE_PREFIX); }
     public static String source(ExpiryStraddleSession session) { return SOURCE_PREFIX+session.getId(); }
     @Override public synchronized StrategyApplyResponse apply(StrategyApplyRequest request) {
         String symbol=ExpiryStraddleRules.symbol(request.getSymbol());
         int lots=ExpiryStraddleRules.lots(request.getLots());
+        var profitTarget=ExpiryStraddleRules.profitTarget(request.getProfitTargetPerLot());
         if(request.getUserId()==null || request.getBrokerCredentialsId()==null)
             throw new IllegalArgumentException("Select an account and broker for the straddle");
         LocalDateTime now=LocalDateTime.now(clock);
@@ -77,7 +78,7 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
         double strike=ExpiryStraddleRules.atm(common,spotPrice);
         var session=ExpiryStraddleSession.builder().id(id).appUserId(request.getUserId())
                 .brokerCredentialsId(request.getBrokerCredentialsId()).symbol(symbol).tradingDay(now.toLocalDate())
-                .slot(slot.get().id()).exitAt(now.toLocalDate().atTime(slot.get().exit())).strike(strike).lots(lots).claimedAt(now).build();
+                .slot(slot.get().id()).exitAt(now.toLocalDate().atTime(slot.get().exit())).strike(strike).lots(lots).profitTargetPerLot(profitTarget).claimedAt(now).build();
         List<TriggerRequest> legs=new ArrayList<>();
         Integer lotSize=null;
         for(String side:List.of("CE","PE")) {
@@ -113,11 +114,23 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
             session.setAbortRequested(true);session.setMessage("Entry incomplete; close fills and cancel unfilled entries");
             log.error("Straddle session {} entry incomplete; recovery will unwind exposure",id,failure);
         }
-        sessions.save(session);
+        sessions.recordOutcome(session.getId(),session.isAbortRequested(),session.getMessage());
+        sessions.findById(session.getId()).ifPresent(saved -> session.setProfitExitRequested(saved.isProfitExitRequested()));
         manageSession(session,LocalDateTime.now(clock));
         return StrategyApplyResponse.builder().status(session.isAbortRequested()?"error":"triggered")
                 .message(session.getMessage()).templateId(metadata().id()).symbol(symbol).direction("CE+PE").tradeRequest(first).build();
     }
+    /** Cache-only checks; the persisted exit decision survives restarts and price reversals. */
+    @Scheduled(fixedDelayString="${app.strategy.straddle-profit-poll-ms:1000}")
+    public synchronized void monitorProfitTargets() {
+        LocalDateTime now=LocalDateTime.now(clock);
+        if(now.toLocalTime().isBefore(LocalTime.of(9,15)) || now.toLocalTime().isAfter(LocalTime.of(15,30))) return;
+        for(var session:sessions.findByProfitTargetPerLotIsNotNullAndTradingDayLessThanEqual(now.toLocalDate())) {
+            try { manageSession(session,now); }
+            catch(RuntimeException failure) { log.error("Straddle profit monitoring failed for {}",session.getId(),failure); }
+        }
+    }
+
     /** Independent of subscription status/readiness: cancellation must not disable existing exits. */
     @Scheduled(cron="0 * * * * MON-FRI",zone="Asia/Kolkata")
     public synchronized void manageExits() {
@@ -135,20 +148,55 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
                 && Objects.equals(legs.get(0).getQuantity(),legs.get(1).getQuantity())
                 && Objects.equals(legs.get(0).getQuantity(),session.getExpectedQuantity())
                 && legs.stream().map(TriggeredTradeSetupEntity::getOptionType).collect(java.util.stream.Collectors.toSet()).equals(Set.of("CE","PE"));
-        if(entryGraceOver && !balanced && now.isBefore(session.getExitAt()) && !legs.stream().allMatch(t->terminal(t.getStatus()))) {
-            session.setAbortRequested(true);session.setMessage("Unbalanced/unconfirmed pair; unwinding exposure");sessions.save(session);
+        if(balanced && !session.isAbortRequested() && !session.isProfitExitRequested()
+                && now.isBefore(session.getExitAt()) && session.getProfitTargetPerLot()!=null) {
+            var combined=combinedBidProfit(legs,now.atZone(StrategySupport.MARKET_ZONE).toInstant());
+            var target=session.getProfitTargetPerLot().multiply(java.math.BigDecimal.valueOf(session.getLots()));
+            if(combined.isPresent() && combined.get().compareTo(target)>=0) {
+                String message="Combined gross profit target reached: INR "+target.toPlainString()+"; closing both legs";
+                // Persist the group decision before placing either sell, even when the second leg fails.
+                if(sessions.claimProfitExit(session.getId(),message)==1) {
+                    session.setProfitExitRequested(true);session.setMessage(message);
+                } else if(sessions.findById(session.getId()).map(ExpiryStraddleSession::isProfitExitRequested).orElse(false)) {
+                    session.setProfitExitRequested(true);
+                }
+            }
         }
-        if(!session.isAbortRequested() && now.isBefore(session.getExitAt())) return;
+        if(entryGraceOver && !session.isProfitExitRequested() && !balanced && now.isBefore(session.getExitAt()) && !legs.stream().allMatch(t->terminal(t.getStatus()))) {
+            session.setAbortRequested(true);session.setMessage("Unbalanced/unconfirmed pair; unwinding exposure");
+            sessions.recordOutcome(session.getId(),true,session.getMessage());
+            sessions.findById(session.getId()).ifPresent(saved -> session.setProfitExitRequested(saved.isProfitExitRequested()));
+        }
+        if(!session.isAbortRequested() && !session.isProfitExitRequested() && now.isBefore(session.getExitAt())) return;
         for(var trade:legs) {
             try {
                 if(trade.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
                     execution.cancelTimedStrategyEntry(trade.getId());
                 else if(Set.of(TriggeredTradeStatus.EXECUTED,TriggeredTradeStatus.TARGET_ORDER_PLACED,
-                        TriggeredTradeStatus.EXIT_ORDER_PLACED,TriggeredTradeStatus.EXIT_TRIGGERED,TriggeredTradeStatus.EXIT_FAILED).contains(trade.getStatus()))
-                    execution.squareOffTimedStrategyTrade(trade.getId());
+                        TriggeredTradeStatus.EXIT_ORDER_PLACED,TriggeredTradeStatus.EXIT_TRIGGERED,TriggeredTradeStatus.EXIT_FAILED).contains(trade.getStatus())) {
+                    if(session.isProfitExitRequested()) execution.squareOffProfitStrategyTrade(trade.getId());
+                    else execution.squareOffTimedStrategyTrade(trade.getId());
+                }
             } catch(RuntimeException failure) { log.error("Straddle exit/cancel pending for session {} trade {}",session.getId(),trade.getId(),failure); }
         }
     }
+    private Optional<java.math.BigDecimal> combinedBidProfit(List<TriggeredTradeSetupEntity> legs,Instant now) {
+        java.math.BigDecimal profit=java.math.BigDecimal.ZERO;
+        List<Instant> timestamps=new ArrayList<>();
+        for(var trade:legs) {
+            // Requested entry prices cannot substitute for confirmed fills.
+            if(trade.getActualEntryPrice()==null || !Double.isFinite(trade.getActualEntryPrice()) || trade.getActualEntryPrice()<=0) return Optional.empty();
+            var quote=execution.strategyProfitExitQuote(trade,now);
+            if(quote.isEmpty()) return Optional.empty();
+            timestamps.add(quote.get().getLastBookAt());
+            profit=profit.add(java.math.BigDecimal.valueOf(quote.get().getBestBid())
+                    .subtract(java.math.BigDecimal.valueOf(trade.getActualEntryPrice()))
+                    .multiply(java.math.BigDecimal.valueOf(trade.getQuantity())));
+        }
+        if(Duration.between(Collections.min(timestamps),Collections.max(timestamps)).compareTo(Duration.ofSeconds(2))>0) return Optional.empty();
+        return Optional.of(profit);
+    }
+
     private static boolean terminal(TriggeredTradeStatus status) {
         return status!=null && Set.of(TriggeredTradeStatus.REJECTED,TriggeredTradeStatus.FAILED,TriggeredTradeStatus.CANCELLED,
                 TriggeredTradeStatus.COMPLETED,TriggeredTradeStatus.EXITED_SUCCESS).contains(status);

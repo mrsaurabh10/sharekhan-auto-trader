@@ -382,6 +382,10 @@
 </label>
 <label id="subscriptionLotsRow">Quantity (lots)<input name="lots" type="number" min="1" max="1000" step="1" value="1" required>
 </label>
+<label id="subscriptionProfitTargetRow" hidden>Profit target per lot, per session (₹)
+<input name="profitTargetPerLot" type="number" min="0" max="999999999.99" step="0.01" placeholder="e.g. 2000" disabled>
+<small>Combined call + put gross profit. Example: ₹2,000 × 2 lots = ₹4,000 for each entry. Blank or zero keeps only the scheduled exit; charges and slippage are extra.</small>
+</label>
 <label id="subscriptionInvestmentRow" hidden>Investment per stock (₹)
 <input name="investmentPerStock" type="number" min="0.01" max="999999999.99" step="0.01" placeholder="e.g. 10000" disabled>
 <small>Up to five stocks. Whole shares are sized at the signal price; charges and fill-price changes are extra.</small>
@@ -421,7 +425,7 @@
 </div>
 </form>
 </dialog>
-<script src="/portal/portal.js?v=20261019-expiry-straddle" defer>
+<script src="/portal/portal.js?v=20261019-straddle-profit" defer>
 </script>
 </body>
 </html>

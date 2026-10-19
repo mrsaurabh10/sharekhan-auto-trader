@@ -38,4 +38,24 @@ class ExpiryStraddleSessionStoreTest {
             assertThat(repository.count()).isEqualTo(1);
         } finally {pool.shutdownNow();}
     }
+    @Test void targetSnapshotAndExitDecisionSurviveReloadAndStaleEntryOutcomeCannotClearExit() {
+        var row=row("profit");row.setProfitTargetPerLot(new java.math.BigDecimal("2000"));
+        new ExpiryStraddleSessionStore(repository,em,manager).claim(row);
+        assertThat(repository.findById("profit").orElseThrow().getProfitTargetPerLot()).isEqualByComparingTo("2000");
+        assertThat(repository.claimProfitExit("profit","profit target")).isOne();
+        assertThat(repository.claimProfitExit("profit","duplicate")).isZero();
+        assertThat(repository.recordOutcome("profit",false,"late entry outcome")).isZero();
+        assertThat(repository.recordOutcome("profit",true,"stale abort outcome")).isZero();
+        var loaded=repository.findById("profit").orElseThrow();assertThat(loaded.isProfitExitRequested()).isTrue();
+        assertThat(loaded.getMessage()).isEqualTo("profit target");
+    }
+    @Test void concurrentProfitChecksOnlyLatchOnce() throws Exception {
+        new ExpiryStraddleSessionStore(repository,em,manager).claim(row("profit-race"));
+        var pool=Executors.newFixedThreadPool(2);var start=new CountDownLatch(1);
+        try {
+            Callable<Integer> claim=()->{start.await();return repository.claimProfitExit("profit-race","target");};
+            var first=pool.submit(claim);var second=pool.submit(claim);start.countDown();
+            assertThat(java.util.List.of(first.get(10,TimeUnit.SECONDS),second.get(10,TimeUnit.SECONDS))).containsExactlyInAnyOrder(1,0);
+        } finally {pool.shutdownNow();}
+    }
 }

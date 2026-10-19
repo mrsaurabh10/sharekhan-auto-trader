@@ -95,7 +95,7 @@ class ExpiryLongStraddleStrategyTest {
         when(execution.executeTriggeredTrade(any())).thenReturn(TriggerTradeRequestEntity.builder().status(TriggeredTradeStatus.EXECUTED).build()).thenThrow(new IllegalStateException("reject"));
         when(trades.findBySource(anyString())).thenReturn(List.of(leg(1,"CE",TriggeredTradeStatus.EXECUTED)));
         assertThat(strategy(LocalTime.of(9,30)).apply(request()).getStatus()).isEqualTo("error");
-        verify(sessions).save(argThat(ExpiryStraddleSession::isAbortRequested));verify(execution).squareOffTimedStrategyTrade(1L);
+        verify(sessions).recordOutcome(anyString(),eq(true),anyString());verify(execution).squareOffTimedStrategyTrade(1L);
     }
     @Test void balancedPairHoldsUntilExitAndBothLegsCloseAtExactBoundary() {
         var s=session();when(trades.findBySource(ExpiryLongStraddleStrategy.source(s))).thenReturn(List.of(leg(1,"CE",TriggeredTradeStatus.EXECUTED),leg(2,"PE",TriggeredTradeStatus.EXECUTED)));
@@ -113,5 +113,73 @@ class ExpiryLongStraddleStrategyTest {
         var s=session();when(sessions.findByTradingDayLessThanEqual(day)).thenReturn(List.of(s));
         when(trades.findBySource(anyString())).thenReturn(List.of(leg(1,"CE",TriggeredTradeStatus.EXITED_SUCCESS),leg(2,"PE",TriggeredTradeStatus.EXECUTED)));
         strategy(LocalTime.of(14,31)).manageExits();verify(execution).squareOffTimedStrategyTrade(2L);verify(execution,never()).squareOffTimedStrategyTrade(1L);
+    }
+    org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot quote(double bid,Instant time) {
+        return org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot.builder().bestBid(bid).bestAsk(bid+0.05).lastBookAt(time).build();
+    }
+    List<TriggeredTradeSetupEntity> filledPair(ExpiryStraddleSession s) {
+        var ce=leg(1,"CE",TriggeredTradeStatus.EXECUTED);var pe=leg(2,"PE",TriggeredTradeStatus.EXECUTED);
+        for(var trade:List.of(ce,pe)) {trade.setActualEntryPrice(100d);trade.setEntryPrice(20d);trade.setQuantity(s.getExpectedQuantity());}
+        when(trades.findBySource(anyString())).thenReturn(List.of(ce,pe));
+        return List.of(ce,pe);
+    }
+    @Test void capturesConfiguredProfitTargetForEachNewSession() {
+        var request=request();request.setProfitTargetPerLot(new java.math.BigDecimal("2000"));
+        strategy(LocalTime.of(9,30)).apply(request);
+        verify(store).claim(argThat(s->s.getProfitTargetPerLot().compareTo(new java.math.BigDecimal("2000"))==0 && s.getLots()==2));
+    }
+    @Test void usesCombinedActualFillProfitAndScalesRupeesByLots() {
+        var s=session();s.setProfitTargetPerLot(new java.math.BigDecimal("2000"));var pair=filledPair(s);
+        var now=day.atTime(10,0);var instant=now.atZone(StrategySupport.MARKET_ZONE).toInstant();
+        // CE alone gains 5200, but PE loses 1300: combined3900 is below the two-lot target4000.
+        when(execution.strategyProfitExitQuote(pair.get(0),instant)).thenReturn(Optional.of(quote(140,instant)));
+        when(execution.strategyProfitExitQuote(pair.get(1),instant)).thenReturn(Optional.of(quote(90,instant)));
+        strategy(LocalTime.of(10,0)).manageSession(s,now);
+        verify(execution,never()).squareOffProfitStrategyTrade(anyLong());verify(sessions,never()).claimProfitExit(anyString(),anyString());
+        when(execution.strategyProfitExitQuote(pair.get(0),instant)).thenReturn(Optional.of(quote(141,instant)));
+        when(sessions.claimProfitExit(anyString(),anyString())).thenReturn(1);
+        strategy(LocalTime.of(10,0)).manageSession(s,now);
+        assertThat(s.isProfitExitRequested()).isTrue();
+        var order=inOrder(sessions,execution);order.verify(sessions).claimProfitExit(eq(s.getId()),contains("4000"));
+        order.verify(execution).squareOffProfitStrategyTrade(1L);order.verify(execution).squareOffProfitStrategyTrade(2L);
+        verify(execution,never()).squareOffTimedStrategyTrade(anyLong());
+    }
+    @Test void targetTriggersAtEqualityAndOneLotUsesOneLotThreshold() {
+        var s=session();s.setLots(1);s.setExpectedQuantity(65);s.setProfitTargetPerLot(new java.math.BigDecimal("1950"));var pair=filledPair(s);
+        var now=day.atTime(10,0);var instant=now.atZone(StrategySupport.MARKET_ZONE).toInstant();
+        for(var trade:pair) when(execution.strategyProfitExitQuote(trade,instant)).thenReturn(Optional.of(quote(115,instant)));
+        when(sessions.claimProfitExit(anyString(),anyString())).thenReturn(1);
+        strategy(LocalTime.of(10,0)).manageSession(s,now);
+        verify(sessions).claimProfitExit(eq(s.getId()),contains("1950"));verify(execution).squareOffProfitStrategyTrade(1L);
+    }
+    @Test void missingBookOrFillOrUnsynchronisedBooksNeverInventProfit() {
+        var s=session();s.setProfitTargetPerLot(java.math.BigDecimal.ONE);var pair=filledPair(s);
+        var now=day.atTime(10,0);var instant=now.atZone(StrategySupport.MARKET_ZONE).toInstant();
+        when(execution.strategyProfitExitQuote(pair.get(0),instant)).thenReturn(Optional.of(quote(150,instant)));
+        strategy(LocalTime.of(10,0)).manageSession(s,now);
+        when(execution.strategyProfitExitQuote(pair.get(1),instant)).thenReturn(Optional.of(quote(150,instant.minusSeconds(3))));
+        strategy(LocalTime.of(10,0)).manageSession(s,now);
+        when(execution.strategyProfitExitQuote(pair.get(1),instant)).thenReturn(Optional.of(quote(150,instant)));
+        pair.get(0).setActualEntryPrice(null);strategy(LocalTime.of(10,0)).manageSession(s,now);
+        verify(sessions,never()).claimProfitExit(anyString(),anyString());verify(execution,never()).squareOffProfitStrategyTrade(anyLong());
+    }
+    @Test void persistentProfitExitResumesAfterRestartWithoutRecheckingThresholdAndSurvivesOneSellFailure() {
+        var s=session();s.setProfitTargetPerLot(new java.math.BigDecimal("2000"));s.setProfitExitRequested(true);
+        when(sessions.findByProfitTargetPerLotIsNotNullAndTradingDayLessThanEqual(day)).thenReturn(List.of(s));
+        var pair=filledPair(s);pair.get(0).setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        doThrow(new IllegalStateException("exit failed")).when(execution).squareOffProfitStrategyTrade(1L);
+        strategy(LocalTime.of(10,0)).monitorProfitTargets();
+        verify(execution).squareOffProfitStrategyTrade(2L);verify(execution,never()).strategyProfitExitQuote(any(),any());
+        assertThat(s.isProfitExitRequested()).isTrue();assertThat(s.isAbortRequested()).isFalse();
+    }
+    @Test void noProfitTargetMeansNoPriceLookupsAndOriginalTimedExitStillRuns() {
+        var s=session();filledPair(s);
+        strategy(LocalTime.of(10,0)).manageSession(s,day.atTime(10,0));verifyNoInteractions(execution);
+        strategy(LocalTime.of(10,30)).manageSession(s,day.atTime(10,30));verify(execution).squareOffTimedStrategyTrade(1L);
+    }
+    @Test void missingProfitQuotesDoNotBlockScheduledExit() {
+        var s=session();s.setProfitTargetPerLot(new java.math.BigDecimal("2000"));filledPair(s);
+        strategy(LocalTime.of(10,30)).manageSession(s,day.atTime(10,30));
+        verify(execution).squareOffTimedStrategyTrade(1L);verify(execution).squareOffTimedStrategyTrade(2L);
     }
 }

@@ -24,4 +24,9 @@ class ExpiryStraddleRulesTest {
         assertThatThrownBy(()->ExpiryStraddleRules.atm(List.of(),25000)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(()->ExpiryStraddleRules.atm(List.of(25000d),Double.NaN)).isInstanceOf(IllegalArgumentException.class);
     }
+    @Test void validatesOptionalProfitTargetPrecisionAndBounds() {
+        assertThat(ExpiryStraddleRules.profitTarget(null)).isNull();assertThat(ExpiryStraddleRules.profitTarget(java.math.BigDecimal.ZERO)).isNull();
+        assertThat(ExpiryStraddleRules.profitTarget(new java.math.BigDecimal("2000"))).isEqualByComparingTo("2000.00");
+        for(String input:List.of("-1","0.001","1000000000")) assertThatThrownBy(()->ExpiryStraddleRules.profitTarget(new java.math.BigDecimal(input))).isInstanceOf(IllegalArgumentException.class);
+    }
 }

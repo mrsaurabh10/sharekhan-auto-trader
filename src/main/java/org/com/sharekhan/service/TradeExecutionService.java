@@ -1547,13 +1547,32 @@ public class TradeExecutionService {
         return resolveEntryReferencePrice(scripCode, "expiryStraddlePreflight");
     }
 
+    /** A fresh, uncrossed sell-side book for estimating combined straddle profit. No API calls. */
+    public Optional<QuoteCacheService.QuoteSnapshot> strategyProfitExitQuote(TriggeredTradeSetupEntity trade, Instant now) {
+        if (quoteCacheService == null || trade == null || trade.getScripCode() == null) return Optional.empty();
+        return quoteCacheService.getSnapshot(trade.getScripCode()).filter(q -> q.hasBook()
+                && Double.isFinite(q.getBestBid()) && Double.isFinite(q.getBestAsk()) && q.getBestBid() <= q.getBestAsk()
+                && q.getLastBookAt() != null && !q.getLastBookAt().isAfter(now)
+                && !q.getLastBookAt().isBefore(now.minusSeconds(5))
+                && hasUsableTradedExitPrice(trade, q.getBestBid()));
+    }
+
     public void squareOffTimedStrategyTrade(Long tradeId) {
+        closeStraddleTrade(tradeId, "EXPIRY_STRADDLE_TIMED_EXIT");
+    }
+
+    public void squareOffProfitStrategyTrade(Long tradeId) {
+        closeStraddleTrade(tradeId, "EXPIRY_STRADDLE_PROFIT_TARGET");
+    }
+
+    private void closeStraddleTrade(Long tradeId, String reason) {
         var trade = triggeredTradeRepo.findById(tradeId).orElseThrow();
         if (!org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource()))
             throw new IllegalArgumentException("Not an expiry straddle leg");
-        Double price = resolveEntryReferencePrice(trade.getScripCode(), "expiryStraddleTimedExit");
-        if (price == null) throw new IllegalStateException("Option price unavailable for timed square-off");
-        squareOff(trade, price, "EXPIRY_STRADDLE_TIMED_EXIT");
+        Double price = strategyProfitExitQuote(trade, Instant.now()).map(QuoteCacheService.QuoteSnapshot::getBestBid)
+                .orElseGet(() -> resolveEntryReferencePrice(trade.getScripCode(), "expiryStraddleExit"));
+        if (price == null) throw new IllegalStateException("Option price unavailable for straddle square-off");
+        squareOff(trade, price, reason);
     }
 
     /** Keep pending/partial fills under polling; a cancel acknowledgement is not a terminal fill report. */

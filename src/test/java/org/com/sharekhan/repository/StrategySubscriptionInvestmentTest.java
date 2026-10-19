@@ -23,4 +23,13 @@ class StrategySubscriptionInvestmentTest {
         var reloaded = repository.findById(option.getId()).orElseThrow();
         assertThat(reloaded.getInvestmentPerStock()).isNull(); assertThat(reloaded.getLots()).isEqualTo(3);
     }
+    @Test void straddleProfitTargetSurvivesPersistenceWithoutOptingInLegacySubscriptions() {
+        var row=repository.saveAndFlush(StrategySubscriptionEntity.builder().templateId("EXPIRY_LONG_STRADDLE")
+                .symbol("NIFTY").status("ACTIVE").lots(2).profitTargetPerLot(new BigDecimal("2000.25")).build());
+        var legacy=repository.saveAndFlush(StrategySubscriptionEntity.builder().templateId("EXPIRY_LONG_STRADDLE")
+                .symbol("BANKNIFTY").status("ACTIVE").lots(1).build());
+        entityManager.clear();
+        assertThat(repository.findById(row.getId()).orElseThrow().getProfitTargetPerLot()).isEqualByComparingTo("2000.25");
+        assertThat(repository.findById(legacy.getId()).orElseThrow().getProfitTargetPerLot()).isNull();
+    }
 }

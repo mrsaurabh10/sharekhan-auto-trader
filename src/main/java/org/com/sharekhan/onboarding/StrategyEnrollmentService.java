@@ -22,6 +22,8 @@ public class StrategyEnrollmentService {
     public StrategySubscriptionEntity enroll(StrategyApplyRequest request, String templateId,
                                               String symbol, String source) {
         boolean stockMover = Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+        boolean straddle = org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(templateId);
+        var profitTarget = straddle ? org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.profitTarget(request.getProfitTargetPerLot()) : null;
         if (stockMover) Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
         users.lockForEnrollment(request.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
@@ -33,6 +35,10 @@ public class StrategyEnrollmentService {
                 .findFirst();
         if (existing.isPresent()) {
             var subscription = existing.get();
+            if (straddle) {
+                subscription.setProfitTargetPerLot(profitTarget);
+                subscription.setLots(request.getLots());
+            }
             if (stockMover) {
                 subscription.setInvestmentPerStock(request.getInvestmentPerStock());
                 subscription.setLots(null);
@@ -42,11 +48,12 @@ public class StrategyEnrollmentService {
                 subscription.setLastMessage("Strategy is active and will run daily until cancelled.");
                 return subscriptions.save(subscription);
             }
-            return stockMover ? subscriptions.save(subscription) : subscription;
+            return stockMover || straddle ? subscriptions.save(subscription) : subscription;
         }
         return subscriptions.save(StrategySubscriptionEntity.builder()
                 .templateId(templateId).symbol(symbol).lots(stockMover ? null : request.getLots())
                 .investmentPerStock(stockMover ? request.getInvestmentPerStock() : null)
+                .profitTargetPerLot(profitTarget)
                 .intraday(request.getIntraday() == null || request.getIntraday())
                 .appUserId(request.getUserId()).brokerCredentialsId(request.getBrokerCredentialsId())
                 .source(source).status("ACTIVE").lastMessage("Strategy started and waiting for confirmation.").build());

@@ -19,7 +19,9 @@ On a trading day with CE and PE contracts actually listed for today's expiry:
 At each entry, select the strike nearest the fresh spot price from strikes shared
 by both contracts. An exact tie selects the lower strike. Buy equal lots of the
 same strike/expiry CE and PE. PM selects ATM again, rather than reusing AM's strike.
-There is no stop, target or trailing stop. Same-day lifecycle is compulsory;
+There is no stop or trailing stop. An optional combined profit target can close
+both legs before the scheduled exit (see the October 19 profit-target update below).
+Same-day lifecycle is compulsory;
 the existing delivery/carry-forward broker-product policy remains effective.
 
 Orders are separate legs, not an atomic exchange combination. Both premium
@@ -49,7 +51,8 @@ The application must be running for either scheduled action.
 
 ## Release prerequisites
 
-The additive DDL is `src/main/resources/db/postgresql/expiry-straddle-schema.sql`.
+The additive DDL files are `src/main/resources/db/postgresql/expiry-straddle-schema.sql`
+and, after it, `src/main/resources/db/postgresql/straddle-profit-target-schema.sql`.
 It was NOT applied to production. Review existing Hibernate/schema configuration
 before a separately authorized rollout. No production configuration was changed.
 
@@ -152,3 +155,57 @@ No credentials or network capability are part of the calculator.
 The secondary spot run adds today's independently verified holiday-adjusted expiry
 to the nominal schedule: 409 dates / 818 sessions, AM mean absolute 37.71 and PM
 32.68 points; nominal-only results above remain separately retained.
+
+
+## October 19 update: combined profit booking per lot, per entry
+
+Added `profitTargetPerLot` to strategy requests/subscriptions and snapshots in
+`expiry_straddle_sessions`. It is optional, expressed in INR, and applies to the
+**combined CE + PE position for each entry/session**. Example: enter 2000, choose
+1 lot → target2000; 2lots →4000; 3lots →6000. AM and PM have independent targets;
+one session's profit/loss does not change the other's target. Blank or zero disables
+early profit booking. Negative values, more than two decimal places and amounts
+above999999999.99 are rejected. The optional field appears only on the straddle
+form in both personal and admin views; saved subscriptions show the scaled total.
+
+Profit calculation is gross, before commissions/taxes and execution slippage:
+
+```
+combined profit = (CE sell bid - CE confirmed actual entry) * CE quantity
+                + (PE sell bid - PE confirmed actual entry) * PE quantity
+exit threshold = profitTargetPerLot * session lots
+```
+
+Both full legs must be broker-confirmed, quantities balanced, and actual entry
+prices available. Requested prices are never used as fill substitutes. Each bid
+requires a complete uncrossed book at most5seconds old, no future timestamp,
+valid option-price guard, and no more than2seconds difference between the books.
+Cached quotes are checked approximately once per second (subject to scheduler
+availability). There are no high-frequency outbound quote requests. Missing/stale
+books skip profit detection; they do not disable the10:30/14:30 timed exit.
+
+When combined gross profit reaches or exceeds the threshold, an atomic database
+update persists `profitExitRequested` BEFORE either sell. Both legs then use the
+existing square-off/chase flow with `EXPIRY_STRADDLE_PROFIT_TARGET` reason. The
+latched decision survives restart, subscription cancellation, a quote reversal,
+one sell failure and one leg closing first. Existing sell-order IDs remain
+preserved. Stale entry/abort updates cannot erase a recorded profit decision.
+Target trigger is not a guaranteed realized rupee amount; actual fills/costs can
+produce a smaller result. No intrabar historical profit claim was added to the
+existing offline report, which retains the original timed-exit benchmark.
+
+Enrollment stores the target and forwards it to subsequent evaluations. Changing
+a repeated enrollment's lots/target updates future sessions only; open sessions
+keep their captured settings. Legacy NULL target remains timed-only. New additive
+DDL adds nullable NUMERIC(19,2) subscription/session columns and a defaultfalse
+session exit-decision column. No production schema or setting was modified.
+
+Validation for this update:191selected Java tests passed (zero failures/errors/
+skips), including SQL reload/concurrent profit claims, combined gain/loss/netting,
+per-lot scaling and equality threshold, actual fill requirement, unavailable/
+stale/crossed/future/asynchronous books, persisted profit-exit retry after restart,
+one failed sell not blocking the other, unchanged timed exits, subscription
+persistence/update/validation and existing HTTP/security/entry/exit regressions.
+Maven package succeeded. Isolated mock-only Chrome passed personal/admin form
+payloads (2000with2/3lots), zero-disable, unrelated-template hiding, mobile layout,
+and no page errors. No broker/server request, deployment or activation this turn.
