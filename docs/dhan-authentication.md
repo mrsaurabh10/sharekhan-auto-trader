@@ -60,3 +60,27 @@ strings, including callback tokenId; use HTTPS for credential entry and callback
 Automated verification uses synthetic credentials, mocked Dhan transport and
 HTTP/security/JPA tests with H2. Live Dhan login and the public redirect registration
 still require operator verification; no real broker calls or trades are test steps.
+
+## Scheduled PIN/TOTP refresh
+
+The application runs forced weekday refreshes at 07:30 and 08:30 Asia/Kolkata,
+plus hourly expiry maintenance. Dhan accounts with saved PIN/TOTP can use these
+jobs. API-key-only accounts need interactive browser consent; the scheduler does
+not fabricate a consent or replace that flow with a global session.
+
+Dhan sessions are persisted by broker credential ID, even though there is no
+Sharekhan customer ID. Hourly checks read that same credential's token/expiry and
+skip authentication while it remains current. A forced job still generates and
+saves a replacement. Successful persistence renews an already-connected account's
+verification through the existing connection-renewal guard; trading consent is
+not changed. Inactive credentials are skipped. Authentication/persistence failure
+for one account does not stop the next account, and success is logged only after
+persistence completes.
+
+Before this fix, the scheduler generated Dhan sessions but called a customer-ID
+save method which silently returned for null IDs. The old credential token
+remained saved while logs said refreshed. Expiry maintenance also fell back to
+a global token instead of the Dhan credential's session. This can leave the app
+using an invalid older token despite repeated successful authentication logs.
+A past invalid token needs a successful scoped refresh after the fix is deployed;
+this code change does not replay any rejected order.

@@ -16,6 +16,7 @@ public class TokenRefreshScheduler {
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
     private final BrokerCredentialsRepository brokerCredentialsRepository;
+    private final AccessTokenPersistenceService persistenceService;
 
     @Scheduled(fixedDelay = 3600_000) // every hour
     public void refreshTokenIfNeeded() {
@@ -96,7 +97,7 @@ public class TokenRefreshScheduler {
 
     // --- helper to refresh a single broker credential; 'force' indicates this is a scheduled forced refresh ---
     private void refreshCredential(BrokerCredentialsEntity creds, boolean force) {
-        if (creds == null) return;
+        if (creds == null || creds.getId() == null || Boolean.FALSE.equals(creds.getActive())) return;
         String brokerName = creds.getBrokerName();
         if (brokerName == null) return;
 
@@ -117,10 +118,22 @@ public class TokenRefreshScheduler {
             return;
         }
 
-        // If not forced, only refresh when token is expired for this broker+customer
+        // Dhan has no Sharekhan customerId: its session belongs to the credential row.
+        boolean credentialScoped = brokerEnum == Broker.DHAN || creds.getCustomerId() == null;
+        if (brokerEnum == Broker.DHAN && (creds.getBrokerPassword() == null || creds.getBrokerPassword().isBlank()
+                || creds.getTotpSecret() == null || creds.getTotpSecret().isBlank())) {
+            log.warn("Dhan credential id {} requires browser login; automatic refresh needs saved PIN and TOTP", creds.getId());
+            return;
+        }
+
+        // Hourly maintenance must inspect that account's session, never a global fallback.
         try {
             if (!force) {
-                boolean expired = tokenStoreService.isExpired(brokerEnum, creds.getCustomerId());
+                boolean expired = credentialScoped
+                        ? persistenceService.findLatestByBrokerAndBrokerCredentialsId(brokerEnum.getDisplayName(), creds.getId())
+                            .filter(t -> t.getToken() != null && !t.getToken().isBlank() && t.getExpiry() != null
+                                    && t.getExpiry().isAfter(java.time.Instant.now())).isEmpty()
+                        : tokenStoreService.isExpired(brokerEnum, creds.getCustomerId());
                 if (!expired) {
                     log.debug("Token for broker {} customer {} is still valid - skipping refresh for credential id {}", brokerEnum.getDisplayName(), creds.getCustomerId(), creds.getId());
                     return;
@@ -133,14 +146,19 @@ public class TokenRefreshScheduler {
 
         try {
             AuthTokenResult res = provider.loginAndFetchToken(creds);
-            if (res != null && res.token() != null) {
-                tokenStoreService.updateTokenForCustomer(brokerEnum, creds.getCustomerId(), creds.getAppUserId(), res.token(), res.expiresIn());
+            if (res != null && res.token() != null && !res.token().isBlank() && res.expiresIn() > 60) {
+                if (credentialScoped) {
+                    persistenceService.replaceTokenForBrokerCredentials(brokerEnum.getDisplayName(), creds.getId(),
+                            res.token(), java.time.Instant.now().plusSeconds(res.expiresIn() - 60));
+                } else {
+                    tokenStoreService.updateTokenForCustomer(brokerEnum, creds.getCustomerId(), creds.getAppUserId(), res.token(), res.expiresIn());
+                }
                 log.info("{} token refreshed for broker credential id {} (broker={})", (force ? "✅ Scheduled" : "✅"), creds.getId(), brokerEnum.getDisplayName());
             } else {
                 log.warn("Provider returned no token for credential id {} (broker={})", creds.getId(), brokerEnum.getDisplayName());
             }
         } catch (Exception e) {
-            log.error("Failed to refresh token for broker credential id {} (broker={}): {}", creds.getId(), brokerEnum.getDisplayName(), e.getMessage(), e);
+            log.error("Failed to refresh token for broker credential id {} (broker={}): {}", creds.getId(), brokerEnum.getDisplayName(), e.getClass().getSimpleName());
         }
     }
 }

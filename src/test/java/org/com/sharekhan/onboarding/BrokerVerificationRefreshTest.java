@@ -42,6 +42,28 @@ class BrokerVerificationRefreshTest {
     private UserTradingAccess access() {
         return new UserTradingAccess(mock(CurrentUserService.class),brokers,connections,profiles);
     }
+    @Test void morningDhanSchedulerPersistsEncryptedTokenAndRenewsExactConnection() {
+        var b=brokers.saveAndFlush(BrokerCredentialsEntity.builder().brokerName("Dhan").appUserId(4L)
+            .active(true).tradingEnabled(true).clientCode("encrypted-client").brokerPassword("encrypted-pin").totpSecret("encrypted-seed").build());
+        var connection=new BrokerConnection();connection.setCredentialId(b.getId());
+        connection.setVerifiedUntil(Instant.now().minusSeconds(60));connections.saveAndFlush(connection);
+        var other=broker(false,false,Instant.EPOCH);
+        when(crypto.encrypt("new-dhan-token")).thenReturn("encrypted-new-dhan-token");
+        var provider=mock(org.com.sharekhan.auth.BrokerAuthProvider.class);
+        when(provider.getBroker()).thenReturn(org.com.sharekhan.enums.Broker.DHAN);
+        when(provider.loginAndFetchToken(any())).thenReturn(new org.com.sharekhan.auth.AuthTokenResult("new-dhan-token",3600));
+        var scheduler=new org.com.sharekhan.auth.TokenRefreshScheduler(mock(org.com.sharekhan.auth.TokenStoreService.class),
+            new org.com.sharekhan.auth.BrokerAuthProviderRegistry(java.util.List.of(provider)),brokers,tokens);
+        scheduler.refreshTokenAt830IST();em.flush();em.clear();
+        var saved=tokenRows.findAllByBrokerNameAndBrokerCredentialsId("Dhan",b.getId());
+        assertThat(saved).hasSize(1);
+        assertThat(saved.getFirst().getToken()).isEqualTo("encrypted-new-dhan-token");
+        assertThat(saved.getFirst().getExpiry()).isAfter(Instant.now().plusSeconds(3500));
+        assertThat(connections.findById(b.getId()).orElseThrow().getVerifiedUntil()).isEqualTo(saved.getFirst().getExpiry());
+        assertThat(connections.findById(other.getId()).orElseThrow().getVerifiedUntil()).isEqualTo(Instant.EPOCH);
+        assertThatCode(()->access().requireReady(4L,b.getId())).doesNotThrowAnyException();
+    }
+
     @Test void scheduledCustomerRefreshRepairsExpiredVerificationAndAllowsEntry() {
         var b=broker(true,true,Instant.now().minusSeconds(3600));
         assertThatThrownBy(()->access().requireReady(7L,b.getId())).isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
