@@ -95,13 +95,16 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
         await instr.selectOption('TCS');await instr.selectOption('NIFTY');
       } else {
         await instr.fill('TCS');await instr.dispatchEvent('change');
-        await instr.fill('NIFTY');await instr.dispatchEvent('change');
+        await instr.fill('NIFTY');await instr.press('Tab');
       }
       await page.waitForFunction(()=>document.querySelectorAll('.option-picker-grid button').length===10);
       await page.waitForTimeout(250);
       assert.equal(await strike.locator('option').count(),12,'stale strike response ignored');
       assert.equal(await page.locator('.option-picker-strike').count(),5);
+      const visibleStrikes=await page.locator('.option-picker-strike').allTextContents();
       await page.getByRole('button',{name:'Select NIFTY 24700 CE',exact:true}).click();
+      assert.deepEqual(await page.locator('.option-picker-strike').allTextContents(),visibleStrikes,'clicking a visible strike must keep rows stationary');
+      assert.equal(await page.locator('.option-picker .is-selected').getAttribute('aria-label'),'Select NIFTY 24700 CE');
       await page.getByRole('button',{name:'Select NIFTY 24800 PE',exact:true}).click();
       await page.waitForFunction(id=>document.getElementById(id).options.length===3,adminMode?'expiry':'orderExpiry');
       await expiry.selectOption('29/10/2026');
@@ -109,6 +112,20 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
       assert.equal(await strike.inputValue(),'24800');assert.equal(await type.inputValue(),'PE');
       assert.equal(await expiry.inputValue(),'29/10/2026','stale expiry ignored');
       assert.equal(await page.locator('.option-picker [aria-pressed=true]').count(),1);
+      assert.deepEqual(await page.locator('.option-picker-strike').allTextContents(),visibleStrikes,'expiry replies must keep rows stationary');
+      assert.equal(await page.locator('.option-picker .is-selected').getAttribute('aria-label'),'Select NIFTY 24800 PE');
+      const selectedColor=await page.locator('.option-picker .is-selected').evaluate(el=>getComputedStyle(el).backgroundColor);
+      const previousColor=await page.getByRole('button',{name:'Select NIFTY 24700 CE',exact:true}).evaluate(el=>getComputedStyle(el).backgroundColor);
+      assert.notEqual(selectedColor,previousColor,'highlight follows the current selection');
+      // A response arriving between pointer-down and pointer-up must not replace the button.
+      const second=page.getByRole('button',{name:'Select NIFTY 24800 CE',exact:true});
+      const hit=await second.boundingBox();
+      await page.mouse.move(hit.x+hit.width/2,hit.y+hit.height/2);await page.mouse.down();
+      await expiry.evaluate(el=>el.append(new Option('12/11/2026','12/11/2026')));
+      await page.waitForTimeout(40);await page.mouse.up();
+      assert.equal(await type.inputValue(),'CE');
+      assert.equal(await page.locator('.option-picker .is-selected').getAttribute('aria-label'),'Select NIFTY 24800 CE');
+      assert.deepEqual(await page.locator('.option-picker-strike').allTextContents(),visibleStrikes);
       await page.getByRole('button',{name:'Select NIFTY 24850 CE',exact:true}).click();
       await page.waitForFunction(id=>document.getElementById(id).value==='29/10/2026',adminMode?'expiry':'orderExpiry');
       await page.getByRole('button',{name:'Higher →',exact:true}).click();
@@ -116,6 +133,13 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
       await strike.selectOption('24500');
       assert.ok((await page.locator('.option-picker-strike').allTextContents()).includes('24500'));
       await page.setViewportSize({width:390,height:844});
+      const mobileRows=await page.locator('.option-picker-strike').allTextContents();
+      for (const [value,side] of [['24600','PE'],['24550','CE'],['24700','PE']]) {
+        await page.getByRole('button',{name:'Select NIFTY '+value+' '+side,exact:true}).click();
+        assert.deepEqual(await page.locator('.option-picker-strike').allTextContents(),mobileRows,'mobile selection keeps rows stationary');
+        assert.equal(await page.locator('.option-picker .is-selected').getAttribute('aria-label'),'Select NIFTY '+value+' '+side);
+        assert.equal(await page.locator('.option-picker [aria-pressed=true]').count(),1);
+      }
       const bounds=await page.locator('.option-picker').boundingBox();
       assert.ok(bounds.x>=0 && bounds.x+bounds.width<=390,'picker fits mobile viewport');
       await page.locator('.option-picker').screenshot({path:path.join(require('node:os').tmpdir(),adminMode?'option-picker-admin.png':'option-picker-portal.png')});
@@ -127,7 +151,7 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     }
     await checkOptionPicker(false);
     await checkOptionPicker(true);
-    console.log('PASS: five-strike Call/Put picker, selection/full list/navigation, expiry preservation, stale strike/expiry guards, mobile and cash hiding; zero order writes, portal/admin');
+    console.log('PASS: stationary five-strike Call/Put rows, exact latest highlight, clicks spanning expiry replies, desktop/mobile repeated selection, full list/navigation, expiry preservation, stale strike/expiry guards and cash hiding; zero order writes, portal/admin');
     const {page:p,errors,starts,closes}=await fixture([account(7)]);
     await p.locator('#strategyCatalog article').filter({hasText:'Expiry straddle'}).getByRole('button').click();
     const form=p.locator('#subscriptionForm');

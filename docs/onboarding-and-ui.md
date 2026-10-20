@@ -295,3 +295,15 @@ Validation: `tools/ux-preview/strategy-runs-smoke.cjs` includes mock-only portal
 admin checks for five-row bounds, Call/Put selection, navigation/full-list sync,
 expiry preservation, out-of-order replies, cash hiding, mobile fit, no page
 errors and zero order writes. Existing strategy/trade UI checks also pass.
+
+
+### Stable option-picker selection (2026-10-20 follow-up)
+
+Selecting any visible Call/Put keeps the five displayed rows stationary. The
+selected colour, checkmark and aria-pressed value follow the exact latest strike
+and side. Expiry responses update selection/status without replacing buttons,
+so a response between pointer-down and pointer-up cannot swallow a click. Lower/
+Higher, a changed strike list/instrument, or an off-screen dropdown choice can
+change the displayed window. Regression checks assert exact highlighted contract
+and distinct computed colours, fixed desktop/mobile rows after repeated clicks,
+and a click spanning an expiry-list mutation.
