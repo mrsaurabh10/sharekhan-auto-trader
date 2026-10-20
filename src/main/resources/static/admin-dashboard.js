@@ -2149,8 +2149,10 @@
   function wireAdminForm() {
     const exSel = document.getElementById('exchange'); const instrSel = document.getElementById('instrument'); const strikeSel = document.getElementById('strikePrice'); const expirySel = document.getElementById('expiry'); const optionTypeSel = document.getElementById('optionType');
     if (!exSel) return;
+    let strikeLoad = 0, expiryLoad = 0;
     exSel.addEventListener('change', async function () {
       const ex = (this.value || '').trim();
+      strikeLoad++; expiryLoad++;
       if (!instrSel) return; instrSel.disabled = true; instrSel.innerHTML = '<option value="">Loading...</option>';
       const isNCBC = (ex === 'NC' || ex === 'BC');
       if (strikeSel) { strikeSel.disabled = !!isNCBC; strikeSel.innerHTML = '<option value="">Select Strike</option>'; }
@@ -2170,6 +2172,7 @@
     if (instrSel) {
       instrSel.addEventListener('change', async function () {
         const instrument = (this.value || '').trim(); const ex = (exSel.value || '').trim();
+        const request = ++strikeLoad; expiryLoad++;
         if (strikeSel) strikeSel.innerHTML = '<option value="">Select Strike</option>'; if (expirySel) expirySel.innerHTML = '<option value="">Select Expiry</option>';
         if (!instrument) return;
         const isNCBC = (ex === 'NC' || ex === 'BC');
@@ -2178,10 +2181,23 @@
             fetchMStockLtp({ exchange: mappedExchange, instrument }).then(ltp => { if (ltp != null) document.getElementById('entryPrice').value = ltp; }).catch(() => {});
             return;
         }
-        try { const strikes = await fetchStrikes(ex, instrument); if (Array.isArray(strikes) && strikeSel) { strikeSel.innerHTML = '<option value="">Select Strike</option>' + strikes.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join(''); strikeSel.disabled = false; fetchUnderlyingAndSelectNearestStrike(ex, instrument, strikes); } } catch (e) { }
+        try { const strikes = await fetchStrikes(ex, instrument); if (request !== strikeLoad) return; if (Array.isArray(strikes) && strikeSel) { strikeSel.innerHTML = '<option value="">Select Strike</option>' + strikes.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join(''); strikeSel.disabled = false; fetchUnderlyingAndSelectNearestStrike(ex, instrument, strikes); } } catch (e) { }
       });
     }
-    if (strikeSel) { strikeSel.addEventListener('change', async function () { const strike = (this.value || '').trim(); const instrument = instrSel ? (instrSel.value || '').trim() : ''; const ex = (exSel.value || '').trim(); if (!strike) return; try { const expiries = await fetchExpiries(ex, instrument, strike); if (Array.isArray(expiries) && expirySel) { expirySel.innerHTML = '<option value="">Select Expiry</option>' + expiries.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join(''); expirySel.disabled = false; fetchOptionLtpAndPopulateEntry(); } } catch (e) { } }); }
+    if (strikeSel) strikeSel.addEventListener('change', async function () {
+      const request = ++expiryLoad, previous = expirySel ? expirySel.value : '';
+      const strike = this.value, instrument = instrSel ? instrSel.value : '', ex = exSel.value;
+      if (expirySel) expirySel.innerHTML = '<option value="">Select Expiry</option>';
+      if (!strike) return;
+      const expiries = await fetchExpiries(ex, instrument, strike);
+      if (request !== expiryLoad) return;
+      if (Array.isArray(expiries) && expirySel) {
+        expirySel.innerHTML = '<option value="">Select Expiry</option>' + expiries.map(s => '<option value="' + escapeHtml(s) + '">' + escapeHtml(s) + '</option>').join('');
+        expirySel.disabled = false;
+        if (expiries.includes(previous)) expirySel.value = previous;
+        fetchOptionLtpAndPopulateEntry();
+      }
+    });
     if (expirySel) expirySel.addEventListener('change', function () { fetchOptionLtpAndPopulateEntry(); });
     if (optionTypeSel) optionTypeSel.addEventListener('change', function () { fetchOptionLtpAndPopulateEntry(); });
   }
@@ -2573,7 +2589,7 @@
       const underlyingExchangeMap = { 'NF': 'NSE', 'BF': 'BSE' };
       const mappedExchange = underlyingExchangeMap[exchange] || exchange;
       fetchMStockLtp({ exchange: mappedExchange, instrument }).then(ltp => {
-          if (ltp == null) return;
+          if (ltp == null || document.getElementById('exchange').value !== exchange || document.getElementById('instrument').value !== instrument || document.getElementById('strikePrice').value) return;
           let nearestStrike = null; let minDiff = Infinity;
           for (const strike of strikes) { const strikeVal = parseFloat(strike); const diff = Math.abs(strikeVal - ltp); if (diff < minDiff) { minDiff = diff; nearestStrike = strike; } }
           if (nearestStrike) { const strikeSelect = document.getElementById('strikePrice'); if (strikeSelect) { strikeSelect.value = nearestStrike; strikeSelect.dispatchEvent(new Event('change')); } }
@@ -2589,7 +2605,11 @@
           return;
       }
       if (!exchange || !instrument || !strikePrice || !expiry) return;
-      fetchMStockLtp({ exchange, instrument, strikePrice, optionType, expiry }).then(ltp => { if (ltp != null) { const entryPriceInput = document.getElementById('entryPrice'); if (entryPriceInput) entryPriceInput.value = ltp; } }).catch(() => {});
+      const entryPriceInput = document.getElementById('entryPrice');
+      const previousEntry = entryPriceInput.value;
+      fetchMStockLtp({ exchange, instrument, strikePrice, optionType, expiry }).then(ltp => {
+        if (ltp != null && document.getElementById('exchange').value === exchange && document.getElementById('instrument').value === instrument && document.getElementById('strikePrice').value === strikePrice && (document.getElementById('optionType').value || 'CE') === optionType && document.getElementById('expiry').value === expiry && entryPriceInput.value === previousEntry) entryPriceInput.value = ltp;
+      }).catch(() => {});
   }
 
   document.addEventListener('DOMContentLoaded', async function(){

@@ -224,23 +224,47 @@
   $('#refreshOrders').addEventListener('click',event=>busy(event.target,loadOrders));
   for (const [id,key,delta] of [['previousRequests','requestPage',-1],['nextRequests','requestPage',1],['previousExecutions','executionPage',-1],['nextExecutions','executionPage',1]]) $('#'+id).addEventListener('click',event=>busy(event.target,async()=>{state[key]=Math.max(0,state[key]+delta);await loadOrders();}));
   const query = object => new URLSearchParams(object).toString();
+  let instrumentLoad = 0, strikeLoad = 0, expiryLoad = 0, instrumentExchange = null;
+  function resetContract() {
+    strikeLoad++; expiryLoad++;
+    $('#orderStrike').replaceChildren(new Option('Choose strike',''));
+    $('#orderExpiry').replaceChildren(new Option('Choose expiry',''));
+  }
   async function loadInstruments() {
+    const request=++instrumentLoad;
     const exchange=$('#orderExchange').value, derivatives=!['NC','BC'].includes(exchange);
+    if (instrumentExchange !== exchange) { resetContract(); instrumentExchange=exchange; }
+    $('#instrumentOptions').replaceChildren();
     for (const id of ['optionTypeField','strikeField','expiryField']) $('#'+id).hidden=!derivatives;
     $('#quantityLabel').textContent=derivatives?'Quantity (lots)':'Quantity (shares)';
     $('#orderStrike').required=derivatives; $('#orderExpiry').required=derivatives;
     const data=await api('/api/scripts/instruments/'+encodeURIComponent(exchange));
+    if (request!==instrumentLoad) return;
     $('#instrumentOptions').replaceChildren(...data.instruments.map(item=>new Option(item,item)));
   }
   async function loadStrikes() {
-    const f=$('#orderForm'); if (['NC','BC'].includes(f.elements.exchange.value)) return;
-    $('#orderStrike').replaceChildren(new Option('Choose strike','')); $('#orderExpiry').replaceChildren(new Option('Choose expiry',''));
-    const data=await api('/api/scripts/strikes?'+query({exchange:f.elements.exchange.value,instrument:f.elements.instrument.value}));
+    resetContract();
+    const request=strikeLoad, f=$('#orderForm');
+    const exchange=f.elements.exchange.value, instrument=f.elements.instrument.value;
+    if (['NC','BC'].includes(exchange) || !instrument.trim()) return;
+    const data=await api('/api/scripts/strikes?'+query({exchange,instrument}));
+    if (request!==strikeLoad) return;
     data.strikes.forEach(v=>$('#orderStrike').append(new Option(v,v)));
   }
   $('#orderExchange').addEventListener('change',()=>{ $('#orderInstrument').value=''; loadInstruments().catch(e=>notify(e.message,true)); });
+  $('#orderInstrument').addEventListener('input',resetContract);
   $('#orderInstrument').addEventListener('change',()=>loadStrikes().catch(e=>notify(e.message,true)));
-  $('#orderStrike').addEventListener('change',()=>{ const f=$('#orderForm'); api('/api/scripts/expiries?'+query({exchange:f.elements.exchange.value,instrument:f.elements.instrument.value,strikePrice:f.elements.strikePrice.value})).then(data=>{ $('#orderExpiry').replaceChildren(new Option('Choose expiry',''),...data.expiries.map(v=>new Option(v,v))); }).catch(e=>notify(e.message,true)); });
+  $('#orderStrike').addEventListener('change',async()=>{
+    const request=++expiryLoad, f=$('#orderForm'), previous=$('#orderExpiry').value;
+    $('#orderExpiry').replaceChildren(new Option('Choose expiry',''));
+    if (!f.elements.strikePrice.value) return;
+    try {
+      const data=await api('/api/scripts/expiries?'+query({exchange:f.elements.exchange.value,instrument:f.elements.instrument.value,strikePrice:f.elements.strikePrice.value}));
+      if (request!==expiryLoad) return;
+      $('#orderExpiry').replaceChildren(new Option('Choose expiry',''),...data.expiries.map(v=>new Option(v,v)));
+      if (data.expiries.includes(previous)) $('#orderExpiry').value=previous;
+    } catch(e) { if (request===expiryLoad) notify(e.message,true); }
+  });
   $('#orderForm').addEventListener('submit', event=>{
     event.preventDefault(); const f=event.target; const body=Object.fromEntries(new FormData(f));
     for (const key of ['brokerCredentialsId','quantity','entryPrice','stopLoss','target1','target2','target3','strikePrice']) body[key]=body[key] ? Number(body[key]) : null;

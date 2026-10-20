@@ -271,3 +271,27 @@ The shared source/status display is also used in the personal order/execution
 view. Asset version `20261019-compact-trades` refreshes both dashboard variants and
 the portal. Mock Chrome verification includes realistic closed-trade rows, source
 and status focus/blur, literal HTML sources, mobile and existing close controls.
+
+
+## Compact option selection (2026-10-20)
+
+The personal Orders form and both admin dashboard HTML variants load the shared
+`/portal/option-picker.js` and CSS. For an option exchange and instrument, the
+picker displays up to five sorted strikes with Call/Put buttons. Selecting a
+button fills the existing strike and option-type fields; it never submits an
+order. Lower/Higher browses adjacent strikes and the full strike dropdown stays
+available. The view centres on a selected strike; without one it starts at the
+middle of the available list (not a claimed ATM price). Existing admin nearest-
+spot selection still applies if its quote arrives before manual selection.
+
+Choose expiry in the existing field. A selected expiry survives a strike change
+only if it remains available; stale strike/expiry replies are ignored. The admin
+entry quote cannot overwrite a different contract or a manually edited entry
+price. Cash exchanges hide the picker. No live premium/OI/Greek columns are
+provided. Broker routing, review/confirmation, order APIs and database are
+unchanged. The unused standalone legacy place-order template is unchanged.
+
+Validation: `tools/ux-preview/strategy-runs-smoke.cjs` includes mock-only portal/
+admin checks for five-row bounds, Call/Put selection, navigation/full-list sync,
+expiry preservation, out-of-order replies, cash hiding, mobile fit, no page
+errors and zero order writes. Existing strategy/trade UI checks also pass.

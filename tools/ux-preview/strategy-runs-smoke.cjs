@@ -68,6 +68,66 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
       await page.goto('http://ui.test/'+(admin?'admin-dashboard.html':'portal#strategies'));
       return {page,errors,starts,closes,reject:()=>rejectStart=true,setAnalytics:value=>analytics=value};
     }
+    async function checkOptionPicker(adminMode) {
+      const sample=await fixture([account(7)],adminMode), page=sample.page;
+      let orderWrites=0;
+      page.on('request',r=>{if(r.method()==='POST' && /orders|manual-execute/.test(r.url())) orderWrites++;});
+      await page.route('**/api/scripts/strikes?*',async route=>{
+        const old=new URL(route.request().url()).searchParams.get('instrument')==='TCS';
+        if(old) await new Promise(resolve=>setTimeout(resolve,200));
+        await route.fulfill({contentType:'application/json',body:JSON.stringify({strikes:old?[100,200]:Array.from({length:11},(_,i)=>24500+i*50)})});
+      });
+      await page.route('**/api/scripts/expiries?*',async route=>{
+        const old=new URL(route.request().url()).searchParams.get('strikePrice')==='24700';
+        if(old) await new Promise(resolve=>setTimeout(resolve,200));
+        await route.fulfill({contentType:'application/json',body:JSON.stringify({expiries:old?['stale-expiry']:['29/10/2026','05/11/2026']})});
+      });
+      const ex=page.locator(adminMode?'#exchange':'#orderExchange');
+      const instr=page.locator(adminMode?'#instrument':'#orderInstrument');
+      const strike=page.locator(adminMode?'#strikePrice':'#orderStrike');
+      const expiry=page.locator(adminMode?'#expiry':'#orderExpiry');
+      const type=page.locator(adminMode?'#optionType':'#orderForm [name=optionType]');
+      if(adminMode) { await page.locator('#userTabs button').first().click(); await page.locator('#manualOrderComposer summary').click(); }
+      else await page.locator('[data-view=orders]').click();
+      await ex.selectOption('NF');
+      if(adminMode) {
+        await page.waitForFunction(()=>document.querySelector('#instrument').options.length>1);
+        await instr.selectOption('TCS');await instr.selectOption('NIFTY');
+      } else {
+        await instr.fill('TCS');await instr.dispatchEvent('change');
+        await instr.fill('NIFTY');await instr.dispatchEvent('change');
+      }
+      await page.waitForFunction(()=>document.querySelectorAll('.option-picker-grid button').length===10);
+      await page.waitForTimeout(250);
+      assert.equal(await strike.locator('option').count(),12,'stale strike response ignored');
+      assert.equal(await page.locator('.option-picker-strike').count(),5);
+      await page.getByRole('button',{name:'Select NIFTY 24700 CE',exact:true}).click();
+      await page.getByRole('button',{name:'Select NIFTY 24800 PE',exact:true}).click();
+      await page.waitForFunction(id=>document.getElementById(id).options.length===3,adminMode?'expiry':'orderExpiry');
+      await expiry.selectOption('29/10/2026');
+      await page.waitForTimeout(250);
+      assert.equal(await strike.inputValue(),'24800');assert.equal(await type.inputValue(),'PE');
+      assert.equal(await expiry.inputValue(),'29/10/2026','stale expiry ignored');
+      assert.equal(await page.locator('.option-picker [aria-pressed=true]').count(),1);
+      await page.getByRole('button',{name:'Select NIFTY 24850 CE',exact:true}).click();
+      await page.waitForFunction(id=>document.getElementById(id).value==='29/10/2026',adminMode?'expiry':'orderExpiry');
+      await page.getByRole('button',{name:'Higher →',exact:true}).click();
+      assert.ok((await page.locator('.option-picker-strike').allTextContents()).includes('25000'));
+      await strike.selectOption('24500');
+      assert.ok((await page.locator('.option-picker-strike').allTextContents()).includes('24500'));
+      await page.setViewportSize({width:390,height:844});
+      const bounds=await page.locator('.option-picker').boundingBox();
+      assert.ok(bounds.x>=0 && bounds.x+bounds.width<=390,'picker fits mobile viewport');
+      await page.locator('.option-picker').screenshot({path:path.join(require('node:os').tmpdir(),adminMode?'option-picker-admin.png':'option-picker-portal.png')});
+      await ex.selectOption('NC');
+      assert.equal(await page.locator('.option-picker').isVisible(),false);
+      assert.equal(orderWrites,0,'contract selection does not submit orders');
+      assert.deepEqual(sample.errors,[]);
+      await page.close();
+    }
+    await checkOptionPicker(false);
+    await checkOptionPicker(true);
+    console.log('PASS: five-strike Call/Put picker, selection/full list/navigation, expiry preservation, stale strike/expiry guards, mobile and cash hiding; zero order writes, portal/admin');
     const {page:p,errors,starts,closes}=await fixture([account(7)]);
     await p.locator('#strategyCatalog article').filter({hasText:'Expiry straddle'}).getByRole('button').click();
     const form=p.locator('#subscriptionForm');
