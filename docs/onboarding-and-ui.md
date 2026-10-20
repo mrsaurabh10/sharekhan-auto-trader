@@ -307,3 +307,34 @@ Higher, a changed strike list/instrument, or an off-screen dropdown choice can
 change the displayed window. Regression checks assert exact highlighted contract
 and distinct computed colours, fixed desktop/mobile rows after repeated clicks,
 and a click spanning an expiry-list mutation.
+
+
+### Personal executed-trade actions (2026-10-21)
+
+Orders → Executions & positions now exposes Edit SL / targets, Move SL to Cost,
+Close position, Modify Exit, Reset to Executed and Audit for the signed-in user's
+individual trades. Closed/rejected/unknown statuses offer Audit only. Editing,
+cost stops and closing are offered for EXECUTED/TARGET_ORDER_PLACED; Modify Exit
+requires an exit state and an existing exit order ID. Reset is offered only for
+explicitly non-intraday live trades; the server still verifies broker inactivity.
+
+Edit supports SL, T1–T3, partial-booking trailing SL, app-managed same-day exit,
+and individual spot/traded-instrument references. It sends only changed fields;
+legacy null reference flags remain untouched unless the user changes a reference.
+Existing levels cannot be removed with a blank input. Entry/fill and filled
+quantity are read-only references, preventing accidental edits to executed fills.
+Changing app levels does not reprice an already placed broker exit: use Modify
+Exit for that. Cost stops explicitly describe spot entry versus traded-price
+break-even including estimated charges and the possibility of a crossed stop.
+Close supports normal app pricing or an entered price, with wait-at-target versus
+chase-fill intent; target mode requires an entered price.
+
+Every mutation has a review dialog, uses the existing CSRF/owner-checked API and
+refreshes orders after success. Errors retain the form; pending submissions are
+locked against repeat clicks/cancellation. Audit renders all event values as text.
+Dialogs scroll within the mobile viewport and action buttons wrap in the table.
+
+Validation: mock-only Chrome `tools/ui/personal-trade-actions-smoke.cjs` exercises
+these flows without broker/server access. `PersonalTradeActionsSecurityTest`
+checks USER access, CSRF/authentication, cross-user/missing-owner rejection,
+audit isolation and broker reset conflicts against the existing controllers.

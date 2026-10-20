@@ -210,10 +210,7 @@
       await api('/api/trades/cancel-request/'+row.id,'POST',{}); notify('Request cancelled.'); await loadOrders();
     })));
     table($('#executions'),[['Instrument','symbol'],['Source',r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Costs',r=>money(r.totalTradeCost),'numeric'],['Net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>window.StrategyRunView?.statusTag(r.status) || badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
-      if (['EXECUTED','TARGET_ORDER_PLACED'].includes(row.status)) td.append(button('Close position',async()=>{
-        if (!await confirmAction('Submit a live square-off order for this position?')) return;
-        await api('/api/trades/square-off/'+row.id,'POST',{}); notify('Square-off requested. Check broker execution status.'); await loadOrders();
-      }));
+      window.PersonalTradeActions.mount(td, row, {api, refresh:loadOrders, notify, button});
     });
     $('#requestPage').textContent='Page '+(state.requestPage+1); $('#executionPage').textContent='Page '+(state.executionPage+1);
     $('#previousRequests').disabled=state.requestPage===0; $('#nextRequests').disabled=requests.last == null ? state.requests.length<10 : requests.last;

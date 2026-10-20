@@ -23,3 +23,9 @@
 @media(max-width:700px){.analytics-stats .stat-value{font-size:20px}.pnl-value{padding:4px 6px}.pnl-legend{gap:6px}}
 
 .analytics-breakdown{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:1250px){.analytics-breakdown{grid-template-columns:minmax(0,1fr)}}
+
+/* Keep personal trade actions compact while dialogs remain usable on small screens. */
+.personal-trade-actions{display:flex;flex-wrap:wrap;gap:6px;width:240px;white-space:normal}
+.trade-action-dialog{max-height:90vh;overflow:auto}.trade-edit-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.trade-edit-fields>p,.trade-edit-fields>.trade-audit-event{grid-column:1/-1}
+.trade-action-dialog .actions{margin-top:18px}.trade-audit-event{border-left:3px solid var(--line);padding:12px;overflow-wrap:anywhere}.trade-audit-event pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.trade-audit-event p{margin:6px 0}
+@media(max-width:600px){.trade-edit-fields{grid-template-columns:minmax(0,1fr)}.trade-action-dialog{padding:20px}}
