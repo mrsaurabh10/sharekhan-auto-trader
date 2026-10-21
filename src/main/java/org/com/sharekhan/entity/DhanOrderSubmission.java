@@ -12,4 +12,6 @@ public class DhanOrderSubmission {
     @Column(name="submission_key", nullable=false, length=80) private String submissionKey;
     @Column(name="order_side", nullable=false, length=4) private String side;
     @Column(name="created_at", nullable=false) private Instant createdAt;
+    private Integer generation;
+    private String outcome;
 }

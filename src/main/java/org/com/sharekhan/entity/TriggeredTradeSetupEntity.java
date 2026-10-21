@@ -27,6 +27,8 @@ public class TriggeredTradeSetupEntity {
     private Long triggerRequestId;
 
     private String symbol;
+    /** Broker contract identity, independent of the market-data provider's scrip code. */
+    private String brokerSecurityId;
     private Integer scripCode;
 
     // reference to broker_credentials id

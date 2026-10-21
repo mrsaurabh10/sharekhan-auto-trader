@@ -21,8 +21,9 @@ the trade's owner. The trade is not marked closed merely because the chase ends.
 These are the application's supported session bounds; special sessions require
 separate configuration work. The existing 15:35 scheduler time is unchanged.
 
-The chase uses in-memory scheduled tasks. Restart recovery currently resumes
-status polling, not intraday repricing; do not restart during a closure chase.
+Scheduled tasks are restored from durable exit controls after restart, keeping
+the original order, intent and five-minute/session budget. Expired/unknown budgets
+require attention; recovery never sends a replacement sell. See `exit-order-safety.md`.
 This change does not reconcile old live positions or place corrective trades.
 
 Validation (2026-10-15): 413 tests selected, 411 passed, two skipped, no failures

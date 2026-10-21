@@ -31,6 +31,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class SharekhanBrokerService implements ModifiableEntryBrokerService, TriggerPriceEntryBrokerService, OrderStatusBrokerService {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.service.BrokerExitSubmissionStore exitSubmissions;
     private final TokenStoreService tokenStoreService;
     private final ScriptMasterRepository scriptMasterRepository;
 
@@ -69,6 +71,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             if (trade == null || context == null || orderId == null || orderId.isBlank()) {
                 return null;
             }
+            if(orderId.startsWith("SK-UNKNOWN-"))return null;
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) {
                 accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
@@ -509,10 +512,24 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             order.disclosedQty = 0L;
             order.channelUser = context.getClientCode();
 
-            // Retry logic
+            String unknownHandle="SK-UNKNOWN-"+context.getBrokerCredentialsId()+"-"+trade.getId()+"-1";
+            if("S".equals(transactionType)) {
+                if(trade.getId()==null || context.getBrokerCredentialsId()==null)throw new IllegalArgumentException("Persist owned exit before submission");
+                if(exitSubmissions!=null) {
+                    org.com.sharekhan.service.BrokerExitSubmissionStore.Claim claim;
+                    try { claim=exitSubmissions.claim(trade.getId(),context.getBrokerCredentialsId()); }
+                    catch(Exception contention) {
+                        try {return unknownExit(exitSubmissions.existing(trade.getId(),context.getBrokerCredentialsId()).map(c->c.handle()).orElse(unknownHandle),price);}
+                        catch(Exception unavailable) {return unknownExit(unknownHandle,price);}
+                    }
+                    unknownHandle=claim.handle();
+                    if(!claim.send())return unknownExit(unknownHandle,price);
+                }
+            }
+            // A lost sell acknowledgement is ambiguous delivery, never permission for another NEW sell.
             JSONObject response = null;
             String orderId = null;
-            final int maxAttempts = 3;
+            final int maxAttempts = "S".equals(transactionType) ? 1 : 3;
             long[] backoffMs = new long[]{300L, 700L, 1500L};
             String stage = "S".equalsIgnoreCase(transactionType)
                     ? "EXIT"
@@ -550,6 +567,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             }
 
             if (orderId == null) {
+                if("S".equals(transactionType))return unknownExit(unknownHandle,price);
                 String reason = "Broker did not return orderId after retries";
                 if (response != null) {
                     String msg = response.optString("message", "");
@@ -563,6 +581,10 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                         .build();
             }
 
+            if("S".equals(transactionType) && exitSubmissions!=null) {
+                try { exitSubmissions.accepted(unknownHandle,orderId); }
+                catch(Exception bookkeeping) {log.warn("Sell acknowledged; submission metadata requires reconciliation for trade {}",trade.getId());}
+            }
             // Check for immediate execution details
             String status = "Pending";
             Double executedPrice = null;
@@ -606,6 +628,11 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                     .status("Rejected")
                     .build();
         }
+    }
+
+    private static OrderPlacementResult unknownExit(String handle,double price) {
+        return OrderPlacementResult.builder().success(true).orderId(handle).status("Pending").attemptedPrice(price)
+                .rejectionReason("Sharekhan sell delivery requires reconciliation; no replacement submitted").build();
     }
 
     private long elapsedMillis(long startedAtNanos) {

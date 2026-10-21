@@ -339,4 +339,34 @@ class TradeExecutionServiceIntradayExitChaseTest {
         assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_ORDER_PLACED);
     }
 
+    @Test void premiumTargetChaseKeepsTargetFloorAndOriginalIntent() {
+        trade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);trade.setExitReason("TARGET_HIT");
+        trade.setActualEntryPrice(195.1);trade.setStopLoss(160d);trade.setTarget1(250d);trade.setUseSpotForTarget(false);
+        quotes.recordQuote(123,249d,250d,249.5);
+        ReflectionTestUtils.invokeMethod(service,"scheduleExitOrderChase",trade);tick.run();
+        verify(broker).modifyEntryOrder(eq(trade),any(),eq("211652102"),eq(250d));
+        assertThat(trade.getExitReason()).isEqualTo("TARGET_HIT");
+    }
+    @Test void restoredChaseUsesPersistedStartAndCannotGainAnotherFiveMinutes() {
+        var controls=mock(ExitChaseControlService.class);
+        ReflectionTestUtils.setField(service,"exitControls",controls);
+        trade.setStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED);trade.setExitReason("STOP_LOSS_HIT");
+        trade.setExitOrderPlacedAt(LocalDateTime.ofInstant(start.minusSeconds(240),ZoneId.of("Asia/Kolkata")));
+        var saved=new org.com.sharekhan.entity.ExitChaseControl();saved.setActive(true);saved.setStartedAt(start.minusSeconds(240));
+        when(controls.begin(eq(trade),any())).thenReturn(saved);
+        when(trades.findByStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED)).thenReturn(java.util.List.of(trade));
+        when(controls.dueAlerts(any())).thenReturn(java.util.List.of());
+        service.recoverExitChases();assertThat(tick).isNotNull();
+        at(start.plusSeconds(60));tick.run();
+        verify(controls).attention(eq(trade),contains("deadline"),any());
+        verify(broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+    }
+    @Test void inactivePartialExitNeverGetsRepriced() {
+        var partial=history("Partly Executed").put("requiresExitReconciliation",true);
+        when(broker.fetchOrderStatus(any(),any(),anyString())).thenReturn(partial);
+        service.startIntradayExitChase(trade);tick.run();
+        verify(broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        verify(notifications).sendTradeMessageForUser(anyLong(),anyString(),contains("Partial inactive"));
+    }
+
 }

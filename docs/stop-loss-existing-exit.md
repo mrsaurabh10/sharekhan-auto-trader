@@ -22,7 +22,9 @@ while an old ID remains recorded: expiry alone is not broker reconciliation.
 No automatic replacement for cancelled/rejected orders is introduced; an operator
 must reconcile fills and remaining position before further action.
 
-Chases are in memory. Restart resumes existing status polling, not repricing.
+Durable chase controls now restore same-order repricing after restart within the
+original budget. Expired budgets and inactive partial exits require attention;
+see `exit-order-safety.md`.
 Special-session hours are not implemented. This fix makes no broker calls in
 tests and requires a separate reviewed rollout to affect production.
 

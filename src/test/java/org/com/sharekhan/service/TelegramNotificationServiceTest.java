@@ -51,4 +51,15 @@ public class TelegramNotificationServiceTest {
         assertFalse(group.isAuthorizedEntryActor("42"));
         assertTrue(group.isAuthorizedEntryActor("42"));
     }
+    @Test void exitAlertRequiresAcknowledgementAndUnconfiguredDeliveryIsNotReportedAsSuccess() {
+        RestTemplate rest=mock(RestTemplate.class);
+        when(rest.postForEntity(anyString(),any(),eq(String.class))).thenReturn(
+            ResponseEntity.ok("{\"ok\":false}"),ResponseEntity.ok("{\"ok\":true}"));
+        var service=new TelegramNotificationService("fake","12345",rest);
+        assertFalse(service.sendExitAttention(4L,"Verify existing order"));
+        assertTrue(service.sendExitAttention(4L,"Verify existing order"));
+        assertFalse(new TelegramNotificationService("","",rest).sendExitAttention(4L,"Not configured"));
+        verify(rest,times(2)).postForEntity(anyString(),any(),eq(String.class));
+    }
+
 }

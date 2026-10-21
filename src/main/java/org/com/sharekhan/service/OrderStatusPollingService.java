@@ -148,11 +148,14 @@ public class OrderStatusPollingService {
         return now.getDayOfWeek()!=DayOfWeek.SATURDAY && now.getDayOfWeek()!=DayOfWeek.SUNDAY
             && !now.toLocalTime().isBefore(LocalTime.of(9,15)) && !now.toLocalTime().isAfter(LocalTime.of(15,45));
     }
+    @org.springframework.beans.factory.annotation.Autowired
+    private ExitChaseControlService exitControls;
     private void requireDhanAttention(TriggeredTradeSetupEntity trade,String detail,boolean failedExit,boolean finalSession) {
         String reason=failedExit ? "DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED" : finalSession ? "DHAN_SESSION_RECONCILIATION_REQUIRED" : "DHAN_ORDER_RECONCILIATION_REQUIRED";
         boolean first=!reason.equals(trade.getReason());
         if(failedExit)trade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
         if(first) {
+            if(exitControls!=null && isExitOrder(trade))exitControls.attention(trade,detail,monitorClock.instant());
             String comment=(trade.getComment()==null ? "" : trade.getComment()+"; ")+detail;
             trade.setComment(comment.substring(0,Math.min(2000,comment.length())));
             trade.setReason(reason);tradeRepo.save(trade);
@@ -538,7 +541,9 @@ public class OrderStatusPollingService {
                     if (rejectedExit) {
                         currentTrade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                         currentTrade.setReason("EXIT_BROKER_ORDER_INACTIVE");
-                        currentTrade.setComment("Exit order is cancelled, rejected or expired. Position remains open; reconcile before replacing order " + orderIdToMonitor);
+                        String diagnostic=response!=null?response.optString("brokerDiagnostic","Broker order inactive"):"Broker order inactive";
+                        currentTrade.setComment("Exit order is cancelled, rejected or expired. Position remains open; reconcile before replacing order " + orderIdToMonitor+"; "+diagnostic);
+                        if(exitControls!=null)exitControls.attention(currentTrade,currentTrade.getComment(),monitorClock.instant());
                     } else {
                         tradeExecutionService.stopEntryOrderChase(currentTrade.getId());
                         currentTrade.setStatus(TriggeredTradeStatus.REJECTED);

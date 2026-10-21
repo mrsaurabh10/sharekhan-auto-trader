@@ -201,7 +201,7 @@ class SharekhanBrokerServiceTest {
         var tokens = org.mockito.Mockito.mock(org.com.sharekhan.auth.TokenStoreService.class);
         var sdk = org.mockito.Mockito.mock(com.sharekhan.SharekhanConnect.class);
         var context = new BrokerContext(1L, "key", "CLIENT", "Sharekhan", 2L);
-        var trade = TriggeredTradeSetupEntity.builder().symbol("MAXHEALTH").scripCode(22377).exchange("NC")
+        var trade = TriggeredTradeSetupEntity.builder().id(101L).symbol("MAXHEALTH").scripCode(22377).exchange("NC")
                 .quantity(4L).entryPrice(1038.74).intraday(true).build();
         org.mockito.Mockito.when(repository.findById(22377)).thenReturn(java.util.Optional.of(
                 org.com.sharekhan.entity.ScriptMasterEntity.builder().exchange("NC").tickSize(0.1).build()));
@@ -235,4 +235,22 @@ class SharekhanBrokerServiceTest {
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.instrumentTickSize(22377, "NC"))
                 .isInstanceOf(IllegalArgumentException.class);
     }
+    @Test void lostSellAcknowledgementIsRetainedAndNeverRetried() throws Throwable {
+        var tokens=org.mockito.Mockito.mock(org.com.sharekhan.auth.TokenStoreService.class);
+        var scripts=org.mockito.Mockito.mock(org.com.sharekhan.repository.ScriptMasterRepository.class);
+        var sdk=org.mockito.Mockito.mock(com.sharekhan.SharekhanConnect.class);
+        var store=org.mockito.Mockito.mock(org.com.sharekhan.service.BrokerExitSubmissionStore.class);
+        var service=org.mockito.Mockito.spy(new SharekhanBrokerService(tokens,scripts));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"exitSubmissions",store);
+        org.mockito.Mockito.when(store.claim(12L,7L)).thenReturn(new org.com.sharekhan.service.BrokerExitSubmissionStore.Claim(true,"SK-UNKNOWN-7-12-1"),new org.com.sharekhan.service.BrokerExitSubmissionStore.Claim(false,"SK-UNKNOWN-7-12-1"));
+        org.mockito.Mockito.doReturn(sdk).when(service).createClient("key",null);
+        org.mockito.Mockito.doReturn(new BigDecimal("0.05")).when(service).instrumentTickSize(51346,"NF");
+        org.mockito.Mockito.when(sdk.placeOrder(org.mockito.ArgumentMatchers.any())).thenThrow(new RuntimeException("lost ack"));
+        var trade=TriggeredTradeSetupEntity.builder().id(12L).scripCode(51346).symbol("NIFTY").exchange("NF").quantity(65L).build();
+        var context=new BrokerContext(99L,"key","CLIENT","Sharekhan",7L);
+        assertThat(service.placeExitOrder(trade,context,250).getOrderId()).isEqualTo("SK-UNKNOWN-7-12-1");
+        assertThat(service.placeExitOrder(trade,context,250).getOrderId()).isEqualTo("SK-UNKNOWN-7-12-1");
+        org.mockito.Mockito.verify(sdk,org.mockito.Mockito.times(1)).placeOrder(org.mockito.ArgumentMatchers.any());
+    }
+
 }

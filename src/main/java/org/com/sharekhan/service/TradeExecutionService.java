@@ -29,6 +29,7 @@ import org.com.sharekhan.repository.TriggeredTradeSetupRepository;
 import org.com.sharekhan.repository.BrokerCredentialsRepository;
 import org.com.sharekhan.entity.BrokerCredentialsEntity;
 import org.com.sharekhan.service.broker.BrokerService;
+import org.com.sharekhan.service.broker.RefusedExitRecovery;
 import org.com.sharekhan.service.broker.BrokerServiceFactory;
 import org.com.sharekhan.service.broker.ModifiableEntryBrokerService;
 import org.com.sharekhan.service.broker.OrderStatusBrokerService;
@@ -158,6 +159,10 @@ public class TradeExecutionService {
     private final QuoteCacheService quoteCacheService;
     @Autowired(required = false)
     private TradeAuditService tradeAuditService;
+    @Autowired
+    private ExitChaseControlService exitControls;
+    @Autowired
+    private BrokerExitSubmissionStore exitSubmissions;
 
     private final ApplicationEventPublisher eventPublisher;
 
@@ -205,7 +210,6 @@ public class TradeExecutionService {
     private final ConcurrentMap<Long, ScheduledFuture<?>> entryChaseFutures = new ConcurrentHashMap<>();
 
     private static final class ExitChaseState {
-        private boolean bufferedAttempted;
         private Double lastPrice;
         private Instant startedAt;
     }
@@ -2300,6 +2304,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setOptionType(trigger.getOptionType());
             triggeredTradeSetupEntity.setIntraday(trigger.getIntraday());
             triggeredTradeSetupEntity.setBrokerExecutionProduct(trigger.getBrokerExecutionProduct());
+            triggeredTradeSetupEntity.setBrokerSecurityId(trigger.getBrokerSecurityId());
             // Persist the credential actually used to place the order. A trigger can
             // omit its credential and be routed to a default broker; polling must not
             // later re-resolve to a different broker.
@@ -2579,6 +2584,7 @@ public class TradeExecutionService {
                 TradeEventLogger.logOrderRejected("EXIT", persisted, rejectionReason, sanitizedRequestedExitPrice);
             }
             log.error("❌ Exit place order failed for trade {}. Reason: {}", persisted.getId(), rejectionReason);
+            reportExitIncomplete(persisted,rejectionReason);
             try {
                 persisted.setStatus(TriggeredTradeStatus.EXIT_FAILED);
                 triggeredTradeRepo.save(persisted);
@@ -3673,7 +3679,9 @@ public class TradeExecutionService {
         return false;
     }
 
-    private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {
+    private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade) {scheduleExitOrderChase(trade,false);}
+
+    private void scheduleExitOrderChase(TriggeredTradeSetupEntity trade,boolean recovering) {
         if (trade == null || trade.getId() == null) {
             return;
         }
@@ -3709,7 +3717,13 @@ public class TradeExecutionService {
         stopExitOrderChase(tradeId);
 
         ExitChaseState state = new ExitChaseState();
-        state.startedAt = exitChaseClock.instant();
+        state.startedAt = recovering && latestTrade.getExitOrderPlacedAt()!=null
+                ? latestTrade.getExitOrderPlacedAt().atZone(MARKET_ZONE).toInstant() : exitChaseClock.instant();
+        if(exitControls!=null) {
+            var control=exitControls.begin(latestTrade,state.startedAt);
+            if(!control.isActive()) return;
+            state.startedAt=control.getStartedAt();
+        }
         exitChaseStates.put(tradeId, state);
 
         String exitOrderId = latestTrade.getExitOrderId();
@@ -3732,15 +3746,19 @@ public class TradeExecutionService {
                         stopExitOrderChase(tradeId);
                         return;
                     }
-                    TradeStatus status = fetchOrderStatus(latest, ctx, exitOrderId);
+                    JSONObject response=fetchOrderHistory(latest,ctx,exitOrderId);
+                    if(response!=null && response.optBoolean("requiresExitReconciliation",false)) {
+                        reportExitIncomplete(latest,"Partial inactive exit requires broker-position reconciliation; no repricing or replacement sent.");
+                        stopExitOrderChase(tradeId);return;
+                    }
+                    TradeStatus status = evaluateOrderFinalStatus(latest,response);
                     if (isOrderFilled(status)) {
+                        if(exitControls!=null)exitControls.complete(tradeId,exitOrderId);
                         stopExitOrderChase(tradeId);
                         return;
                     }
                     if (TradeStatus.REJECTED.equals(status)) {
-                        if ("INTRADAY_CLOSE".equals(latest.getExitReason()) || isStopExit(latest)) {
-                            reportExitIncomplete(latest, "Broker exit order is " + status);
-                        }
+                        reportExitIncomplete(latest, "Broker exit order is " + status + "; confirm remaining position before resetting.");
                         log.warn("🧵 Exit chase stopping for trade {} — order inactive: {}", tradeId, status);
                         stopExitOrderChase(tradeId);
                         return;
@@ -3827,6 +3845,13 @@ public class TradeExecutionService {
 
         String exitOrderId = trade.getExitOrderId();
         if (exitOrderId == null || exitOrderId.isBlank()) {
+            if(trade.getStatus()==TriggeredTradeStatus.EXIT_FAILED) {
+                BrokerContext context=resolveBrokerContext(trade.getBrokerCredentialsId(),trade.getAppUserId());
+                if(context==null)return EndOfDayExitResetResult.SKIPPED_BROKER_UNAVAILABLE;
+                var service=brokerServiceFactory.getService(context.getBrokerName());
+                if(!(service instanceof RefusedExitRecovery recovery) || !recovery.hasDefinitivelyRefusedExit(trade,context))
+                    return EndOfDayExitResetResult.SKIPPED_BROKER_UNAVAILABLE;
+            }
             return resetInactiveNonIntradayExitState(trade);
         }
 
@@ -3839,9 +3864,13 @@ public class TradeExecutionService {
             return EndOfDayExitResetResult.SKIPPED_BROKER_UNAVAILABLE;
         }
 
-        TradeStatus brokerStatus = fetchOrderStatus(trade, context, exitOrderId);
-        if (brokerStatus == TradeStatus.REJECTED) {
-            return resetInactiveNonIntradayExitState(trade);
+        JSONObject response=fetchOrderHistory(trade,context,exitOrderId);
+        TradeStatus brokerStatus = evaluateOrderFinalStatus(trade,response);
+        if (brokerStatus == TradeStatus.REJECTED && confirmsInactiveZeroFill(response,trade.getQuantity())) {
+            EndOfDayExitResetResult reset=resetInactiveNonIntradayExitState(trade);
+            if(reset==EndOfDayExitResetResult.RESET && exitSubmissions!=null)
+                exitSubmissions.inactive(trade.getId(),trade.getBrokerCredentialsId(),exitOrderId);
+            return reset;
         }
 
         log.info("EOD_EXIT_RESET_SKIPPED | trade={} | orderId={} | brokerStatus={}",
@@ -3851,6 +3880,23 @@ public class TradeExecutionService {
                 : EndOfDayExitResetResult.SKIPPED_BROKER_UNAVAILABLE;
     }
 
+    private boolean confirmsInactiveZeroFill(JSONObject response,Long expected) {
+        if(response==null || expected==null || response.optBoolean("requiresExitReconciliation",false))return false;
+        JSONArray rows=response.optJSONArray("data");
+        if(rows==null || rows.isEmpty())return false;
+        boolean inactive=false;
+        for(int i=0;i<rows.length();i++) {
+            JSONObject row=rows.optJSONObject(i);if(row==null)return false;
+            Long filled=firstLongJsonValue(row,"filled_quantity","filledQty","execQty","executedQuantity");
+            Long quantity=firstLongJsonValue(row,"quantity","orderQty");
+            Long remaining=firstLongJsonValue(row,"pending_quantity","pendingQty","openQty","remainingQuantity");
+            if(filled==null || filled!=0 || quantity==null || !quantity.equals(expected) || remaining==null || !remaining.equals(expected))return false;
+            String status=firstNonBlankJsonString(row,"orderStatus","status").toUpperCase(Locale.ROOT);
+            if(status.contains("CANCEL") || status.contains("REJECT") || status.contains("EXPIRE"))inactive=true;
+        }
+        return inactive;
+    }
+
     private EndOfDayExitResetResult resetInactiveNonIntradayExitState(TriggeredTradeSetupEntity trade) {
         int updated = triggeredTradeRepo.resetInactiveNonIntradayExitState(
                 trade.getId(),
@@ -3858,7 +3904,8 @@ public class TradeExecutionService {
                         TriggeredTradeStatus.EXECUTED.name(),
                         TriggeredTradeStatus.EXIT_TRIGGERED.name(),
                         TriggeredTradeStatus.EXIT_ORDER_PLACED.name(),
-                        TriggeredTradeStatus.TARGET_ORDER_PLACED.name()));
+                        TriggeredTradeStatus.TARGET_ORDER_PLACED.name(),
+                        TriggeredTradeStatus.EXIT_FAILED.name()));
         if (updated == 0) {
             return EndOfDayExitResetResult.SKIPPED_NOT_ELIGIBLE;
         }
@@ -3872,7 +3919,8 @@ public class TradeExecutionService {
         return status == TriggeredTradeStatus.EXECUTED
                 || status == TriggeredTradeStatus.EXIT_TRIGGERED
                 || status == TriggeredTradeStatus.EXIT_ORDER_PLACED
-                || status == TriggeredTradeStatus.TARGET_ORDER_PLACED;
+                || status == TriggeredTradeStatus.TARGET_ORDER_PLACED
+                || status == TriggeredTradeStatus.EXIT_FAILED;
     }
 
     private Double determineExitChasePrice(TriggeredTradeSetupEntity trade, ExitChaseState state) {
@@ -3889,51 +3937,18 @@ public class TradeExecutionService {
             }
         }
 
-        if ("INTRADAY_CLOSE".equals(trade.getExitReason()) || isStopExit(trade)) {
-            // A last trade or stop level is not an executable sell quote. LTP-only
-            // ticks must not make an old book usable for the closure chase.
-            return quoteCacheService.getSnapshot(trade.getScripCode())
-                    .filter(q -> q.hasBook() && q.getBestBid() <= q.getBestAsk())
-                    .filter(q -> !quoteCacheService.isBookStale(q, DEFAULT_QUOTE_STALENESS))
-                    .map(q -> sanitizeExitPriceCandidate(trade, q.getBestBid(), "INTRADAY_EXIT_BID"))
-                    .orElse(null);
-        }
-
-        Double stopLoss = trade.getStopLoss();
-        if (!state.bufferedAttempted) {
-            state.bufferedAttempted = true;
-            if (stopLoss != null && stopLoss > 0) {
-                Double candidate = sanitizeExitPriceCandidate(trade, stopLoss * 0.9975d, "EXIT_CHASE_BUFFER");
-                if (candidate != null) {
-                    return candidate;
-                }
-            }
-        }
-
-        Double bid = null;
-        if (trade.getScripCode() != null) {
-            Optional<QuoteCacheService.QuoteSnapshot> snapshot = quoteCacheService.getSnapshot(trade.getScripCode());
-            if (snapshot.isPresent() && snapshot.get().getBestBid() != null && snapshot.get().getBestBid() > 0) {
-                bid = snapshot.get().getBestBid();
-            }
-        }
-
-        if (bid != null && bid > 0) {
-            Double candidate = sanitizeExitPriceCandidate(trade, bid, "EXIT_CHASE_BID");
-            if (candidate != null) {
-                return candidate;
-            }
-        }
-
-        Double ltp = ltpCacheService.getLtp(trade.getScripCode());
-        if (ltp != null && ltp > 0) {
-            Double candidate = sanitizeExitPriceCandidate(trade, ltp, "EXIT_CHASE_LTP");
-            if (candidate != null) {
-                return candidate;
-            }
-        }
-
-        return null;
+        // Repricing requires a fresh executable book for every exit intent, not an SL or LTP fallback.
+        return quoteCacheService.getSnapshot(trade.getScripCode())
+                .filter(q->q.hasBook() && q.getBestBid()<=q.getBestAsk())
+                .filter(q->!quoteCacheService.isBookStale(q,DEFAULT_QUOTE_STALENESS))
+                .map(q->{
+                    double bid=q.getBestBid();
+                    if("TARGET_HIT".equals(trade.getExitReason()) && !isSpotTarget(trade)) {
+                        Double target=pickTargetPrice(trade);
+                        if(target!=null)bid=Math.max(bid,target);
+                    }
+                    return sanitizeExitPriceCandidate(trade,bid,"EXIT_CHASE_FRESH_BID");
+                }).orElse(null);
     }
 
     private double applySpotTargetExitFloor(TriggeredTradeSetupEntity trade, double candidatePrice, String exitReason) {
@@ -4228,6 +4243,10 @@ public class TradeExecutionService {
                     .rejectionReason("Existing exit order must be reconciled before placing another sell")
                     .build();
         }
+        if(!List.of(TriggeredTradeStatus.EXECUTED,TriggeredTradeStatus.EXIT_TRIGGERED,
+                TriggeredTradeStatus.EXIT_ORDER_PLACED,TriggeredTradeStatus.TARGET_ORDER_PLACED).contains(latest.getStatus()))
+            return OrderPlacementResult.builder().success(false).status("Rejected").rejectionReason("Trade no longer eligible for an exit").build();
+        persisted=latest;
         BrokerContext exitCtx = resolveBrokerContext(persisted.getBrokerCredentialsId(), persisted.getAppUserId());
         if (exitCtx == null || exitCtx.getBrokerName() == null) {
             throw new IllegalStateException("No active broker configured for this user (exit)");
@@ -4290,6 +4309,7 @@ public class TradeExecutionService {
             persisted.setExitReason(exitReason);
             persisted.setExitOrderPlacedAt(placedAt);
             triggeredTradeRepo.save(persisted);
+            if(exitControls!=null && result.getRejectionReason()==null)exitControls.accepted(persisted);
         } catch (Exception e) {
             log.debug("Failed to persist exitOrderId/status {} for trade {}: {}", placedStatus, persisted.getId(), e.getMessage());
         }
@@ -4901,6 +4921,7 @@ public class TradeExecutionService {
         leg.setUseSpotForEntry(root.getUseSpotForEntry()); leg.setUseSpotForSl(false); leg.setUseSpotForTarget(false);
         leg.setSpotScripCode(root.getSpotScripCode()); leg.setIntraday(root.getIntraday()); leg.setSource(root.getSource()); leg.setStrategyRunId(root.getStrategyRunId());
         leg.setBrokerExecutionProduct(root.getBrokerExecutionProduct());
+        leg.setBrokerSecurityId(root.getBrokerSecurityId());
         leg.setStatus(TriggeredTradeStatus.EXECUTED); leg.setTriggeredAt(root.getTriggeredAt()); leg.setEntryAt(root.getEntryAt());
         leg.setTargetOrderGroupId(groupId); leg.setTargetStage(stage);
         leg.setOrderId(root.getOrderId() != null ? root.getOrderId() + "-T" + stage : null);
@@ -5123,6 +5144,7 @@ public class TradeExecutionService {
             return new ModifyExitOrderResult(false, "No exit order is currently active for this trade.");
         }
 
+        if("EXIT_CHASE".equals(exitReason)) exitReason=trade.getExitReason();
         newPrice = applySpotTargetExitFloor(trade, newPrice, exitReason);
         Double safeNewPrice = sanitizeExitPriceCandidate(trade, newPrice, "EXIT_MODIFY_" + (exitReason != null ? exitReason : "UNKNOWN"));
         if (safeNewPrice == null) {
@@ -5345,6 +5367,14 @@ public class TradeExecutionService {
     private void reportExitIncomplete(TriggeredTradeSetupEntity trade, String reason) {
         log.error("EXIT_INCOMPLETE | trade={} | order={} | quantity={} | reason={}",
                 trade.getId(), trade.getExitOrderId(), trade.getQuantity(), reason);
+        if(exitControls!=null) {
+            exitControls.attention(trade,reason,exitChaseClock.instant());
+            if(tradeAuditService!=null)tradeAuditService.record(TradeAuditEventEntity.builder()
+                    .appUserId(trade.getAppUserId()).tradeId(trade.getId()).triggerRequestId(trade.getTriggerRequestId())
+                    .symbol(trade.getSymbol()).source(trade.getSource()).eventType("EXIT_NEEDS_ATTENTION")
+                    .outcome("PENDING").reason(reason).build());
+            return;
+        }
         try {
             telegramNotificationService.sendTradeMessageForUser(trade.getAppUserId(),
                     isStopExit(trade) ? "Stop-loss exit needs attention" : "Intraday exit needs attention",
@@ -5352,6 +5382,33 @@ public class TradeExecutionService {
                             + ": " + reason + " Check broker remaining quantity and order history.");
         } catch (Exception e) {
             log.warn("Could not notify exit failure for trade {}", trade.getId());
+        }
+    }
+
+    /** Restores the original same-order budget; it never places a new sell or resets a deadline. */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay=15000,initialDelay=15000)
+    public void recoverExitChases() {
+        if(exitControls==null)return;
+        for(var trade:triggeredTradeRepo.findByStatus(TriggeredTradeStatus.EXIT_ORDER_PLACED)) {
+            if(trade.getExitOrderId()==null || isExitOrderChaseActive(trade.getId()))continue;
+            try {
+                if(trade.getExitOrderPlacedAt()==null) {
+                    reportExitIncomplete(trade,"Missing original exit time; verify broker order before resuming chase.");continue;
+                }
+                scheduleExitOrderChase(trade,true);
+            } catch(Exception failure) { log.warn("Exit recovery unavailable for trade {}: {}",trade.getId(),failure.getClass().getSimpleName()); }
+        }
+        for(var alert:exitControls.dueAlerts(exitChaseClock.instant())) {
+            try {
+                var trade=triggeredTradeRepo.findById(alert.getTradeId()).orElse(null);
+                if(trade==null)continue;
+                if(trade.getStatus()==TriggeredTradeStatus.EXITED_SUCCESS || trade.getStatus()==TriggeredTradeStatus.COMPLETED) {
+                    exitControls.complete(trade.getId(),alert.getOrderId());continue;
+                }
+                triggeredTradeRepo.markExitAttention(trade.getId(),alert.getAttention());
+                if(telegramNotificationService.sendExitAttention(trade.getAppUserId(),"Trade "+trade.getId()+" "+trade.getSymbol()+": "+alert.getAttention()))
+                    exitControls.delivered(trade.getId(),alert.getAttention());
+            } catch(Exception failure) { log.warn("Exit alert retry unavailable: {}",failure.getClass().getSimpleName()); }
         }
     }
 

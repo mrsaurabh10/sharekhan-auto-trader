@@ -71,6 +71,5 @@ MOVER_ENTRY_READINESS with request and execution times/prices, and
 ENTRY_QUOTE_TIMING with book timestamp/age. These logs record local receipt time,
 not guaranteed exchange-origin time. No credentials or raw broker bodies added.
 
-No schema change. This change can be reviewed/deployed separately from the
-unreleased exit-safety branch; deployment still requires an explicitly requested,
-reviewed rollout. All tests use mocked brokers and market data.
+No schema change. The release includes the already deployed exit-safety changes. Deployment requires
+an explicitly requested, reviewed rollout. All tests use mocked brokers and market data.

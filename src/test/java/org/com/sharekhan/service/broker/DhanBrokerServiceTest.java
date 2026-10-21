@@ -27,18 +27,26 @@ class DhanBrokerServiceTest {
     DhanBrokerService service=new DhanBrokerService(client,instruments,claims,credentials,tokens,crypto);
     BrokerContext context=new BrokerContext(null,null,"1000000001","Dhan",7L);
     TriggeredTradeSetupEntity trade;
-    @BeforeEach void setup() {
+    @BeforeEach void setup() throws Exception {
         trade=TriggeredTradeSetupEntity.builder().id(12L).appUserId(4L).brokerCredentialsId(7L).symbol("TCS").exchange("NC").quantity(10L).intraday(true).build();
         when(credentials.findById(7L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(7L).appUserId(4L).brokerName("Dhan").clientCode("encrypted-client").active(true).tradingEnabled(true).build()));
         when(crypto.decrypt("encrypted-client")).thenReturn("1000000001");
         when(tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",7L)).thenReturn(Optional.of(AccessTokenEntity.builder().token("test-token").expiry(Instant.now().plusSeconds(3600)).build()));
         when(instruments.resolve(trade)).thenReturn(new DhanInstrumentResolver.Instrument("NSE_EQ","11536",1,new BigDecimal("0.05"),10000));
+        when(client.exchange(eq("GET"),eq("/positions"),anyString(),isNull())).thenAnswer(c->{
+            var instrument=instruments.resolve(trade);
+            String product=trade.getBrokerExecutionProduct()!=null?trade.getBrokerExecutionProduct():Boolean.TRUE.equals(trade.getIntraday())?"INTRADAY":instrument.segment().endsWith("FNO")?"MARGIN":"CNC";
+            return new DhanOrderClient.Response(200,new org.json.JSONArray().put(new JSONObject().put("dhanClientId","1000000001")
+                .put("securityId",instrument.securityId()).put("exchangeSegment",instrument.segment()).put("productType",product)
+                .put("netQty",trade.getQuantity()).put("positionType","LONG")).toString());
+        });
+        when(client.exchange(eq("GET"),eq("/orders"),anyString(),isNull())).thenReturn(new DhanOrderClient.Response(200,"[]"));
     }
     DhanOrderClient.Response response(int code,JSONObject body) { return new DhanOrderClient.Response(code,body.toString()); }
     JSONObject order(String status,long filled,long remaining) {
         return new JSONObject().put("dhanClientId","1000000001").put("orderId","12345").put("orderStatus",status)
             .put("transactionType","BUY").put("exchangeSegment","NSE_EQ").put("securityId","11536")
-            .put("orderType","LIMIT").put("quantity",10).put("filledQty",filled).put("remainingQuantity",remaining).put("averageTradedPrice",100.5);
+            .put("productType","CNC").put("orderType","LIMIT").put("quantity",10).put("filledQty",filled).put("remainingQuantity",remaining).put("averageTradedPrice",100.5);
     }
     @Test void placesScopedCashLimitWithUnitsAndNeverConfirmsAcknowledgementAsFill() throws Exception {
         when(client.exchange(eq("POST"),eq("/orders"),eq("test-token"),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","TRADED")));
@@ -137,7 +145,7 @@ class DhanBrokerServiceTest {
     }
     @Test void recoveredLegacyClaimRetainsActualBrokerProductRatherThanNewEntryPolicy() throws Exception {
         doThrow(new DuplicateKeyException("duplicate")).when(claims).claim(anyString(),anyLong(),anyString(),eq("BUY"));
-        when(client.exchange(eq("GET"),anyString(),anyString(),isNull())).thenAnswer(call->{
+        when(client.exchange(eq("GET"),contains("/orders/external/"),anyString(),isNull())).thenAnswer(call->{
             String path=call.getArgument(1);
             return response(200,order("TRADED",10,0).put("productType","INTRADAY")
                 .put("correlationId",path.substring(path.lastIndexOf('/')+1)));
