@@ -27,6 +27,17 @@ public class StrategyController {
     private final StrategySubscriptionService strategySubscriptionService;
     private final CurrentUserService currentUserService;
     private final org.com.sharekhan.onboarding.UserTradingAccess tradingAccess;
+    private final org.com.sharekhan.service.StrategySubscriptionLifecycleService lifecycle;
+
+    @PostMapping("/subscriptions/{id}/pause")
+    public ResponseEntity<?> pause(@PathVariable Long id) {
+        return ResponseEntity.ok(lifecycle.pause(id, currentUserService.currentAppUserIdOrNull(), currentUserService.isAdmin()));
+    }
+
+    @PostMapping("/subscriptions/{id}/resume")
+    public ResponseEntity<?> resume(@PathVariable Long id) {
+        return ResponseEntity.ok(lifecycle.resume(id, currentUserService.currentAppUserIdOrNull(), currentUserService.isAdmin()));
+    }
 
     @GetMapping("/templates")
     public ResponseEntity<?> templates() {

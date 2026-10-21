@@ -178,10 +178,18 @@
       }); card.append(el); $('#strategyCatalog').append(card);
     });
     table($('#subscriptions'),[['Strategy','templateId'],['Broker',r=>{const b=state.brokers.find(b=>b.id===r.brokerCredentialsId);return b ? brokerLabel(b) : 'Account '+r.brokerCredentialsId;}],['Instruments','symbol'],['Size / investment',r=>r.investmentPerStock != null ? '₹'+r.investmentPerStock+' / stock' : r.lots+(r.profitTargetPerLot ? ' lots · profit target ₹'+r.profitTargetPerLot+' / lot / session (₹'+(r.profitTargetPerLot*r.lots).toFixed(2)+' total)' : '')],['Status',r=>badge(r.status,['ACTIVE','TRIGGERED'].includes(r.status))],['Latest update','lastMessage']],state.subscriptions,(row,td)=>{
-      if (['ACTIVE','TRIGGERED'].includes(row.status)) td.append(button('Cancel',async()=>{
-        if (!await confirmAction('Cancel future evaluations for this subscription? Existing orders and positions remain open.')) return;
-        await api('/api/strategies/subscriptions/'+row.id+'/cancel','POST',{}); await loadStrategies(); notify('Subscription cancelled. Existing orders and positions remain open.');
-      }));
+      if (['ACTIVE','TRIGGERED','PAUSED'].includes(row.status)) {
+        const paused = row.status === 'PAUSED';
+        td.append(button(paused ? 'Resume' : 'Pause',async()=>{
+          if (!await confirmAction(paused ? 'Resume scheduled evaluations with the saved settings? Existing daily entry limits still apply.' : 'Pause future strategy evaluations? Existing orders and positions continue to be managed. An entry already being submitted may still complete.')) return;
+          await api('/api/strategies/subscriptions/'+row.id+(paused ? '/resume' : '/pause'),'POST',{});
+          $('#subscriptionStatusFilter').value='ALL'; await loadStrategies(); notify(paused ? 'Strategy resumed. Evaluation continues on the next scheduled cycle.' : 'Strategy paused. Existing orders and positions continue to be managed.');
+        }));
+        td.append(button('Cancel',async()=>{
+          if (!await confirmAction('Cancel future evaluations for this subscription? Existing orders and positions remain open.')) return;
+          await api('/api/strategies/subscriptions/'+row.id+'/cancel','POST',{}); await loadStrategies(); notify('Subscription cancelled. Existing orders and positions remain open.');
+        }));
+      }
     });
   }
   async function loadStrategies() { state.subscriptions=await api('/api/strategies/subscriptions?status='+encodeURIComponent($('#subscriptionStatusFilter').value)); renderStrategies(); await loadOnboarding(); }

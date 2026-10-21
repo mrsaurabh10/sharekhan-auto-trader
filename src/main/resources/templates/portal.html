@@ -173,8 +173,8 @@
 </div>
 <div class="card section-gap">
 <h2>Your subscriptions</h2>
-<p class="muted">Cancel stops future strategy evaluations. Existing orders and positions must be managed separately.</p>
-<label>Show subscriptions<select id="subscriptionStatusFilter"><option value="ACTIVE">Active</option><option value="CANCELLED">Cancelled</option><option value="ALL">All</option></select></label>
+<p class="muted">Pause stops future evaluations and keeps settings for Resume. Existing orders and positions continue to be managed. Cancel ends the subscription.</p>
+<label>Show subscriptions<select id="subscriptionStatusFilter"><option value="ACTIVE">Active</option><option value="PAUSED">Paused</option><option value="CANCELLED">Cancelled</option><option value="ALL">All</option></select></label>
 <div id="subscriptions" class="table-wrap">
 </div>
 </div>
@@ -451,7 +451,7 @@
 </dialog>
 <script src="/portal/trade-actions.js?v=20261021-exit-safety" defer></script>
 <script src="/portal/telegram-settings.js?v=20261021-personal-telegram" defer></script>
-<script src="/portal/portal.js?v=20261021-personal-telegram" defer>
+<script src="/portal/portal.js?v=20261022-strategy-pause" defer>
 </script>
 </body>
 </html>

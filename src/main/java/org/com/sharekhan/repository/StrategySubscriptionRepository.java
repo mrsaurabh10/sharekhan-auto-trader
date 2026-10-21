@@ -6,6 +6,12 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import java.util.List;
 
 public interface StrategySubscriptionRepository extends JpaRepository<StrategySubscriptionEntity, Long> {
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically=true,flushAutomatically=true)
+    @org.springframework.transaction.annotation.Transactional
+    @org.springframework.data.jpa.repository.Query("update StrategySubscriptionEntity s set s.symbol=:symbols, s.lastMessage=:message, s.updatedAt=CURRENT_TIMESTAMP where s.id=:id")
+    int updateConfiguredSymbols(@org.springframework.data.repository.query.Param("id") Long id,
+            @org.springframework.data.repository.query.Param("symbols") String symbols,
+            @org.springframework.data.repository.query.Param("message") String message);
     /** Evaluation may update its outcome, but cannot undo a concurrent cancellation or overwrite settings. */
     @org.springframework.data.jpa.repository.Modifying(clearAutomatically=true,flushAutomatically=true)
     @org.springframework.transaction.annotation.Transactional
@@ -26,6 +32,7 @@ public interface StrategySubscriptionRepository extends JpaRepository<StrategySu
             String symbol,
             Long appUserId
     );
+    @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
     List<StrategySubscriptionEntity> findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(
             List<String> statuses,
             String templateId,

@@ -13,6 +13,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 
 class StrategySubscriptionServiceTest {
+    @org.junit.jupiter.api.Test void pausedSubscriptionIsNotEvaluatedOrDuplicatedByStart() {
+        var repo=mock(StrategySubscriptionRepository.class); var evaluator=mock(StrategyTemplateService.class);
+        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));
+        var subscription=StrategySubscriptionEntity.builder().id(9L).templateId("ST_RSI_EMA_ADX_CE").symbol("NIFTY")
+            .appUserId(1L).brokerCredentialsId(2L).source("strategy:ST_RSI_EMA_ADX_CE").status("PAUSED").build();
+        service.evaluate(subscription); verifyNoInteractions(evaluator);
+        when(evaluator.supports(anyString())).thenReturn(true);
+        when(repo.findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(anyList(),anyString(),anyString(),anyLong())).thenReturn(List.of(subscription));
+        var request=new StrategyApplyRequest(); request.setTemplateId(subscription.getTemplateId());request.setSymbol("NIFTY");request.setUserId(1L);request.setBrokerCredentialsId(2L);
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->service.start(request)).hasMessageContaining("Resume the existing subscription");
+        verify(repo,never()).save(any());
+    }
+
     @org.junit.jupiter.api.Test void straddleDefaultsNiftyAndContinuesAfterMorningEntry() {
         var repo=mock(StrategySubscriptionRepository.class);var evaluator=mock(StrategyTemplateService.class);
         when(evaluator.supports(anyString())).thenReturn(true);when(repo.save(any())).thenAnswer(c->c.getArgument(0));

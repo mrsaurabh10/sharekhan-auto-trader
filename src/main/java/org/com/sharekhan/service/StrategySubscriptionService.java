@@ -66,9 +66,10 @@ public class StrategySubscriptionService {
         String filter=status==null ? "ACTIVE" : status.trim().toUpperCase(Locale.ROOT);
         List<String> statuses=switch(filter) {
             case "ACTIVE" -> List.of(ACTIVE,TRIGGERED);
+            case "PAUSED" -> List.of("PAUSED");
             case "CANCELLED" -> List.of(CANCELLED);
             case "ALL" -> List.of();
-            default -> throw new IllegalArgumentException("Status must be ACTIVE, CANCELLED or ALL");
+            default -> throw new IllegalArgumentException("Status must be ACTIVE, PAUSED, CANCELLED or ALL");
         };
         if(!statuses.isEmpty()) {
             if(admin && appUserId==null)return repository.findByStatusInOrderByIdDesc(statuses);
@@ -85,8 +86,9 @@ public class StrategySubscriptionService {
         return repository.findByAppUserIdOrderByIdDesc(appUserId);
     }
 
+    @org.springframework.transaction.annotation.Transactional
     public StrategySubscriptionEntity cancel(Long id, Long currentUserId, boolean admin) {
-        StrategySubscriptionEntity entity = repository.findById(id)
+        StrategySubscriptionEntity entity = repository.lockForRunEntry(id)
                 .orElseThrow(() -> new IllegalArgumentException("Strategy subscription not found: " + id));
         if (!admin && (currentUserId == null || entity.getAppUserId() == null || !currentUserId.equals(entity.getAppUserId()))) {
             throw new IllegalArgumentException("Forbidden: strategy does not belong to user");
@@ -116,9 +118,8 @@ public class StrategySubscriptionService {
         if (normalized.length() > 255) {
             throw new IllegalArgumentException("Configured symbol list is too long (maximum 255 characters)");
         }
-        entity.setSymbol(normalized);
-        entity.setLastMessage("Configured instruments updated: " + normalized + ".");
-        StrategySubscriptionEntity saved = repository.save(entity);
+        repository.updateConfiguredSymbols(id, normalized, "Configured instruments updated: " + normalized + ".");
+        StrategySubscriptionEntity saved = repository.findById(id).orElseThrow();
         evaluateImmediatelyIfEligible(saved);
         return saved;
     }
@@ -161,6 +162,7 @@ public class StrategySubscriptionService {
     }
 
     void evaluate(StrategySubscriptionEntity subscription) {
+        if (!List.of(ACTIVE, TRIGGERED).contains(subscription.getStatus())) return;
         try {
             boolean continuousFnoTemplate = isContinuousFnoTemplate(subscription.getTemplateId());
             if (!continuousFnoTemplate && triggeredToday(subscription)) {
@@ -314,6 +316,7 @@ public class StrategySubscriptionService {
 
     /** New ATR subscriptions should create their pending request immediately instead of waiting for the next poll. */
     private void evaluateImmediatelyIfEligible(StrategySubscriptionEntity subscription) {
+        if (subscription == null || !List.of(ACTIVE, TRIGGERED).contains(subscription.getStatus())) return;
         if (!isAtrPreviousDayTemplate(subscription != null ? subscription.getTemplateId() : null)) {
             return;
         }

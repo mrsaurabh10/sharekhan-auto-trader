@@ -29,13 +29,15 @@ public class StrategyEnrollmentService {
         users.lockForEnrollment(request.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         var matches = subscriptions.findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(
-                List.of("ACTIVE", "TRIGGERED"), templateId, symbol, request.getUserId());
+                List.of("ACTIVE", "TRIGGERED", "PAUSED"), templateId, symbol, request.getUserId());
         var existing = matches.stream()
                 .filter(s -> Objects.equals(s.getBrokerCredentialsId(), request.getBrokerCredentialsId()))
                 .filter(s -> (s.getSource() == null || s.getSource().isBlank() ? "strategy:" + templateId : s.getSource().trim()).equalsIgnoreCase(source))
                 .findFirst();
         if (existing.isPresent()) {
             var subscription = existing.get();
+            if ("PAUSED".equals(subscription.getStatus()))
+                throw new IllegalArgumentException("This strategy is paused. Resume the existing subscription to keep its settings and history.");
             subscription.setRiskSettings(risk);
             if (straddle) {
                 subscription.setProfitTargetPerLot(profitTarget);

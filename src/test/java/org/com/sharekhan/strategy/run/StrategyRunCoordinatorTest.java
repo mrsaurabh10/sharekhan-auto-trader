@@ -62,10 +62,12 @@ class StrategyRunCoordinatorTest {
             assertThatThrownBy(()->am.attach(foreign)).isInstanceOf(IllegalArgumentException.class);return null;});
         r.setUserId(99L);assertThatThrownBy(()->am.evaluate(r,()->null)).hasMessageContaining("scope mismatch");
     }
-    @Test void pausedSubscriptionBlocksEntryEvenAfterEvaluationStarted() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"PAUSED", "CANCELLED"})
+    void pausedSubscriptionBlocksEntryEvenAfterEvaluationStarted(String status) {
         var am=coordinator("09:30:00");
         am.evaluate(request(),()->{
-            subs.findById(10L).orElseThrow().setStatus("CANCELLED");
+            subs.findById(10L).orElseThrow().setStatus(status);
             assertThatThrownBy(am::ensureCurrentRun).hasMessageContaining("paused");return null;
         });assertThat(saved).isEmpty();
     }

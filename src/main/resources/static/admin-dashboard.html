@@ -198,8 +198,9 @@
                         <button type="button" class="btn" id="refreshStrategiesBtn">Refresh Strategies</button>
                     </div>
                     <div id="strategyResult" class="hint"></div>
+                    <p class="hint">Pause stops future evaluations and keeps settings for Resume. Existing orders and positions continue to be managed. Cancel ends the subscription.</p>
                     <label for="strategyStatusFilter">Subscriptions</label>
-                    <select id="strategyStatusFilter"><option value="ACTIVE">Active</option><option value="CANCELLED">Cancelled</option><option value="ALL">All</option></select>
+                    <select id="strategyStatusFilter"><option value="ACTIVE">Active</option><option value="PAUSED">Paused</option><option value="CANCELLED">Cancelled</option><option value="ALL">All</option></select>
                     <table id="strategy-subscriptions-table" style="width:100%;border-collapse:collapse;margin-top:8px" border="1">
                         <thead><tr><th>ID</th><th>Template</th><th>Symbol</th><th>Size / investment</th><th>Status</th><th>Last Check</th><th>Message</th><th>Trade Request</th><th>Action</th></tr></thead>
                         <tbody><tr><td colspan="9">No strategies loaded</td></tr></tbody>
@@ -502,6 +503,6 @@
 </div>
 
 <script src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js" defer></script>
-<script src="/admin-dashboard.js?v=20261021-mover-timing" defer></script>
+<script src="/admin-dashboard.js?v=20261022-strategy-pause" defer></script>
 </body>
 </html>

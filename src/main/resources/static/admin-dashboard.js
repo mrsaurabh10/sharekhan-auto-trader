@@ -2524,7 +2524,23 @@
           '<td>' + escapeHtml(row.lastMessage || '-') + '</td>' +
           '<td>' + escapeHtml(row.generatedTradeRequestId || '-') + '</td>';
         const action = document.createElement('td');
-        if (['ACTIVE','TRIGGERED'].includes(String(row.status || '').toUpperCase())) {
+        if (['ACTIVE','TRIGGERED','PAUSED'].includes(String(row.status || '').toUpperCase())) {
+          const paused = row.status === 'PAUSED';
+          const toggle = document.createElement('button');
+          toggle.className = 'btn small';
+          toggle.innerText = paused ? 'Resume' : 'Pause';
+          toggle.addEventListener('click', async function () {
+            if (!confirm(paused ? 'Resume scheduled evaluations with saved settings? Daily entry limits still apply.' : 'Pause future evaluations? Existing orders and positions continue to be managed. An entry already being submitted may still complete.')) return;
+            toggle.disabled = true;
+            try {
+              await ensureCsrf();
+              await fetchJson('/api/strategies/subscriptions/' + encodeURIComponent(row.id) + (paused ? '/resume' : '/pause'), { method: 'POST' });
+              document.getElementById('strategyStatusFilter').value = 'ALL';
+              await loadStrategySubscriptions(uid);
+            } catch (error) { alert(error.message || 'Unable to update strategy. Refresh and try again.'); }
+            finally { toggle.disabled = false; }
+          });
+          action.appendChild(toggle);
           const manualFno = ['FNO_VWAP_RECLAIM_BASE_CE', 'FNO_VWAP_RECLAIM_BASE_PE', 'FNO_ATR_PREVIOUS_DAY_CE', 'FNO_ATR_PREVIOUS_DAY_PE'].includes(String(row.templateId || '').toUpperCase());
           if (manualFno) {
             const update = document.createElement('button');
