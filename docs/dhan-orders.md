@@ -65,8 +65,8 @@ identity against the current master before mutating a broker order.
 `dhan_order_submissions` records a unique send-once claim in a separate committed
 transaction before each POST. Its correlation ID is deterministic per credential,
 submission identity and side. Entries use saved request ID and gap-reentry count
-when available (the engine may not yet have a trade row); exits use persisted trade
-ID. The journal must stay with trading state during backup/restore.
+when available (the engine may not yet have a trade row); exits use the persisted
+trade ID and a durable submission generation. The journal must stay with trading state during backup/restore.
 
 On a timeout, malformed acknowledgement or uncertain HTTP outcome, the adapter
 queries `/orders/external/{correlationId}`. If still unconfirmed, it returns a
@@ -78,11 +78,11 @@ implicit login/HTTP retry is used. New buys require active, trading-enabled owne
 credentials; existing exits and reconciliation remain available when new trading
 is disabled, provided a valid scoped token exists.
 
-The journal intentionally does not automatically release claims for rejected,
-cancelled or expired orders. A confirmed unsuccessful entry needs a fresh request;
-replacement exits/overnight target rearming for the same trade require operator
-reconciliation before a new submission generation can be introduced. Do not erase
-a journal row merely because an API lookup failed or because a target expired.
+The journal never deletes claims. A confirmed unsuccessful entry needs a fresh
+request. Exit generations can advance only after an explicit refusal or verified
+inactive order with zero fills; checked reset and position/product verification
+still apply. Unknown outcomes, missing correlations and calendar expiry never
+release a generation. See `exit-order-safety.md` for legacy handling and recovery.
 Partly filled inactive exits retain their original order ID and become EXIT_FAILED
 with a reconciliation-required reason and notification attempt. Reconcile fills
 and the remaining position manually before another sell. Periodic status checks
@@ -97,7 +97,8 @@ The submission journal and `triggered_trade_setups.broker_execution_product`
 column are required on the primary JPA datasource. Existing deployments
 using Hibernate ddl-auto=update create it on an authorized rollout. For managed
 PostgreSQL schema deployments, review `db/postgresql/dhan-order-submissions.sql`
-and `db/postgresql/broker-execution-product-schema.sql`.
+and `db/postgresql/broker-execution-product-schema.sql`. The exit safety release
+also requires `db/postgresql/exit-order-safety-schema.sql`.
 It has no credentials, foreign-key dependency or existing trading-row changes.
 No production schema changes, deployment or real order tests have been run here.
 

@@ -114,7 +114,7 @@
       submit(d, 'Submit exit price', async () => complete(d, await api('/api/trades/exit-order/' + id + '/modify', 'POST', {price: Number(price.value)})));
       price.focus();
     }));
-    if (liveStatuses.has(status) && trade.intraday === false) actions.append(button('Reset to Executed', async () => {
+    if ((liveStatuses.has(status) || status === 'EXIT_FAILED') && trade.intraday === false) actions.append(button('Reset to Executed', async () => {
       const d = dialog('Reset to Executed · ' + title, 'For carry-forward positions only. The server checks the broker exit order and resets only when it is inactive. An active, filled, or unverifiable broker order prevents the reset.');
       submit(d, 'Check and reset', async () => complete(d, await api('/api/trades/execution/' + id + '/reset-to-executed', 'POST', {})));
     }));

@@ -34,7 +34,7 @@ class OrderStatusPollingServiceDhanUpdateTest {
     Instant morning=Instant.parse("2026-10-19T04:30:00Z");
     @BeforeEach void setup() {
         trade=TriggeredTradeSetupEntity.builder().id(88L).appUserId(4L).brokerCredentialsId(7L).symbol("TCS").exchange("NC")
-            .quantity(10L).entryPrice(90d).orderId("entry-123").exitOrderId("12345").status(TriggeredTradeStatus.TARGET_ORDER_PLACED)
+            .brokerSecurityId("11536").quantity(10L).entryPrice(90d).orderId("entry-123").exitOrderId("12345").status(TriggeredTradeStatus.TARGET_ORDER_PLACED)
             .triggeredAt(LocalDateTime.of(2026,10,19,10,0)).exitOrderPlacedAt(LocalDateTime.of(2026,10,19,10,0)).build();
         when(trades.findById(88L)).thenReturn(Optional.of(trade));when(trades.save(any())).thenAnswer(c->c.getArgument(0));
         when(credentials.findById(7L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(7L).appUserId(4L).brokerName("Dhan").clientCode("enc-client").build()));
@@ -84,7 +84,7 @@ class OrderStatusPollingServiceDhanUpdateTest {
         when(trades.markExitedWithPNL(anyLong(),any(),anyDouble(),any(),anyDouble(),any(),any())).thenReturn(1);
         service.monitorOrderStatus(trade);
         JSONObject update=new JSONObject().put("dhanClientId","1000000001").put("orderId","12345").put("orderStatus","TRADED")
-            .put("exchangeSegment","NSE_EQ").put("transactionType","SELL").put("quantity",10).put("filledQty",10)
+            .put("securityId","11536").put("productType","CNC").put("exchangeSegment","NSE_EQ").put("transactionType","SELL").put("quantity",10).put("filledQty",10)
             .put("remainingQuantity",0).put("averageTradedPrice",100.5);
         event(update);
         assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXITED_SUCCESS);
@@ -102,7 +102,7 @@ class OrderStatusPollingServiceDhanUpdateTest {
             (CryptoService)ReflectionTestUtils.getField(service,"cryptoService"));
         when(factory.getService("Dhan")).thenReturn(adapter);
         JSONObject fill=new JSONObject().put("dhanClientId","1000000001").put("orderId","12345").put("orderStatus","TRADED")
-            .put("exchangeSegment","NSE_EQ").put("transactionType","BUY").put("quantity",10).put("filledQty",10)
+            .put("securityId","11536").put("productType","CNC").put("exchangeSegment","NSE_EQ").put("transactionType","BUY").put("quantity",10).put("filledQty",10)
             .put("remainingQuantity",0).put("averageTradedPrice",100.5);
         when(http.exchange(eq("GET"),eq("/orders/12345"),eq("test-token"),isNull()))
             .thenReturn(new DhanOrderClient.Response(200,new JSONArray().put(fill).toString()));

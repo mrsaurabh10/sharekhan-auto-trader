@@ -20,7 +20,8 @@ const root = path.resolve(__dirname, '../..');
       {...base,id:5,symbol:'DAY',status:'EXECUTED',intraday:true,useSpotPrice:false},
       {...base,id:6,symbol:'REJECTED',status:'REJECTED'},
       {...base,id:7,symbol:'NO-ORDER',status:'TARGET_ORDER_PLACED',exitOrderId:''},
-      {...base,id:8,symbol:'UNKNOWN',status:'FUTURE_STATUS'}
+      {...base,id:8,symbol:'UNKNOWN',status:'FUTURE_STATUS'},
+      {...base,id:9,symbol:'FAILED-EXIT',status:'EXIT_FAILED',exitOrderId:'exit-failed'}
     ];
     let failure = null, delay = false, csrfReject = false;
     await page.route('**/*', async route => {
@@ -56,6 +57,7 @@ const root = path.resolve(__dirname, '../..');
     assert.deepEqual(await row('OPEN').getByRole('button').allTextContents(),['Edit SL / targets','Move SL to Cost','Close position','Reset to Executed','Audit']);
     assert.deepEqual(await row('CLOSING').getByRole('button').allTextContents(),['Modify Exit','Reset to Executed','Audit']);
     for(const name of ['CLOSED','REJECTED','UNKNOWN'])assert.deepEqual(await row(name).getByRole('button').allTextContents(),['Audit']);
+    assert.deepEqual(await row('FAILED-EXIT').getByRole('button').allTextContents(),['Reset to Executed','Audit']);
     assert.equal(await row('DAY').getByRole('button',{name:'Reset to Executed'}).count(),0);
     assert.equal(await row('NO-ORDER').getByRole('button',{name:'Modify Exit'}).count(),0);
     await row('OPEN').getByRole('button',{name:'Edit SL / targets'}).click();

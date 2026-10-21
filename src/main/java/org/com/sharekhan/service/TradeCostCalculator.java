@@ -93,7 +93,7 @@ public class TradeCostCalculator {
      * brokerage and statutory charges. A spot target must not close an option at break-even.
      */
     public static Double minimumProfitableExitPrice(TriggeredTradeSetupEntity trade, double tickSize) {
-        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0 || tickSize <= 0d) {
+        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0 || tickSize <= 0d || !Double.isFinite(tickSize)) {
             return null;
         }
         Double entryPrice = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
@@ -101,13 +101,15 @@ public class TradeCostCalculator {
             return null;
         }
 
-        double candidate = Math.ceil((entryPrice + tickSize) / tickSize) * tickSize;
+        BigDecimal tick = BigDecimal.valueOf(tickSize);
+        BigDecimal candidate = BigDecimal.valueOf(entryPrice).divide(tick, 0, RoundingMode.FLOOR)
+                .add(BigDecimal.ONE).multiply(tick);
         for (int attempt = 0; attempt < 10_000; attempt++) {
-            TradeCharges charges = calculateCharges(trade, entryPrice, candidate, null);
+            TradeCharges charges = calculateCharges(trade, entryPrice, candidate.doubleValue(), null);
             if (charges != null && charges.effectivePnl() > 0d) {
-                return money(BigDecimal.valueOf(candidate));
+                return candidate.doubleValue();
             }
-            candidate += tickSize;
+            candidate = candidate.add(tick);
         }
         return null;
     }

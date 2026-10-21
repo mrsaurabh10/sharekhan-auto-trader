@@ -166,6 +166,18 @@ public class TelegramNotificationService {
         }
     }
 
+    /** Acknowledged delivery only; the exit control retains failures for bounded retry. */
+    public boolean sendExitAttention(Long appUserId,String body) {
+        try {
+            var response=telegramRequest("sendMessage",Map.of("chat_id",chatId,
+                    "text","Exit needs attention\nUserId: #"+appUserId+"\n"+body));
+            return response!=null && response.optBoolean("ok");
+        } catch(Exception failure) {
+            log.warn("Exit notification not acknowledged: {}",failure.getClass().getSimpleName());
+            return false;
+        }
+    }
+
     public boolean clearEntryActionButtons(Long messageId) {
         if (messageId == null) return true;
         try {

@@ -18,14 +18,16 @@
     tag.title='Source: '+full;tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
     tag.onfocus=()=>{tag.textContent=full;};tag.onblur=()=>{tag.textContent=sourceLabel(full);};return tag;
   }
-  function statusTag(value) {
+  function statusTag(value,reason) {
     const full=String(value || 'PENDING');
     const labels={EXITED_SUCCESS:'Exited',COMPLETED:'Completed',EXECUTED:'Open',PLACED_PENDING_CONFIRMATION:'Pending',ENTRY_SUBMITTING:'Submitting',
       EXIT_ORDER_PLACED:'Exit pending',TARGET_ORDER_PLACED:'Target set',EXIT_TRIGGERED:'Closing',EXIT_FAILED:'Exit failed',REJECTED:'Rejected',CANCELLED:'Cancelled',FAILED:'Failed',TRIGGERED:'Triggered',ACTIVE:'Active'};
-    const tone=/FAILED|REJECTED|CANCELLED/.test(full)?'status-bad':/EXECUTED|COMPLETED|SUCCESS|ACTIVE/.test(full)?'status-good':'status-wait';
-    const tag=node('span',labels[full] || full.replaceAll('_',' '),'status-pill compact-trade-status '+tone);
-    tag.title='Status: '+full;tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
-    tag.onfocus=()=>{tag.textContent=full;};tag.onblur=()=>{tag.textContent=labels[full] || full.replaceAll('_',' ');};return tag;
+    const attention=!['EXITED_SUCCESS','COMPLETED'].includes(full) && (full==='EXIT_FAILED' || String(reason || '').includes('RECONCILIATION_REQUIRED'));
+    const label=attention?'Needs attention':labels[full] || full.replaceAll('_',' ');
+    const tone=attention?'status-bad':/FAILED|REJECTED|CANCELLED/.test(full)?'status-bad':/EXECUTED|COMPLETED|SUCCESS|ACTIVE/.test(full)?'status-good':'status-wait';
+    const tag=node('span',label,'status-pill compact-trade-status '+tone);
+    tag.title='Status: '+full+(reason?' · '+String(reason):'');tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
+    tag.onfocus=()=>{tag.textContent=full;};tag.onblur=()=>{tag.textContent=label;};return tag;
   }
   function timestamp(value) {
     const full=String(value || ''),match=full.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}:\d{2}:\d{2})/);

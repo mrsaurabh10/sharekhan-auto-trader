@@ -1467,6 +1467,15 @@
             }); actionCell.appendChild(resetBtn);
           }
         }
+        if (statusUpper === 'EXIT_FAILED' && t.intraday === false) {
+          const reset = document.createElement('button'); reset.className='btn small'; reset.textContent='Reset to Executed';
+          reset.onclick=async()=>{
+            if(!confirm('Check broker order and reset trade '+id+' only if it has zero fills and is inactive?'))return;
+            try {await ensureCsrf();await fetchJson('/api/trades/execution/'+id+'/reset-to-executed',{method:'POST'});await loadExecutedForUser(uid,getSelectedStatuses(),currentExecPage,currentTradeScope());}
+            catch(error){alert('Reset was not completed: '+error.message);}
+          };
+          actionCell.appendChild(reset);
+        }
         actionCell.appendChild(auditBtn);
 
         tr.innerHTML = '<td>' + escapeHtml(id) + '</td>' +
@@ -1484,7 +1493,7 @@
                        '<td>' + escapeHtml(String(qty)) + '</td>';
         if(window.StrategyRunView) {
           tr.querySelector('.trade-date-cell').replaceChildren(window.StrategyRunView.timestamp(setupDate));
-          tr.querySelector('.trade-status-cell').replaceChildren(window.StrategyRunView.statusTag(status));
+          tr.querySelector('.trade-status-cell').replaceChildren(window.StrategyRunView.statusTag(status,t.reason));
           tr.querySelector('.trade-source-cell').append(window.StrategyRunView.sourceTag(source));
         } else tr.querySelector('.trade-source-cell').textContent=source;
         tr.appendChild(actionCell);
