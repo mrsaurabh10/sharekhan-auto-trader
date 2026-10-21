@@ -34,6 +34,12 @@ public class TelegramNotificationService {
     @Autowired(required = false)
     private AppUserRepository appUserRepository;
 
+    @Autowired(required = false)
+    private org.com.sharekhan.telegram.TelegramUserSettingsRepository personalSettings;
+
+    private volatile String cachedBotUsername;
+    private volatile long botUsernameCheckedAt;
+
     @Autowired
     public TelegramNotificationService(@Value("${app.telegram.bot-token:}") String botToken,
                                        @Value("${app.telegram.chat-id:}") String chatId) {
@@ -116,11 +122,14 @@ public class TelegramNotificationService {
             // ignore lookup failures and send without username
             prefix = (appUserId != null) ? ("UserId: #" + appUserId + "\n") : "";
         }
-        sendTradeMessageWithCallback(title, prefix + (body == null ? "" : body), callbackData);
+        // Operator buttons retain their existing shared-chat authorization and message identity.
+        // Personal destinations receive informational alerts only.
+        String destination = callbackData != null && !callbackData.isBlank() ? chatId : destinationForUser(appUserId);
+        sendTradeMessageWithCallback(title, prefix + (body == null ? "" : body), callbackData, destination);
     }
 
-    private void sendTradeMessageWithCallback(String title, String body, String callbackData) {
-        if (botToken.isBlank() || chatId.isBlank()) {
+    private void sendTradeMessageWithCallback(String title, String body, String callbackData, String destination) {
+        if (botToken.isBlank() || destination.isBlank()) {
             log.debug("Telegram not configured (botToken/chatId missing) - skipping message");
             return;
         }
@@ -129,7 +138,7 @@ public class TelegramNotificationService {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON_UTF8);
             Map<String, Object> payload = new HashMap<>();
-            payload.put("chat_id", chatId);
+            payload.put("chat_id", destination);
             payload.put("text", (title == null ? "" : title) + "\n" + (body == null ? "" : body));
             payload.put("disable_web_page_preview", true);
             if (callbackData != null && !callbackData.isBlank()) {
@@ -142,7 +151,7 @@ public class TelegramNotificationService {
                 log.warn("Telegram sendMessage returned non-2xx: {}", response);
             }
         } catch (Exception e) {
-            log.warn("Failed to send Telegram action message: {}", e.getMessage());
+            log.warn("Failed to send Telegram action message: {}", e.getClass().getSimpleName());
         }
     }
 
@@ -169,7 +178,7 @@ public class TelegramNotificationService {
     /** Acknowledged delivery only; the exit control retains failures for bounded retry. */
     public boolean sendExitAttention(Long appUserId,String body) {
         try {
-            var response=telegramRequest("sendMessage",Map.of("chat_id",chatId,
+            var response=telegramRequest("sendMessage",Map.of("chat_id",destinationForUser(appUserId),
                     "text","Exit needs attention\nUserId: #"+appUserId+"\n"+body));
             return response!=null && response.optBoolean("ok");
         } catch(Exception failure) {
@@ -205,8 +214,31 @@ public class TelegramNotificationService {
         }
     }
 
+    private String destinationForUser(Long appUserId) {
+        if (appUserId == null || personalSettings == null) return chatId;
+        return personalSettings.findById(appUserId).map(org.com.sharekhan.telegram.TelegramUserSettings::getChatId)
+                .filter(id -> !id.isBlank()).orElse(chatId);
+    }
+
+    public boolean isBotConfigured() { return !botToken.isBlank(); }
+
+    /** Read-only bot metadata. Never expose token-bearing request failures to the portal. */
+    public synchronized String botUsername() {
+        if (!isBotConfigured()) return null;
+        long now = System.currentTimeMillis();
+        if (now - botUsernameCheckedAt < 300_000) return cachedBotUsername;
+        botUsernameCheckedAt = now;
+        try {
+            var response = telegramRequest("getMe", Map.of());
+            String name = response != null && response.optBoolean("ok")
+                    ? response.getJSONObject("result").optString("username", "") : "";
+            cachedBotUsername = name.matches("[A-Za-z0-9_]{5,32}") ? name : null;
+        } catch (Exception ignored) { cachedBotUsername = null; }
+        return cachedBotUsername;
+    }
+
     private org.json.JSONObject telegramRequest(String method, Map<String, Object> payload) {
-        if (botToken.isBlank() || chatId.isBlank()) return null;
+        if (botToken.isBlank()) return null;
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         ResponseEntity<String> response = restTemplate.postForEntity(

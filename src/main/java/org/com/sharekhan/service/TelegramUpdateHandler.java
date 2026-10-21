@@ -20,6 +20,9 @@ public class TelegramUpdateHandler {
     private final TelegramNotificationService telegramNotificationService;
     private final String authorizedChatId;
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private org.com.sharekhan.telegram.TelegramSettingsService telegramSettings;
+
     @org.springframework.beans.factory.annotation.Autowired
     @org.springframework.context.annotation.Lazy
     private TradeExecutionService tradeExecutionService;
@@ -65,6 +68,8 @@ public class TelegramUpdateHandler {
             log.debug("Telegram message {} has no usable text payload", message.get("message_id"));
             return;
         }
+
+        if (telegramSettings != null && telegramSettings.handleConnectionMessage(message)) return;
 
         String sender = extractSenderName(message);
         String uniqueId = buildUniqueId(update, message);

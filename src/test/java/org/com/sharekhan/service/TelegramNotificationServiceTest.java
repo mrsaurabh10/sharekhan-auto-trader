@@ -62,4 +62,33 @@ public class TelegramNotificationServiceTest {
         verify(rest,times(2)).postForEntity(anyString(),any(),eq(String.class));
     }
 
+    @Test void personalRoutingIsAccountScopedAndOperatorActionsRemainShared() {
+        var rest=mock(RestTemplate.class);
+        when(rest.postForEntity(anyString(),any(),eq(String.class))).thenReturn(ResponseEntity.ok("{\"ok\":true}"));
+        var service=new TelegramNotificationService("fake","shared",rest);
+        var rows=mock(org.com.sharekhan.telegram.TelegramUserSettingsRepository.class);
+        var row=new org.com.sharekhan.telegram.TelegramUserSettings();row.setAppUserId(4L);row.setChatId("12345");
+        when(rows.findById(4L)).thenReturn(java.util.Optional.of(row));
+        when(rows.findById(5L)).thenReturn(java.util.Optional.empty());
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"personalSettings",rows);
+        service.sendTradeMessageForUser(4L,"Filled","Your order");
+        service.sendExitAttention(4L,"Review your exit");
+        service.sendTradeMessageForUser(5L,"Filled","Other user");
+        service.sendTradeMessageForUser(4L,"Source control","Action","disable-stockbazaari:4");
+        var requests=ArgumentCaptor.forClass(org.springframework.http.HttpEntity.class);
+        verify(rest,times(4)).postForEntity(endsWith("/sendMessage"),requests.capture(),eq(String.class));
+        var destinations=requests.getAllValues().stream().map(r->((java.util.Map<?,?>)r.getBody()).get("chat_id")).toList();
+        assertEquals(java.util.List.of("12345","12345","shared","shared"),destinations);
+    }
+    @Test void personalSendFailureDoesNotLeakToSharedChat() {
+        var rest=mock(RestTemplate.class);
+        when(rest.postForEntity(anyString(),any(),eq(String.class))).thenThrow(new RuntimeException("offline"));
+        var service=new TelegramNotificationService("fake","shared",rest);
+        var rows=mock(org.com.sharekhan.telegram.TelegramUserSettingsRepository.class);
+        var row=new org.com.sharekhan.telegram.TelegramUserSettings();row.setChatId("12345");
+        when(rows.findById(4L)).thenReturn(java.util.Optional.of(row));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"personalSettings",rows);
+        assertFalse(service.sendExitAttention(4L,"Review exit"));
+        verify(rest,times(1)).postForEntity(anyString(),any(),eq(String.class));
+    }
 }

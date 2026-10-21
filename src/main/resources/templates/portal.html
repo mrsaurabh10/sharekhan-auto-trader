@@ -367,6 +367,23 @@
 <p class="section-note">Broker credentials are managed separately in Brokers. Disabling new trading does not close existing positions.</p>
 </div>
 </div>
+<div class="card section-gap" id="telegramSettings">
+<h2>Telegram notifications</h2>
+<p data-status role="status" aria-live="polite">Loading Telegram settings…</p>
+<p class="muted" data-detail>Connect your personal Telegram account to receive your trade alerts.</p>
+<form class="grid">
+<label>Telegram username<input name="username" type="text" placeholder="e.g. vaibhavhubli" autocomplete="off" maxlength="33" pattern="@?[A-Za-z][A-Za-z0-9_]{4,31}" required>
+<small>Your personal username, with or without @.</small></label>
+<div class="actions">
+<button type="submit" class="secondary">Save username</button>
+<button type="button" class="primary" data-connect>Connect Telegram</button>
+<button type="button" class="secondary" data-refresh>Refresh status</button>
+<button type="button" class="text-button" data-remove hidden>Remove personal connection</button>
+</div>
+</form>
+<p><a data-open class="button primary" target="_blank" rel="noopener noreferrer" hidden>Open Telegram →</a></p>
+<p class="section-note">Until connected, alerts continue to use the existing shared destination. Removing your connection restores that destination. Order-action buttons remain in the operator chat.</p>
+</div>
 </section>
 <footer class="section-note section-gap">AutoTrader · Trading involves risk. Review all live trading actions carefully.</footer>
 </main>
@@ -433,7 +450,8 @@
 </form>
 </dialog>
 <script src="/portal/trade-actions.js?v=20261021-exit-safety" defer></script>
-<script src="/portal/portal.js?v=20261021-mover-timing" defer>
+<script src="/portal/telegram-settings.js?v=20261021-personal-telegram" defer></script>
+<script src="/portal/portal.js?v=20261021-personal-telegram" defer>
 </script>
 </body>
 </html>

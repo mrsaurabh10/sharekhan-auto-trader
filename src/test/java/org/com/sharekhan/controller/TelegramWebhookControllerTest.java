@@ -18,4 +18,14 @@ class TelegramWebhookControllerTest {
         assertThat(secured.receiveUpdate(update, "secret").getStatusCode().value()).isEqualTo(200);
         verify(handler).handleUpdate(update);
     }
+    @Test void personalConnectionsRequireAuthenticatedWebhook() {
+        var handler=mock(TelegramUpdateHandler.class);
+        Map<String,Object> body=Map.of("message",Map.of("text","/start connect_"+"a".repeat(32)));
+        assertThat(new TelegramWebhookController(handler, "").receiveUpdate(body,null).getStatusCode().value()).isEqualTo(403);
+        var secured=new TelegramWebhookController(handler,"secret");
+        assertThat(secured.receiveUpdate(body,"wrong").getStatusCode().value()).isEqualTo(403);
+        verifyNoInteractions(handler);
+        assertThat(secured.receiveUpdate(body,"secret").getStatusCode().value()).isEqualTo(200);
+        verify(handler).handleUpdate(body);
+    }
 }

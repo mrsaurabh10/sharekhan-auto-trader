@@ -369,6 +369,7 @@
     const me=await api('/api/user/me'); const name=me.displayName || me.username;
     $('#identity').textContent=name; $('#avatar').textContent=name.slice(0,1).toUpperCase(); $('#welcome').textContent='Welcome, '+name.split(' ')[0]; $('#profileEmail').textContent=me.email || me.username;
     $('#adminLink').hidden=!me.admin;
+    window.PersonalTelegramSettings?.mount(api, me.admin);
     state.templates=await api('/api/strategies/templates');
     const sources=await api('/api/analytics/sources'); (Array.isArray(sources)?sources:[]).forEach(v=>$('#analyticsSource').append(new Option(v,v)));
     await Promise.all([loadBrokers(),loadStrategies(),loadOrders()]); renderStrategies(); view(location.hash.slice(1));

@@ -47,6 +47,12 @@ public class TelegramWebhookController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("invalid secret token");
         }
 
+        // Account linking trusts Telegram's sender identity only behind the authenticated webhook.
+        if (!isSecretEnforced() && body != null && body.get("message") instanceof Map<?, ?> message
+                && message.get("text") instanceof String text && text.contains("connect_")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("account linking requires webhook secret");
+        }
+
         // Entry buttons can mutate live orders: they must never use the legacy unauthenticated mode.
         if (!isSecretEnforced() && body != null
                 && body.get("callback_query") instanceof Map<?, ?> callback

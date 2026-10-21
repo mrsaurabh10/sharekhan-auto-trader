@@ -4,7 +4,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.server.ResponseStatusException;
 import java.util.Map;
-@RestControllerAdvice(assignableTypes = {AccountController.class, BrokerCatalogController.class, OnboardingController.class, UserController.class,
+@RestControllerAdvice(assignableTypes = {org.com.sharekhan.telegram.TelegramSettingsController.class, AccountController.class, BrokerCatalogController.class, OnboardingController.class, UserController.class,
         org.com.sharekhan.controller.TradeTriggerController.class, org.com.sharekhan.controller.StrategyController.class,
         org.com.sharekhan.controller.OrderViewController.class, org.com.sharekhan.controller.TradeAnalyticsController.class})
 public class PortalExceptionHandler {

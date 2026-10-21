@@ -75,4 +75,15 @@ class TelegramUpdateHandlerTest {
                 "data", data,
                 "message", Map.of("chat", Map.of("id", chatId))));
     }
+    @Test void connectionCommandsCannotReachTradingPipeline() {
+        var trading=mock(TradingMessageService.class);
+        var handler=new TelegramUpdateHandler(trading,mock(UserConfigService.class),mock(TelegramNotificationService.class),"shared");
+        var settings=mock(org.com.sharekhan.telegram.TelegramSettingsService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(handler,"telegramSettings",settings);
+        Map<String,Object> message=Map.of("text","/start connect_token","from",Map.of("id",123,"is_bot",false),"chat",Map.of("id",123,"type","private"));
+        org.mockito.Mockito.when(settings.handleConnectionMessage(message)).thenReturn(true);
+        handler.handleUpdate(Map.of("message",message));
+        verify(settings).handleConnectionMessage(message);
+        org.mockito.Mockito.verifyNoInteractions(trading);
+    }
 }
