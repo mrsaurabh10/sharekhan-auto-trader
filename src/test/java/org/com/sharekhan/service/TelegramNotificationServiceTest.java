@@ -91,4 +91,14 @@ public class TelegramNotificationServiceTest {
         assertFalse(service.sendExitAttention(4L,"Review exit"));
         verify(rest,times(1)).postForEntity(anyString(),any(),eq(String.class));
     }
+    @Test void recipientLookupFailureCannotBreakTradeExecutionOrFallbackToShared() {
+        var rest=mock(RestTemplate.class);
+        var service=new TelegramNotificationService("fake","shared",rest);
+        var rows=mock(org.com.sharekhan.telegram.TelegramUserSettingsRepository.class);
+        when(rows.findById(4L)).thenThrow(new RuntimeException("database unavailable"));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"personalSettings",rows);
+        assertDoesNotThrow(()->service.sendTradeMessageForUser(4L,"Filled","Your order"));
+        assertFalse(service.sendExitAttention(4L,"Review exit"));
+        verifyNoInteractions(rest);
+    }
 }

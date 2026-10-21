@@ -124,8 +124,13 @@ public class TelegramNotificationService {
         }
         // Operator buttons retain their existing shared-chat authorization and message identity.
         // Personal destinations receive informational alerts only.
-        String destination = callbackData != null && !callbackData.isBlank() ? chatId : destinationForUser(appUserId);
-        sendTradeMessageWithCallback(title, prefix + (body == null ? "" : body), callbackData, destination);
+        try {
+            String destination = callbackData != null && !callbackData.isBlank() ? chatId : destinationForUser(appUserId);
+            sendTradeMessageWithCallback(title, prefix + (body == null ? "" : body), callbackData, destination);
+        } catch (Exception failure) {
+            // A routing failure must neither change trade execution nor expose the alert in another chat.
+            log.warn("Personal Telegram routing unavailable: {}", failure.getClass().getSimpleName());
+        }
     }
 
     private void sendTradeMessageWithCallback(String title, String body, String callbackData, String destination) {
