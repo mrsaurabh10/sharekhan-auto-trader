@@ -1244,7 +1244,7 @@
                        '<td class="trade-status-cell">' + escapeHtml(String(status)) + '</td>';
         if(window.StrategyRunView) {
           tr.querySelector('.trade-date-cell').replaceChildren(window.StrategyRunView.timestamp(createdAt));
-          tr.querySelector('.trade-status-cell').replaceChildren(window.StrategyRunView.statusTag(status));
+          tr.querySelector('.trade-status-cell').replaceChildren(window.StrategyRunView.statusTag(status,r.reason));
         }
         tr.appendChild(actionCell);
 

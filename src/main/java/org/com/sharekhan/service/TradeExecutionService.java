@@ -498,6 +498,10 @@ public class TradeExecutionService {
         String mid = formatPrice(diagnostics.recommendedLimit());
         String quoteTime = diagnostics.quoteTimestamp() != null ? diagnostics.quoteTimestamp().toString() : "NA";
         String ltpStr = formatPrice(ltp);
+        String quoteAgeMillis = diagnostics.quoteTimestamp() == null ? "NA"
+                : Long.toString(java.time.Duration.between(diagnostics.quoteTimestamp(), java.time.Instant.now()).toMillis());
+        log.info("ENTRY_QUOTE_TIMING | triggerId={} | checkedAt={} | quoteTime={} | quoteAgeMs={}",
+                triggerLogId(trigger), java.time.Instant.now(), quoteTime, quoteAgeMillis);
 
         if (diagnostics.shouldPlace()) {
             log.info("📋 Entry diagnostics trade {} decision=PLACE reason={} spread={} bid={} ask={} mid={} ltp={} quoteTime={}",
@@ -6005,6 +6009,14 @@ public class TradeExecutionService {
         
         boolean useSpotForTarget = Boolean.TRUE.equals(requestEntity.getUseSpotForTarget()) 
                 || (requestEntity.getUseSpotForTarget() == null && Boolean.TRUE.equals(requestEntity.getUseSpotPrice()));
+
+        if (requestEntity.getSource() != null && (requestEntity.getSource().contains("STOCK_0925_MOVER_ATR_BREAKOUT")
+                || requestEntity.getSource().contains("FNO_0925_MOVER_ATR_BREAKOUT"))) {
+            log.info("MOVER_ENTRY_READINESS | triggerId={} | userId={} | brokerCredentialsId={} | checkedAt={} | requestCreatedAt={} | ltp={} | entry={} | useSpotForEntry={}",
+                    requestEntity.getId(), requestEntity.getAppUserId(), requestEntity.getBrokerCredentialsId(),
+                    LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")), requestEntity.getCreatedAt(),
+                    ltp, requestEntity.getEntryPrice(), useSpotForEntry);
+        }
 
         // The simulator fills immediately at the price passed to placeOrder.  It
         // must therefore retain the local "buy above" gate instead of treating a

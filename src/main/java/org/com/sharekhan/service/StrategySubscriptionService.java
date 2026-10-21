@@ -42,6 +42,9 @@ public class StrategySubscriptionService {
     private final NseMarketCalendar nseMarketCalendar;
     private final org.com.sharekhan.onboarding.StrategyEnrollmentService enrollment;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private MoverStrategyEvaluationDispatcher moverDispatcher;
+
     public StrategySubscriptionEntity start(StrategyApplyRequest request) {
         validate(request);
         String templateId = request.getTemplateId().trim().toUpperCase(Locale.ROOT);
@@ -128,9 +131,7 @@ public class StrategySubscriptionService {
             return;
         }
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
-        for (StrategySubscriptionEntity subscription : active) {
-            evaluate(subscription);
-        }
+        evaluateBatch(active);
     }
 
     @Scheduled(cron = "0 30 9,13 * * MON-FRI", zone = "Asia/Kolkata")
@@ -147,11 +148,16 @@ public class StrategySubscriptionService {
         if (!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) {
             return;
         }
-        repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
-                .filter(subscription -> Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID
-                        .equalsIgnoreCase(subscription.getTemplateId())
-                        || Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(subscription.getTemplateId()))
-                .forEach(this::evaluate);
+        evaluateBatch(repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
+                .filter(subscription -> MoverStrategyEvaluationDispatcher.supports(subscription.getTemplateId()))
+                .toList());
+    }
+
+    void evaluateBatch(List<StrategySubscriptionEntity> active) {
+        moverDispatcher.dispatch(active, this::evaluate);
+        for (StrategySubscriptionEntity subscription : active) {
+            if (!MoverStrategyEvaluationDispatcher.supports(subscription.getTemplateId())) evaluate(subscription);
+        }
     }
 
     void evaluate(StrategySubscriptionEntity subscription) {

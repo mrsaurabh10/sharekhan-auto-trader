@@ -49,7 +49,7 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
         if(endpoint==='/api/strategies/start') {
           starts.push(route.request().postDataJSON());return rejectStart?json({message:'Mock broker unavailable'},503):json({id:4,status:'ACTIVE'});
         }
-        if(endpoint==='/api/orders/requests')return json({content:[{id:99,symbol:'NIFTY',quantity:65,entryPrice:100,status:'FAILED',source:unsafeSource}],totalElements:1,number:0,totalPages:1,first:true,last:true});
+        if(endpoint==='/api/orders/requests')return json({content:[{id:99,symbol:'NIFTY',quantity:65,entryPrice:100,status:'FAILED',source:unsafeSource},{id:100,symbol:'WIPRO-WAIT',quantity:10,entryPrice:189.5,status:'REJECTED',reason:'ENTRY_NOT_READY_NO_ORDER'},{id:101,symbol:'WIPRO-REJECTED',quantity:10,entryPrice:189.5,status:'REJECTED',reason:'ENTRY_BROKER_REJECTED'}],totalElements:3,number:0,totalPages:1,first:true,last:true});
         if(endpoint==='/api/orders/executed') {
           const trades=[['AXISBANK','FNO',1240,'PE',1235.1,1241.5,1227.32,625],['POLYCAB','FNO',8100,'PE',8050.5,8088,8000.9,125],
             ['UNIONBANK','STOCK',null,null,176.64,175.76,179,5],['UNIONBANK','STOCK',null,null,176.64,175.76,178.41,3],['UNIONBANK','STOCK',null,null,176.64,175.76,177.82,3],
@@ -165,8 +165,11 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     await p.locator('[data-view=orders]').click();
     assert.deepEqual(await p.locator('#strategyRuns summary .source-tag').allTextContents(),[compactSourceLabel,unsafeSource,'Unspecified']);
     assert.equal(await p.locator('#executions .source-tag').last().textContent(),unsafeSource);
-    assert.equal(await p.locator('#orderRequests .source-tag').textContent(),unsafeSource);
+    assert.equal(await p.locator('#orderRequests .source-tag').first().textContent(),unsafeSource);
     assert.equal(await p.locator('#strategyRuns img, #executions img').count(),0);
+    assert.equal(await p.locator('#orderRequests tr').filter({hasText:'WIPRO-WAIT'}).locator('.compact-trade-status').textContent(),'Waiting for entry');
+    assert.equal(await p.locator('#orderRequests tr').filter({hasText:'WIPRO-WAIT'}).locator('.status-bad').count(),0);
+    assert.equal(await p.locator('#orderRequests tr').filter({hasText:'WIPRO-REJECTED'}).locator('.status-bad').textContent(),'Rejected');
     await p.locator('#strategyRuns details').first().locator('summary').click();
     assert.equal(await p.locator('#strategyRuns details').first().locator('td').count(),18);
     await p.locator('#strategyRuns details').first().getByRole('button',{name:'Close this instance',exact:true}).click();
@@ -176,6 +179,8 @@ const templates = [{id:'EXPIRY_LONG_STRADDLE',name:'Expiry straddle',description
     assert.deepEqual(errors,[]);
     const admin=await fixture([account(7)],true);const a=admin.page;
     await a.locator('#userTabs button').first().click();
+    assert.equal(await a.locator('#user-requests-table tr').filter({hasText:'WIPRO-WAIT'}).locator('.compact-trade-status').textContent(),'Waiting for entry');
+    assert.equal(await a.locator('#user-requests-table tr').filter({hasText:'WIPRO-REJECTED'}).locator('.status-bad').textContent(),'Rejected');
     await a.locator('#strategyTemplate').selectOption('EXPIRY_LONG_STRADDLE');
     await a.locator('#adminRunRisk [data-risk-field=profitTarget]').fill('2000');await a.locator('#strategyLots').fill('3');
     await a.locator('#strategyBroker').selectOption('7');await a.locator('#applyStrategyBtn').click();

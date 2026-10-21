@@ -80,7 +80,7 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     }
 
     @Override
-    public synchronized StrategyApplyResponse apply(StrategyApplyRequest request) {
+    public StrategyApplyResponse apply(StrategyApplyRequest request) {
         validateInvestment(request);
         LocalDateTime now = LocalDateTime.now(clock);
         String symbol = request.getSymbol() == null ? "FNO_UNIVERSE" : request.getSymbol().trim().toUpperCase(Locale.ROOT);
@@ -105,6 +105,14 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         Set<String> submitted = submittedSymbolsByRun.computeIfAbsent(
                 new RunKey(now.toLocalDate(), request.getUserId(), request.getBrokerCredentialsId(), sourceFor(request)),
                 ignored -> ConcurrentHashMap.newKeySet());
+        // Broker waits for one account must never hold the singleton strategy lock.
+        synchronized (submitted) {
+            return evaluateSelections(request, selections, submitted, now, symbol);
+        }
+    }
+
+    private StrategyApplyResponse evaluateSelections(StrategyApplyRequest request, List<Fno925Candidate> selections,
+                                                     Set<String> submitted, LocalDateTime now, String symbol) {
         List<Triggered> triggered = new ArrayList<>();
         List<String> waiting = new ArrayList<>();
         int evaluated = 0;
@@ -146,6 +154,14 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                 submitted.add(selection.symbol());
                 continue;
             }
+            if (entryQualificationService.isCycleExpired()) {
+                waiting.add(selection.symbol() + ": mover evaluation expired; waiting for a fresh cycle");
+                continue;
+            }
+            log.info("MOVER_ENTRY_CHECK | template={} | userId={} | brokerCredentialsId={} | symbol={} | signalCandleAt={} | {}",
+                    TEMPLATE_ID, request.getUserId(), request.getBrokerCredentialsId(), selection.symbol(),
+                    qualification.signal().breakoutCandle().date().atTime(qualification.signal().breakoutCandle().time()),
+                    entryQualificationService.cycleTiming());
             TriggerTradeRequestEntity trade;
             try {
                 trade = support.executeTriggeredTrade(trigger);

@@ -18,13 +18,14 @@
     tag.title='Source: '+full;tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
     tag.onfocus=()=>{tag.textContent=full;};tag.onblur=()=>{tag.textContent=sourceLabel(full);};return tag;
   }
-  function statusTag(value) {
-    const full=String(value || 'PENDING');
-    const labels={EXITED_SUCCESS:'Exited',COMPLETED:'Completed',EXECUTED:'Open',PLACED_PENDING_CONFIRMATION:'Pending',ENTRY_SUBMITTING:'Submitting',
+  function statusTag(value,reason) {
+    const noOrderWait=value==='REJECTED' && reason==='ENTRY_NOT_READY_NO_ORDER';
+    const full=noOrderWait?'WAITING_FOR_ENTRY':String(value || 'PENDING');
+    const labels={WAITING_FOR_ENTRY:'Waiting for entry',EXITED_SUCCESS:'Exited',COMPLETED:'Completed',EXECUTED:'Open',PLACED_PENDING_CONFIRMATION:'Pending',ENTRY_SUBMITTING:'Submitting',
       EXIT_ORDER_PLACED:'Exit pending',TARGET_ORDER_PLACED:'Target set',EXIT_TRIGGERED:'Closing',EXIT_FAILED:'Exit failed',REJECTED:'Rejected',CANCELLED:'Cancelled',FAILED:'Failed',TRIGGERED:'Triggered',ACTIVE:'Active'};
     const tone=/FAILED|REJECTED|CANCELLED/.test(full)?'status-bad':/EXECUTED|COMPLETED|SUCCESS|ACTIVE/.test(full)?'status-good':'status-wait';
     const tag=node('span',labels[full] || full.replaceAll('_',' '),'status-pill compact-trade-status '+tone);
-    tag.title='Status: '+full;tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
+    tag.title=noOrderWait?'Waiting for entry · no order was submitted for this attempt; entry conditions were not met.':'Status: '+full;tag.setAttribute('aria-label',tag.title);tag.tabIndex=0;
     tag.onfocus=()=>{tag.textContent=full;};tag.onblur=()=>{tag.textContent=labels[full] || full.replaceAll('_',' ');};return tag;
   }
   function timestamp(value) {

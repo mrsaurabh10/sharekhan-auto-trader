@@ -4,6 +4,8 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -23,6 +25,47 @@ public class Fno925EntryQualificationService {
     private static final int ATR_PERIOD = 75;
 
     private final StrategySupport support;
+    private final ThreadLocal<EvaluationCycle> cycleContext = new ThreadLocal<>();
+    private Clock clock = Clock.system(StrategySupport.MARKET_ZONE);
+
+    @Value("${app.strategy.mover-evaluation.max-cycle-age-ms:30000}")
+    private long maxCycleAgeMillis = 30_000L;
+
+    /** Market-only results, shared by all accounts in one scheduler pass; never contains account orders. */
+    public static final class EvaluationCycle {
+        private final String id = java.util.UUID.randomUUID().toString();
+        private final LocalDateTime evaluatedAt;
+        private final java.util.Map<String, Qualification> qualifications = new java.util.concurrent.ConcurrentHashMap<>();
+
+        public EvaluationCycle(LocalDateTime evaluatedAt) { this.evaluatedAt = evaluatedAt; }
+        public String id() { return id; }
+        public LocalDateTime evaluatedAt() { return evaluatedAt; }
+    }
+
+    public void withinCycle(EvaluationCycle cycle, Runnable work) {
+        if (cycleContext.get() != null) throw new IllegalStateException("Nested mover cycles are not supported");
+        cycleContext.set(cycle);
+        try { work.run(); } finally { cycleContext.remove(); }
+    }
+
+    /** Queued work cannot revive an old completed candle or a prior trading day. */
+    public boolean isCycleExpired() {
+        EvaluationCycle cycle = cycleContext.get();
+        if (cycle == null) return false; // Direct/manual apply retains its existing current-time evaluation.
+        LocalDateTime current = LocalDateTime.now(clock);
+        long age = Duration.between(cycle.evaluatedAt, current).toMillis();
+        return age < 0 || age > Math.max(1L, maxCycleAgeMillis)
+                || !cycle.evaluatedAt.toLocalDate().equals(current.toLocalDate())
+                || cycle.evaluatedAt.toLocalTime().toSecondOfDay() / 300
+                    != current.toLocalTime().toSecondOfDay() / 300;
+    }
+
+    public String cycleTiming() {
+        EvaluationCycle cycle = cycleContext.get();
+        return cycle == null ? "cycle=direct" : "cycle=" + cycle.id + ", signalEvaluatedAt=" + cycle.evaluatedAt
+                + ", evaluationDelayMs=" + Duration.between(cycle.evaluatedAt, LocalDateTime.now(clock)).toMillis();
+    }
+
 
     @Value("${app.strategy.fno-0925-mover.orb-volume-multiplier:0.75}")
     private double orbVolumeMultiplier;
@@ -78,7 +121,14 @@ public class Fno925EntryQualificationService {
 
     /** Mover templates require the completed signal candle to agree with the entry direction. */
     public Qualification qualifyWithDirectionalCandle(Fno925Candidate candidate, LocalDateTime now) {
-        return qualify(candidate, now, true);
+        EvaluationCycle cycle = cycleContext.get();
+        if (cycle == null) return qualify(candidate, now, true);
+        if (isCycleExpired()) return Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle");
+        String key = candidate.spot().getExchange() + ":" + candidate.spot().getScripCode()
+                + ":" + candidate.symbol() + ":" + candidate.optionType();
+        Qualification result = cycle.qualifications.computeIfAbsent(key,
+                ignored -> qualify(candidate, cycle.evaluatedAt, true));
+        return isCycleExpired() ? Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle") : result;
     }
 
     private Qualification qualify(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {

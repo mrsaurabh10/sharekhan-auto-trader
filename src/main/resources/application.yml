@@ -106,6 +106,12 @@ app:
   scheduler:
     pool-size: ${SCHEDULER_POOL_SIZE:8}
   strategy:
+    mover-evaluation:
+      # Bound account work; never let live broker placement block simulator evaluation.
+      live-pool-size: ${MOVER_EVALUATION_LIVE_POOL_SIZE:4}
+      simulator-pool-size: ${MOVER_EVALUATION_SIMULATOR_POOL_SIZE:2}
+      queue-capacity: ${MOVER_EVALUATION_QUEUE_CAPACITY:50}
+      max-cycle-age-ms: ${MOVER_EVALUATION_MAX_CYCLE_AGE_MS:30000}
     orb:
       max-signal-delay-seconds: ${ORB_MAX_SIGNAL_DELAY_SECONDS:120}
       max-spot-age-seconds: ${ORB_MAX_SPOT_AGE_SECONDS:30}
