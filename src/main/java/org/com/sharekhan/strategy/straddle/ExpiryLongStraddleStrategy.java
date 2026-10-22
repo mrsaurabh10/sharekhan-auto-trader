@@ -27,6 +27,8 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
     private final LtpCacheService prices;
     private final NseMarketCalendar calendar;
     @Autowired(required=false) private org.com.sharekhan.strategy.run.StrategyRunCoordinator runCoordinator;
+    @Autowired private SharedStraddleSignalStore sharedSignals;
+    @Autowired private SharedMarketDecisions sharedDecisions;
     private final Clock clock;
     @Autowired
     public ExpiryLongStraddleStrategy(StrategySupport support,ScriptMasterRepository scripts,
@@ -48,7 +50,7 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
     }
     public static boolean owns(String source) { return source!=null && source.startsWith(SOURCE_PREFIX); }
     public static String source(ExpiryStraddleSession session) { return SOURCE_PREFIX+session.getId(); }
-    @Override public synchronized StrategyApplyResponse apply(StrategyApplyRequest request) {
+    @Override public StrategyApplyResponse apply(StrategyApplyRequest request) {
         String symbol=ExpiryStraddleRules.symbol(request.getSymbol());
         int lots=ExpiryStraddleRules.lots(request.getLots());
         var profitTarget=ExpiryStraddleRules.profitTarget(request.getProfitTargetPerLot());
@@ -70,20 +72,38 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
                 .filter(s->Objects.equals(s.getAppUserId(),request.getUserId()) && Objects.equals(s.getBrokerCredentialsId(),request.getBrokerCredentialsId()) && symbol.equals(s.getSymbol()))
                 .anyMatch(s->{ var prior=trades.findBySource(source(s)); return prior.size()!=2 || prior.stream().anyMatch(t->!terminal(t.getStatus())); }))
             return support.waiting(metadata(),symbol,"Earlier straddle exposure is unresolved; new session blocked");
-        var spot=support.resolveSpotScript(symbol);
-        support.warmUpSpotFeed(spot);
-        Double spotPrice=prices.getLtp(spot.getScripCode());
-        LocalDateTime observed=prices.getObservedAt(spot.getScripCode());
-        if(spotPrice==null || observed==null || observed.isBefore(now.minusSeconds(30)) || observed.isAfter(now))
-            return support.waiting(metadata(),symbol,"Waiting for fresh spot price for ATM selection");
-        double strike=ExpiryStraddleRules.atm(common,spotPrice);
+        SharedStraddleSignal shared = null;
+        double strike;
+        if (sharedSignals != null) {
+            String signalId = UUID.nameUUIDFromBytes(("STRADDLE_V1:"+now.toLocalDate()+":"+symbol+":"+slot.get().id())
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+            try {
+                shared = sharedSignals.loadOrCreate(signalId, () -> prepareSignal(signalId, symbol, expiry, common, slot.get(), now));
+            } catch (SignalNotReady waiting) { return support.waiting(metadata(),symbol,waiting.getMessage()); }
+            if(!now.toLocalDate().equals(shared.getTradingDay()) || !symbol.equals(shared.getSymbol())
+                    || !slot.get().id().equals(shared.getSlot()) || !expiry.equals(shared.getExpiry()))
+                throw new IllegalStateException("Shared straddle signal does not match this date/symbol/session");
+            if(sharedDecisions != null) sharedDecisions.recordSignal(shared.getId());
+            strike = shared.getStrike();
+        } else {
+            var spot=support.resolveSpotScript(symbol);
+            support.warmUpSpotFeed(spot);
+            Double spotPrice=prices.getLtp(spot.getScripCode());
+            LocalDateTime observed=prices.getObservedAt(spot.getScripCode());
+            if(spotPrice==null || observed==null || observed.isBefore(now.minusSeconds(30)) || observed.isAfter(now))
+                return support.waiting(metadata(),symbol,"Waiting for fresh spot price for ATM selection");
+            strike=ExpiryStraddleRules.atm(common,spotPrice);
+        }
         var session=ExpiryStraddleSession.builder().id(id).appUserId(request.getUserId())
                 .brokerCredentialsId(request.getBrokerCredentialsId()).symbol(symbol).tradingDay(now.toLocalDate())
                 .slot(slot.get().id()).exitAt(now.toLocalDate().atTime(slot.get().exit())).strike(strike).lots(lots).profitTargetPerLot(profitTarget).claimedAt(now).build();
+        if(shared != null) session.setSharedSignalId(shared.getId());
         List<TriggerRequest> legs=new ArrayList<>();
         Integer lotSize=null;
         for(String side:List.of("CE","PE")) {
-            var contract=scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,strike,side,expiry).orElseThrow();
+            var contract = shared == null
+                    ? scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,strike,side,expiry).orElseThrow()
+                    : frozenContract(shared, side);
             if(contract.getLotSize()==null || contract.getLotSize()<1 || (lotSize!=null && !lotSize.equals(contract.getLotSize())))
                 throw new IllegalArgumentException("Both contracts must have matching valid lot sizes");
             lotSize=contract.getLotSize();
@@ -100,6 +120,8 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
         session.setExpectedQuantity((long)lots * lotSize);
         if(!slot.get().entryWindow(LocalDateTime.now(clock).toLocalTime()) || !now.toLocalDate().equals(LocalDate.now(clock)))
             return support.waiting(metadata(),symbol,"Entry minute elapsed during quote preparation; session skipped");
+        if(sharedDecisions!=null && !sharedDecisions.executionFresh())
+            return support.waiting(metadata(),symbol,"Shared decision cycle elapsed during premium preparation; waiting for the next evaluation");
         if(runCoordinator!=null) session.setStrategyRunId(runCoordinator.ensureCurrentRun());
         if(!store.claim(session)) return support.waiting(metadata(),symbol,"This expiry session is already claimed");
         TriggerTradeRequestEntity first=null;
@@ -122,6 +144,33 @@ public class ExpiryLongStraddleStrategy implements StrategyEvaluator {
         return StrategyApplyResponse.builder().status(session.isAbortRequested()?"error":"triggered")
                 .message(session.getMessage()).templateId(metadata().id()).symbol(symbol).direction("CE+PE").tradeRequest(first).build();
     }
+    private SharedStraddleSignal prepareSignal(String id,String symbol,String expiry,Set<Double> common,
+                                                ExpiryStraddleRules.Session slot,LocalDateTime now) {
+        var spot=support.resolveSpotScript(symbol); support.warmUpSpotFeed(spot);
+        Double price=prices.getLtp(spot.getScripCode()); var observed=prices.getObservedAt(spot.getScripCode());
+        if(price==null || !Double.isFinite(price) || price<=0 || observed==null
+                || observed.isBefore(now.minusSeconds(30)) || observed.isAfter(now))
+            throw new SignalNotReady("Waiting for fresh spot price for shared ATM selection");
+        double strike=ExpiryStraddleRules.atm(common,price);
+        var ce=scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,strike,"CE",expiry).orElseThrow();
+        var pe=scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,strike,"PE",expiry).orElseThrow();
+        if(ce.getLotSize()==null || ce.getLotSize()<1 || !ce.getLotSize().equals(pe.getLotSize()))
+            throw new IllegalArgumentException("Both shared contracts must have matching valid lot sizes");
+        return SharedStraddleSignal.builder().id(id).tradingDay(now.toLocalDate()).symbol(symbol).slot(slot.id())
+                .expiry(expiry).strike(strike).ceScripCode(ce.getScripCode()).peScripCode(pe.getScripCode())
+                .lotSize(ce.getLotSize()).spotPrice(price).spotObservedAt(observed).createdAt(now).build();
+    }
+    private ScriptMasterEntity frozenContract(SharedStraddleSignal signal,String side) {
+        var contract=scripts.findByScripCode("CE".equals(side)?signal.getCeScripCode():signal.getPeScripCode());
+        if(contract==null || !signal.getSymbol().equalsIgnoreCase(contract.getTradingSymbol())
+                || !signal.getExpiry().equals(contract.getExpiry()) || !side.equals(contract.getOptionType())
+                || contract.getStrikePrice()==null || Double.compare(signal.getStrike(),contract.getStrikePrice())!=0
+                || !Integer.valueOf(signal.getLotSize()).equals(contract.getLotSize()))
+            throw new IllegalStateException("Shared straddle contract changed or is unavailable; no replacement selected");
+        return contract;
+    }
+    private static class SignalNotReady extends RuntimeException { SignalNotReady(String message){super(message);} }
+
     /** Cache-only checks; the persisted exit decision survives restarts and price reversals. */
     @Scheduled(fixedDelayString="${app.strategy.straddle-profit-poll-ms:1000}")
     public synchronized void monitorProfitTargets() {

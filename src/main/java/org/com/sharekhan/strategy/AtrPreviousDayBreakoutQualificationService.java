@@ -37,6 +37,8 @@ public class AtrPreviousDayBreakoutQualificationService {
     private static final double ENTRY_DISTANCE_COMPARISON_EPSILON = 1e-9d;
     private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private SharedMarketDecisions sharedDecisions;
     private final StrategySupport support;
     private final MStockHistoricalService mStockHistoricalService;
     private final UserConfigService userConfigService;
@@ -45,6 +47,15 @@ public class AtrPreviousDayBreakoutQualificationService {
                                                                    String optionType,
                                                                    Long appUserId,
                                                                    LocalDateTime now) {
+        double offset = entryOffsetAtr(appUserId), minimum = minimumEntryDistanceAtr(appUserId);
+        return sharedDecisions == null ? qualifyMarket(spot, optionType, offset, minimum, now)
+                : sharedDecisions.share("ATR_PRIOR_DAY", spot.getTradingSymbol(), spot.getScripCode() + ":"
+                        + optionType + ":" + offset + ":" + minimum, now,
+                        () -> qualifyMarket(spot, optionType, offset, minimum, now));
+    }
+
+    private Fno925EntryQualificationService.Qualification qualifyMarket(ScriptMasterEntity spot, String optionType,
+                                                                       double offset, double minimum, LocalDateTime now) {
         List<StrategyCandle> fiveMinute = loadMStockFiveMinuteChart(spot, now);
         double atr = atr(fiveMinute);
         if (atr <= 0d) {
@@ -64,9 +75,9 @@ public class AtrPreviousDayBreakoutQualificationService {
         double pdl = previousDayCandles.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
         // The completed final MStock candle is authoritative, including a volatile closing auction.
         double referenceClose = previousDayCandles.get(previousDayCandles.size() - 1).close();
-        double offsetMultiplier = entryOffsetAtr(appUserId);
+        double offsetMultiplier = offset;
         double entryOffset = offsetMultiplier * atr;
-        double minimumDistanceAtr = minimumEntryDistanceAtr(appUserId);
+        double minimumDistanceAtr = minimum;
         List<SwingPoint> swingHighs = withReferenceLevel(meaningfulSwingHighs(previousDayCandles, atr), pdh);
         List<SwingPoint> swingLows = withReferenceLevel(meaningfulSwingLows(previousDayCandles, atr), pdl);
         Optional<SwingPoint> selectedSwing = selectTradableSwing(
@@ -121,6 +132,15 @@ public class AtrPreviousDayBreakoutQualificationService {
                                                                           String optionType,
                                                                           TriggeredTradeSetupEntity priorTrade,
                                                                           LocalDateTime now) {
+        if (priorTrade == null) return Fno925EntryQualificationService.Qualification.waiting("prior ATR entry is not terminal");
+        return sharedDecisions == null ? qualifyReentryMarket(spot, optionType, priorTrade, now)
+                : sharedDecisions.share("ATR_REENTRY", spot.getTradingSymbol(), spot.getScripCode() + ":" + optionType
+                        + ":" + priorTrade.getExitedAt() + ":" + priorTrade.getEntryPrice(), now,
+                        () -> qualifyReentryMarket(spot, optionType, priorTrade, now));
+    }
+
+    private Fno925EntryQualificationService.Qualification qualifyReentryMarket(ScriptMasterEntity spot, String optionType,
+                                                                              TriggeredTradeSetupEntity priorTrade, LocalDateTime now) {
         if (priorTrade == null || priorTrade.getExitedAt() == null || priorTrade.getEntryPrice() == null) {
             return Fno925EntryQualificationService.Qualification.waiting("prior ATR entry is not terminal");
         }

@@ -24,6 +24,8 @@ public class Fno925EntryQualificationService {
     private static final LocalTime DEFAULT_RECLAIM_CUTOFF = LocalTime.of(14, 30);
     private static final int ATR_PERIOD = 75;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private SharedMarketDecisions sharedDecisions;
     private final StrategySupport support;
     private final ThreadLocal<EvaluationCycle> cycleContext = new ThreadLocal<>();
     private Clock clock = Clock.system(StrategySupport.MARKET_ZONE);
@@ -132,6 +134,13 @@ public class Fno925EntryQualificationService {
     }
 
     private Qualification qualify(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {
+        return sharedDecisions == null ? qualifyMarket(candidate, now, requireDirectionalCandle)
+                : sharedDecisions.share("FNO_BREAKOUT", candidate.symbol(), candidate.spot().getExchange() + ":"
+                        + candidate.spot().getScripCode() + ":" + candidate.optionType() + ":" + requireDirectionalCandle,
+                        now, () -> qualifyMarket(candidate, now, requireDirectionalCandle));
+    }
+
+    private Qualification qualifyMarket(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {
         CandleLoad load = support.loadCandlesWithHistoricalFallback(candidate.spot(), ATR_PERIOD + 1);
         List<StrategyCandle> allCandles = load.candles().stream()
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))

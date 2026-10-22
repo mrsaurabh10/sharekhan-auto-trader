@@ -15,6 +15,8 @@ import java.util.Locale;
 
 abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator {
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private SharedMarketDecisions sharedDecisions;
     protected final StrategySupport support;
     private final IndicatorService indicatorService;
     private final StrategyMetadata metadata;
@@ -48,7 +50,10 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
         ScriptMasterEntity spotScript = support.resolveSpotScript(symbol);
         LocalDate today = now.toLocalDate();
         int requiredCandles = Math.max(50, indicatorService.minimumCandles());
-        CandleLoad candleLoad = support.loadCompletedIndicatorCandles(spotScript, requiredCandles, now);
+        CandleLoad candleLoad = sharedDecisions == null ? support.loadCompletedIndicatorCandles(spotScript, requiredCandles, now)
+                : sharedDecisions.share("SUPER_CANDLES", symbol, spotScript.getScripCode() + ":" + requiredCandles, now,
+                        () -> { var load = support.loadCompletedIndicatorCandles(spotScript, requiredCandles, now);
+                            return new CandleLoad(List.copyOf(load.candles()), load.hasVolume(), load.reason()); });
         List<StrategyCandle> completedCandles = candleLoad.candles().stream()
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
                 .filter(c -> isCompleted(c, today, now))
@@ -76,9 +81,14 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
                     + latest.time() + ". Cached history is available, but today's feed has not advanced.");
         }
 
-        IndicatorSnapshot indicator = indicatorService.computeSnapshot(completedCandles);
+        IndicatorSnapshot indicator = sharedDecisions == null ? indicatorService.computeSnapshot(completedCandles)
+                : sharedDecisions.share("SUPER_INDICATORS", symbol, "INDICATORS_V1", now,
+                        () -> indicatorService.computeSnapshot(completedCandles));
         StrategyCandle signal = indicator.candle();
-        SupertrendSignalRules.Result signalResult = rules.evaluate(support.normalizeSymbolKey(symbol), metadata.optionType(), indicator);
+        SupertrendSignalRules.Result signalResult = sharedDecisions == null
+                ? rules.evaluate(support.normalizeSymbolKey(symbol), metadata.optionType(), indicator)
+                : sharedDecisions.share(metadata.id(), symbol, "SUPER_RULES_V1", now,
+                        () -> rules.evaluate(support.normalizeSymbolKey(symbol), metadata.optionType(), indicator));
         diagnostics.record(request, metadata, symbol, indicator, signalResult);
         if (!signalResult.passed()) {
             return StrategyApplyResponse.builder()

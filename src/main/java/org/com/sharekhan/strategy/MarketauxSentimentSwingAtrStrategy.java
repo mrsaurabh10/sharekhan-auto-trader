@@ -44,6 +44,8 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
             "For F&O stocks with a direct corporate-catalyst headline and Marketaux score at least +/-0.30, confirms a post-news five-minute swing break with 1.5x relative volume. A breakout buys ATM CE; a breakdown buys ATM PE. Spot stop is 2 ATR and the sole spot target is 3 ATR.",
             "AUTO");
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private SharedMarketDecisions sharedDecisions;
     private final MarketauxEntitySentimentRepository sentimentRepository;
     private final StrategySupport support;
     private final MarketauxNewsSwingQualificationService qualificationService;
@@ -136,6 +138,11 @@ public class MarketauxSentimentSwingAtrStrategy implements StrategyEvaluator {
     }
 
     private List<Candidate> candidatesFor(LocalDateTime now) {
+        return sharedDecisions == null ? marketCandidates(now)
+                : sharedDecisions.share(TEMPLATE_ID, "FNO_UNIVERSE", "NEWS_CANDIDATES_V1", now,
+                        () -> List.copyOf(marketCandidates(now)));
+    }
+    private List<Candidate> marketCandidates(LocalDateTime now) {
         Map<String, Candidate> strongestBySymbol = new LinkedHashMap<>();
         for (MarketauxEntitySentimentEntity row : sentimentRepository.findTop500ByTradingDateOrderByCollectedAtDesc(now.toLocalDate())) {
             if (!eligible(row, now)) continue;

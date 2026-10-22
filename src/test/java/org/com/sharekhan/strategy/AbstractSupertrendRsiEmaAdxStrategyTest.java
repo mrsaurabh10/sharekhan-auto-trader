@@ -69,6 +69,29 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
     }
 
     @Test
+    void subscribersShareIndicatorsAndDecisionButRetainTheirOwnOrdersAndLots() {
+        var now=LocalDateTime.of(2026,10,5,9,30);
+        var candles=rollingCandles(now);var latest=candles.get(49);
+        var shared=new SharedMarketDecisions(java.time.Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        org.springframework.test.util.ReflectionTestUtils.setField(strategy,"sharedDecisions",shared);
+        when(support.resolveSpotScript("NIFTY")).thenReturn(spotScript("NIFTY"));
+        when(support.loadCompletedIndicatorCandles(any(),anyInt(),any())).thenReturn(new CandleLoad(candles,true,null));
+        when(indicatorService.minimumCandles()).thenReturn(50);
+        when(indicatorService.computeSnapshot(anyList())).thenReturn(new IndicatorSnapshot(latest,190,60,59,195,25,30,15));
+        when(support.roundPrice(org.mockito.ArgumentMatchers.anyDouble())).thenAnswer(call->call.getArgument(0));
+        var a=request("NIFTY");a.setUserId(1L);a.setBrokerCredentialsId(10L);a.setLots(1);
+        var b=request("NIFTY");b.setUserId(2L);b.setBrokerCredentialsId(20L);b.setLots(3);
+        assertThat(strategy.apply(a,now).getStatus()).isEqualTo("triggered");
+        assertThat(strategy.apply(b,now).getStatus()).isEqualTo("triggered");
+        verify(indicatorService).computeSnapshot(anyList());
+        verify(support).loadCompletedIndicatorCandles(any(),anyInt(),any());
+        var orders=ArgumentCaptor.forClass(org.com.sharekhan.dto.TriggerRequest.class);
+        org.mockito.Mockito.verify(support,org.mockito.Mockito.times(2)).executeTriggeredTrade(orders.capture());
+        assertThat(orders.getAllValues()).extracting(org.com.sharekhan.dto.TriggerRequest::getUserId).containsExactly(1L,2L);
+        assertThat(orders.getAllValues()).extracting(org.com.sharekhan.dto.TriggerRequest::getLots).containsExactly(1,3);
+    }
+
+    @Test
     void eligibleMorningSignalExecutesWithPreviousSessionHistory() {
         LocalDateTime now = LocalDateTime.of(2026, 10, 5, 9, 30);
         List<StrategyCandle> candles = rollingCandles(now);

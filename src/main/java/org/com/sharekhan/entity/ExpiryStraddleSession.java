@@ -9,6 +9,7 @@ import java.time.*;
 @Table(name="expiry_straddle_sessions",indexes=@Index(name="idx_expiry_straddle_day",columnList="trading_day"))
 @Getter @Setter @Builder @NoArgsConstructor @AllArgsConstructor
 public class ExpiryStraddleSession {
+    @Column(length=64) private String sharedSignalId;
     @Id @Column(length=120) private String id;
     @Column(nullable=false) private Long appUserId;
     @Column(nullable=false) private Long brokerCredentialsId;

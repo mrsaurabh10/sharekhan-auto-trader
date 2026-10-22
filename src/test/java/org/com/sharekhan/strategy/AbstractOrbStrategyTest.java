@@ -29,6 +29,20 @@ class AbstractOrbStrategyTest {
         when(prices.getLtp(20000)).thenReturn(103d);
         when(prices.getObservedAt(20000)).thenReturn(day.atTime(9,35,30));
     }
+    @Test void oneOrbDecisionIsReusedWithoutSharingSubscriberRequests() {
+        prepare();var at=day.atTime(9,35,30);
+        var shared=new SharedMarketDecisions(Clock.fixed(at.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        org.springframework.test.util.ReflectionTestUtils.setField(strategy,"sharedDecisions",shared);
+        request.setLots(1);assertThat(strategy.apply(request,at).getStatus()).isEqualTo("triggered");
+        var other=new StrategyApplyRequest();other.setSymbol("NIFTY");other.setUserId(3L);other.setBrokerCredentialsId(4L);other.setLots(3);
+        assertThat(strategy.apply(other,at).getStatus()).isEqualTo("triggered");
+        verify(support).loadCandles(any());
+        var orders=org.mockito.ArgumentCaptor.forClass(TriggerRequest.class);
+        verify(support,times(2)).executeTriggeredTrade(orders.capture());
+        assertThat(orders.getAllValues()).extracting(TriggerRequest::getUserId).containsExactly(1L,3L);
+        assertThat(orders.getAllValues()).extracting(TriggerRequest::getQuantity).containsExactly(1,3);
+        assertThat(orders.getAllValues().get(0)).isNotSameAs(orders.getAllValues().get(1));
+    }
     @Test void oldBreakoutCannotBeReplayedLater() {
         prepare();
         assertThat(strategy.apply(request,day.atTime(10,0)).getMessage()).contains("No fresh ORB");

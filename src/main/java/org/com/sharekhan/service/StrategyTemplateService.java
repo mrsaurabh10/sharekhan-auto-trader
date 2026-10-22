@@ -18,11 +18,16 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+@lombok.extern.slf4j.Slf4j
 @Service
 public class StrategyTemplateService {
 
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private org.com.sharekhan.strategy.run.StrategyRunCoordinator runCoordinator;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.strategy.SharedMarketDecisions sharedDecisions;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private TradeAuditService tradeAudit;
     private final Map<String, StrategyEvaluator> evaluators;
 
     public StrategyTemplateService(List<StrategyEvaluator> evaluators) {
@@ -61,7 +66,23 @@ public class StrategyTemplateService {
             throw new IllegalArgumentException("Unknown strategy template: " + request.getTemplateId());
         }
         request.setRiskSettings(org.com.sharekhan.strategy.run.StrategyRiskSettings.validate(request.getRiskSettings(),request.getLots()));
-        return runCoordinator==null?evaluator.apply(request):runCoordinator.evaluate(request,()->evaluator.apply(request));
+        java.util.function.Supplier<StrategyApplyResponse> work = () -> runCoordinator==null
+                ? evaluator.apply(request) : runCoordinator.evaluate(request,()->evaluator.apply(request));
+        var response = sharedDecisions == null ? work.get() : sharedDecisions.evaluate(work);
+        if (response != null && response.getSharedSignalIds() != null && !response.getSharedSignalIds().isEmpty())
+            log.info("STRATEGY_SHARED_SIGNALS | subscriptionId={} | userId={} | brokerCredentialsId={} | template={} | symbol={} | signalIds={}",
+                    request.getSubscriptionId(), request.getUserId(), request.getBrokerCredentialsId(), request.getTemplateId(),
+                    request.getSymbol(), response.getSharedSignalIds());
+        if (tradeAudit != null && response != null && response.getTradeRequest() != null
+                && response.getSharedSignalIds() != null && !response.getSharedSignalIds().isEmpty())
+            tradeAudit.record(org.com.sharekhan.entity.TradeAuditEventEntity.builder()
+                    .occurredAt(java.time.LocalDateTime.now(org.com.sharekhan.strategy.StrategySupport.MARKET_ZONE))
+                    .appUserId(request.getUserId()).triggerRequestId(response.getTradeRequest().getId())
+                    .strategyId(request.getTemplateId()).symbol(response.getSymbol()).source(response.getTradeRequest().getSource())
+                    .strategyRunId(response.getTradeRequest().getStrategyRunId())
+                    .eventType("SHARED_STRATEGY_DECISION").outcome(response.getStatus() == null ? "CREATED" : response.getStatus().toUpperCase(Locale.ROOT))
+                    .reason("COMMON_MARKET_SIGNAL").details("sharedSignalIds=" + response.getSharedSignalIds()).build());
+        return response;
     }
 
     private void validate(StrategyApplyRequest request) {

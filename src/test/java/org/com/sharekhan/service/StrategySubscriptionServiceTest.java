@@ -130,7 +130,7 @@ class StrategySubscriptionServiceTest {
     }
 
     @org.junit.jupiter.api.Test
-    void schedulerDispatchesMoversBeforeAnySynchronousStrategyWork() {
+    void schedulerDispatchesEveryStrategyWithoutSynchronousAccountExecution() {
         var repo=mock(StrategySubscriptionRepository.class);
         var evaluator=mock(StrategyTemplateService.class);
         var dispatcher=mock(MoverStrategyEvaluationDispatcher.class);
@@ -143,10 +143,8 @@ class StrategySubscriptionServiceTest {
         when(evaluator.apply(any())).thenReturn(StrategyApplyResponse.builder().status("waiting").message("wait").build());
         var batch=List.of(other,mover);
         service.evaluateBatch(batch);
-        var order=inOrder(dispatcher,evaluator);
-        order.verify(dispatcher).dispatch(eq(batch),any());
-        order.verify(evaluator).apply(argThat(r -> "ST_RSI_EMA_ADX_CE".equals(r.getTemplateId())));
-        verify(evaluator,never()).apply(argThat(r -> "STOCK_0925_MOVER_ATR_BREAKOUT".equals(r.getTemplateId())));
+        verify(dispatcher).dispatchAll(eq(batch),any());
+        verify(evaluator,never()).apply(any());
     }
 
     private org.com.sharekhan.onboarding.StrategyEnrollmentService enrollment(StrategySubscriptionRepository repo) {

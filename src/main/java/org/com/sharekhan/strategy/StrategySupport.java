@@ -69,6 +69,7 @@ public class StrategySupport {
     private TriggeredTradeSetupRepository triggeredTradeSetupRepository;
     @Autowired(required = false)
     private TradeAuditService tradeAuditService;
+    @Autowired private SharedMarketDecisions sharedDecisions;
     private final ConcurrentHashMap<FnoWarmupKey, FnoOptionContract> warmedFnoOptions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, LocalDateTime> indicatorHistoryAttempts = new ConcurrentHashMap<>();
 
@@ -351,6 +352,14 @@ public class StrategySupport {
                                                       String symbol,
                                                       String currentExpiry,
                                                       double currentStrike) {
+        return sharedDecisions == null ? resolveMarketContract(request, metadata, symbol, currentExpiry, currentStrike)
+                : sharedDecisions.share(metadata.id() + ":CONTRACT", symbol,
+                        metadata.optionType() + ":" + currentExpiry + ":" + currentStrike,
+                        LocalDateTime.now(MARKET_ZONE), () -> resolveMarketContract(request, metadata, symbol, currentExpiry, currentStrike));
+    }
+
+    private FnoOptionContract resolveMarketContract(StrategyApplyRequest request, StrategyMetadata metadata,
+                                                    String symbol, String currentExpiry, double currentStrike) {
         FnoOptionContract current = new FnoOptionContract(currentExpiry, currentStrike);
         FnoOptionContract warmed = warmedFnoOptions.get(fnoWarmupKey(request, metadata, symbol));
         if (warmed == null || warmed.matches(current)) {
@@ -368,8 +377,6 @@ public class StrategySupport {
 
     private FnoWarmupKey fnoWarmupKey(StrategyApplyRequest request, StrategyMetadata metadata, String symbol) {
         return new FnoWarmupKey(LocalDate.now(MARKET_ZONE),
-                request != null ? request.getUserId() : null,
-                request != null ? request.getBrokerCredentialsId() : null,
                 metadata != null ? metadata.id() : null,
                 symbol != null ? symbol.trim().toUpperCase(Locale.ROOT) : null);
     }
@@ -390,8 +397,7 @@ public class StrategySupport {
         }
     }
 
-    private record FnoWarmupKey(LocalDate day, Long userId, Long brokerCredentialsId,
-                                String strategyId, String symbol) { }
+    private record FnoWarmupKey(LocalDate day, String strategyId, String symbol) { }
 
     public TriggerTradeRequestEntity findExisting(TriggerRequest trigger) {
         if (trigger.getUserId() == null) {
@@ -533,6 +539,11 @@ public class StrategySupport {
     }
 
     public String nearestExpiry(String symbol, String optionType) {
+        return sharedDecisions == null ? nearestMarketExpiry(symbol, optionType)
+                : sharedDecisions.share("NEAREST_EXPIRY", symbol, optionType, LocalDateTime.now(MARKET_ZONE),
+                        () -> nearestMarketExpiry(symbol, optionType));
+    }
+    private String nearestMarketExpiry(String symbol, String optionType) {
         LocalDateTime now = LocalDateTime.now(MARKET_ZONE);
         LocalTime expiryCutoff = LocalTime.of(15, 30);
         return scriptMasterRepository.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol, optionType)
@@ -553,7 +564,9 @@ public class StrategySupport {
      * expiry, which avoids taking a new position into expiry-week decay.
      */
     public String preferredFnoExpiry(String symbol, String optionType) {
-        return preferredFnoExpiry(symbol, optionType, LocalDate.now(MARKET_ZONE));
+        return sharedDecisions == null ? preferredFnoExpiry(symbol, optionType, LocalDate.now(MARKET_ZONE))
+                : sharedDecisions.share("PREFERRED_EXPIRY", symbol, optionType, LocalDateTime.now(MARKET_ZONE),
+                        () -> preferredFnoExpiry(symbol, optionType, LocalDate.now(MARKET_ZONE)));
     }
 
     String preferredFnoExpiry(String symbol, String optionType, LocalDate tradeDate) {
@@ -571,6 +584,11 @@ public class StrategySupport {
     }
 
     public double nearestStrike(String symbol, String optionType, String expiry, double referencePrice) {
+        return sharedDecisions == null ? nearestMarketStrike(symbol, optionType, expiry, referencePrice)
+                : sharedDecisions.share("NEAREST_STRIKE", symbol, optionType + ":" + expiry + ":" + referencePrice,
+                        LocalDateTime.now(MARKET_ZONE), () -> nearestMarketStrike(symbol, optionType, expiry, referencePrice));
+    }
+    private double nearestMarketStrike(String symbol, String optionType, String expiry, double referencePrice) {
         return scriptMasterRepository.findStrikePricesByTradingSymbolAndOptionTypeAndExpiry(symbol, optionType, expiry)
                 .stream()
                 .filter(Objects::nonNull)

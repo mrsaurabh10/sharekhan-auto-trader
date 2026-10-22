@@ -14,6 +14,8 @@ public class MarketauxNewsSwingQualificationService {
     private static final int ATR_PERIOD = 75;
     private static final int RELATIVE_VOLUME_LOOKBACK = 5;
     private static final double RELATIVE_VOLUME_MULTIPLIER = 1.5d;
+    @org.springframework.beans.factory.annotation.Autowired
+    private SharedMarketDecisions sharedDecisions;
     private final StrategySupport support;
 
     public MarketauxNewsSwingQualificationService(StrategySupport support) {
@@ -22,6 +24,13 @@ public class MarketauxNewsSwingQualificationService {
 
     public Fno925EntryQualificationService.Qualification qualify(ScriptMasterEntity spot, String optionType,
                                                                    LocalDateTime newsObservedAt, LocalDateTime now) {
+        return sharedDecisions == null ? qualifyMarket(spot, optionType, newsObservedAt, now)
+                : sharedDecisions.share("NEWS_SWING", spot.getTradingSymbol(), spot.getScripCode() + ":" + optionType
+                        + ":" + newsObservedAt, now, () -> qualifyMarket(spot, optionType, newsObservedAt, now));
+    }
+
+    private Fno925EntryQualificationService.Qualification qualifyMarket(ScriptMasterEntity spot, String optionType,
+                                                                       LocalDateTime newsObservedAt, LocalDateTime now) {
         if (newsObservedAt == null) return Fno925EntryQualificationService.Qualification.waiting("news observation time is unavailable");
         List<StrategyCandle> all = support.loadCandlesWithHistoricalFallback(spot, ATR_PERIOD + 1).candles().stream()
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time)).toList();

@@ -138,9 +138,8 @@ public class StrategySubscriptionService {
     @Scheduled(cron = "0 30 9,13 * * MON-FRI", zone = "Asia/Kolkata")
     public void enterExpiryStraddleSessions() {
         if (!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) return;
-        repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
-                .filter(s -> org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(s.getTemplateId()))
-                .forEach(this::evaluate);
+        evaluateBatch(repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
+                .filter(s -> org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(s.getTemplateId())).toList());
     }
 
     /** The mover universe must be frozen at the stated market time, not at the next polling tick. */
@@ -155,10 +154,7 @@ public class StrategySubscriptionService {
     }
 
     void evaluateBatch(List<StrategySubscriptionEntity> active) {
-        moverDispatcher.dispatch(active, this::evaluate);
-        for (StrategySubscriptionEntity subscription : active) {
-            if (!MoverStrategyEvaluationDispatcher.supports(subscription.getTemplateId())) evaluate(subscription);
-        }
+        moverDispatcher.dispatchAll(active, this::evaluate);
     }
 
     void evaluate(StrategySubscriptionEntity subscription) {

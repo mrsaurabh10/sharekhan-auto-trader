@@ -7,6 +7,7 @@ import org.com.sharekhan.entity.TriggerTradeRequestEntity;
 @Data
 @Builder
 public class StrategyApplyResponse {
+    private java.util.List<String> sharedSignalIds;
     private String status;
     private String message;
     private String templateId;

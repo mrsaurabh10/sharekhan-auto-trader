@@ -78,6 +78,31 @@ class AtrPreviousDayBreakoutQualificationServiceTest {
         assertThat(qualification.signal().entryPrice()).isEqualTo(102.35d);
     }
 
+    @Test
+    void equalEffectiveAccountSettingsShareOneCalculationAndDifferentThresholdsDoNot() {
+        StrategySupport support = mock(StrategySupport.class);
+        MStockHistoricalService historical = mock(MStockHistoricalService.class);
+        UserConfigService config = mock(UserConfigService.class);
+        var service = new AtrPreviousDayBreakoutQualificationService(support,historical,config);
+        var now=LocalDateTime.of(2026,8,13,20,25);
+        var engine=new SharedMarketDecisions(java.time.Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"sharedDecisions",engine);
+        var spot=ScriptMasterEntity.builder().tradingSymbol("NTPC").scripCode(11630).build();
+        when(support.loadCandles(spot,"5minute")).thenReturn(new CandleLoad(List.of(),false,"closed"));
+        when(support.resolveMStockHistoricalIdentity(spot)).thenReturn(java.util.Optional.of(
+                new StrategySupport.MStockHistoricalIdentity("NSE",11630L,"NSE:NTPC-EQ")));
+        when(support.roundPrice(anyDouble())).thenAnswer(call -> Math.round((double)call.getArgument(0)*100)/100d);
+        when(historical.getHistoricalCandlesByToken(eq("NSE"),eq(11630L),eq("5minute"),any(String.class),eq("2026-08-13")))
+                .thenReturn(MStockHistoricalService.HistoricalResponse.builder().candles(closeAtPdhCandles(now.toLocalDate())).build());
+        var a=service.qualify(spot,"CE",1L,now);var b=service.qualify(spot,"CE",2L,now);
+        assertThat(a).isSameAs(b); assertThat(a.qualified()).isTrue();
+        org.mockito.Mockito.verify(support).loadCandles(spot,"5minute");
+        when(config.getConfig(2L,"fno_atr_previous_day_min_entry_distance_atr",null)).thenReturn("0.5");
+        var changed=service.qualify(spot,"CE",2L,now);
+        assertThat(changed).isNotSameAs(a);assertThat(changed.signal().entryPrice()).isNotEqualTo(a.signal().entryPrice());
+        org.mockito.Mockito.verify(support,org.mockito.Mockito.times(2)).loadCandles(spot,"5minute");
+    }
+
     private List<MStockHistoricalService.HistoricalCandle> fridayCandles(LocalDate friday) {
         return java.util.stream.IntStream.range(0, 76)
                 .mapToObj(index -> {

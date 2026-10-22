@@ -341,6 +341,11 @@ public class TradeExecutionService {
         return Duration.ofMillis(staleMs);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.strategy.SharedMarketDecisions sharedDecisions;
+
+    private boolean sharedDecisionExecutable() { return sharedDecisions == null || sharedDecisions.executionFresh(); }
+
     private Double resolveEntryReferencePrice(Integer scripCode, String context) {
         return resolveEntryReferencePrice(scripCode, context, () -> true);
     }
@@ -1003,6 +1008,7 @@ public class TradeExecutionService {
             TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now(), ctx);
             TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", limitPrice, null);
 
+            if (!sharedDecisionExecutable()) throw new InvalidTradeRequestException("Shared strategy signal expired before order submission; no order submitted");
             OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice, limitPrice);
             if (result != null && result.getAttemptedPrice() == null) {
                 result.setAttemptedPrice(limitPrice);
@@ -2776,7 +2782,7 @@ public class TradeExecutionService {
 
             OrderPlacementResult result;
             if (attempt == 0) {
-                if (!entryQuoteWindowOpen(trigger.getSource())) {
+                if (!sharedDecisionExecutable() || !entryQuoteWindowOpen(trigger.getSource())) {
                     return OrderPlacementResult.builder().success(false)
                             .rejectionReason("ENTRY_WINDOW_ELAPSED: no order submitted").build();
                 }

@@ -33,6 +33,7 @@ public class MoverStrategyEvaluationDispatcher {
     private final Fno925EntryQualificationService qualifications;
     private final ThreadPoolExecutor live;
     private final ThreadPoolExecutor simulator;
+    @Autowired private org.com.sharekhan.strategy.SharedMarketDecisions sharedDecisions;
     private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
 
     @Autowired
@@ -60,12 +61,19 @@ public class MoverStrategyEvaluationDispatcher {
         }
     }
 
+    /** Every strategy uses bounded account workers; a slow broker never holds the scheduler. */
+    public void dispatchAll(List<StrategySubscriptionEntity> active, Consumer<StrategySubscriptionEntity> evaluate) {
+        var cycle = new Fno925EntryQualificationService.EvaluationCycle(LocalDateTime.now(StrategySupport.MARKET_ZONE));
+        for (var subscription : active) submit(subscription, cycle, evaluate);
+    }
+
     boolean submit(StrategySubscriptionEntity subscription, Fno925EntryQualificationService.EvaluationCycle cycle,
                    Consumer<StrategySubscriptionEntity> evaluate) {
         if (subscription.getId() == null || subscription.getAppUserId() == null
                 || subscription.getBrokerCredentialsId() == null) return false;
         String key = subscription.getTemplateId().toUpperCase(Locale.ROOT) + ":"
-                + subscription.getAppUserId() + ":" + subscription.getBrokerCredentialsId();
+                + subscription.getAppUserId() + ":" + subscription.getBrokerCredentialsId()
+                + ":" + Objects.toString(subscription.getSymbol(), "FNO_UNIVERSE").trim().toUpperCase(Locale.ROOT);
         if (!inFlight.add(key)) return false;
         try {
             var broker = brokers.findById(subscription.getBrokerCredentialsId())
@@ -85,11 +93,13 @@ public class MoverStrategyEvaluationDispatcher {
                                 .filter(s -> "ACTIVE".equals(s.getStatus()) || "TRIGGERED".equals(s.getStatus()))
                                 .filter(s -> Objects.equals(s.getAppUserId(), subscription.getAppUserId())
                                         && Objects.equals(s.getBrokerCredentialsId(), subscription.getBrokerCredentialsId())
-                                        && Objects.equals(s.getTemplateId(), subscription.getTemplateId()))
+                                        && Objects.equals(s.getTemplateId(), subscription.getTemplateId())
+                                        && Objects.equals(s.getSymbol(), subscription.getSymbol()))
                                 .ifPresent(s -> {
                                     log.info("MOVER_EVALUATION_START | subscriptionId={} | userId={} | brokerCredentialsId={} | {}",
                                             s.getId(), s.getAppUserId(), s.getBrokerCredentialsId(), qualifications.cycleTiming());
-                                    evaluate.accept(s);
+                                    if (sharedDecisions == null) evaluate.accept(s);
+                                    else sharedDecisions.withinCycle(cycle.evaluatedAt(), () -> evaluate.accept(s));
                                 });
                     });
                 } catch (Exception error) {

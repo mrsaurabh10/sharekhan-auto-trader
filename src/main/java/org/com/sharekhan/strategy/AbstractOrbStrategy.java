@@ -24,6 +24,8 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
     private static final int AVERAGE_VOLUME_CANDLES = 20;
     private static final double VOLUME_MULTIPLIER = 1.5d;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private SharedMarketDecisions sharedDecisions;
     protected final StrategySupport support;
     private final StrategyMetadata metadata;
     private final org.com.sharekhan.cache.LtpCacheService prices;
@@ -49,6 +51,35 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
     }
 
     StrategyApplyResponse apply(StrategyApplyRequest request, LocalDateTime now) {
+        String symbol = request.getSymbol().trim().toUpperCase(Locale.ROOT);
+        var neutral = new StrategyApplyRequest(); neutral.setSymbol(symbol);
+        var decision = sharedDecisions == null ? new PreparedStrategyDecision(prepare(neutral, now))
+                : sharedDecisions.share(metadata.id(), symbol, "ORB_RULES_V1", now,
+                        () -> new PreparedStrategyDecision(prepare(neutral, now)));
+        var response = decision.forSubscriber(request);
+        var trigger = response.getTriggerRequest();
+        if (trigger == null) return response;
+        // The common signal never overrides execution-time freshness/deviation checks.
+        var spot = support.resolveSpotScript(symbol);
+        Double price = prices.getLtp(spot.getScripCode());
+        var observed = prices.getObservedAt(spot.getScripCode());
+        var executionNow = sharedDecisions == null ? now : sharedDecisions.currentTime();
+        double risk = Math.abs(trigger.getEntryPrice() - trigger.getStopLoss());
+        boolean pe = "PE".equalsIgnoreCase(metadata.optionType());
+        if (price == null || !Double.isFinite(price) || price <= 0 || observed == null
+                || observed.isBefore(executionNow.minusSeconds(properties.getMaxSpotAgeSeconds())) || observed.isAfter(executionNow)
+                || !(pe ? price < response.getOpeningRangeLow() : price > response.getOpeningRangeHigh())
+                || Math.abs(price - trigger.getEntryPrice()) > risk * properties.getMaxEntryDeviationRisk())
+            return support.waiting(metadata, symbol, "Shared ORB signal waiting for a fresh executable spot price.");
+        var existing = support.findExisting(trigger);
+        response.setTradeRequest(existing != null ? existing : support.executeTriggeredTrade(trigger));
+        response.setStatus(existing != null ? "duplicate" : "triggered");
+        response.setMessage(existing != null ? "A pending request already exists for this strategy contract."
+                : "ORB breakout confirmed and strategy entry triggered immediately.");
+        return response;
+    }
+
+    private StrategyApplyResponse prepare(StrategyApplyRequest request, LocalDateTime now) {
         String symbol = request.getSymbol().trim().toUpperCase(Locale.ROOT);
         ScriptMasterEntity spotScript = support.resolveSpotScript(symbol);
         LocalDate today = now.toLocalDate();
@@ -158,15 +189,7 @@ abstract class AbstractOrbStrategy implements StrategyEvaluator {
             if (!stillBeyondRange || Math.abs(spotPrice - trigger.getEntryPrice()) > risk * properties.getMaxEntryDeviationRisk()) {
                 return support.waiting(metadata, symbol, "ORB entry skipped: spot price moved outside the permitted entry deviation or back inside the opening range.");
             }
-            TriggerTradeRequestEntity existing = support.findExisting(trigger);
-            if (existing != null) {
-                return response("duplicate", "A pending request already exists for this strategy contract.",
-                        symbol, orh, orl, breakout, filters, trigger, existing);
-            }
-
-            TriggerTradeRequestEntity saved = support.executeTriggeredTrade(trigger);
-            return response("triggered", "ORB breakout confirmed and strategy entry triggered immediately.",
-                    symbol, orh, orl, breakout, filters, trigger, saved);
+            return response("qualified", "Shared ORB breakout confirmed.", symbol, orh, orl, breakout, filters, trigger, null);
         }
 
         return StrategyApplyResponse.builder()

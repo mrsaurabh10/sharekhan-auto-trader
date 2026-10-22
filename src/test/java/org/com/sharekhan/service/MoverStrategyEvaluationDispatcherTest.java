@@ -62,6 +62,18 @@ class MoverStrategyEvaluationDispatcherTest {
         assertThat(cycles.getAllValues().get(0)).isSameAs(cycles.getAllValues().get(1));
     }
 
+    @Test void straddleSubscribersUseIndependentWorkersWithOneCommonCycle() {
+        var live=subscription(1,"Dhan");var sim=subscription(3,"Simulator");
+        live.setTemplateId("EXPIRY_LONG_STRADDLE");sim.setTemplateId("EXPIRY_LONG_STRADDLE");
+        live.setSymbol("SENSEX");sim.setSymbol("SENSEX");
+        var started=new CountDownLatch(1);var simulated=new CountDownLatch(1);
+        dispatcher.dispatchAll(List.of(live,sim),s->{if(s.getAppUserId()==1L){started.countDown();await(release);}else simulated.countDown();});
+        await(started);await(simulated);assertThat(release.getCount()).isOne();
+        var cycles=org.mockito.ArgumentCaptor.forClass(Fno925EntryQualificationService.EvaluationCycle.class);
+        verify(qualifications,times(2)).withinCycle(cycles.capture(),any());
+        assertThat(cycles.getAllValues().get(0)).isSameAs(cycles.getAllValues().get(1));
+    }
+
     @Test void overlappingCronAndPollCannotEvaluateTheSameAccountConcurrently() {
         var sub = subscription(1, "Sharekhan"); var started = new CountDownLatch(1);
         Consumer<StrategySubscriptionEntity> evaluate = s -> { started.countDown(); await(release); };
