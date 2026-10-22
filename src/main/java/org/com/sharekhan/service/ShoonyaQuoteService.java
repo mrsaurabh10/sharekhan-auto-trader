@@ -109,7 +109,7 @@ public class ShoonyaQuoteService {
         return getQuote(script);
     }
 
-    /** Fetches a current quote for any script represented in the Shoonya symbol master. */
+    /** Fetches a current quote using the provider master or a verified index mapping. */
     public Optional<LiveQuote> getQuote(ScriptMasterEntity script) {
         Optional<ShoonyaInstrumentEntity> instrument = instrumentMasterService.resolveScript(script);
         if (instrument.isEmpty()) return Optional.empty();

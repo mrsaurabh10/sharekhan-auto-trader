@@ -20,6 +20,33 @@ import static org.mockito.Mockito.when;
 
 class ShoonyaInstrumentMasterServiceTest {
     @Test
+    void resolvesSensexSpotWithoutAnEquityMasterRowOrLocalCodeAsProviderToken() {
+        ShoonyaInstrumentRepository repository = mock(ShoonyaInstrumentRepository.class);
+        var service = new ShoonyaInstrumentMasterService(repository, mock(ShoonyaInstrumentMasterWriter.class));
+        for (String exchange : List.of("BC", "BSE")) {
+            var script = ScriptMasterEntity.builder().scripCode(999901).exchange(exchange)
+                    .tradingSymbol(" sensex ").optionType("").build();
+            var resolved = service.resolveScript(script).orElseThrow();
+            assertThat(resolved.getExchange()).isEqualTo("BSE");
+            assertThat(resolved.getToken()).isEqualTo("1");
+            assertThat(resolved.getTradingSymbol()).isEqualTo("SENSEX");
+        }
+        org.mockito.Mockito.verifyNoInteractions(repository);
+    }
+
+    @Test
+    void sensexMappingDoesNotApplyToOtherIndicesEtfsOrExchanges() {
+        var repository = mock(ShoonyaInstrumentRepository.class);
+        var service = new ShoonyaInstrumentMasterService(repository, mock(ShoonyaInstrumentMasterWriter.class));
+        for (String symbol : List.of("SENSEX50", "SENSEXIETF", "BANKEX")) {
+            assertThat(service.resolveScript(ScriptMasterEntity.builder().exchange("BC")
+                    .tradingSymbol(symbol).build())).isEmpty();
+        }
+        assertThat(service.resolveScript(ScriptMasterEntity.builder().exchange("NC")
+                .tradingSymbol("SENSEX").build())).isEmpty();
+    }
+
+    @Test
     void resolvesNiftyAndBankNiftyByTheirIndexTokensInsteadOfEquityLabels() {
         ShoonyaInstrumentRepository repository = mock(ShoonyaInstrumentRepository.class);
         ShoonyaInstrumentMasterService service = new ShoonyaInstrumentMasterService(repository, mock(ShoonyaInstrumentMasterWriter.class));

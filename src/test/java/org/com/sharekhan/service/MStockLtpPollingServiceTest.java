@@ -26,6 +26,39 @@ import static org.mockito.Mockito.when;
 
 class MStockLtpPollingServiceTest {
     @Test
+    void sensexQuoteUpdatesLocalSpotCodeOnlyForConfirmedProviderIdentity() {
+        for (var quote : java.util.List.of(
+                new ShoonyaQuoteService.LiveQuote("SENSEX", "1", "SENSEX", "1", 73585.88, null, null),
+                new ShoonyaQuoteService.LiveQuote("SENSEX", "1", "SENSEX50", "1", 73585.88, null, null),
+                new ShoonyaQuoteService.LiveQuote("SENSEX", "1", "SENSEX", "47", 73585.88, null, null))) {
+            var cache = new LtpCacheService();
+            var poller = new MStockLtpPollingService(mock(WebSocketSubscriptionService.class),
+                    mock(MStockLtpService.class), cache, mock(QuoteCacheService.class),
+                    mock(PriceTriggerService.class), mock(ScripExecutorManager.class),
+                    mock(MStockInstrumentResolver.class), mock(TokenStoreService.class), mock(NseMarketCalendar.class));
+            var shoonya = mock(ShoonyaQuoteService.class);
+            var scripts = mock(ScriptMasterRepository.class);
+            ReflectionTestUtils.setField(poller, "shoonyaQuoteService", shoonya);
+            ReflectionTestUtils.setField(poller, "scriptMasterRepository", scripts);
+            ReflectionTestUtils.setField(poller, "shoonyaPollMaxActiveScrips", 1);
+            var sensex = ScriptMasterEntity.builder().scripCode(999901).exchange("BC").tradingSymbol("SENSEX").build();
+            when(scripts.findByScripCode(999901)).thenReturn(sensex);
+            when(shoonya.getQuote(sensex)).thenReturn(Optional.of(quote));
+
+            ReflectionTestUtils.invokeMethod(poller, "refreshActiveQuotesFromShoonya", Set.of("BC999901"));
+
+            if (quote.hasConfirmedIdentity()) {
+                assertThat(cache.getLtp(999901)).isEqualTo(73585.88);
+                assertThat(cache.getObservedAt(999901)).isNotNull();
+            } else {
+                assertThat(cache.getLtp(999901)).isNull();
+                assertThat(cache.getObservedAt(999901)).isNull();
+            }
+            assertThat(cache.getLtp(1)).isNull();
+        }
+    }
+
+    @Test
     void indexAliasQuoteRefreshesSpotCacheAndDispatchesStopTargetMonitor() {
         LtpCacheService cache = mock(LtpCacheService.class);
         QuoteCacheService quotes = mock(QuoteCacheService.class);

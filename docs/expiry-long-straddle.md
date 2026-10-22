@@ -50,6 +50,18 @@ still require monitoring/reconciliation. Exits retry on market-time minute scans
 this does not guarantee fills at the exact clock time. Session history is retained.
 The application must be running for either scheduled action.
 
+### SENSEX spot mapping (2026-10-22)
+
+Shoonya's BSE equity master can omit the SENSEX index. Spot resolution maps
+`BC`/`BSE` SENSEX to provider `BSE`, token `1`, symbol `SENSEX` without requiring
+a master row. This identity was confirmed using Shoonya GetIndexList and a
+matching GetQuotes response. The application's local spot code (currently
+`999901`) remains the cache key; it is not sent to Shoonya as its token.
+The existing poller rejects quotes with missing or mismatched token/symbol.
+SENSEX50, ETFs and option contracts retain their separate resolution paths.
+The straddle's fresh-price gate, entry minutes and no-late-entry policy remain
+unchanged. Deployment and an actual future session still require verification.
+
 ## Release prerequisites
 
 The additive DDL files are `src/main/resources/db/postgresql/expiry-straddle-schema.sql`

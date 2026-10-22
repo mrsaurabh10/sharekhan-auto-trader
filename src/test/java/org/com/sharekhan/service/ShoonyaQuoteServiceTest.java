@@ -69,6 +69,42 @@ class ShoonyaQuoteServiceTest {
         assertThat(authorization.get()).isEqualTo("Bearer session-token");
     }
 
+    @Test
+    void sensexSpotUsesVerifiedProviderIdentityAndRejectsMismatchedQuoteIdentity() throws Exception {
+        AtomicReference<String> response = new AtomicReference<>(
+                "{\"stat\":\"Ok\",\"exch\":\"BSE\",\"token\":\"1\",\"tsym\":\"SENSEX\",\"lp\":\"73585.88\"}");
+        AtomicReference<String> body = new AtomicReference<>();
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/GetQuotes", exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+            reply(exchange, 200, response.get());
+        });
+        server.start();
+        var properties = new ShoonyaProperties();
+        properties.setApiUrl("http://localhost:" + server.getAddress().getPort());
+        properties.setUid("test-user");
+        var tokens = mock(TokenStoreService.class);
+        when(tokens.getAccessToken(Broker.SHOONYA)).thenReturn("existing-session");
+        var master = new ShoonyaInstrumentMasterService(
+                mock(org.com.sharekhan.repository.ShoonyaInstrumentRepository.class), mock(ShoonyaInstrumentMasterWriter.class));
+        var service = new ShoonyaQuoteService(properties, tokens, mock(BrokerAuthProviderRegistry.class), master);
+        var script = org.com.sharekhan.entity.ScriptMasterEntity.builder()
+                .scripCode(999901).exchange("BC").tradingSymbol("SENSEX").build();
+
+        var quote = service.getQuote(script).orElseThrow();
+        assertThat(quote.hasConfirmedIdentity()).isTrue();
+        assertThat(quote.referencePrice()).isEqualTo(73585.88);
+        var request = new JSONObject(URLDecoder.decode(body.get().substring("jData=".length()), StandardCharsets.UTF_8));
+        assertThat(request.toMap()).containsEntry("exch", "BSE").containsEntry("token", "1");
+
+        response.set("{\"stat\":\"Ok\",\"token\":\"47\",\"tsym\":\"SENSEX\",\"lp\":\"73585.88\"}");
+        assertThat(service.getQuote(script).orElseThrow().hasConfirmedIdentity()).isFalse();
+        response.set("{\"stat\":\"Ok\",\"token\":\"1\",\"tsym\":\"SENSEX50\",\"lp\":\"73585.88\"}");
+        assertThat(service.getQuote(script).orElseThrow().hasConfirmedIdentity()).isFalse();
+        response.set("{\"stat\":\"Ok\",\"lp\":\"73585.88\"}");
+        assertThat(service.getQuote(script).orElseThrow().hasConfirmedIdentity()).isFalse();
+    }
+
     private static void reply(HttpExchange exchange, int status, String response) throws java.io.IOException {
         exchange.sendResponseHeaders(status, response.length());
         exchange.getResponseBody().write(response.getBytes(StandardCharsets.UTF_8));

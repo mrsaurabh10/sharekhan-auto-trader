@@ -127,6 +127,14 @@ public class ShoonyaInstrumentMasterService {
         String tradingSymbol = script.getTradingSymbol().trim();
         // Index labels differ between the Sharekhan and Shoonya masters.
         String indexName = tradingSymbol.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        if ("BSE".equals(exchange) && "SENSEX".equals(indexName)) {
+            // BSE's daily equity master omits the index. Shoonya GetIndexList and
+            // GetQuotes confirm BSE token 1 / SENSEX (verified 2026-10-22).
+            // Keep the provider identity separate from our local scrip 999901.
+            return Optional.of(ShoonyaInstrumentEntity.builder()
+                    .instrumentKey("BSE:SENSEX").exchange("BSE").token("1")
+                    .tradingSymbol("SENSEX").symbol("SENSEX").instrument("INDEX").build());
+        }
         if ("NSE".equals(exchange)) {
             String indexToken = switch (indexName) {
                 case "NIFTY", "NIFTY50", "NIFTYINDEX" -> "26000";
