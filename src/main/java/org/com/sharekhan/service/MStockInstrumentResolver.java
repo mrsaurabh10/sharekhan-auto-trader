@@ -127,6 +127,8 @@ public class MStockInstrumentResolver {
             return false;
         }
 
+        if (!isValidResolvedKey(script, cachedKey, normalizedExchange, true)) return true;
+
         String expectedPrefix = normalizedExchange + ":";
         if (!cachedKey.startsWith(expectedPrefix)) {
             return true;
@@ -225,7 +227,7 @@ public class MStockInstrumentResolver {
                 + ", candidates=" + candidateSymbols);
 
         if (derivativeInstrument) {
-            Optional<String> patternMatch = lookupDerivativeByPattern(normalizedExchange, script.getTradingSymbol());
+            Optional<String> patternMatch = lookupDerivativeByPattern(normalizedExchange, script);
             if (patternMatch.isPresent()) {
                 String key = patternMatch.get();
                 if (isValidResolvedKey(script, key, normalizedExchange, true)) {
@@ -362,7 +364,8 @@ public class MStockInstrumentResolver {
         return bySymbol.map(MStockInstrumentEntity::getInstrumentKey);
     }
 
-    private Optional<String> lookupDerivativeByPattern(String exchange, String tradingSymbol) {
+    private Optional<String> lookupDerivativeByPattern(String exchange, ScriptMasterEntity script) {
+        String tradingSymbol = script.getTradingSymbol();
         if (!StringUtils.hasText(exchange) || !StringUtils.hasText(tradingSymbol)) {
             return Optional.empty();
         }
@@ -379,6 +382,7 @@ public class MStockInstrumentResolver {
             List<MStockInstrumentEntity> matches = mStockInstrumentRepository
                     .findByExchangeAndTradingSymbolPattern(normalizedExchange, pattern);
             Optional<String> first = matches.stream()
+                    .filter(i -> matchesDerivativeContract(script, i, normalizedExchange))
                     .map(MStockInstrumentEntity::getInstrumentKey)
                     .findFirst();
             if (first.isPresent()) {
@@ -412,6 +416,10 @@ public class MStockInstrumentResolver {
 
     private List<MStockInstrumentEntity> applyAttributeFilters(List<MStockInstrumentEntity> candidates,
                                                                ScriptMasterEntity script) {
+        String exchange = normalizeExchangeForApi(script.getExchange());
+        if (isDerivativeInstrument(script, exchange)) {
+            return candidates.stream().filter(i -> matchesDerivativeContract(script, i, exchange)).toList();
+        }
         List<MStockInstrumentEntity> current = new ArrayList<>(candidates);
 
         if (script.getStrikePrice() != null) {
@@ -523,9 +531,27 @@ public class MStockInstrumentResolver {
                                        String normalizedExchange,
                                        boolean derivativeInstrument) {
         if (derivativeInstrument) {
-            return isValidDerivativeKey(key, normalizedExchange);
+            return isValidDerivativeKey(key, normalizedExchange)
+                    && mStockInstrumentRepository.findByInstrumentKey(key)
+                    .filter(i -> matchesDerivativeContract(script, i, normalizedExchange)).isPresent();
         }
         return isValidSpotKey(script, key);
+    }
+
+    private boolean matchesDerivativeContract(ScriptMasterEntity script, MStockInstrumentEntity candidate, String exchange) {
+        // A different expiry/strike/side must never become a best-effort fallback.
+        LocalDate expiry = parseExpiry(script.getExpiry());
+        if (expiry == null || !expiry.equals(parseExpiry(candidate.getExpiry()))
+                || !exchange.equalsIgnoreCase(candidate.getExchange())) return false;
+        if (!StringUtils.hasText(candidate.getName())
+                || !normalizeSymbolKey(script.getTradingSymbol()).equals(normalizeSymbolKey(candidate.getName()))) return false;
+        if (isOptionInstrument(script)) {
+            return script.getStrikePrice() != null && candidate.getStrike() != null
+                    && Math.abs(script.getStrikePrice() - candidate.getStrike()) < 0.001
+                    && script.getOptionType().equalsIgnoreCase(candidate.getInstrumentType());
+        }
+        return StringUtils.hasText(candidate.getInstrumentType())
+                && candidate.getInstrumentType().toUpperCase(Locale.ROOT).contains("FUT");
     }
 
     private boolean isValidDerivativeKey(String key, String normalizedExchange) {

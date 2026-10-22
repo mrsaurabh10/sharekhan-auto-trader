@@ -285,6 +285,108 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void retriesWrongIdentityBeforeUsingVerifiedPremiumWithoutSubmittingAnyOrder() {
+        var ctx = new TestContext(pending("unused"));
+        var option = retryOption(ctx);
+        var shoonya = mock(ShoonyaQuoteService.class);
+        var wrong = new ShoonyaQuoteService.LiveQuote("SENSEX26O2273200CE", "1124326",
+                "SENSEX", "1", 73164.81, null, null);
+        var correct = new ShoonyaQuoteService.LiveQuote("SENSEX26O2273200CE", "1124326", 125.6, 125.15, 125.5);
+        when(shoonya.getOptionQuote(option)).thenReturn(Optional.of(wrong), Optional.of(correct));
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+        Double price = ReflectionTestUtils.invokeMethod(ctx.service, "resolveEntryReferencePrice", 123456, "executeTradeFromEntity");
+        assertThat(price).isEqualTo(125.6);
+        verify(shoonya, times(2)).getOptionQuote(option);
+        verify(ctx.ltpCache, never()).updateLtp(123456, 73164.81);
+        verify(ctx.ltpCache).updateLtp(123456, 125.6);
+        org.mockito.Mockito.verifyNoInteractions(ctx.broker);
+    }
+
+    @Test
+    void exhaustedQuoteReadsAreBoundedAndDoNotSubmitOrders() {
+        var ctx = new TestContext(pending("unused")); var option = retryOption(ctx);
+        var shoonya = mock(ShoonyaQuoteService.class);
+        when(shoonya.getOptionQuote(option)).thenReturn(Optional.empty());
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+        Double price = ReflectionTestUtils.invokeMethod(ctx.service, "resolveEntryReferencePrice", 123456, "executeTradeFromEntity");
+        assertThat(price).isNull(); verify(shoonya, times(3)).getOptionQuote(option);
+        org.mockito.Mockito.verifyNoInteractions(ctx.broker);
+    }
+
+    @Test
+    void retriesStopWhenEntryWindowClosesDuringAQuoteRead() {
+        var ctx = new TestContext(pending("unused")); var option = retryOption(ctx);
+        var shoonya = mock(ShoonyaQuoteService.class);
+        var open = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(shoonya.getOptionQuote(option)).thenAnswer(i -> { open.set(false); return Optional.empty(); });
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+        Double price = ReflectionTestUtils.invokeMethod(ctx.service, "resolveEntryReferencePrice", 123456,
+                "executeTradeFromEntity", (java.util.function.BooleanSupplier) open::get);
+        assertThat(price).isNull(); verify(shoonya).getOptionQuote(option);
+        org.mockito.Mockito.verifyNoInteractions(ctx.broker);
+    }
+
+    @Test
+    void failedFinalPremiumReadPersistsSpecificNoOrderReason() {
+        var ctx = new TestContext(pending("unused"));
+        var option = retryOption(ctx); var shoonya = mock(ShoonyaQuoteService.class);
+        var correct = new ShoonyaQuoteService.LiveQuote("SENSEX26O2273200CE", "1124326", 125.6, 125.15, 125.5);
+        when(shoonya.getOptionQuote(option)).thenReturn(Optional.of(correct), Optional.empty());
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+        when(ctx.triggerRepo.claimIfStatusEquals(77L, "PLACED_PENDING_CONFIRMATION", "TRIGGERED")).thenReturn(1);
+        when(ctx.triggerRepo.claimIfStatusEqualsWithOutcome(eq(77L), eq("TRIGGERED"), eq("REJECTED"),
+                eq("ENTRY_OPTION_QUOTE_UNAVAILABLE"), anyString())).thenReturn(1);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ctx.service.executeTriggeredTrade(optionRequest()))
+                .hasMessageContaining("no broker order submitted");
+        assertThat(ctx.savedRequest.get().getReason()).isEqualTo("ENTRY_OPTION_QUOTE_UNAVAILABLE");
+        assertThat(ctx.savedRequest.get().getStatus()).isEqualTo(TriggeredTradeStatus.REJECTED);
+        verify(ctx.triggerRepo).claimIfStatusEqualsWithOutcome(eq(77L), eq("TRIGGERED"), eq("REJECTED"),
+                eq("ENTRY_OPTION_QUOTE_UNAVAILABLE"), anyString());
+        org.mockito.Mockito.verifyNoInteractions(ctx.broker);
+    }
+
+    @Test
+    void recoveredFinalQuoteSubmitsExactlyOneBrokerOrder() {
+        var ctx = new TestContext(pending("unused")); var option = retryOption(ctx);
+        configureFiveAttemptPolicy(ctx);
+        var shoonya = mock(ShoonyaQuoteService.class);
+        var correct = new ShoonyaQuoteService.LiveQuote("NIFTY30JUN26C25000", "123456", 125.6, 125.15, 125.5);
+        var wrong = new ShoonyaQuoteService.LiveQuote("NIFTY30JUN26C25000", "123456", "Nifty 50", "26000", 23000d, null, null);
+        when(shoonya.getOptionQuote(option)).thenReturn(Optional.of(correct), Optional.of(wrong), Optional.of(correct));
+        ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+        when(ctx.triggerRepo.claimIfStatusEquals(77L, "PLACED_PENDING_CONFIRMATION", "TRIGGERED")).thenReturn(1);
+        when(ctx.broker.placeOrder(any(), any(), anyDouble())).thenReturn(OrderPlacementResult.builder()
+                .success(true).orderId("single-order").status("Fully Executed").executedPrice(125.6).build());
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(quote(125.15, 125.5, 125.325)));
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(125.6);
+        var request = ctx.service.executeTriggeredTrade(optionRequest());
+        assertThat(request.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        verify(ctx.broker, times(1)).placeOrder(any(), any(), anyDouble());
+        verify(shoonya, times(3)).getOptionQuote(option);
+        verify(ctx.ltpCache, never()).updateLtp(123456, 23000d);
+    }
+
+    @Test
+    void finalSubmissionGuardBlocksAnExpiredStraddleEvenWithAVerifiedBook() {
+        var ctx = new TestContext(pending("unused")); configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, 125.15, 125.5, 125.325);
+        var trade = TriggeredTradeSetupEntity.builder().scripCode(123456).quantity(50L)
+                .entryPrice(125.6).source("expiry-straddle:2000-01-01:9:55:NIFTY:AM").build();
+        OrderPlacementResult result = ReflectionTestUtils.invokeMethod(ctx.service, "attemptEntryPlacement",
+                trade, 125.6, new BrokerContext(), ctx.broker, false);
+        assertThat(result.isSuccess()).isFalse();
+        assertThat(result.getRejectionReason()).contains("ENTRY_WINDOW_ELAPSED");
+        org.mockito.Mockito.verifyNoInteractions(ctx.broker);
+    }
+
+    private ScriptMasterEntity retryOption(TestContext ctx) {
+        var option = ScriptMasterEntity.builder().scripCode(123456).tradingSymbol("NIFTY").exchange("NF")
+                .instrumentType("OI").strikePrice(25000d).optionType("CE").expiry("30/06/2026").build();
+        when(ctx.scriptRepo.findByScripCode(123456)).thenReturn(option);
+        return option;
+    }
+
+    @Test
     void advancesStopsForLaterInitialTargetLegsWhenEarlierTargetFills() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         TriggeredTradeSetupEntity targetOne = new TriggeredTradeSetupEntity();

@@ -101,7 +101,7 @@ class MStockInstrumentResolverTest {
                 .tradingSymbol("SENSEX04JUN2674000PE")
                 .name("SENSEX")
                 .exchange("BFO")
-                .instrumentType("PE")
+                .instrumentType("PE").expiry("2026-06-04").strike(74000d)
                 .fetchedAt(java.time.LocalDateTime.now())
                 .build();
 
@@ -112,6 +112,73 @@ class MStockInstrumentResolverTest {
 
         assertThat(resolver.resolveInstrumentKey(sensexOption))
                 .contains("BFO:SENSEX04JUN2674000PE");
+    }
+
+    @Test
+    void rejectsWrongExpiryStrikeSideAndUnderlyingAcrossAttributeAndPatternLookups() {
+        var script = octoberSensex();
+        for (String fault : List.of("expiry", "strike", "side", "underlying", "missingExpiry", "missingUnderlying")) {
+            var candidate = octoberContract();
+            switch (fault) {
+                case "expiry" -> candidate.setExpiry("2026-08-13");
+                case "strike" -> candidate.setStrike(73300d);
+                case "side" -> candidate.setInstrumentType("PE");
+                case "underlying" -> candidate.setName("BANKEX");
+                case "missingExpiry" -> candidate.setExpiry(null);
+                case "missingUnderlying" -> candidate.setName(null);
+            }
+            when(mStockInstrumentRepository.findByExchangeIgnoreCaseAndNameIgnoreCase("BFO", "SENSEX"))
+                    .thenReturn(List.of(candidate));
+            when(mStockInstrumentRepository.findByInstrumentKey(candidate.getInstrumentKey()))
+                    .thenReturn(Optional.of(candidate));
+            when(mStockInstrumentRepository.findByExchangeAndTradingSymbolPattern("BFO", "SENSEX%"))
+                    .thenReturn(List.of(candidate));
+            assertThat(resolver.resolveInstrumentKey(script)).as(fault).isEmpty();
+        }
+    }
+
+    @Test
+    void patternLookupSkipsExpiredFirstRowAndSelectsExactContract() {
+        var expired = octoberContract(); expired.setExpiry("2026-08-13");
+        expired.setInstrumentKey("BFO:SENSEX2681373200CE");
+        var correct = octoberContract();
+        when(mStockInstrumentRepository.findByExchangeAndTradingSymbolPattern("BFO", "SENSEX%"))
+                .thenReturn(List.of(expired, correct));
+        when(mStockInstrumentRepository.findByInstrumentKey(correct.getInstrumentKey())).thenReturn(Optional.of(correct));
+        assertThat(resolver.resolveInstrumentKey(octoberSensex())).contains(correct.getInstrumentKey());
+    }
+
+    @Test
+    void cachedDerivativeMustStillMatchTheCurrentExpiryAndMasterMetadata() {
+        var script = octoberSensex(); var contract = octoberContract();
+        when(scriptMasterRepository.findByScripCode(1124326)).thenReturn(script);
+        when(mStockInstrumentRepository.findByExchangeIgnoreCaseAndNameIgnoreCase("BFO", "SENSEX"))
+                .thenReturn(List.of(contract));
+        when(mStockInstrumentRepository.findByInstrumentKey(contract.getInstrumentKey())).thenReturn(Optional.of(contract));
+        assertThat(resolver.resolveInstrumentKey(1124326)).contains(contract.getInstrumentKey());
+        contract.setExpiry("2026-08-13");
+        assertThat(resolver.resolveInstrumentKey(1124326)).isEmpty();
+    }
+
+    @Test
+    void rejectsStaleExactSymbolRowAndUnverifiedDerivativeHeuristic() {
+        var contract = octoberContract(); contract.setExpiry("2026-08-13");
+        when(mStockInstrumentRepository.findByInstrumentKey(contract.getInstrumentKey())).thenReturn(Optional.of(contract));
+        assertThat(resolver.resolveInstrumentKey(octoberSensex())).isEmpty();
+        when(mStockInstrumentRepository.findByInstrumentKey(anyString())).thenReturn(Optional.empty());
+        when(mStockInstrumentRepository.count()).thenReturn(0L);
+        assertThat(resolver.resolveInstrumentKey(octoberSensex())).isEmpty();
+    }
+
+    private ScriptMasterEntity octoberSensex() {
+        return ScriptMasterEntity.builder().scripCode(1124326).tradingSymbol("SENSEX").exchange("BF")
+                .instrumentType("OI").optionType("CE").strikePrice(73200d).expiry("22/10/2026").build();
+    }
+
+    private MStockInstrumentEntity octoberContract() {
+        return MStockInstrumentEntity.builder().instrumentKey("BFO:SENSEX22OCT2673200CE")
+                .tradingSymbol("SENSEX22OCT2673200CE").name("SENSEX").exchange("BFO")
+                .instrumentType("CE").strike(73200d).expiry("2026-10-22").build();
     }
 
     private ScriptMasterEntity spotScript(Integer scripCode, String tradingSymbol, String exchange) {

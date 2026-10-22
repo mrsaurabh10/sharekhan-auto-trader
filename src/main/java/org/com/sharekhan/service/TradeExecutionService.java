@@ -342,12 +342,28 @@ public class TradeExecutionService {
     }
 
     private Double resolveEntryReferencePrice(Integer scripCode, String context) {
+        return resolveEntryReferencePrice(scripCode, context, () -> true);
+    }
+
+    private Double resolveEntryReferencePrice(Integer scripCode, String context,
+                                               java.util.function.BooleanSupplier quoteWindowOpen) {
         ScriptMasterEntity script = scripCode == null ? null : scriptMasterRepository.findByScripCode(scripCode);
         if (isFnoOption(script) && !"strategyOptionWarmup".equals(context)) {
-            Double shoonyaPrice = fetchShoonyaOptionQuote(script, context);
-            if (isUsableMarketPrice(shoonyaPrice)) return shoonyaPrice;
+            boolean entryRead = Set.of("expiryStraddlePreflight", "executeTriggeredTrade", "executeTradeFromEntity").contains(context);
+            long started = System.nanoTime();
+            for (int attempt = 1; attempt <= (entryRead ? 3 : 1); attempt++) {
+                if (!quoteWindowOpen.getAsBoolean()) return null;
+                if (attempt > 1 && System.nanoTime() - started >= Duration.ofSeconds(2).toNanos()) break;
+                Double shoonyaPrice = fetchShoonyaOptionQuote(script, context);
+                if (!quoteWindowOpen.getAsBoolean()) return null;
+                if (isUsableMarketPrice(shoonyaPrice)) return shoonyaPrice;
+                if (entryRead) log.warn("OPTION_QUOTE_READ_UNAVAILABLE | context={} | scrip={} | attempt={}/3 | read-only; no order submitted",
+                        context, scripCode, attempt);
+            }
+            if (!quoteWindowOpen.getAsBoolean()) return null;
             log.warn("[{}] Shoonya option quote unavailable for scrip {}. Falling back to MStock LTP.", context, scripCode);
-            return fetchLtpViaMStockFallback(scripCode, context);
+            Double fallback = fetchLtpViaMStockFallback(scripCode, context);
+            return quoteWindowOpen.getAsBoolean() ? fallback : null;
         }
         Double sharekhanQuotePrice = resolveFreshSharekhanReferencePrice(scripCode, context);
         if (isUsableMarketPrice(sharekhanQuotePrice)) {
@@ -1569,7 +1585,9 @@ public class TradeExecutionService {
 
     /** Read-only premium lookup for paired-entry preflight. */
     public Double strategyEntryReferencePrice(Integer scripCode) {
-        return resolveEntryReferencePrice(scripCode, "expiryStraddlePreflight");
+        return resolveEntryReferencePrice(scripCode, "expiryStraddlePreflight", () ->
+                org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.SESSIONS.stream()
+                        .anyMatch(s -> s.entryWindow(java.time.LocalTime.now(ZoneId.of("Asia/Kolkata")))));
     }
 
     /** A fresh, uncrossed sell-side book for estimating combined straddle profit. No API calls. */
@@ -1640,7 +1658,8 @@ public class TradeExecutionService {
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
         if (!isNoStrikeExchange) {
-            Double optionLtp = resolveEntryReferencePrice(script.getScripCode(), "executeTriggeredTrade");
+            Double optionLtp = resolveEntryReferencePrice(script.getScripCode(), "executeTriggeredTrade",
+                    () -> entryQuoteWindowOpen(request.getSource()));
             if (optionLtp == null) {
                 if (request.getBrokerCredentialsId() != null && brokerCredentialsRepository.findById(request.getBrokerCredentialsId())
                         .filter(c -> java.util.Objects.equals(c.getAppUserId(), request.getUserId()))
@@ -1666,6 +1685,22 @@ public class TradeExecutionService {
         TriggeredTradeSetupEntity executed;
         try {
             executed = executeTradeFromEntity(saved, false, true);
+        } catch (OptionQuoteUnavailableException unavailable) {
+            int recorded = triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(saved.getId(),
+                    TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.REJECTED.name(),
+                    "ENTRY_OPTION_QUOTE_UNAVAILABLE", unavailable.getMessage());
+            if (recorded != 1) throw new InvalidTradeRequestException("Strategy request state changed while recording unavailable option premium");
+            saved.setStatus(TriggeredTradeStatus.REJECTED);
+            saved.setReason("ENTRY_OPTION_QUOTE_UNAVAILABLE");
+            saved.setComment(unavailable.getMessage());
+            if (tradeAuditService != null) tradeAuditService.record(
+                    org.com.sharekhan.entity.TradeAuditEventEntity.builder()
+                            .occurredAt(LocalDateTime.now()).appUserId(saved.getAppUserId())
+                            .triggerRequestId(saved.getId()).strategyRunId(saved.getStrategyRunId())
+                            .symbol(saved.getSymbol()).source(saved.getSource())
+                            .eventType("ENTRY_QUOTE_UNAVAILABLE").outcome("REJECTED")
+                            .reason("ENTRY_OPTION_QUOTE_UNAVAILABLE").details(unavailable.getMessage()).build());
+            throw unavailable;
         } catch (EntryNotReadyException waiting) {
             // This exception is raised only before broker placement. Keep an explicit
             // terminal no-order record, not an executable queued request or an ambiguous failure.
@@ -2741,6 +2776,10 @@ public class TradeExecutionService {
 
             OrderPlacementResult result;
             if (attempt == 0) {
+                if (!entryQuoteWindowOpen(trigger.getSource())) {
+                    return OrderPlacementResult.builder().success(false)
+                            .rejectionReason("ENTRY_WINDOW_ELAPSED: no order submitted").build();
+                }
                 result = brokerService.placeOrder(trigger, ctx, price);
                 if (result != null && isUsableBrokerOrderId(result.getOrderId())) {
                     orderId = result.getOrderId();
@@ -6030,12 +6069,15 @@ public class TradeExecutionService {
         boolean isMxExchange = exchange != null && exchange.equalsIgnoreCase("MX");
 
         if (!isMxExchange) {
-            ltp = resolveEntryReferencePrice(optionScripCode, "executeTradeFromEntity");
+            ltp = resolveEntryReferencePrice(optionScripCode, "executeTradeFromEntity",
+                    () -> entryQuoteWindowOpen(requestEntity.getSource()));
 
             if (ltp == null) {
                 log.warn("Option LTP not found for scripCode {}. Skipping execution for trigger request {} this time.", optionScripCode, requestEntity.getId());
                 if (reportSimulatorWait && isSimulatorBrokerRequest(requestEntity))
                     throw new EntryNotReadyException("Simulator waiting for a usable traded LTP; no order submitted.");
+                if (reportSimulatorWait && isFnoOption(scriptMasterRepository.findByScripCode(optionScripCode)))
+                    throw new OptionQuoteUnavailableException("No verified option premium after bounded Shoonya quote reads and exact-contract MStock lookup, or entry window elapsed; no broker order submitted.");
                 return null; // Signal to the caller to skip and re-try later for equities.
             }
 
@@ -6141,7 +6183,8 @@ public class TradeExecutionService {
         String requestLockKey = buildEntryLockKey(requestEntity);
         try {
             return orderPlacementGuard.withLock(requestLockKey, ORDER_LOCK_TIMEOUT,
-                    () -> execute(temp, executionLtp, java.time.LocalDateTime.now(), chaseEntryUntilExecuted));
+                    () -> entryQuoteWindowOpen(requestEntity.getSource())
+                            ? execute(temp, executionLtp, java.time.LocalDateTime.now(), chaseEntryUntilExecuted) : null);
         } catch (OrderPlacementGuard.LockAcquisitionException e) {
             log.warn("⚠️ Duplicate entry placement prevented for request {} (symbol={}): {}",
                     requestEntity != null ? requestEntity.getId() : null,
@@ -6149,6 +6192,16 @@ public class TradeExecutionService {
                     e.getMessage());
             return null;
         }
+    }
+
+    private boolean entryQuoteWindowOpen(String source) {
+        return !org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(source)
+                || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(source,
+                        LocalDateTime.now(ZoneId.of("Asia/Kolkata")));
+    }
+
+    private static class OptionQuoteUnavailableException extends InvalidTradeRequestException {
+        OptionQuoteUnavailableException(String message) { super(message); }
     }
 
     private boolean isSimulatorBrokerRequest(TriggerTradeRequestEntity requestEntity) {

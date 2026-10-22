@@ -62,6 +62,30 @@ SENSEX50, ETFs and option contracts retain their separate resolution paths.
 The straddle's fresh-price gate, entry minutes and no-late-entry policy remain
 unchanged. Deployment and an actual future session still require verification.
 
+## Option quote recovery (2026-10-22)
+
+Entry premium reads (paired preflight, immediate strategy validation and final
+pre-placement lookup) retry Shoonya at most three times. An additional read starts
+only within two seconds of that lookup's start and, for straddles, while its entry
+minute is open. Existing HTTP timeouts still apply to each in-flight read. A
+response arriving after the minute is discarded for entry, and the window is
+checked again immediately before the first broker submission. Identity validation
+remains mandatory; a spot/index quote cannot replace an option premium. Recovery
+retries market-data reads only, never an order submission or an aborted session.
+
+MStock derivative resolution requires matching exchange, underlying name, parsed
+expiry, strike and CE/PE side (or future type). Attribute, direct-symbol, pattern
+and cached lookups all validate metadata. Missing/stale contracts fail closed;
+refresh the provider master separately to enable a fallback for contracts absent
+from it. No guessed derivative symbol is used without a verified master row.
+This release does not refresh or overwrite the production master.
+
+A failed final live-option premium lookup records
+`ENTRY_OPTION_QUOTE_UNAVAILABLE` and an explicit no-order explanation/audit.
+Simulator no-order waits retain their existing reason and behavior. A claimed
+straddle still aborts on incomplete entry, preserves uncertain exposure and never
+replays the session. Today's already-aborted Vaibhav session remains closed.
+
 ## Release prerequisites
 
 The additive DDL files are `src/main/resources/db/postgresql/expiry-straddle-schema.sql`
