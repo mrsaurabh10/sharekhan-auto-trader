@@ -13,6 +13,45 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 
 class StrategySubscriptionServiceTest {
+    @org.junit.jupiter.api.Test void expiryIsWaitingButFeedFailureRemainsAnError() {
+        var repo=mock(StrategySubscriptionRepository.class); var evaluator=mock(StrategyTemplateService.class);
+        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));
+        var subscription=StrategySubscriptionEntity.builder().id(134L).templateId("FNO_0925_MOVER_ATR_BREAKOUT")
+                .symbol("FNO_UNIVERSE").appUserId(3L).brokerCredentialsId(4L).status("ACTIVE").build();
+        when(evaluator.apply(any())).thenThrow(new org.com.sharekhan.strategy.SharedMarketDecisions.ExpiredDecisionException())
+                .thenThrow(new IllegalStateException("feed unavailable"));
+        service.evaluate(subscription);
+        assertThat(subscription.getLastEvaluationStatus()).isEqualTo("waiting");
+        assertThat(subscription.getStatus()).isEqualTo("ACTIVE");
+        assertThat(subscription.getGeneratedTradeRequestId()).isNull();
+        service.evaluate(subscription);
+        assertThat(subscription.getLastEvaluationStatus()).isEqualTo("error");
+        assertThat(subscription.getLastMessage()).isEqualTo("feed unavailable");
+        verify(repo,times(2)).recordEvaluationIfActive(subscription);
+    }
+
+    @org.junit.jupiter.api.Test void candleClosePassOnlyDispatchesMoversWithinTradingWindow() {
+        var repo=mock(StrategySubscriptionRepository.class); var evaluator=mock(StrategyTemplateService.class);
+        var calendar=mock(NseMarketCalendar.class);
+        var service=new StrategySubscriptionService(repo,evaluator,calendar,enrollment(repo));
+        var dispatcher=mock(MoverStrategyEvaluationDispatcher.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"moverDispatcher",dispatcher);
+        var at=java.time.LocalDateTime.of(2026,10,23,10,0,5);
+        when(calendar.isTradingDay(at.toLocalDate())).thenReturn(true);
+        var fno=StrategySubscriptionEntity.builder().templateId("FNO_0925_MOVER_ATR_BREAKOUT").build();
+        var cash=StrategySubscriptionEntity.builder().templateId("STOCK_0925_MOVER_ATR_BREAKOUT").build();
+        var straddle=StrategySubscriptionEntity.builder().templateId("EXPIRY_LONG_STRADDLE").build();
+        when(repo.findByStatusInOrderByIdDesc(anyList())).thenReturn(List.of(fno,cash,straddle));
+        service.evaluateMoversAfterCandleClose(at);
+        verify(dispatcher).dispatchAll(eq(List.of(fno,cash)),any());
+        clearInvocations(repo,dispatcher);
+        service.evaluateMoversAfterCandleClose(at.withHour(9).withMinute(20));
+        service.evaluateMoversAfterCandleClose(at.withHour(15).withMinute(25));
+        when(calendar.isTradingDay(at.toLocalDate())).thenReturn(false);
+        service.evaluateMoversAfterCandleClose(at);
+        verifyNoInteractions(repo,dispatcher);
+    }
+
     @org.junit.jupiter.api.Test void pausedSubscriptionIsNotEvaluatedOrDuplicatedByStart() {
         var repo=mock(StrategySubscriptionRepository.class); var evaluator=mock(StrategyTemplateService.class);
         var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));

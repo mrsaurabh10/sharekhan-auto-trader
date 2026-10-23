@@ -135,6 +135,20 @@ public class StrategySubscriptionService {
         evaluateBatch(active);
     }
 
+    /** A pass straddling candle close must not leave movers waiting for the next polling minute. */
+    @Scheduled(cron = "5 0/5 9-15 * * MON-FRI", zone = "Asia/Kolkata")
+    public void evaluateMoversAfterCandleClose() {
+        evaluateMoversAfterCandleClose(LocalDateTime.now(MARKET_ZONE));
+    }
+
+    void evaluateMoversAfterCandleClose(LocalDateTime now) {
+        if (!nseMarketCalendar.isTradingDay(now.toLocalDate())
+                || now.toLocalTime().isBefore(LocalTime.of(9, 25))
+                || !now.toLocalTime().isBefore(LocalTime.of(15, 25))) return;
+        evaluateBatch(repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED)).stream()
+                .filter(s -> MoverStrategyEvaluationDispatcher.supports(s.getTemplateId())).toList());
+    }
+
     @Scheduled(cron = "0 30 9,13 * * MON-FRI", zone = "Asia/Kolkata")
     public void enterExpiryStraddleSessions() {
         if (!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) return;
@@ -203,6 +217,12 @@ public class StrategySubscriptionService {
                 subscription.setCompletedAt(null);
             }
             repository.recordEvaluationIfActive(subscription);
+        } catch (org.com.sharekhan.strategy.SharedMarketDecisions.ExpiredDecisionException expired) {
+            subscription.setLastEvaluatedAt(LocalDateTime.now(MARKET_ZONE));
+            subscription.setLastEvaluationStatus("waiting");
+            subscription.setLastMessage(expired.getMessage());
+            repository.recordEvaluationIfActive(subscription);
+            log.info("Strategy subscription {} waiting for a fresh market decision", subscription.getId());
         } catch (Exception e) {
             subscription.setLastEvaluatedAt(LocalDateTime.now());
             subscription.setLastEvaluationStatus("error");

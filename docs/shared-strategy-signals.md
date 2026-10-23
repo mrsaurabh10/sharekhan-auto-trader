@@ -50,6 +50,21 @@ again. New broker submissions check freshness; existing order/exit management
 continues independently. Saturated queues defer to the next normal evaluation,
 with no unbounded queue or scheduler-thread execution fallback.
 
+A calculation that expires at a candle boundary produces a typed freshness wait,
+not an application error. F&O and cash movers handle this per candidate, retain
+any requests already created in the basket, and leave unsubmitted candidates
+eligible for the next pass. Expired cycles skip further feed warm-up and entry
+work. Feed/calculation failures remain errors; expiry handling never retries a
+broker submission within the same evaluation.
+
+An additional mover-only pass runs at five seconds after every five-minute
+boundary during the normal entry monitoring window. It loads active subscriptions
+and uses the same bounded dispatcher, subscription reload, overlap lock and daily
+entry guards as polling. It does not change the frozen opening shortlist or
+activate paused subscriptions. A still-running pass may defer this pass through
+the overlap guard; ordinary polling remains the fallback. Freshness, spot trigger,
+spread, sizing and execution rules remain in force.
+
 Ordinary market calculations are process-local and recomputed in a fresh cycle
 following restart. The mover opening shortlist retains its existing persistence.
 For expiry straddles, `shared_straddle_signals` stores the first committed contract

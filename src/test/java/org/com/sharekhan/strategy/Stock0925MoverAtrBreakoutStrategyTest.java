@@ -53,6 +53,17 @@ class Stock0925MoverAtrBreakoutStrategyTest {
         when(support.executeTriggeredTrade(any())).thenReturn(TriggerTradeRequestEntity.builder().id(10L).build());
         when(support.waiting(any(), any(), anyString())).thenAnswer(c -> StrategyApplyResponse.builder().status("waiting").message(c.getArgument(2)).build());
     }
+    @Test void sharedDecisionExpiryWaitsWithoutConsumingCandidateAndRetriesLater() {
+        setup();
+        when(qualification.qualifyWithDirectionalCandle(any(), any()))
+                .thenThrow(new SharedMarketDecisions.ExpiredDecisionException())
+                .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal()));
+        assertThat(strategy.apply(request("10000")).getStatus()).isEqualTo("waiting");
+        verify(support, never()).executeTriggeredTrade(any());
+        assertThat(strategy.apply(request("10000")).getStatus()).isEqualTo("triggered");
+        verify(support, times(1)).executeTriggeredTrade(any());
+    }
+
     @Test void simulatorPrePlacementWaitDoesNotConsumeTheSymbolAndLaterSignalCanExecute() {
         setup();
         when(support.executeTriggeredTrade(any()))

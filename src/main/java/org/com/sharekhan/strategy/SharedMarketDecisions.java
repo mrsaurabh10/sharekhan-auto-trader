@@ -20,6 +20,12 @@ public class SharedMarketDecisions {
     private final ThreadLocal<Set<String>> trace = new ThreadLocal<>();
     @Autowired public SharedMarketDecisions() { this(Clock.system(StrategySupport.MARKET_ZONE)); }
     public SharedMarketDecisions(Clock clock) { this.clock = clock; }
+    /** Expected freshness boundary, distinct from feed, calculation and broker failures. */
+    public static final class ExpiredDecisionException extends IllegalStateException {
+        public ExpiredDecisionException() {
+            super("Shared strategy decision expired; waiting for a fresh evaluation");
+        }
+    }
     private record Key(String kind, String symbol, String parameters, LocalDateTime bucket) { }
 
     public void withinCycle(LocalDateTime evaluatedAt, Runnable work) {
@@ -68,9 +74,10 @@ public class SharedMarketDecisions {
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt(); throw new IllegalStateException("Shared decision interrupted", interrupted);
         } catch (java.util.concurrent.ExecutionException failed) {
+            if (failed.getCause() instanceof ExpiredDecisionException expired) throw expired;
             throw new IllegalStateException("Shared market decision unavailable", failed.getCause());
         } catch (java.util.concurrent.TimeoutException expired) {
-            throw new IllegalStateException("Shared market decision expired; wait for a fresh evaluation", expired);
+            throw new ExpiredDecisionException();
         }
         requireCurrent(at);
         if (executeBefore.get() != null && bucket.plusSeconds(30).isBefore(executeBefore.get())) executeBefore.set(bucket.plusSeconds(30));
@@ -87,6 +94,6 @@ public class SharedMarketDecisions {
         long age = Duration.between(at, current).toMillis();
         if (age < 0 || age > 30_000 || !at.toLocalDate().equals(current.toLocalDate())
                 || at.toLocalTime().toSecondOfDay() / 300 != current.toLocalTime().toSecondOfDay() / 300)
-            throw new IllegalStateException("Shared strategy decision expired; wait for a fresh evaluation");
+            throw new ExpiredDecisionException();
     }
 }
