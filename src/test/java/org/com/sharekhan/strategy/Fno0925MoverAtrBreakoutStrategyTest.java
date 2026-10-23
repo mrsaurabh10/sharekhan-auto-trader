@@ -55,6 +55,51 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         verify(support, times(3)).executeTriggeredTrade(any());
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"qualification", "contract", "warmup", "qualification-after-success", "cycle-after-success"})
+    void expiredPreparationDoesNotConsumeCandidateOrLoseOtherBasketResults(String stage) {
+        var support = mock(StrategySupport.class);
+        var snapshots = mock(MoverSelectionSnapshotStore.class);
+        var qualification = mock(Fno925EntryQualificationService.class);
+        var now = LocalDateTime.of(2026,10,19,12,0);
+        var spot = ScriptMasterEntity.builder().tradingSymbol("FIRST").exchange("NC").scripCode(123).build();
+        var first = new Fno925Candidate("FIRST", spot, "PE");
+        var second = new Fno925Candidate("SECOND", spot, "PE");
+        when(snapshots.loadOrCapture(anyString(), eq(now), any())).thenReturn(java.util.Optional.of(List.of(first, second)));
+        var candle = new StrategyCandle(now.toLocalDate(), now.toLocalTime().minusMinutes(5), 108,110,105,106,1000L);
+        var signal = new Fno925EntryQualificationService.Signal(106,110,4,110,105,candle,"VWAP_RECLAIM_BASE_BREAKOUT");
+        when(qualification.qualifyWithDirectionalCandle(any(), eq(now)))
+                .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+        when(support.roundPrice(anyDouble())).thenAnswer(c -> c.getArgument(0));
+        when(support.preferredFnoExpiry(anyString(), anyString())).thenReturn("27/10/2026");
+        when(support.resolveFnoEntryContract(any(), any(), any(), any(), anyDouble()))
+                .thenReturn(new StrategySupport.FnoOptionContract("27/10/2026",100d));
+        when(support.executeTriggeredTrade(any())).thenReturn(TriggerTradeRequestEntity.builder().id(10L).build());
+        var expired = new SharedMarketDecisions.ExpiredDecisionException();
+        if (stage.equals("qualification")) {
+            when(qualification.qualifyWithDirectionalCandle(any(), eq(now))).thenThrow(expired)
+                    .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+        } else if (stage.equals("contract")) {
+            when(support.preferredFnoExpiry(anyString(), anyString())).thenThrow(expired).thenReturn("27/10/2026");
+        } else if (stage.equals("qualification-after-success")) {
+            when(qualification.qualifyWithDirectionalCandle(any(), eq(now)))
+                    .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal)).thenThrow(expired)
+                    .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+        } else if (stage.equals("cycle-after-success")) {
+            when(qualification.isCycleExpired()).thenReturn(false, false, true, false);
+        } else {
+            doThrow(expired).doNothing().when(support).warmUpPreferredFnoFeeds(any(), any(), anyString(), any());
+        }
+        var strategy = new Fno0925MoverAtrBreakoutStrategy(support, mock(ScriptMasterRepository.class),
+                mock(MStockGainerLoserService.class), qualification, snapshots,
+                Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        var request = new StrategyApplyRequest(); request.setUserId(3L); request.setBrokerCredentialsId(4L); request.setLots(1);
+        boolean afterSuccess = stage.endsWith("after-success");
+        assertThat(strategy.apply(request).getSymbol()).isEqualTo(afterSuccess ? "FIRST" : "SECOND");
+        assertThat(strategy.apply(request).getSymbol()).isEqualTo(afterSuccess ? "SECOND" : "FIRST");
+        verify(support, times(2)).executeTriggeredTrade(any());
+    }
+
     @Test
     void directionRejectionDoesNotSubmitOrConsumeTheCandidatesDailyEntry() {
         StrategySupport support = mock(StrategySupport.class);

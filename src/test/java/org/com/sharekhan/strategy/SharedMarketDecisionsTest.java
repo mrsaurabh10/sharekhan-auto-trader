@@ -70,6 +70,34 @@ class SharedMarketDecisionsTest {
         });
         assertThat(shared.share("A","SENSEX","",now.withSecond(31),count::incrementAndGet)).isEqualTo(2);
     }
+    @Test void calculationCrossingCandleCloseExpiresAndFreshPassRecalculates() {
+        var at=now.withMinute(34).withSecond(59);
+        var instant=new AtomicReference<>(at.atZone(StrategySupport.MARKET_ZONE).toInstant());
+        var ticking=new Clock(){public ZoneId getZone(){return StrategySupport.MARKET_ZONE;}
+            public Clock withZone(ZoneId zone){return this;}public Instant instant(){return instant.get();}};
+        var shared=new SharedMarketDecisions(ticking); var calculations=new AtomicInteger();
+        assertThatThrownBy(()->shared.withinCycle(at,()->shared.evaluate(()-> {
+            shared.share("FNO_BREAKOUT","BHEL","PE",at,()-> {
+                calculations.incrementAndGet(); instant.set(at.plusSeconds(2).atZone(StrategySupport.MARKET_ZONE).toInstant());
+                return "old candle";
+            });
+            fail("Expired calculation must never reach order work"); return null;
+        }))).isInstanceOf(SharedMarketDecisions.ExpiredDecisionException.class);
+        var fresh=at.plusSeconds(6);
+        instant.set(fresh.atZone(StrategySupport.MARKET_ZONE).toInstant());
+        shared.withinCycle(fresh,()-> {
+            var result=shared.evaluate(()-> {
+                assertThat(shared.share("FNO_BREAKOUT","BHEL","PE",fresh,()-> {
+                    calculations.incrementAndGet(); return "new candle";
+                })).isEqualTo("new candle");
+                assertThat(shared.executionFresh()).isTrue();
+                return StrategyApplyResponse.builder().build();
+            });
+            assertThat(result.getSharedSignalIds()).hasSize(1);
+        });
+        assertThat(calculations).hasValue(2);
+    }
+
     @Test void preparedTriggerIsCopiedAndBoundToEachSubscriberIndependently() {
         var trigger=new TriggerRequest();trigger.setInstrument("SENSEX");trigger.setStrikePrice(73200d);trigger.setEntryPrice(125d);
         var decision=new PreparedStrategyDecision(StrategyApplyResponse.builder().triggerRequest(trigger).build());
