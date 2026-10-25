@@ -81,12 +81,14 @@ public class OrderViewController {
 
     private Map<String, Object> enrichRequest(TriggerTradeRequestEntity request, Long scopedUserId) {
         Map<String, Object> row = objectMapper.convertValue(request, MAP_TYPE);
+        row.put("entryAction", org.com.sharekhan.util.TradeSide.isShort(request) ? "SELL" : "BUY");
         addTradeScope(row, request.getBrokerCredentialsId(), request.getAppUserId(), scopedUserId);
         return row;
     }
 
     private Map<String, Object> enrichExecution(TriggeredTradeSetupEntity trade, Long scopedUserId) {
         Map<String, Object> row = objectMapper.convertValue(trade, MAP_TYPE);
+        row.put("entryAction", org.com.sharekhan.util.TradeSide.entry(trade));
         runningTradePnlService.snapshot(trade).ifPresent(mark->{
             row.put("lastKnownPrice",mark.price());
             row.put("runningPnl",mark.runningPnl());

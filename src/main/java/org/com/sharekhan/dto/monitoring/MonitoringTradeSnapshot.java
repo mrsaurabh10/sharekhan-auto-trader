@@ -11,6 +11,7 @@ public record MonitoringTradeSnapshot(
         Integer scripCode,
         Integer spotScripCode,
         String exchange,
+        String entryAction,
         String instrumentType,
         Double strikePrice,
         String optionType,

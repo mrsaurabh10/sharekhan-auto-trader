@@ -20,6 +20,19 @@ class DhanSubmissionClaimTest {
     @Autowired DhanSubmissionClaim claims;
     @Autowired JdbcTemplate jdbc;
     @Autowired PlatformTransactionManager transactions;
+    @Test void coverJournalPersistsBuySideAndDoesNotMistakeSellEntryForExit() {
+        claims.claim("short-entry",9L,"TRADE:88","SELL");
+        assertThat(claims.latestExit(9L,88L,"BUY")).isEmpty();
+        new TransactionTemplate(transactions).execute(status->{
+            claims.claimExit("cover-buy",9L,"TRADE:88:EXIT:1",1,"BUY");status.setRollbackOnly();return null;
+        });
+        assertThat(claims.latestExit(9L,88L,"BUY")).get().extracting(DhanSubmissionClaim.ExitAttempt::correlation).isEqualTo("cover-buy");
+        assertThat(jdbc.queryForObject("SELECT order_side FROM dhan_order_submissions WHERE correlation_id='cover-buy'",String.class)).isEqualTo("BUY");
+        assertThatThrownBy(()->claims.claimExit("cover-buy",9L,"TRADE:88:EXIT:1",1,"BUY")).isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
+        claims.exitOutcome("cover-buy","REFUSED","BUY");
+        assertThat(claims.latestExit(9L,88L,"BUY")).get().extracting(DhanSubmissionClaim.ExitAttempt::outcome).isEqualTo("REFUSED");
+    }
+
     @Test void claimSurvivesCallerRollbackAndRejectsDuplicateAfterward() {
         new TransactionTemplate(transactions).execute(status->{
             claims.claim("rollback-proof",1L,"TRADE:2","BUY");status.setRollbackOnly();return null;

@@ -1,5 +1,7 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.util.TradeSide;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.cache.LtpCacheService;
@@ -132,7 +134,7 @@ public class PriceTriggerService {
 
                 double tolerance = 1.10;
 
-                boolean cashShort = org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trigger.getSource());
+                boolean cashShort = TradeSide.isShort(trigger);
                 if (rejectIfEntryPriceGuardFails(trigger, trigger.getScripCode(), ltp, "option LTP", tolerance, cashShort)) {
                     continue;
                 }
@@ -192,7 +194,7 @@ public class PriceTriggerService {
                 double entryPrice = trigger.getEntryPrice();
                 double tolerance = 1.006;
                 boolean isPE = "PE".equalsIgnoreCase(trigger.getOptionType())
-                        || org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trigger.getSource());
+                        || TradeSide.isShort(trigger);
 
                 Integer referenceScrip = trigger.getSpotScripCode() != null ? trigger.getSpotScripCode() : trigger.getScripCode();
                 if (rejectIfEntryPriceGuardFails(trigger, referenceScrip, ltp, "spot LTP", tolerance, isPE)) {
@@ -947,7 +949,7 @@ public class PriceTriggerService {
                         }
                     } else {
                         // Option-price SL: hit immediately from the traded instrument LTP.
-                        slHit = slRefPrice <= slVal;
+                        slHit = TradeSide.isShort(persisted) ? slRefPrice >= slVal : slRefPrice <= slVal;
                     }
                 }
 
@@ -1001,7 +1003,7 @@ public class PriceTriggerService {
                         boolean isPE = "PE".equalsIgnoreCase(persisted.getOptionType());
 
                         boolean targetHit;
-                        if (isSpotTarget && isPE) {
+                        if (TradeSide.isShort(persisted) || (isSpotTarget && isPE)) {
                             // For PE with Spot Target: Hit if Spot Price goes BELOW Target
                             targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice <= persisted.getTarget1()) ||
                                         (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice <= persisted.getTarget2()) ||
@@ -1440,6 +1442,7 @@ public class PriceTriggerService {
             remainingTrade.setUseSpotForTarget(trade.getUseSpotForTarget());
             remainingTrade.setSpotScripCode(trade.getSpotScripCode());
             remainingTrade.setSource(trade.getSource());
+            remainingTrade.setEntryAction(trade.getEntryAction());
             remainingTrade.setStrategyRunId(trade.getStrategyRunId());
             
             // Append suffix to orderId to avoid unique constraint violation
@@ -1527,7 +1530,7 @@ public class PriceTriggerService {
 
         boolean isSpotTarget = usesSpotForTarget(trade);
         boolean isPE = "PE".equalsIgnoreCase(trade.getOptionType());
-        if (isSpotTarget && isPE) {
+        if (TradeSide.isShort(trade) || (isSpotTarget && isPE)) {
             return ltp <= target;
         }
         return ltp >= target;
@@ -1827,7 +1830,7 @@ public class PriceTriggerService {
                 java.math.BigDecimal exitBd = java.math.BigDecimal.valueOf(exitPrice);
                 java.math.BigDecimal entryBd = java.math.BigDecimal.valueOf(entryPriceForPnl);
                 java.math.BigDecimal qtyBd = java.math.BigDecimal.valueOf(quantity);
-                java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd).setScale(2, java.math.RoundingMode.HALF_UP);
+                java.math.BigDecimal rawPnlBd = exitBd.subtract(entryBd).multiply(qtyBd).multiply(java.math.BigDecimal.valueOf(TradeSide.sign(saved))).setScale(2, java.math.RoundingMode.HALF_UP);
                 saved.setPnl(rawPnlBd.doubleValue());
             } catch (Exception e) {
                 log.warn("Failed computing PnL in persistPnlIfMissing for trade {}: {}", saved.getId(), e.getMessage());

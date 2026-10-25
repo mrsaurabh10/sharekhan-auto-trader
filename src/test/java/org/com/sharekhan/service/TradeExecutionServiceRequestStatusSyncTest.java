@@ -23,41 +23,21 @@ class TradeExecutionServiceRequestStatusSyncTest {
             null, null, null, null, null, null, null, null);
 
     @Test
-    void synchronizesPendingRequestWhenEntryIsExecuted() {
-        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
-                .id(7261L)
-                .triggerRequestId(9924L)
-                .build();
-        when(requestRepo.claimIfStatusEquals(9924L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                TriggeredTradeStatus.EXECUTED.name())).thenReturn(1);
-
+    void synchronizesSubmittingRequestWhenEntryIsExecuted() {
+        var trade = TriggeredTradeSetupEntity.builder().id(7261L).triggerRequestId(9924L).build();
+        when(requestRepo.claimIfStatusEqualsWithOutcome(9924L,"ENTRY_SUBMITTING","EXECUTED",null,null)).thenReturn(1);
         service.syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.EXECUTED);
-
-        verify(requestRepo).claimIfStatusEquals(9924L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                TriggeredTradeStatus.EXECUTED.name());
-        verify(requestRepo, never()).claimIfStatusEquals(9924L,
-                TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.EXECUTED.name());
+        verify(requestRepo).claimIfStatusEqualsWithOutcome(9924L,"ENTRY_SUBMITTING","EXECUTED",null,null);
+        verify(requestRepo,never()).claimIfStatusEqualsWithOutcome(9924L,"TRIGGERED","EXECUTED",null,null);
     }
 
     @Test
-    void synchronizesTriggeredRequestWhenEntryIsRejected() {
-        TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()
-                .id(7262L)
-                .triggerRequestId(9925L)
-                .build();
-        when(requestRepo.claimIfStatusEquals(9925L,
-                TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
-                TriggeredTradeStatus.REJECTED.name())).thenReturn(0);
-        when(requestRepo.claimIfStatusEquals(9925L,
-                TriggeredTradeStatus.TRIGGERED.name(),
-                TriggeredTradeStatus.REJECTED.name())).thenReturn(1);
-
+    void synchronizesLegacyTriggeredRequestWithRejectionOutcome() {
+        var trade = TriggeredTradeSetupEntity.builder().id(7262L).triggerRequestId(9925L).reason("ENTRY_REJECTED").comment("No fill").build();
+        when(requestRepo.claimIfStatusEqualsWithOutcome(9925L,"TRIGGERED","REJECTED","ENTRY_REJECTED","No fill")).thenReturn(1);
         service.syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.REJECTED);
-
-        verify(requestRepo).claimIfStatusEquals(9925L,
-                TriggeredTradeStatus.TRIGGERED.name(), TriggeredTradeStatus.REJECTED.name());
+        verify(requestRepo).claimIfStatusEqualsWithOutcome(9925L,"ENTRY_SUBMITTING","REJECTED","ENTRY_REJECTED","No fill");
+        verify(requestRepo).claimIfStatusEqualsWithOutcome(9925L,"TRIGGERED","REJECTED","ENTRY_REJECTED","No fill");
     }
 
     @Test

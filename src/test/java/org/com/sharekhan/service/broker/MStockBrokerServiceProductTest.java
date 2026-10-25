@@ -16,6 +16,14 @@ class MStockBrokerServiceProductTest {
     MStockInstrumentResolver instruments=mock(MStockInstrumentResolver.class);
     MStockBrokerService service=new MStockBrokerService(tokens,mock(CryptoService.class),instruments);
 
+    @Test void shortCashEntryAndCoverKeepMisProduct() {
+        var trade=TriggeredTradeSetupEntity.builder().entryAction("SELL").symbol("TEST").exchange("NC").quantity(10L).intraday(true).build();
+        assertThat(service.placeOrder(trade,new BrokerContext(null,null,null,"MStock",7L),100).isSuccess()).isFalse();
+        assertThat(trade.getBrokerExecutionProduct()).isEqualTo("MIS");
+        var instrument=ReflectionTestUtils.invokeMethod(service,"resolveInstrumentIdentity",trade);
+        Map<String,String> form=ReflectionTestUtils.invokeMethod(service,"buildBaseOrderForm",trade,instrument,org.com.sharekhan.util.TradeSide.exit(trade),"LIMIT",95d,null);
+        assertThat(form).containsEntry("product","MIS").containsEntry("transaction_type","BUY");
+    }
     @Test void sameDayEntryUsesDeliveryAndBothExitAndModifyFormsRetainProduct() {
         for(String exchange:new String[]{"NC","NF"}) {
             var trade=TriggeredTradeSetupEntity.builder().symbol("TEST").exchange(exchange).quantity(10L).intraday(true).build();

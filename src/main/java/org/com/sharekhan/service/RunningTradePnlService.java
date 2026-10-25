@@ -1,5 +1,7 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.util.TradeSide;
+
 import java.math.*;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
@@ -46,7 +48,7 @@ public class RunningTradePnlService {
             || trade.getQuantity()==null || trade.getQuantity()<=0 || !positive(trade.getActualEntryPrice())) return Optional.empty();
         String identity=Arrays.asList(trade.getAppUserId(),trade.getBrokerCredentialsId(),trade.getOrderId(),
             trade.getExchange(),trade.getSymbol(),trade.getExpiry(),trade.getStrikePrice(),trade.getOptionType(),
-            trade.getQuantity(),trade.getActualEntryPrice(),trade.getSource(),trade.getBrokerExecutionProduct()).toString();
+            trade.getQuantity(),trade.getActualEntryPrice(),trade.getEntryAction(),trade.getSource(),trade.getBrokerExecutionProduct()).toString();
         Remembered saved=marks.get(trade.getId());
         Snapshot result=saved!=null && saved.identity().equals(identity)?saved.snapshot():null;
         if(trade.getScripCode()!=null) {
@@ -68,7 +70,7 @@ public class RunningTradePnlService {
     }
     private Snapshot mark(TriggeredTradeSetupEntity trade,BigDecimal price,Instant at,String source) {
         BigDecimal pnl=price.subtract(BigDecimal.valueOf(trade.getActualEntryPrice())).multiply(BigDecimal.valueOf(trade.getQuantity()));
-        if(SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource())) pnl=pnl.negate();
+        if(TradeSide.isShort(trade)) pnl=pnl.negate();
         return new Snapshot(price,pnl.setScale(2,RoundingMode.HALF_UP),at,source);
     }
     private Snapshot dhanPosition(TriggeredTradeSetupEntity trade) {
@@ -107,12 +109,15 @@ public class RunningTradePnlService {
                 if(match!=null) return null;
                 match=row;
             }
-            if(match==null || match.getBigDecimal("netQty").compareTo(BigDecimal.valueOf(trade.getQuantity()))!=0 || match.getBigDecimal("sellQty").signum()!=0
-                || match.getBigDecimal("buyQty").compareTo(BigDecimal.valueOf(trade.getQuantity()))!=0 || !"LONG".equals(match.getString("positionType"))
-                || new BigDecimal(match.get("buyAvg").toString()).compareTo(BigDecimal.valueOf(trade.getActualEntryPrice()))!=0
+            boolean shortSide=TradeSide.isShort(trade);
+            if(match==null || match.getBigDecimal("netQty").compareTo(BigDecimal.valueOf(trade.getQuantity()).multiply(BigDecimal.valueOf(TradeSide.sign(trade))))!=0
+                || match.getBigDecimal(shortSide ? "buyQty" : "sellQty").signum()!=0
+                || match.getBigDecimal(shortSide ? "sellQty" : "buyQty").compareTo(BigDecimal.valueOf(trade.getQuantity()))!=0
+                || !(shortSide ? "SHORT" : "LONG").equals(match.getString("positionType"))
+                || new BigDecimal(match.get(shortSide ? "sellAvg" : "buyAvg").toString()).compareTo(BigDecimal.valueOf(trade.getActualEntryPrice()))!=0
                 || match.optDouble("multiplier",1d)!=1d) return null;
             BigDecimal pnl=new BigDecimal(match.get("unrealizedProfit").toString());
-            BigDecimal price=BigDecimal.valueOf(trade.getActualEntryPrice()).add(pnl.divide(BigDecimal.valueOf(trade.getQuantity()),12,RoundingMode.HALF_UP));
+            BigDecimal price=BigDecimal.valueOf(trade.getActualEntryPrice()).add(pnl.multiply(BigDecimal.valueOf(TradeSide.sign(trade))).divide(BigDecimal.valueOf(trade.getQuantity()),12,RoundingMode.HALF_UP));
             if(price.signum()<=0) return null;
             return new Snapshot(price.stripTrailingZeros(),pnl.setScale(2,RoundingMode.HALF_UP),data.at(),"Dhan position snapshot");
         } catch(Exception ignored){return null;}

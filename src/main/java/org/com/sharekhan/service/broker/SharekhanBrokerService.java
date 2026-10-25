@@ -1,5 +1,7 @@
 package org.com.sharekhan.service.broker;
 
+import org.com.sharekhan.util.TradeSide;
+
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.model.OrderParams;
 import lombok.RequiredArgsConstructor;
@@ -46,7 +48,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         if (isBigTradePlus(trade)) {
             return placeBigTradePlusBracket(trade, context);
         }
-        return executeSharekhanOrder(trade, context, ltp, "B", "NEW");
+        return executeSharekhanOrder(trade, context, ltp, TradeSide.isShort(trade) ? "S" : "B", "NEW");
     }
 
     @Override
@@ -57,12 +59,12 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         if (isBigTradePlus(trade)) {
             return placeBigTradePlusBracket(trade, context, triggerPrice, limitPrice);
         }
-        return executeSharekhanOrder(trade, context, limitPrice, "B", "NEW", triggerPrice);
+        return executeSharekhanOrder(trade, context, limitPrice, TradeSide.isShort(trade) ? "S" : "B", "NEW", triggerPrice);
     }
 
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
-        return executeSharekhanOrder(trade, context, exitPrice, "S", "NEW");
+        return executeSharekhanOrder(trade, context, exitPrice, TradeSide.isShort(trade) ? "B" : "S", "NEW");
     }
 
     @Override
@@ -469,6 +471,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                                                        String transactionType,
                                                        String requestType,
                                                        Double triggerPrice) {
+        boolean exitOrder = transactionType.equals(TradeSide.isShort(trade) ? "B" : "S");
+        if (TradeSide.isShort(trade) && (!Boolean.TRUE.equals(trade.getIntraday()) || !java.util.Set.of("NC", "BC").contains(trade.getExchange())))
+            return rejected("Cash shorts must be intraday", price);
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
@@ -493,8 +498,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                 order.triggerPrice = String.valueOf(triggerPrice);
             }
             order.orderType = "NORMAL";
-            order.productType = "INVESTMENT";
-            if ("B".equals(transactionType)) trade.setBrokerExecutionProduct("INVESTMENT");
+            order.productType = TradeSide.isShort(trade) ? "BIGTRADE" : "INVESTMENT";
+            if (!exitOrder) trade.setBrokerExecutionProduct(order.productType);
+            else if (trade.getBrokerExecutionProduct() != null) order.productType = trade.getBrokerExecutionProduct();
             order.instrumentType = trade.getInstrumentType();
             
             if (trade.getStrikePrice() != null) {
@@ -513,7 +519,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             order.channelUser = context.getClientCode();
 
             String unknownHandle="SK-UNKNOWN-"+context.getBrokerCredentialsId()+"-"+trade.getId()+"-1";
-            if("S".equals(transactionType)) {
+            if(exitOrder) {
                 if(trade.getId()==null || context.getBrokerCredentialsId()==null)throw new IllegalArgumentException("Persist owned exit before submission");
                 if(exitSubmissions!=null) {
                     org.com.sharekhan.service.BrokerExitSubmissionStore.Claim claim;
@@ -526,12 +532,12 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                     if(!claim.send())return unknownExit(unknownHandle,price);
                 }
             }
-            // A lost sell acknowledgement is ambiguous delivery, never permission for another NEW sell.
+            // A lost exit acknowledgement is ambiguous delivery, never permission for another exit order.
             JSONObject response = null;
             String orderId = null;
-            final int maxAttempts = "S".equals(transactionType) ? 1 : 3;
+            final int maxAttempts = exitOrder || TradeSide.isShort(trade) ? 1 : 3;
             long[] backoffMs = new long[]{300L, 700L, 1500L};
-            String stage = "S".equalsIgnoreCase(transactionType)
+            String stage = exitOrder
                     ? "EXIT"
                     : triggerPrice != null ? "ENTRY_TRIGGER" : "ENTRY";
 
@@ -567,7 +573,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             }
 
             if (orderId == null) {
-                if("S".equals(transactionType))return unknownExit(unknownHandle,price);
+                if(exitOrder)return unknownExit(unknownHandle,price);
                 String reason = "Broker did not return orderId after retries";
                 if (response != null) {
                     String msg = response.optString("message", "");
@@ -581,9 +587,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                         .build();
             }
 
-            if("S".equals(transactionType) && exitSubmissions!=null) {
+            if(exitOrder && exitSubmissions!=null) {
                 try { exitSubmissions.accepted(unknownHandle,orderId); }
-                catch(Exception bookkeeping) {log.warn("Sell acknowledged; submission metadata requires reconciliation for trade {}",trade.getId());}
+                catch(Exception bookkeeping) {log.warn("Exit acknowledged; submission metadata requires reconciliation for trade {}",trade.getId());}
             }
             // Check for immediate execution details
             String status = "Pending";
@@ -600,11 +606,11 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
                         try { executedPrice = Double.parseDouble(avgPrice); } catch (Exception ignored) {}
                     }
                     
-                    // Calculate PnL if it's a sell order and we have entry price
-                    if ("S".equals(transactionType) && executedPrice != null) {
+                    // Calculate signed P&L only for a confirmed exit fill.
+                    if (exitOrder && executedPrice != null) {
                         Double entryPriceForPnl = resolveEntryPriceForPnl(trade);
                         if (entryPriceForPnl != null) {
-                            pnl = (executedPrice - entryPriceForPnl) * trade.getQuantity();
+                            pnl = TradeSide.sign(trade) * (executedPrice - entryPriceForPnl) * trade.getQuantity();
                         }
                     }
                 }
@@ -632,7 +638,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
 
     private static OrderPlacementResult unknownExit(String handle,double price) {
         return OrderPlacementResult.builder().success(true).orderId(handle).status("Pending").attemptedPrice(price)
-                .rejectionReason("Sharekhan sell delivery requires reconciliation; no replacement submitted").build();
+                .rejectionReason("Sharekhan exit delivery requires reconciliation; no replacement submitted").build();
     }
 
     private long elapsedMillis(long startedAtNanos) {

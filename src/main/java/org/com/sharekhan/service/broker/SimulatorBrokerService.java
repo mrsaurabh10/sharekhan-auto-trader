@@ -1,5 +1,7 @@
 package org.com.sharekhan.service.broker;
 
+import org.com.sharekhan.util.TradeSide;
+
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.dto.BrokerContext;
 import org.com.sharekhan.dto.OrderPlacementResult;
@@ -18,7 +20,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
-        log.info("🚀 [SIMULATOR] Placing BUY order for {} at {}", trade.getSymbol(), ltp);
+        log.info("🚀 [SIMULATOR] Placing {} entry order for {} at {}", TradeSide.entry(trade), trade.getSymbol(), ltp);
         String orderId = "SIM-" + System.currentTimeMillis();
         
         return OrderPlacementResult.builder()
@@ -58,13 +60,13 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
-        log.info("🚀 [SIMULATOR] Placing SELL/EXIT order for {} at {}", trade.getSymbol(), exitPrice);
+        log.info("🚀 [SIMULATOR] Placing {} exit order for {} at {}", TradeSide.exit(trade), trade.getSymbol(), exitPrice);
         String orderId = "SIM-EXIT-" + System.currentTimeMillis();
         
         Double pnl = null;
         Double entryPriceForPnl = resolveEntryPriceForPnl(trade);
         if (entryPriceForPnl != null && trade.getQuantity() != null) {
-            pnl = (exitPrice - entryPriceForPnl) * trade.getQuantity();
+            pnl = TradeSide.sign(trade) * (exitPrice - entryPriceForPnl) * trade.getQuantity();
         }
 
         return OrderPlacementResult.builder()

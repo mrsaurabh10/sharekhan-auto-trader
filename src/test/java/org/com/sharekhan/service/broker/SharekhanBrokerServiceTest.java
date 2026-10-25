@@ -10,6 +10,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class SharekhanBrokerServiceTest {
 
+    @Test void cashShortSellsThenBuysBackAndModifiesCoverAsBuy() throws Throwable {
+        var repository = org.mockito.Mockito.mock(org.com.sharekhan.repository.ScriptMasterRepository.class);
+        var tokens = org.mockito.Mockito.mock(org.com.sharekhan.auth.TokenStoreService.class);
+        var sdk = org.mockito.Mockito.mock(com.sharekhan.SharekhanConnect.class);
+        var service = org.mockito.Mockito.spy(new SharekhanBrokerService(tokens, repository));
+        org.mockito.Mockito.doReturn(sdk).when(service).createClient("key", null);
+        org.mockito.Mockito.when(sdk.placeOrder(org.mockito.ArgumentMatchers.any())).thenReturn(new JSONObject().put("data",new JSONObject().put("orderId","ORDER-1")));
+        org.mockito.Mockito.when(sdk.modifyorder(org.mockito.ArgumentMatchers.any())).thenReturn(new JSONObject().put("data",new JSONObject().put("orderId","ORDER-1")));
+        var context = new BrokerContext(1L,"key","CLIENT","Sharekhan",2L);
+        org.mockito.Mockito.when(repository.findById(123)).thenReturn(java.util.Optional.of(org.com.sharekhan.entity.ScriptMasterEntity.builder().exchange("NC").tickSize(0.05).build()));
+        var trade = TriggeredTradeSetupEntity.builder().id(101L).symbol("TEST").scripCode(123).exchange("NC").entryAction("SELL").quantity(10L).entryPrice(100d).intraday(true).build();
+        assertThat(service.placeOrder(trade,context,100d).isSuccess()).isTrue();
+        assertThat(service.placeExitOrder(trade,context,95d).isSuccess()).isTrue();
+        var captor = org.mockito.ArgumentCaptor.forClass(com.sharekhan.model.OrderParams.class);
+        org.mockito.Mockito.verify(sdk,org.mockito.Mockito.times(2)).placeOrder(captor.capture());
+        assertThat(captor.getAllValues()).extracting(o->o.transactionType).containsExactly("S","B");
+        assertThat(captor.getAllValues()).allSatisfy(o->assertThat(o.productType).isEqualTo("BIGTRADE"));
+        trade.setStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        service.modifyEntryOrder(trade,context,"ORDER-1",95d);
+        org.mockito.Mockito.verify(sdk).modifyorder(captor.capture());
+        assertThat(captor.getValue().transactionType).isEqualTo("B");
+        assertThat(captor.getValue().productType).isEqualTo("BIGTRADE");
+    }
+
     @Test void bracketLogsPreserveRejectionAndRedactNestedCredentials() {
         var raw = new JSONObject().put("status", 400).put("message", "Invalid stop for sensitive-token")
                 .put("orderId", "C1").put("childSlPrice", "1200.70")

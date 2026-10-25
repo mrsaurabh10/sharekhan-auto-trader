@@ -1,5 +1,7 @@
 package org.com.sharekhan.service.broker;
 
+import org.com.sharekhan.util.TradeSide;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.com.sharekhan.auth.TokenStoreService;
@@ -53,12 +55,12 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
 
     @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
-        return placeMStockOrder(trade, context, ltp, "BUY", "LIMIT", null);
+        return placeMStockOrder(trade, context, ltp, TradeSide.entry(trade), "LIMIT", null);
     }
 
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
-        return placeMStockOrder(trade, context, exitPrice, "SELL", "LIMIT", null);
+        return placeMStockOrder(trade, context, exitPrice, TradeSide.exit(trade), "LIMIT", null);
     }
 
     @Override
@@ -66,7 +68,7 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
                                                            BrokerContext context,
                                                            double triggerPrice,
                                                            double limitPrice) {
-        return placeMStockOrder(trade, context, limitPrice, "BUY", "SL", triggerPrice);
+        return placeMStockOrder(trade, context, limitPrice, TradeSide.entry(trade), "SL", triggerPrice);
     }
 
     @Override
@@ -91,7 +93,7 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
             }
 
             InstrumentIdentity instrument = resolveInstrumentIdentity(trade);
-            String transactionType = isExitOrder(trade, orderId) ? "SELL" : "BUY";
+            String transactionType = isExitOrder(trade, orderId) ? TradeSide.exit(trade) : TradeSide.entry(trade);
             Map<String, String> form = buildBaseOrderForm(trade, instrument, transactionType, "LIMIT", newPrice, null);
             form.put("disclosed_quantity", "0");
             form.put("trigger_price", "0");
@@ -208,7 +210,9 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
 
             InstrumentIdentity instrument = resolveInstrumentIdentity(trade);
             String variety = ShareKhanOrderUtil.isAfterHours() ? "amo" : "regular";
-            if ("BUY".equals(transactionType)) trade.setBrokerExecutionProduct(isDerivativeExchange(instrument.exchange()) ? "NRML" : "CNC");
+            if (TradeSide.isShort(trade) && (!Boolean.TRUE.equals(trade.getIntraday()) || isDerivativeExchange(instrument.exchange())))
+                return rejected("Short entries require intraday cash equity", price);
+            if (transactionType.equals(TradeSide.entry(trade))) trade.setBrokerExecutionProduct(TradeSide.isShort(trade) ? "MIS" : isDerivativeExchange(instrument.exchange()) ? "NRML" : "CNC");
 
             Map<String, String> form = buildBaseOrderForm(trade, instrument, transactionType, orderType, price, triggerPrice);
             form.put("tag", buildOrderTag(trade));

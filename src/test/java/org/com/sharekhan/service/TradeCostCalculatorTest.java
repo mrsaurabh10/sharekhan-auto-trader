@@ -9,6 +9,16 @@ class TradeCostCalculatorTest {
 
     private final TradeCostCalculator calculator = new TradeCostCalculator();
 
+    @Test void shortCostsUseSellEntryAndBuyCoverAndBreakEvenMovesBelowEntry() {
+        var trade=org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().entryAction("SELL").quantity(100L).actualEntryPrice(100d).exitPrice(95d).build();
+        var charges=TradeCostCalculator.calculateCharges(trade);
+        assertThat(charges.effectivePnl()).isEqualTo(500d-charges.totalTradeCost());
+        Double cover=TradeCostCalculator.maximumProfitableCoverPrice(trade,0.05d);
+        assertThat(cover).isLessThan(100d);
+        trade.setExitPrice(cover);
+        assertThat(TradeCostCalculator.calculateCharges(trade).effectivePnl()).isPositive();
+    }
+
     @Test
     void calculatesTradeCostAndEffectivePnlForRegularOptionExit() {
         TriggeredTradeSetupEntity trade = TriggeredTradeSetupEntity.builder()

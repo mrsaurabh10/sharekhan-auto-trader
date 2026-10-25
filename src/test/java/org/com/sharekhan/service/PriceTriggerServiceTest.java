@@ -41,6 +41,30 @@ import static org.mockito.Mockito.when;
 
 class PriceTriggerServiceTest {
 
+    @Test void stockShortStopsAboveEntryAndTargetsBelowEntry() {
+        for (boolean stop : new boolean[]{true,false}) {
+            org.mockito.Mockito.reset(triggeredRepo, tradeExecutionService);
+            PriceTriggerService timed = spy(service);
+            doReturn(LocalDateTime.of(2026,7,3,10,0)).when(timed).nowIst();
+            var trade = TriggeredTradeSetupEntity.builder().id(9001L).scripCode(123).symbol("TEST").exchange("NC")
+                .entryAction("SELL").quantity(10L).entryPrice(100d).actualEntryPrice(100d).stopLoss(105d).target1(95d)
+                .intraday(true).tslEnabled(false).status(TriggeredTradeStatus.EXECUTED).build();
+            double price = stop ? 106d : 94d;
+            String reason = stop ? "STOP_LOSS_HIT" : "TARGET_HIT";
+            when(triggeredRepo.findByScripCodeAndStatusIn(eq(123), anyList())).thenReturn(List.of(trade));
+            when(triggeredRepo.findBySpotScripCodeAndStatusIn(eq(123), anyList())).thenReturn(List.of());
+            when(triggeredRepo.findById(9001L)).thenReturn(Optional.of(trade));
+            when(tradeExecutionService.hasUsableTradedExitPrice(trade,price)).thenReturn(true);
+            when(triggeredRepo.claimIfStatusEquals(9001L,"EXECUTED","EXIT_TRIGGERED",reason)).thenAnswer(c->{
+                trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason(reason);return 1;
+            });
+            timed.monitorOpenTrades(123,100d);
+            verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
+            timed.monitorOpenTrades(123,price);
+            verify(tradeExecutionService).squareOff(trade,price,reason);
+        }
+    }
+
     @Test void timedStraddleRequestsCannotBeTriggeredByGenericSpotOrOptionTicks() {
         var timed=spy(service);doReturn(LocalDateTime.of(2026,10,13,9,30)).when(timed).nowIst();
         var request=TriggerTradeRequestEntity.builder().id(888L).scripCode(15332).entryPrice(100d)
@@ -90,7 +114,9 @@ class PriceTriggerServiceTest {
             mock(ScripExecutorManager.class),
             orderExecutionDispatcher,
             mock(BrokerCredentialsRepository.class)
-    );
+    ) {
+        @Override LocalDateTime nowIst() { return LocalDateTime.of(2026, 7, 3, 10, 0); }
+    };
 
     {
         // A dispatched entry must atomically move into the non-triggerable broker-submitting state.

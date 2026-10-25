@@ -1,5 +1,7 @@
 package org.com.sharekhan.service.broker;
 
+import org.com.sharekhan.util.TradeSide;
+
 import java.math.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -49,40 +51,49 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
     @Override public boolean hasDefinitivelyRefusedExit(TriggeredTradeSetupEntity trade,BrokerContext context) {
         try {
             session(trade,context);
-            return claims.latestExit(context.getBrokerCredentialsId(),trade.getId())
+            return latestExit(trade,context)
                     .map(attempt->"REFUSED".equals(attempt.outcome())).orElse(false);
         } catch(Exception unavailable) {return false;}
     }
+    private Optional<DhanSubmissionClaim.ExitAttempt> latestExit(TriggeredTradeSetupEntity trade,BrokerContext context) {
+        return TradeSide.isShort(trade) ? claims.latestExit(context.getBrokerCredentialsId(),trade.getId(),"BUY")
+                : claims.latestExit(context.getBrokerCredentialsId(),trade.getId());
+    }
+    private void recordExitOutcome(TriggeredTradeSetupEntity trade,String correlation,String outcome) {
+        if (TradeSide.isShort(trade)) claims.exitOutcome(correlation,outcome,"BUY");
+        else claims.exitOutcome(correlation,outcome);
+    }
     @Override public Broker getBroker() { return Broker.DHAN; }
     @Override public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double price) {
-        return place(trade,context,price,null,"BUY");
+        return place(trade,context,price,null,TradeSide.entry(trade));
     }
     @Override public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double price) {
         if (trade != null && trade.getExitOrderId() != null && !trade.getExitOrderId().isBlank())
-            return rejected("Existing Dhan exit must be reconciled before another sell",price);
-        return place(trade,context,price,null,"SELL");
+            return rejected("Existing Dhan exit must be reconciled before another exit",price);
+        return place(trade,context,price,null,TradeSide.exit(trade));
     }
     @Override public OrderPlacementResult placeTriggerPriceEntryOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double trigger, double limit) {
-        return place(trade,context,limit,trigger,"BUY");
+        return place(trade,context,limit,trigger,TradeSide.entry(trade));
     }
     private OrderPlacementResult place(TriggeredTradeSetupEntity trade, BrokerContext context, double price, Double trigger, String side) {
+        boolean exitOrder = side.equals(TradeSide.exit(trade));
         Session session; String correlation; String submissionKey; JSONObject body; int exitGeneration=0;
         try {
             session = session(trade,context);
-            if ("BUY".equals(side) && !session.entryEnabled()) throw new IllegalArgumentException("Enable trading before entry");
+            if (!exitOrder && !session.entryEnabled()) throw new IllegalArgumentException("Enable trading before entry");
             var instrument = instruments.resolve(trade);
             long quantity = quantity(trade,instrument);
             if(trade.getBrokerSecurityId()!=null && !trade.getBrokerSecurityId().equals(instrument.securityId()))
                 throw new IllegalArgumentException("Persisted broker contract differs from requested contract");
             trade.setBrokerSecurityId(instrument.securityId());
             BigDecimal limit = price(price,instrument);
-            if (trigger != null && (price(trigger,instrument).compareTo(limit)>0)) throw new IllegalArgumentException("Trigger above buy limit");
-            if ("BUY".equals(side) && trade.getTriggerRequestId() != null && trade.getTriggerRequestId() > 0) {
+            if (trigger != null && ("BUY".equals(side) ? price(trigger,instrument).compareTo(limit)>0 : price(trigger,instrument).compareTo(limit)<0)) throw new IllegalArgumentException("Trigger above buy limit");
+            if (!exitOrder && trade.getTriggerRequestId() != null && trade.getTriggerRequestId() > 0) {
                 submissionKey = "REQUEST:"+trade.getTriggerRequestId()+":REENTRY:"+(trade.getGapReentryCount() == null ? 0 : trade.getGapReentryCount());
             } else if (trade.getId() != null && trade.getId() > 0) {
                 submissionKey = "TRADE:"+trade.getId();
-                if ("SELL".equals(side)) {
-                    var previous=claims.latestExit(context.getBrokerCredentialsId(),trade.getId());
+                if (exitOrder) {
+                    var previous=latestExit(trade,context);
                     if(previous.isPresent()) {
                         var prior=previous.get();
                         if(!Set.of("REFUSED","INACTIVE_ZERO_FILL").contains(Objects.toString(prior.outcome(),""))) {
@@ -94,7 +105,7 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
                             if(!Set.of("REJECTED","CANCELLED","EXPIRED").contains(old.getString("orderStatus"))
                                     || units(old,"filledQty")!=0 || units(old,"remainingQuantity")!=quantity)
                                 return pendingPlacement(accepted(old,null,price));
-                            claims.exitOutcome(prior.correlation(),"INACTIVE_ZERO_FILL");
+                            recordExitOutcome(trade,prior.correlation(),"INACTIVE_ZERO_FILL");
                         }
                         exitGeneration=prior.generation()+1;
                     } else exitGeneration=1;
@@ -103,7 +114,11 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
             } else throw new IllegalArgumentException("Persist request or trade before sending Dhan order");
             if (trade.getBrokerProductType() != null && !trade.getBrokerProductType().isBlank())
                 throw new IllegalArgumentException("Dhan broker-managed products are unsupported");
-            if ("BUY".equals(side)) trade.setBrokerExecutionProduct(instrument.segment().endsWith("FNO") ? "MARGIN" : "CNC");
+            if (!exitOrder) {
+                if (TradeSide.isShort(trade) && (!Boolean.TRUE.equals(trade.getIntraday()) || instrument.segment().endsWith("FNO")))
+                    throw new IllegalArgumentException("Short entries require intraday cash equity");
+                trade.setBrokerExecutionProduct(TradeSide.isShort(trade) ? "INTRADAY" : instrument.segment().endsWith("FNO") ? "MARGIN" : "CNC");
+            }
             else verifyExitPosition(session,trade,instrument);
             correlation = correlation(context.getBrokerCredentialsId(),submissionKey,side);
             body = new JSONObject().put("dhanClientId",session.clientId()).put("correlationId",correlation)
@@ -115,7 +130,10 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
         } catch (Exception ignored) { return rejected("Dhan order not sent: verify scoped session, instrument, product, quantity and tick-aligned price",price); }
         boolean claimed;
         try {
-            if ("SELL".equals(side)) claims.claimExit(correlation,context.getBrokerCredentialsId(),submissionKey,exitGeneration);
+            if (exitOrder) {
+                if (TradeSide.isShort(trade)) claims.claimExit(correlation,context.getBrokerCredentialsId(),submissionKey,exitGeneration,"BUY");
+                else claims.claimExit(correlation,context.getBrokerCredentialsId(),submissionKey,exitGeneration);
+            }
             else claims.claim(correlation,context.getBrokerCredentialsId(),submissionKey,side);
             claimed=true;
         }
@@ -127,9 +145,9 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
                 var response = client.exchange("POST","/orders",session.token(),body);
                 if (response.ok()) {
                     var result = accepted(response.json(),null,price);
-                    if (result != null) return placementOutcome(result, session, side);
+                    if (result != null) return placementOutcome(result, session, exitOrder, side);
                 } else if (response.code() >= 400 && response.code() < 500 && response.code() != 408 && response.code() != 429) {
-                    if ("SELL".equals(side)) claims.exitOutcome(correlation,"REFUSED");
+                    if (exitOrder) recordExitOutcome(trade,correlation,"REFUSED");
                     var refusal = rejected("Dhan rejected order (HTTP " + response.code() + ")"+safeError(response,session),price);
                     refusal.setDefinitiveBrokerRejection(true);
                     return refusal;
@@ -138,9 +156,9 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
         }
         try {
             JSONObject found = lookup(session,CORRELATION_PREFIX+correlation);
-            validateStatusIdentity(found,trade,"SELL".equals(side),"BUY".equals(side));
+            validateStatusIdentity(found,trade,exitOrder,!exitOrder);
             var result = accepted(found,null,price);
-            if (result != null) return placementOutcome(result, session, side);
+            if (result != null) return placementOutcome(result, session, exitOrder, side);
         } catch (Exception ignored) {}
         // Durable correlation handle lets the normal poller recover the real order after a lost response.
         return unresolved(correlation,price);
@@ -189,7 +207,7 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
             // Status polling remains available even if today's master download is unavailable.
             if (!session.clientId().equals(row.getString("dhanClientId"))) return null;
             if (!DhanInstrumentResolver.segment(trade.getExchange()).equals(row.getString("exchangeSegment"))
-                    || !(orderId.equals(trade.getExitOrderId()) ? "SELL" : "BUY").equals(row.getString("transactionType"))) return null;
+                    || !(orderId.equals(trade.getExitOrderId()) ? TradeSide.exit(trade) : TradeSide.entry(trade)).equals(row.getString("transactionType"))) return null;
             validateStatusIdentity(row,trade,orderId.equals(trade.getExitOrderId()));
             JSONObject response=adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
             if (response != null && !orderId.equals(trade.getExitOrderId())) recordExecutionProduct(trade,row);
@@ -205,7 +223,7 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
             if(!session.clientId().equals(row.getString("dhanClientId"))
                 || (correlation ? !orderId.substring(CORRELATION_PREFIX.length()).equals(row.getString("correlationId")) : !orderId.equals(row.getString("orderId")))
                 || !DhanInstrumentResolver.segment(trade.getExchange()).equals(row.getString("exchangeSegment"))
-                || !(orderId.equals(trade.getExitOrderId()) ? "SELL" : "BUY").equals(row.getString("transactionType"))) return null;
+                || !(orderId.equals(trade.getExitOrderId()) ? TradeSide.exit(trade) : TradeSide.entry(trade)).equals(row.getString("transactionType"))) return null;
             validateStatusIdentity(row,trade,orderId.equals(trade.getExitOrderId()));
             return adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
         } catch(Exception ignored) {return null;}
@@ -256,7 +274,7 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
     }
     private void validateStatusIdentity(JSONObject row,TriggeredTradeSetupEntity trade,boolean exit,boolean recoveringEntryProduct) {
         if(!DhanInstrumentResolver.segment(trade.getExchange()).equals(row.getString("exchangeSegment"))
-                || !(exit?"SELL":"BUY").equals(row.getString("transactionType")))throw new IllegalArgumentException("Broker order segment/side mismatch");
+                || !(exit ? TradeSide.exit(trade) : TradeSide.entry(trade)).equals(row.getString("transactionType")))throw new IllegalArgumentException("Broker order segment/side mismatch");
         String security=trade.getBrokerSecurityId();
         if(security==null) security=instruments.resolve(trade).securityId();
         if(!security.equals(row.getString("securityId")) || trade.getQuantity()==null
@@ -277,13 +295,13 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
             JSONObject row=rows.getJSONObject(i);
             if(!session.clientId().equals(row.getString("dhanClientId")) || !instrument.securityId().equals(row.getString("securityId"))
                     || !instrument.segment().equals(row.getString("exchangeSegment"))) continue;
-            if(units(row,"netQty")<=0) continue;
+            if(TradeSide.isShort(trade) ? units(row,"netQty") >= 0 : units(row,"netQty") <= 0) continue;
             if(trade.getBrokerExecutionProduct()!=null && !trade.getBrokerExecutionProduct().equals(row.getString("productType"))) continue;
             if(match!=null) throw new IllegalArgumentException("Ambiguous broker position product");
             match=row;
         }
-        if(match==null || units(match,"netQty")<trade.getQuantity() || !"LONG".equals(match.getString("positionType")))
-            throw new IllegalArgumentException("Insufficient verified long position");
+        if(match==null || Math.abs(units(match,"netQty"))<trade.getQuantity() || !(TradeSide.isShort(trade) ? "SHORT" : "LONG").equals(match.getString("positionType")))
+            throw new IllegalArgumentException("Insufficient verified position for exit");
         trade.setBrokerExecutionProduct(match.getString("productType"));
         String product=executionProduct(trade,instrument.segment());
         var book=client.exchange("GET","/orders",session.token(),null);
@@ -294,14 +312,14 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
             JSONObject row=orders.getJSONObject(i);
             if(!session.clientId().equals(row.getString("dhanClientId")) || !instrument.securityId().equals(row.getString("securityId"))
                     || !instrument.segment().equals(row.getString("exchangeSegment")) || !product.equals(row.getString("productType"))
-                    || !"SELL".equals(row.getString("transactionType"))) continue;
+                    || !TradeSide.exit(trade).equals(row.getString("transactionType"))) continue;
             if(Set.of("PENDING","TRANSIT","PART_TRADED").contains(row.getString("orderStatus"))) {
                 long remaining=units(row,"remainingQuantity");
                 if(remaining<0) throw new IllegalArgumentException();
                 reserved=Math.addExact(reserved,remaining);
             }
         }
-        if(reserved>units(match,"netQty")-trade.getQuantity()) throw new IllegalArgumentException("Existing sells reserve remaining exposure");
+        if(reserved>Math.abs(units(match,"netQty"))-trade.getQuantity()) throw new IllegalArgumentException("Existing exit orders reserve remaining exposure");
     }
     private static String safeError(DhanOrderClient.Response response,Session session) {
         // Never retain free-form broker text: it can contain credentials or request echoes.
@@ -330,7 +348,7 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
         boolean exit = orderId.equals(trade.getExitOrderId());
         validateStatusIdentity(row,trade,exit);
         if (!instrument.securityId().equals(row.getString("securityId")) || !instrument.segment().equals(row.getString("exchangeSegment"))
-                || !(exit ? "SELL" : "BUY").equals(row.getString("transactionType"))) throw new IllegalArgumentException();
+                || !(exit ? TradeSide.exit(trade) : TradeSide.entry(trade)).equals(row.getString("transactionType"))) throw new IllegalArgumentException();
     }
     private static long quantity(TriggeredTradeSetupEntity trade,DhanInstrumentResolver.Instrument instrument) {
         Long quantity = trade.getQuantity();
@@ -357,13 +375,13 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
         // Even an inactive acknowledgement can have fills. Persist its ID and let polling reconcile it.
         result.setSuccess(true);result.setStatus("Pending");return result;
     }
-    private OrderPlacementResult placementOutcome(OrderPlacementResult result, Session session, String side) {
-        if (!result.isSuccess() && "BUY".equals(side)) {
+    private OrderPlacementResult placementOutcome(OrderPlacementResult result, Session session, boolean exitOrder, String side) {
+        if (!result.isSuccess() && !exitOrder) {
             try {
                 // Confirm absence of fills before treating an inactive acknowledgement as a failed entry.
                 JSONObject row = lookup(session, result.getOrderId());
                 long quantity = units(row,"quantity");
-                if ("REJECTED".equals(row.getString("orderStatus")) && "BUY".equals(row.getString("transactionType"))
+                if ("REJECTED".equals(row.getString("orderStatus")) && side.equals(row.getString("transactionType"))
                         && quantity > 0 && units(row,"filledQty") == 0 && units(row,"remainingQuantity") == quantity) {
                     result.setDefinitiveBrokerRejection(true);
                     return result;
