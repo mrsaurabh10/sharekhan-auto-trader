@@ -102,6 +102,14 @@ class WebSocketSubscriptionHelperTest {
         helper.releaseObserverFeed("observer");assertTrue(helper.getActiveScripKeys().contains("NF42"));assertTrue(connector.lastMessages.isEmpty());
     }
 
+    @Test void onlyObserverReferencesAreIdentifiedForFallbackPollingExclusion() {
+        helper.subscribeToScrip("NF42");helper.retainObserverFeed("observer","NF42",true);
+        assertTrue(helper.getObserverOnlyScripKeys().isEmpty());
+        helper.unsubscribeFromScrip("NF42");assertTrue(helper.getObserverOnlyScripKeys().contains("NF42"));
+        helper.subscribeToScrip("NF42");assertTrue(helper.getObserverOnlyScripKeys().isEmpty());
+        helper.releaseObserverFeed("observer");assertTrue(helper.getActiveScripKeys().contains("NF42"));
+    }
+
     private static class TestConnector extends WebSocketConnector {
         private final java.util.List<String> lastMessages = new java.util.ArrayList<>();
 

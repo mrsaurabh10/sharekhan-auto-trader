@@ -122,7 +122,10 @@ public class MStockLtpPollingService {
         }
         Set<Integer> refreshed = new java.util.HashSet<>();
         List<ScriptMasterEntity> activeScripts = new ArrayList<>();
+        Set<String> observerOnly=webSocketSubscriptionService.getObserverOnlyScripKeys();
         for (String scripKey : activeScripKeys) {
+            // Shadow-only websocket leases must not consume live fallback quote slots or trigger auth/REST work.
+            if(observerOnly!=null&&observerOnly.contains(scripKey))continue;
             Integer scripCode = extractScripCode(scripKey);
             if (scripCode == null) {
                 continue;

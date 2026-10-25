@@ -25,6 +25,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MStockLtpPollingServiceTest {
+    @Test void observerOnlyRoutesNeverConsumeFallbackProviderSlots() {
+        var feeds=mock(WebSocketSubscriptionService.class);
+        var poller=new MStockLtpPollingService(feeds,mock(MStockLtpService.class),mock(LtpCacheService.class),mock(QuoteCacheService.class),
+                mock(PriceTriggerService.class),mock(ScripExecutorManager.class),mock(MStockInstrumentResolver.class),mock(TokenStoreService.class),mock(NseMarketCalendar.class));
+        var shoonya=mock(ShoonyaQuoteService.class);var scripts=mock(ScriptMasterRepository.class);
+        ReflectionTestUtils.setField(poller,"shoonyaQuoteService",shoonya);ReflectionTestUtils.setField(poller,"scriptMasterRepository",scripts);
+        ReflectionTestUtils.setField(poller,"shoonyaPollMaxActiveScrips",20);
+        when(feeds.getObserverOnlyScripKeys()).thenReturn(Set.of("NF42"));
+        ReflectionTestUtils.invokeMethod(poller,"refreshActiveQuotesFromShoonya",Set.of("NF42"));
+        org.mockito.Mockito.verifyNoInteractions(shoonya,scripts);
+    }
+
     @Test
     void sensexQuoteUpdatesLocalSpotCodeOnlyForConfirmedProviderIdentity() {
         for (var quote : java.util.List.of(

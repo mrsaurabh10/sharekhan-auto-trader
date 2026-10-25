@@ -19,7 +19,7 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
 
     private final WebSocketConnector connector;
 
-    private final java.util.Map<String,String> observerRefs = new java.util.HashMap<>();
+    private final java.util.Map<String,String> observerRefs = new java.util.concurrent.ConcurrentHashMap<>();
     @Override public synchronized boolean retainObserverFeed(String owner,String key,boolean full) {
         if(observerRefs.containsKey(owner)) return true;
         if(!getActiveScripKeys().contains(key)) return false;
@@ -29,6 +29,15 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
     @Override public synchronized void releaseObserverFeed(String owner) {
         String ref=observerRefs.remove(owner);
         if(ref!=null)unsubscribe(scripKey(ref),ref.substring(0,ref.indexOf('|')));
+    }
+    @Override public java.util.Set<String> getObserverOnlyScripKeys() {
+        java.util.Map<String,Integer> owned=new java.util.HashMap<>();
+        observerRefs.values().forEach(ref->owned.merge(scripKey(ref),1,Integer::sum));
+        java.util.Map<String,Integer> all=new java.util.HashMap<>();
+        refCounts.forEach((ref,count)->all.merge(scripKey(ref),count.get(),Integer::sum));
+        java.util.Set<String> result=new java.util.HashSet<>();
+        owned.forEach((key,count)->{if(all.getOrDefault(key,0)>0&&all.getOrDefault(key,0)<=count)result.add(key);});
+        return result;
     }
     public synchronized void reset() {
         observerRefs.clear();
