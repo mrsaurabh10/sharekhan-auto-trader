@@ -85,6 +85,14 @@ public class StrategyTemplateService {
         return response;
     }
 
+    public void validateConfiguration(StrategyApplyRequest request) {
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
+            var evaluator = evaluators.get(org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE);
+            if (evaluator instanceof org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy naturalGas)
+                naturalGas.validateConfiguration(request);
+        }
+    }
+
     private void validate(StrategyApplyRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("Request body is required");
@@ -92,6 +100,8 @@ public class StrategyTemplateService {
         if (!StringUtils.hasText(request.getTemplateId())) {
             throw new IllegalArgumentException("templateId is required");
         }
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))
+            validateConfiguration(request);
         if (org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             request.setSymbol(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.symbol(request.getSymbol()));
             request.setLots(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.lots(request.getLots()));

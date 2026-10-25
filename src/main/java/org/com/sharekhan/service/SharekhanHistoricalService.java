@@ -190,7 +190,7 @@ public class SharekhanHistoricalService {
         LocalTime time = candle.time();
         if (time != null && time.getMinute() % 5 == 4 && time.getSecond() == 59 && time.getNano() == 0) {
             LocalTime start = time.plusSeconds(1).minusMinutes(5);
-            return new HistoricalCandle(candle.date(), start, candle.open(), candle.high(), candle.low(), candle.close());
+            return new HistoricalCandle(candle.date(), start, candle.open(), candle.high(), candle.low(), candle.close(), candle.volume());
         }
         return candle;
     }
@@ -417,7 +417,8 @@ public class SharekhanHistoricalService {
                     array.optDouble(1, Double.NaN),
                     array.optDouble(2, Double.NaN),
                     array.optDouble(3, Double.NaN),
-                    array.optDouble(4, Double.NaN)
+                    array.optDouble(4, Double.NaN),
+                    array.length() > 5 ? optionalVolume(array.opt(5)) : null
             );
         }
         if (node instanceof JSONObject obj) {
@@ -432,10 +433,18 @@ public class SharekhanHistoricalService {
                     extractOpenValue(obj),
                     extractPriceValue(obj, "high", "High", "h"),
                     extractPriceValue(obj, "low", "Low", "l"),
-                    extractPriceValue(obj, "close", "Close", "c")
+                    extractPriceValue(obj, "close", "Close", "c"),
+                    optionalVolume(obj.has("volume") ? obj.opt("volume") : obj.has("Volume") ? obj.opt("Volume") : obj.opt("qty"))
             );
         }
         return null;
+    }
+
+    private Long optionalVolume(Object value) {
+        try {
+            var v = new java.math.BigDecimal(String.valueOf(value));
+            return v.signum() >= 0 ? v.longValueExact() : null;
+        } catch (RuntimeException invalid) { return null; }
     }
 
     private double extractOpenValue(JSONObject obj) {
@@ -595,7 +604,10 @@ public class SharekhanHistoricalService {
                                    double open,
                                    double high,
                                    double low,
-                                   double close) {
+                                   double close, Long volume) {
+        public HistoricalCandle(LocalDate date, LocalTime time, double open, double high, double low, double close) {
+            this(date, time, open, high, low, close, null);
+        }
         private boolean hasOhlc() {
             return Double.isFinite(open)
                     && Double.isFinite(high)

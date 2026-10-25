@@ -37,6 +37,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
     private org.com.sharekhan.service.BrokerExitSubmissionStore exitSubmissions;
     private final TokenStoreService tokenStoreService;
     private final ScriptMasterRepository scriptMasterRepository;
+    private java.time.Clock orderClock = java.time.Clock.system(java.time.ZoneId.of("Asia/Kolkata"));
 
     @Override
     public Broker getBroker() {
@@ -474,6 +475,9 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
         boolean exitOrder = transactionType.equals(TradeSide.isShort(trade) ? "B" : "S");
         if (TradeSide.isShort(trade) && (!Boolean.TRUE.equals(trade.getIntraday()) || !java.util.Set.of("NC", "BC").contains(trade.getExchange())))
             return rejected("Cash shorts must be intraday", price);
+        if (!exitOrder && org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource())
+                && !org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(java.time.LocalDateTime.now(orderClock)))
+            return rejected("MCX Natural Gas entry window has closed", price);
         try {
             String accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN, context.getCustomerId());
             if (accessToken == null) accessToken = tokenStoreService.getAccessToken(Broker.SHAREKHAN);
@@ -512,7 +516,7 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
             order.optionType = (trade.getOptionType() != null && !trade.getOptionType().isBlank()) ? trade.getOptionType() : null;
             order.expiry = (trade.getExpiry() != null && !trade.getExpiry().isBlank()) ? trade.getExpiry() : null;
             order.requestType = requestType;
-            order.afterHour = ShareKhanOrderUtil.isAfterHours() ? "Y" : "N";
+            order.afterHour = ShareKhanOrderUtil.isAfterHours(trade, java.time.LocalDateTime.now(orderClock)) ? "Y" : "N";
             order.validity = "GFD";
             order.rmsCode = "ANY";
             order.disclosedQty = 0L;

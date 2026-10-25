@@ -70,4 +70,15 @@ class IntradayTradeCloserTest {
         org.mockito.Mockito.verifyNoMoreInteractions(execution);
     }
 
+
+    @Test void equityCloserLeavesNaturalGasForItsOwnSession() {
+        var setups=mock(TriggeredTradeSetupRepository.class);var execution=mock(TradeExecutionService.class);
+        var ng=org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().id(99L).scripCode(42)
+                .source(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE).build();
+        when(setups.findByIntradayTrueAndStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED)).thenReturn(java.util.List.of(ng));
+        when(setups.findByIntradayTrueAndStatus(org.com.sharekhan.enums.TriggeredTradeStatus.TARGET_ORDER_PLACED)).thenReturn(java.util.List.of(ng));
+        new IntradayTradeCloser(setups,mock(TriggerTradeRequestRepository.class),execution,mock(LtpCacheService.class)).closeIntradayTrades();
+        verify(execution,org.mockito.Mockito.never()).squareOff(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.anyDouble(),org.mockito.ArgumentMatchers.anyString());
+        verify(execution,org.mockito.Mockito.never()).startIntradayExitChase(org.mockito.ArgumentMatchers.any());
+    }
 }

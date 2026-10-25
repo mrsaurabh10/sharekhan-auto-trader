@@ -921,7 +921,7 @@ public class TradeExecutionService {
                 return;
             }
         }
-        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
+        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen(requestEntity.getSource())) {
             log.info("Skipping broker-side intraday entry request {} after the {} IST cutoff",
                     requestEntity.getId(), INTRADAY_ENTRY_CUTOFF);
             return;
@@ -1141,6 +1141,12 @@ public class TradeExecutionService {
         return time.isBefore(INTRADAY_ENTRY_CUTOFF);
     }
 
+    boolean isIntradayEntryWindowOpen(String source) {
+        return org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source)
+                ? org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(MARKET_ZONE))
+                : isIntradayEntryWindowOpen();
+    }
+
     private boolean isIntradayRequest(TriggerTradeRequestEntity request) {
         return request != null && Boolean.TRUE.equals(request.getIntraday());
     }
@@ -1154,6 +1160,7 @@ public class TradeExecutionService {
         int cancelled = 0;
         for (TriggeredTradeSetupEntity trade : triggeredTradeRepo
                 .findByIntradayTrueAndStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)) {
+            if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource())) continue;
             if (trade.getOrderId() == null || trade.getOrderId().isBlank()) {
                 continue;
             }
@@ -1312,6 +1319,13 @@ public class TradeExecutionService {
             throw new InvalidTradeRequestException("Trade request cannot be null");
         }
 
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(request.getSource())) {
+            var exact = scriptMasterRepository.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MX", "NATURALGAS").stream()
+                    .filter(r -> Objects.equals(r.getExpiry(), request.getExpiry()) && Objects.equals(r.getOptionType(), request.getOptionType())
+                            && Objects.equals(r.getStrikePrice(), request.getStrikePrice())).toList();
+            if (exact.size() != 1) throw new InvalidTradeRequestException("Exact MCX Natural Gas contract is missing or ambiguous");
+            return exact.get(0);
+        }
         String instrument = request.getInstrument();
         if (instrument == null || instrument.isBlank()) {
             throw new InvalidTradeRequestException("Instrument is required");
@@ -3563,7 +3577,7 @@ public class TradeExecutionService {
                 closeEntryDecision(control);
                 return "The broker reports a completed order. Status polling will reconcile the fill or cancellation.";
             }
-            if (!"cancel".equals(action) && Boolean.TRUE.equals(trade.getIntraday()) && !isIntradayEntryWindowOpen()) {
+            if (!"cancel".equals(action) && Boolean.TRUE.equals(trade.getIntraday()) && !isIntradayEntryWindowOpen(trade.getSource())) {
                 return "The intraday entry cutoff has passed. You can still cancel the order.";
             }
             Double price = null;
@@ -4481,6 +4495,7 @@ public class TradeExecutionService {
                 || exitedTrade.getTriggerRequestId() == null) {
             return;
         }
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(exitedTrade.getSource())) return;
         if ("atr-pdh-pdl-strategy".equalsIgnoreCase(exitedTrade.getSource())) {
             log.info("ATR prior-day request {} will not be rearmed after exit; one entry per symbol is enforced",
                     exitedTrade.getTriggerRequestId());
@@ -6063,7 +6078,7 @@ public class TradeExecutionService {
             if (!org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(requestEntity.getSource(),entryNow)) return null;
         }
         if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(requestEntity.getAppUserId(), requestEntity.getBrokerCredentialsId());
-        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen()) {
+        if (isIntradayRequest(requestEntity) && !isIntradayEntryWindowOpen(requestEntity.getSource())) {
             log.info("Blocking queued intraday entry request {} after the {} IST cutoff",
                     requestEntity != null ? requestEntity.getId() : null, INTRADAY_ENTRY_CUTOFF);
             return null;
@@ -6235,6 +6250,8 @@ public class TradeExecutionService {
     }
 
     private boolean entryQuoteWindowOpen(String source) {
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source))
+            return org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(MARKET_ZONE));
         return !org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(source)
                 || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(source,
                         LocalDateTime.now(ZoneId.of("Asia/Kolkata")));

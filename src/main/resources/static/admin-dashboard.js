@@ -2397,6 +2397,7 @@
     const updateSymbolInput = function () {
       if (!symbolInput) return;
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
+      const naturalGas = String((templateSelect && templateSelect.value) || '') === 'MCX_NATURALGAS_ATM_BREAKOUT';
       const profitRow = document.getElementById('strategyProfitTargetRow');
       const profitInput = document.getElementById('strategyProfitTargetPerLot');
       if (profitRow) profitRow.style.display = 'none';
@@ -2404,10 +2405,11 @@
       window.StrategyRunView?.resetRisk(document.getElementById('adminRunRisk'));
       const mode=document.querySelector('#adminRunRisk [data-risk-field=amountMode]');if(mode)mode.value=timedStraddle?'PER_LOT':'TOTAL';
       const sameDayInput = document.getElementById('strategyIntraday');
-      if (sameDayInput) { sameDayInput.disabled = timedStraddle; if (timedStraddle) sameDayInput.checked = true; }
+      if (sameDayInput) { sameDayInput.disabled = timedStraddle || naturalGas; if (timedStraddle || naturalGas) sameDayInput.checked = true; }
       const automatic = automaticUniverseTemplate();
       const btp = isSpotBigTradePlus();
       symbolInput.disabled = automatic;
+      symbolInput.readOnly = naturalGas;
       symbolInput.style.display = btp ? 'none' : '';
       if (quantitiesRow) quantitiesRow.style.display = btp ? '' : 'none';
       const lotsInput = document.getElementById('strategyLots');
@@ -2415,7 +2417,7 @@
       if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';
       if (lotsInput && (btp || isStockMover())) lotsInput.closest('.form-row').style.display = 'none';
       else if (lotsInput) lotsInput.closest('.form-row').style.display = '';
-      symbolInput.value = automatic ? '' : String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE' && !symbolInput.value.trim() ? 'NIFTY' : symbolInput.value;
+      symbolInput.value = naturalGas ? 'NATURALGAS' : automatic ? '' : String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE' && !symbolInput.value.trim() ? 'NIFTY' : symbolInput.value;
       symbolInput.placeholder = automatic
         ? 'Selected automatically from the F&O stock universe'
         : 'e.g. NIFTY, RELIANCE; use commas/new lines for manual F&O lists';
@@ -2453,6 +2455,7 @@
       const investmentPerStock = Number(investmentText);
       let riskSettings;
       try {riskSettings=window.StrategyRunView?.readRisk(document.getElementById('adminRunRisk')) || null;} catch(error) {if(result)result.innerText=error.message;return;}
+      if (templateId === 'MCX_NATURALGAS_ATM_BREAKOUT' && !riskSettings?.maxLoss) {if(result)result.innerText='Set a maximum rupee loss for Natural Gas.';return;}
       if (stockMover && (!/^\d+(\.\d{1,2})?$/.test(investmentText) || !Number.isFinite(investmentPerStock) || investmentPerStock <= 0 || investmentPerStock > 999999999.99)) {
         if (result) result.innerText = 'Enter a positive investment per stock with up to two decimal places.';
         return;

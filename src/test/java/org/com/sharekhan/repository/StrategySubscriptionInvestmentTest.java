@@ -14,6 +14,8 @@ class StrategySubscriptionInvestmentTest {
     @Autowired StrategySubscriptionRepository repository;
     @Autowired EntityManager entityManager;
     @Autowired AppUserRepository users;
+    @Autowired TriggerTradeRequestRepository requests;
+    @Autowired TriggeredTradeSetupRepository trades;
     @Autowired org.com.sharekhan.service.StrategySubscriptionLifecycleService lifecycle;
     @org.springframework.boot.test.mock.mockito.MockBean org.com.sharekhan.onboarding.UserTradingAccess access;
     @Test void pauseAndResumePersistWithoutResettingDailyCompletion() {
@@ -65,5 +67,21 @@ class StrategySubscriptionInvestmentTest {
         entityManager.clear();
         assertThat(repository.findById(row.getId()).orElseThrow().getProfitTargetPerLot()).isEqualByComparingTo("2000.25");
         assertThat(repository.findById(legacy.getId()).orElseThrow().getProfitTargetPerLot()).isNull();
+    }
+
+    @Test void naturalGasDailyGuardsAreBrokerScopedAndCleanupRetainsItsAudit() {
+        var start=java.time.LocalDate.of(2026,10,26).atStartOfDay();
+        var source=org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE;
+        var row=requests.saveAndFlush(org.com.sharekhan.entity.TriggerTradeRequestEntity.builder().source(source).appUserId(10L)
+                .brokerCredentialsId(20L).symbol("NATURALGAS").intraday(true).createdAt(start.plusHours(10))
+                .status(org.com.sharekhan.enums.TriggeredTradeStatus.ENTRY_SUBMITTING).build());
+        assertThat(requests.findNaturalGasDailyRequests(source,10L,20L,start,start.plusDays(1))).extracting(org.com.sharekhan.entity.TriggerTradeRequestEntity::getId).containsExactly(row.getId());
+        assertThat(requests.findNaturalGasDailyRequests(source,10L,21L,start,start.plusDays(1))).isEmpty();
+        requests.deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(start.plusHours(15),org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        entityManager.clear();assertThat(requests.findById(row.getId())).isPresent();
+        trades.saveAndFlush(org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().source(source).appUserId(10L).brokerCredentialsId(20L)
+                .entryAt(start.plusHours(10)).orderId("SIM-TEST").status(org.com.sharekhan.enums.TriggeredTradeStatus.EXITED_SUCCESS).build());
+        assertThat(trades.countNaturalGasDailyEntries(source,10L,20L,start,start.plusDays(1))).isEqualTo(1);
+        assertThat(trades.countNaturalGasDailyEntries(source,10L,21L,start,start.plusDays(1))).isZero();
     }
 }

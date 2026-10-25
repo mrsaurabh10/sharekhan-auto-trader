@@ -17,6 +17,10 @@ import java.time.LocalDateTime;
 
 @Repository
 public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTradeSetupEntity, Long> {
+    @Query("select count(t) from TriggeredTradeSetupEntity t where lower(t.source)=lower(:source) and t.appUserId=:user and t.brokerCredentialsId=:broker and t.entryAt>=:start and t.entryAt<:end and t.orderId is not null")
+    long countNaturalGasDailyEntries(@Param("source") String source, @Param("user") Long user,
+            @Param("broker") Long broker, @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
+
     @Modifying @Transactional
     @Query(value="UPDATE triggered_trade_setups SET reason='EXIT_RECONCILIATION_REQUIRED',comment=LEFT(CONCAT(COALESCE(comment,''),' | ',:detail),2000) WHERE id=:id AND status IN ('EXECUTED','EXIT_ORDER_PLACED','EXIT_TRIGGERED','TARGET_ORDER_PLACED','EXIT_FAILED')",nativeQuery=true)
     int markExitAttention(@Param("id") Long id,@Param("detail") String detail);

@@ -277,4 +277,44 @@ class SharekhanBrokerServiceTest {
         org.mockito.Mockito.verify(sdk,org.mockito.Mockito.times(1)).placeOrder(org.mockito.ArgumentMatchers.any());
     }
 
+
+    @Test void naturalGasEveningOrdersAreRegularAndBuyPeExitsSell() throws Throwable {
+        var repository=org.mockito.Mockito.mock(org.com.sharekhan.repository.ScriptMasterRepository.class);
+        var tokens=org.mockito.Mockito.mock(org.com.sharekhan.auth.TokenStoreService.class);
+        var sdk=org.mockito.Mockito.mock(com.sharekhan.SharekhanConnect.class);
+        var service=org.mockito.Mockito.spy(new SharekhanBrokerService(tokens,repository));
+        org.mockito.Mockito.doReturn(sdk).when(service).createClient("key",null);
+        org.mockito.Mockito.when(repository.findById(42)).thenReturn(java.util.Optional.of(org.com.sharekhan.entity.ScriptMasterEntity.builder().scripCode(42).exchange("MX").tickSize(.05).build()));
+        org.mockito.Mockito.when(sdk.placeOrder(org.mockito.ArgumentMatchers.any())).thenReturn(new JSONObject().put("data",new JSONObject().put("orderId","MOCK-NG")));
+        var trade=TriggeredTradeSetupEntity.builder().id(42L).scripCode(42).symbol("NATURALGAS").exchange("MX").optionType("PE").strikePrice(300d)
+                .instrumentType("OPTC").expiry("20/11/2026").quantity(1250L).entryPrice(5d).entryAction("BUY")
+                .source(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE).build();
+        var context=new BrokerContext(73196L,"key","CLIENT","Sharekhan",2L);
+        var time=java.time.LocalDateTime.of(2026,10,26,20,0);
+        {
+            var zone=java.time.ZoneId.of("Asia/Kolkata");
+            org.springframework.test.util.ReflectionTestUtils.setField(service,"orderClock",java.time.Clock.fixed(time.atZone(zone).toInstant(),zone));
+            assertThat(service.placeOrder(trade,context,5d).isSuccess()).isTrue();
+            var captor=org.mockito.ArgumentCaptor.forClass(com.sharekhan.model.OrderParams.class);
+            org.mockito.Mockito.verify(sdk).placeOrder(captor.capture());
+            assertThat(captor.getValue().afterHour).isEqualTo("N");assertThat(captor.getValue().exchange).isEqualTo("MX");
+            assertThat(captor.getValue().transactionType).isEqualTo("B");assertThat(captor.getValue().quantity).isEqualTo(1250L);
+            assertThat(service.placeExitOrder(trade,context,6d).isSuccess()).isTrue();
+            org.mockito.Mockito.verify(sdk,org.mockito.Mockito.times(2)).placeOrder(captor.capture());
+            assertThat(captor.getValue().afterHour).isEqualTo("N");assertThat(captor.getValue().transactionType).isEqualTo("S");
+            org.springframework.test.util.ReflectionTestUtils.setField(service,"orderClock",java.time.Clock.fixed(time.withHour(23).atZone(zone).toInstant(),zone));
+            org.mockito.Mockito.clearInvocations(sdk);
+            assertThat(service.placeOrder(trade,context,5d).isSuccess()).isFalse();
+            org.mockito.Mockito.verify(sdk,org.mockito.Mockito.never()).placeOrder(org.mockito.ArgumentMatchers.any());
+        }
+    }
+    @Test void naturalGasCannotTurnIntoAmoOutsideItsSession() {
+        var trade=TriggeredTradeSetupEntity.builder().exchange("MX").source(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE).build();
+        var day=java.time.LocalDate.of(2026,10,26);
+        assertThat(org.com.sharekhan.util.ShareKhanOrderUtil.isAfterHours(trade,day.atTime(9,0))).isFalse();
+        assertThat(org.com.sharekhan.util.ShareKhanOrderUtil.isAfterHours(trade,day.atTime(20,0))).isFalse();
+        assertThat(org.com.sharekhan.util.ShareKhanOrderUtil.isAfterHours(trade,day.atTime(23,20))).isFalse();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->org.com.sharekhan.util.ShareKhanOrderUtil.isAfterHours(trade,day.atTime(23,30)));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->org.com.sharekhan.util.ShareKhanOrderUtil.isAfterHours(trade,day.atTime(8,59)));
+    }
 }
