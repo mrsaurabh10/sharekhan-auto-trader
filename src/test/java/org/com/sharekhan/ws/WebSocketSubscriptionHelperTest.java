@@ -87,6 +87,21 @@ class WebSocketSubscriptionHelperTest {
         assertTrue(connector.lastMessages.isEmpty());
     }
 
+    @Test void observerLeaseIsIdempotentAndNeverRemovesLiveReference() {
+        assertFalse(helper.retainObserverFeed("observer","NF42",true));
+        helper.subscribeToScrip("NF42");
+        assertTrue(helper.retainObserverFeed("observer","NF42",true));
+        assertTrue(helper.retainObserverFeed("observer","NF42",true));
+        connector.lastMessages.clear();helper.releaseObserverFeed("observer");helper.releaseObserverFeed("observer");
+        assertTrue(helper.getActiveScripKeys().contains("NF42"));assertTrue(connector.lastMessages.isEmpty());
+        helper.unsubscribeFromScrip("NF42");assertFalse(helper.getActiveScripKeys().contains("NF42"));
+    }
+    @Test void resetInvalidatesObserverOwnershipBeforeLiveFeedsAreRecreated() {
+        helper.subscribeToScrip("NF42");helper.retainObserverFeed("observer","NF42",true);
+        helper.reset();helper.subscribeToScrip("NF42");connector.lastMessages.clear();
+        helper.releaseObserverFeed("observer");assertTrue(helper.getActiveScripKeys().contains("NF42"));assertTrue(connector.lastMessages.isEmpty());
+    }
+
     private static class TestConnector extends WebSocketConnector {
         private final java.util.List<String> lastMessages = new java.util.ArrayList<>();
 

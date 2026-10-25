@@ -176,7 +176,8 @@ public class MStockLtpPollingService {
                     continue;
                 }
                 ltpCacheService.updateLtp(scripCode, price);
-                quoteCacheService.recordQuote(scripCode, quote.bestBid(), quote.bestAsk(), quote.lastPrice());
+                quoteCacheService.recordQuote(scripCode, quote.bestBid(), quote.bestAsk(), quote.lastPrice(),
+                        "SHOONYA",script.getExchange(),quote.returnedToken()+":"+quote.returnedTradingSymbol(),quote.bidQuantity(),quote.askQuantity());
                 shoonyaLastRefreshAt.put(scripCode, now);
                 refreshed.add(scripCode);
                 scripExecutorManager.submitTriggerTask(scripCode,

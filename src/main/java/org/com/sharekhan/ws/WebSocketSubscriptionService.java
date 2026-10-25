@@ -3,6 +3,10 @@ package org.com.sharekhan.ws;
 import java.util.Set;
 
 public interface WebSocketSubscriptionService {
+    /** Observer may retain only an already active route. Implementations without ownership support refuse. */
+    default boolean retainObserverFeed(String owner,String key,boolean full) { return false; }
+    default void releaseObserverFeed(String owner) { }
+
     /**
      * Subscribe to LTP for a given scrip key.
      * @return true if an underlying WS subscribe was sent (transition 0->1),

@@ -344,6 +344,8 @@ public class TradeExecutionService {
     @org.springframework.beans.factory.annotation.Autowired
     private org.com.sharekhan.strategy.SharedMarketDecisions sharedDecisions;
 
+    @Autowired(required=false)
+    private org.com.sharekhan.shadow.MoverShadowRecorder moverShadowRecorder;
     private boolean sharedDecisionExecutable() { return sharedDecisions == null || sharedDecisions.executionFresh(); }
 
     private Double resolveEntryReferencePrice(Integer scripCode, String context) {
@@ -2699,6 +2701,12 @@ public class TradeExecutionService {
 
             EntryDiagnostics entryDiagnostics = analyseEntry(trigger, ltp);
             logEntryDiagnostics(trigger, entryDiagnostics, ltp);
+            if (moverShadowRecorder != null && moverShadowRecorder.enabled() && !chaseEntryUntilExecuted
+                    && "strategy:FNO_0925_MOVER_ATR_BREAKOUT".equals(trigger.getSource())) {
+                moverShadowRecorder.capture(trigger,maxEntrySpreadPercent(trigger),configuredEntryHardSpreadPercent(trigger),
+                        entryQuoteMaxAge().toMillis(),entryPriceCeiling(trigger,ltp),sharedDecisionExecutable(),
+                        entryQuoteWindowOpen(trigger.getSource()),sharedDecisions==null?java.util.List.of():sharedDecisions.currentSignalIds());
+            }
 
             if (!chaseEntryUntilExecuted) {
                 if (!isEntrySignalStillValid(trigger)) {

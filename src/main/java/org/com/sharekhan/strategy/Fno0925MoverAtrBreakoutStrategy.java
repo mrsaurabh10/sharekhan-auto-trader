@@ -164,7 +164,9 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                         entryQualificationService.cycleTiming());
                 TriggerTradeRequestEntity trade;
                 try {
-                    trade = support.executeTriggeredTrade(trigger);
+                    trade = org.com.sharekhan.shadow.MoverShadowSignalContext.withSignal(
+                            qualification.signal().breakoutCandle().date().atTime(qualification.signal().breakoutCandle().time()),
+                            () -> support.executeTriggeredTrade(trigger));
                 } catch (org.com.sharekhan.exception.EntryNotReadyException notReady) {
                     support.auditStrategy(request, metadataFor(selection.optionType()), selection.symbol(),
                             "STRATEGY_EVALUATION", "WAITING", notReady.getMessage(), qualification.signal(), trigger);
