@@ -36,7 +36,8 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
     @Transactional
     @Query("""
             delete from TriggerTradeRequestEntity r
-            where (r.intraday = true or r.status <> :preservedStatus)
+            where (r.source is null or lower(r.source) <> 'strategy:mcx_naturalgas_atm_breakout')
+              and (r.intraday = true or r.status <> :preservedStatus)
               and (r.createdAt is null or r.createdAt < :cutoff)
             """)
     int deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(@Param("cutoff") LocalDateTime cutoff,
@@ -261,6 +262,10 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
             @Param("appUserId") Long appUserId,
             @Param("dayStart") LocalDateTime dayStart,
             @Param("nextDayStart") LocalDateTime nextDayStart);
+
+    @Query("select r from TriggerTradeRequestEntity r where lower(r.source)=lower(:source) and r.appUserId=:user and r.brokerCredentialsId=:broker and r.createdAt>=:start and r.createdAt<:end")
+    List<TriggerTradeRequestEntity> findNaturalGasDailyRequests(@Param("source") String source, @Param("user") Long user,
+            @Param("broker") Long broker, @Param("start") LocalDateTime start, @Param("end") LocalDateTime end);
 
     List<TriggerTradeRequestEntity> findBySymbolAndAppUserIdAndStatusIn(String symbol, Long appUserId, List<TriggeredTradeStatus> statuses);
 

@@ -74,4 +74,35 @@ class StrategyRunServiceTest {
     @Test void unknownQuoteDoesNotDisplayFalseZeroOrActivateRisk() {
         var value=service.pnl(List.of(leg(1,TriggeredTradeStatus.EXECUTED)),Instant.now());assertThat(value.totalGross()).isNull();assertThat(value.marksFresh()).isFalse();
     }
+
+    private void naturalGasRun() {
+        am.setTemplateId(org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE);
+        am.setTradingDay(LocalDate.of(2026,10,26));
+        when(runs.findByStatusIn(anyList())).thenReturn(List.of(am));
+    }
+    @Test void mcxRiskContinuesInEveningAndEquityRunStaysOutsideItsSession() {
+        naturalGasRun();var risk=new StrategyRiskSettings();risk.setMaxLoss(new java.math.BigDecimal("100"));am.setRiskSettings(risk);
+        var position=leg(1,TriggeredTradeStatus.EXECUTED);position.setExchange("MX");when(trades.findByStrategyRunId("am")).thenReturn(List.of(position));
+        when(execution.strategyProfitExitQuote(eq(position),any())).thenReturn(Optional.of(QuoteCacheService.QuoteSnapshot.builder().bestBid(95d).bestAsk(96d).lastBookAt(Instant.now()).build()));
+        service.monitor(LocalDate.of(2026,10,26).atTime(20,0));
+        verify(runs).requestClose(eq("am"),eq("STRATEGY_MAX_LOSS"),any());verify(execution).squareOffStrategyRunTrade(1L,"am","STRATEGY_MAX_LOSS");
+        assertThat(service.pnl(List.of(position),Instant.now()).estimatedNet()).isNull();
+    }
+    @Test void mcxDoesNotCloseAtEquitySquareoffButClosesAt2320() {
+        naturalGasRun();var position=leg(1,TriggeredTradeStatus.EXECUTED);when(trades.findByStrategyRunId("am")).thenReturn(List.of(position));
+        service.monitor(am.getTradingDay().atTime(15,35));verify(execution,never()).squareOffStrategyRunTrade(anyLong(),anyString(),anyString());
+        service.monitor(am.getTradingDay().atTime(23,20));verify(execution).squareOffStrategyRunTrade(1L,"am","MCX_SESSION_CLOSE");verify(runs,never()).markClosed(anyString(),any());
+    }
+    @Test void mcxEntryCutoffCancelsPendingButKeepsFilledPositionUntilSquareoff() {
+        naturalGasRun();when(trades.findByStrategyRunId("am")).thenReturn(List.of(leg(1,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION),leg(2,TriggeredTradeStatus.EXECUTED)));
+        service.monitor(am.getTradingDay().atTime(23,0));verify(execution).cancelStrategyRunEntry(1L,"am");verify(execution,never()).squareOffStrategyRunTrade(anyLong(),anyString(),anyString());verify(runs,never()).markClosed(anyString(),any());
+    }
+    @Test void mcxDoesNotSubmitAfter2330AndOldRunClosesNextOpen() {
+        naturalGasRun();when(trades.findByStrategyRunId("am")).thenReturn(List.of(leg(1,TriggeredTradeStatus.EXECUTED)));
+        service.monitor(am.getTradingDay().atTime(23,30));verifyNoInteractions(execution);
+        service.monitor(am.getTradingDay().plusDays(1).atTime(9,0));verify(execution).squareOffStrategyRunTrade(1L,"am","MCX_SESSION_CLOSE");
+    }
+    @Test void equityRunDoesNotAcquireEveningExitSchedule() {
+        when(runs.findByStatusIn(anyList())).thenReturn(List.of(am));service.monitor(LocalDate.of(2026,10,26).atTime(23,20));verifyNoInteractions(execution);verify(trades,never()).findByStrategyRunId(anyString());
+    }
 }

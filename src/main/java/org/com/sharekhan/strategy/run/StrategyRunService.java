@@ -68,9 +68,19 @@ public class StrategyRunService {
     }
     @Scheduled(fixedDelayString="${app.strategy.run-monitor-ms:1000}")
     public void monitor() {
-        var time=now();if(time.toLocalTime().isBefore(LocalTime.of(9,15)) || time.toLocalTime().isAfter(LocalTime.of(15,40))) return;
+        monitor(now());
+    }
+    void monitor(LocalDateTime time) {
+        if(time.toLocalTime().isBefore(LocalTime.of(9,0)) || !time.toLocalTime().isBefore(LocalTime.of(23,30))) return;
         for(var run:runs.findByStatusIn(List.of("OPEN","CLOSING"))) {
             try {
+                boolean naturalGas=org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(run.getTemplateId());
+                if (naturalGas) {
+                    if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.marketOpen(time)) continue;
+                    if (run.getTradingDay().isBefore(time.toLocalDate()) || !time.toLocalTime().isBefore(org.com.sharekhan.strategy.mcx.NaturalGasSession.SQUARE_OFF))
+                        runs.requestClose(run.getId(),"MCX_SESSION_CLOSE",time);
+                    else if (!time.toLocalTime().isBefore(org.com.sharekhan.strategy.mcx.NaturalGasSession.ENTRY_CUTOFF)) cancelPendingEntries(run);
+                } else if(time.toLocalTime().isBefore(LocalTime.of(9,15)) || time.toLocalTime().isAfter(LocalTime.of(15,40))) continue;
                 if("OPEN".equals(run.getStatus())) {
                     var members=members(run);var values=pnl(members,Instant.now());
                     if(riskReady(run,members) && values.marksFresh() && values.totalGross()!=null && entriesResolved(run)) {
@@ -106,13 +116,7 @@ public class StrategyRunService {
     }
     /** Cancel unsubmitted requests, reconcile broker entries, then close filled positions. */
     void reconcile(StrategyRun run) {
-        for(var request:requests.findByStrategyRunId(run.getId())) {
-            if(!Objects.equals(request.getAppUserId(),run.getAppUserId()) || !Objects.equals(request.getBrokerCredentialsId(),run.getBrokerCredentialsId())) throw new IllegalStateException("Request owner/broker mismatch");
-            if(request.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION && !execution.isBrokerTriggerEntryInFlight(request.getId())
-                    && trades.findByTriggerRequestId(request.getId()).isEmpty()) {
-                requests.claimIfStatusEqualsWithOutcome(request.getId(),TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),TriggeredTradeStatus.CANCELLED.name(),"STRATEGY_RUN_CLOSED","Cancelled before broker submission by strategy instance close");
-            }
-        }
+        cancelUnsubmittedRequests(run);
         for(var trade:members(run)) {
             try {
                 if(trade.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION) execution.cancelStrategyRunEntry(trade.getId(),run.getId());
@@ -121,6 +125,22 @@ public class StrategyRunService {
         }
         // Read again: an HTTP acknowledgement, pending cancellation, unknown submission or late fill is not flat.
         if(entriesResolved(run) && members(run).stream().allMatch(t->flat(t) && !uncertain(t.getReason()))) runs.markClosed(run.getId(),now());
+    }
+    private void cancelUnsubmittedRequests(StrategyRun run) {
+        for(var request:requests.findByStrategyRunId(run.getId())) {
+            if(!Objects.equals(request.getAppUserId(),run.getAppUserId()) || !Objects.equals(request.getBrokerCredentialsId(),run.getBrokerCredentialsId())) throw new IllegalStateException("Request owner/broker mismatch");
+            if(request.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION && !execution.isBrokerTriggerEntryInFlight(request.getId())
+                    && trades.findByTriggerRequestId(request.getId()).isEmpty()) {
+                requests.claimIfStatusEqualsWithOutcome(request.getId(),TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),TriggeredTradeStatus.CANCELLED.name(),"STRATEGY_RUN_CLOSED","Cancelled before broker submission by strategy instance close");
+            }
+        }
+    }
+    private void cancelPendingEntries(StrategyRun run) {
+        cancelUnsubmittedRequests(run);
+        for (var trade : members(run)) {
+            if (trade.getStatus() == TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)
+                execution.cancelStrategyRunEntry(trade.getId(), run.getId());
+        }
     }
     public Pnl pnl(List<TriggeredTradeSetupEntity> members,Instant now) {
         BigDecimal realized=BigDecimal.ZERO,open=BigDecimal.ZERO,costs=BigDecimal.ZERO;
@@ -143,6 +163,7 @@ public class StrategyRunService {
             var value=BigDecimal.valueOf(price).subtract(BigDecimal.valueOf(trade.getActualEntryPrice())).multiply(BigDecimal.valueOf(trade.getQuantity())).multiply(BigDecimal.valueOf(sellSide(trade)?-1:1));
             if(closed) realized=realized.add(trade.getPnl()!=null && Double.isFinite(trade.getPnl())?BigDecimal.valueOf(trade.getPnl()):value);else open=open.add(value);
             if(sellSide(trade)) {costsKnown=false;continue;} // Existing fee model is long-only; don't fabricate short net returns.
+            if ("MX".equalsIgnoreCase(trade.getExchange())) {costsKnown=false;continue;} // Equity fee constants are not MCX charges.
             var estimate=TriggeredTradeSetupEntity.builder().actualEntryPrice(trade.getActualEntryPrice()).exitPrice(price).quantity(trade.getQuantity()).lots(trade.getLots()).pnl(value.doubleValue()).build();
             var charges=TradeCostCalculator.calculateCharges(estimate);
             if(charges==null) costsKnown=false;else costs=costs.add(BigDecimal.valueOf(closed && trade.getTradeCost()!=null && Double.isFinite(trade.getTradeCost())?trade.getTradeCost():charges.totalTradeCost()));

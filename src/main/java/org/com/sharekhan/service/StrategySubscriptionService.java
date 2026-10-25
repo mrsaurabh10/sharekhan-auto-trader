@@ -132,7 +132,16 @@ public class StrategySubscriptionService {
             return;
         }
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
-        evaluateBatch(active);
+        evaluateBatch(active.stream().filter(s -> !org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
+    }
+
+    /** MCX is evaluated independently of the NSE calendar and afternoon entry cutoff. */
+    @Scheduled(cron = "5 0/1 9-22 * * MON-FRI", zone = "Asia/Kolkata")
+    public void evaluateNaturalGasStrategies() {
+        if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(MARKET_ZONE))) return;
+        for (var subscription : repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED))) {
+            if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(subscription.getTemplateId())) evaluate(subscription);
+        }
     }
 
     /** A pass straddling candle close must not leave movers waiting for the next polling minute. */
@@ -249,6 +258,11 @@ public class StrategySubscriptionService {
         if (!strategyTemplateService.supports(request.getTemplateId())) {
             throw new IllegalArgumentException("Unknown strategy template");
         }
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
+            org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
+            strategyTemplateService.validateConfiguration(request);
+            request.setSource(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE);
+        }
         if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             request.setLots(null);
         } else {
@@ -268,6 +282,11 @@ public class StrategySubscriptionService {
         }
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
+        }
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
+            org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
+            strategyTemplateService.validateConfiguration(request);
+            request.setSource(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE);
         }
         if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
@@ -319,6 +338,7 @@ public class StrategySubscriptionService {
 
     private boolean isContinuousFnoTemplate(String templateId) {
         return isAutomaticUniverseTemplate(templateId)
+                || org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(templateId)
                 || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || isManualFnoTemplate(templateId);
     }

@@ -32,4 +32,23 @@ class SimulatorBrokerServiceTest {
         assertThat(result.getAttemptedPrice()).isEqualTo(123.45);
         assertThat(result.getExecutedPrice()).isEqualTo(123.45);
     }
+
+    @Test void naturalGasBuysAtAskAndSellsPeAtBid() {
+        var cache=new org.com.sharekhan.cache.QuoteCacheService();
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"quotes",cache);
+        cache.recordQuote(42,4.9,5d,4.95,"SHAREKHAN_WS",null,"scrip:42",null,null);
+        var trade=TriggeredTradeSetupEntity.builder().scripCode(42).symbol("NATURALGAS").optionType("PE").entryAction("BUY")
+                .source(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE).actualEntryPrice(5d).entryPrice(5d).quantity(1250L).build();
+        assertThat(service.placeOrder(trade,null,5d).getExecutedPrice()).isEqualTo(5d);
+        var exit=service.placeExitOrder(trade,null,20d);assertThat(exit.getExecutedPrice()).isEqualTo(4.9);
+        assertThat(exit.getPnl()).isCloseTo(-125d,org.assertj.core.data.Offset.offset(.00001));
+    }
+    @Test void naturalGasNeverFabricatesAnExitWithoutBookOrFillsAboveEntryLimit() {
+        var cache=new org.com.sharekhan.cache.QuoteCacheService();
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"quotes",cache);
+        var trade=TriggeredTradeSetupEntity.builder().scripCode(42).source(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE).build();
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->service.placeExitOrder(trade,null,5d));
+        cache.recordQuote(42,5.9,6d,6d,"SHAREKHAN_WS",null,"scrip:42",null,null);
+        org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(trade,null,5d));
+    }
 }

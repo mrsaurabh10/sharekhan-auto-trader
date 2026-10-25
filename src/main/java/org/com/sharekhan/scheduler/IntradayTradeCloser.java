@@ -46,6 +46,7 @@ public class IntradayTradeCloser {
             .findByIntradayTrueAndStatus(TriggeredTradeStatus.TARGET_ORDER_PLACED);
 
         for (TriggeredTradeSetupEntity trade : intradayTrades) {
+            if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource())) continue;
             try {
 
                 Double ltp = ltpCacheService.getLtp(trade.getScripCode());
@@ -61,6 +62,7 @@ public class IntradayTradeCloser {
         }
 
         for (TriggeredTradeSetupEntity trade : intradayTargetOrders) {
+            if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource())) continue;
             try {
                 boolean started = tradeExecutionService.startIntradayExitChase(trade);
                 if (started) {

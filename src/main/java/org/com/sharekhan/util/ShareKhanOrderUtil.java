@@ -64,6 +64,20 @@ public class ShareKhanOrderUtil {
         return evening || night || morning;
     }
 
+    /** Natural Gas orders must never silently turn into next-session AMO orders. */
+    public static boolean isAfterHours(TriggeredTradeSetupEntity trade) {
+        return isAfterHours(trade, java.time.LocalDateTime.now(ZoneId.of("Asia/Kolkata")));
+    }
+
+    public static boolean isAfterHours(TriggeredTradeSetupEntity trade, java.time.LocalDateTime now) {
+        if (trade != null && org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource())) {
+            if (!"MX".equalsIgnoreCase(trade.getExchange()) || !org.com.sharekhan.strategy.mcx.NaturalGasSession.marketOpen(now))
+                throw new IllegalStateException("Natural Gas orders require the 09:00-23:30 IST MCX session");
+            return false;
+        }
+        return isAfterHours();
+    }
+
     public static JSONObject modifyOrder(SharekhanConnect sharekhanConnect,
                                          TriggeredTradeSetupEntity tradeSetupEntity,
                                          Double orderPrice,
@@ -98,7 +112,7 @@ public class ShareKhanOrderUtil {
         orderParams.price = String.valueOf(orderPrice);
         orderParams.triggerPrice = "0";
         orderParams.rmsCode= "ANY";
-        orderParams.afterHour= isAfterHours() ? "Y" : "N";
+        orderParams.afterHour= isAfterHours(tradeSetupEntity) ? "Y" : "N";
         orderParams.channelUser=channelUser; // client/user code from broker credentials
         orderParams.requestType="MODIFY"; //
         orderParams.instrumentType=tradeSetupEntity.getInstrumentType(); //(Future Stocks(FS)/ Future Index(FI)/ Option Index(OI)/ Option Stocks(OS)/ Future Currency(FUTCUR)/ Option Currency(OPTCUR))
@@ -135,7 +149,7 @@ public class ShareKhanOrderUtil {
         orderParams.transactionType = TradeSide.isShort(tradeSetupEntity) ? "S" : "B";
         orderParams.orderType = "NORMAL";
         orderParams.validity = "GFD";
-        orderParams.afterHour = isAfterHours() ? "Y" : "N";
+        orderParams.afterHour = isAfterHours(tradeSetupEntity) ? "Y" : "N";
         orderParams.channelUser = channelUser;
         orderParams.requestType = "CANCEL";
         orderParams.instrumentType = tradeSetupEntity.getInstrumentType();

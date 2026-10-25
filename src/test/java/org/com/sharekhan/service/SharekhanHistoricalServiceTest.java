@@ -37,6 +37,7 @@ class SharekhanHistoricalServiceTest {
         assertThat(candles.get(0).date()).isEqualTo(LocalDate.of(2026, 10, 1));
         assertThat(candles.get(0).time()).isEqualTo(LocalTime.of(15, 25));
         assertThat(candles.get(0).close()).isEqualTo(101);
+        assertThat(candles.get(0).volume()).isEqualTo(1000L);
         verify(service).requestHistorical("NC", "20000", "5minute", "test-key", "test-token");
     }
     @Test
@@ -66,4 +67,20 @@ class SharekhanHistoricalServiceTest {
         assertThat(service.getRecentHistoricalCandles(20000,"15minute").get(0).time()).isEqualTo(LocalTime.of(9,19,59));
     }
 
+
+    @Test void preservesVolumeAcrossMcxEndStampNormalizationAndDoesNotInventMissingVolume() throws Exception {
+        var scripts=mock(ScriptMasterRepository.class);var tokens=mock(TokenStoreService.class);var crypto=mock(CryptoService.class);
+        when(scripts.findByScripCode(42)).thenReturn(ScriptMasterEntity.builder().exchange("MX").scripCode(42).build());
+        when(tokens.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN)).thenReturn(new TokenStoreService.TokenInfo("test-token","test-key"));
+        when(crypto.decrypt("test-key")).thenReturn("test-key");
+        var service=spy(new SharekhanHistoricalService(scripts,tokens,crypto,new SharekhanProperties()));
+        doReturn(new JSONObject("""
+            {"data":[["2026-10-26T09:04:59",300,301,299,300,1234],
+            {"tradeDate":"26/10/2026","tradeTime":"09:09:59","open":300,"high":301,"low":299,"close":300,"volume":456},
+            {"tradeDate":"26/10/2026","tradeTime":"09:14:59","open":300,"high":301,"low":299,"close":300}]}
+            """)).when(service).requestHistorical("MX","42","5minute","test-key","test-token");
+        var rows=service.getRecentHistoricalCandles(42,"5minute");
+        assertThat(rows).extracting(SharekhanHistoricalService.HistoricalCandle::volume).containsExactly(1234L,456L,null);
+        assertThat(rows).extracting(SharekhanHistoricalService.HistoricalCandle::time).containsExactly(LocalTime.of(9,0),LocalTime.of(9,5),LocalTime.of(9,10));
+    }
 }

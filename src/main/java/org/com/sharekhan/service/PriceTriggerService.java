@@ -111,7 +111,8 @@ public class PriceTriggerService {
             );
 
             for (TriggerTradeRequestEntity trigger : candidates) {
-                if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trigger.getSource())) continue;
+                if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trigger.getSource())
+                        || org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trigger.getSource())) continue;
                 if (entryExecutionOwnsOrHasPersistedTrade(trigger)) {
                     continue;
                 }
@@ -160,7 +161,8 @@ public class PriceTriggerService {
             );
 
             for (TriggerTradeRequestEntity trigger : spotCandidates) {
-                if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trigger.getSource())) continue;
+                if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trigger.getSource())
+                        || org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trigger.getSource())) continue;
                 if (entryExecutionOwnsOrHasPersistedTrade(trigger)) {
                     continue;
                 }
@@ -364,8 +366,8 @@ public class PriceTriggerService {
      */
     @Scheduled(fixedDelayString = "${app.trading.trigger-recovery-delay-ms:15000}")
     public void recoverStaleTriggeredRequests() {
-        if (!isIntradayEntryWindowOpen(nowIst())) {
-            log.debug("Skipping triggered-request recovery outside the intraday entry window.");
+        if (!isIntradayEntryWindowOpen(nowIst()) && !org.com.sharekhan.strategy.mcx.NaturalGasSession.marketOpen(nowIst())) {
+            log.debug("Skipping triggered-request recovery outside monitored sessions.");
             return;
         }
         recoverIncompleteEntrySubmissions(TriggeredTradeStatus.TRIGGERED);
@@ -373,7 +375,11 @@ public class PriceTriggerService {
     }
 
     private void recoverIncompleteEntrySubmissions(TriggeredTradeStatus incompleteStatus) {
-        for (TriggerTradeRequestEntity request : triggerRepo.findByStatus(incompleteStatus)) {
+        List<TriggerTradeRequestEntity> recoverable = isIntradayEntryWindowOpen(nowIst())
+                ? triggerRepo.findByStatus(incompleteStatus)
+                : triggerRepo.findBySourceIgnoreCaseAndStatusIn(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE, List.of(incompleteStatus));
+        for (TriggerTradeRequestEntity request : recoverable) {
+            if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(request.getSource()) && !isIntradayEntryWindowOpen(nowIst())) continue;
             if (request.getId() == null || tradeExecutionService.isBrokerTriggerEntryInFlight(request.getId())
                     || orderExecutionDispatcher.isInFlight(
                     orderExecutionKey("ENTRY:" + request.getId(), request.getBrokerCredentialsId()))) {

@@ -159,15 +159,16 @@
         window.StrategyRunView?.resetRisk($('#subscriptionRunRisk'));
         const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
-        f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE';
+        const naturalGas = template.id === 'MCX_NATURALGAS_ATM_BREAKOUT';
+        f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE' || naturalGas;
         if (f.elements.intraday.disabled) f.elements.intraday.checked = true;
         const straddle = template.id === 'EXPIRY_LONG_STRADDLE';
         $('#subscriptionProfitTargetRow').hidden = true;
         f.elements.profitTargetPerLot.disabled = true;
         $('#subscriptionRunRisk').querySelector('[data-risk-field=amountMode]').value=straddle ? 'PER_LOT' : 'TOTAL';
         const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
-        f.elements.symbol.value = automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
-        f.elements.symbol.readOnly = automatic;
+        f.elements.symbol.value = naturalGas ? 'NATURALGAS' : automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
+        f.elements.symbol.readOnly = automatic || naturalGas;
         $('#subscriptionLotsRow').hidden = stockMover;
         f.elements.lots.disabled = stockMover;
         $('#subscriptionInvestmentRow').hidden = !stockMover;
@@ -207,6 +208,12 @@
       body.investmentPerStock = Number(amount); body.lots = null;
     } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
     body.riskSettings=window.StrategyRunView?.readRisk($('#subscriptionRunRisk')) || null;
+    if (body.templateId === 'MCX_NATURALGAS_ATM_BREAKOUT') {
+      body.symbol='NATURALGAS'; body.intraday=true;
+      if (!body.riskSettings?.maxLoss) throw new Error('Set a maximum rupee loss for the Natural Gas strategy run.');
+      const broker=state.brokers.find(b=>b.id===body.brokerCredentialsId);
+      if (!['SIMULATOR','SHAREKHAN'].includes(String(broker?.brokerName || '').toUpperCase())) throw new Error('Choose Simulator or Sharekhan for MCX Natural Gas.');
+    }
     await api('/api/strategies/start','POST',body); $('#strategyDialog').close(); notify('Strategy subscription activated.'); await loadStrategies(); await loadOrders();
   });});
   async function loadOrders() {

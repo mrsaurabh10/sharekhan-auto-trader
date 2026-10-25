@@ -26,7 +26,7 @@ public class TradeCostCalculator {
     }
 
     public static TradeCharges calculateCharges(TriggeredTradeSetupEntity trade) {
-        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0
+        if (trade == null || org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource()) || trade.getQuantity() == null || trade.getQuantity() <= 0
                 || trade.getExitPrice() == null || trade.getExitPrice() < 0) {
             return null;
         }
@@ -45,7 +45,7 @@ public class TradeCostCalculator {
                                                  double entryPrice,
                                                  double exitPrice,
                                                  Double grossPnlOverride) {
-        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0) {
+        if (trade == null || org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource()) || trade.getQuantity() == null || trade.getQuantity() <= 0) {
             return null;
         }
 
@@ -95,7 +95,7 @@ public class TradeCostCalculator {
      * brokerage and statutory charges. A spot target must not close an option at break-even.
      */
     public static Double minimumProfitableExitPrice(TriggeredTradeSetupEntity trade, double tickSize) {
-        if (trade == null || TradeSide.isShort(trade) || trade.getQuantity() == null || trade.getQuantity() <= 0 || tickSize <= 0d || !Double.isFinite(tickSize)) {
+        if (trade == null || org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource()) || TradeSide.isShort(trade) || trade.getQuantity() == null || trade.getQuantity() <= 0 || tickSize <= 0d || !Double.isFinite(tickSize)) {
             return null;
         }
         Double entryPrice = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
@@ -118,7 +118,7 @@ public class TradeCostCalculator {
 
     /** Highest tick-aligned buy-back price with positive estimated net P&L for a short. */
     public static Double maximumProfitableCoverPrice(TriggeredTradeSetupEntity trade, double tickSize) {
-        if (!TradeSide.isShort(trade) || trade.getQuantity() == null || trade.getQuantity() <= 0
+        if (!TradeSide.isShort(trade) || org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource()) || trade.getQuantity() == null || trade.getQuantity() <= 0
                 || !Double.isFinite(tickSize) || tickSize <= 0) return null;
         Double entry = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
         if (entry == null || !Double.isFinite(entry) || entry <= 0) return null;

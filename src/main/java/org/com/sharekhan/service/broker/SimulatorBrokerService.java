@@ -12,6 +12,24 @@ import org.springframework.stereotype.Service;
 @Slf4j
 @Service
 public class SimulatorBrokerService implements ModifiableEntryBrokerService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.cache.QuoteCacheService quotes;
+
+    private double naturalGasFill(TriggeredTradeSetupEntity trade, double fallback, boolean buy) {
+        if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource())) return fallback;
+        var q = quotes == null ? null : quotes.getSnapshot(trade.getScripCode()).orElse(null);
+        var now = java.time.Instant.now();
+        if (q == null || !q.hasBook() || !q.isCoherentBook() || !Double.isFinite(q.getBestBid()) || !Double.isFinite(q.getBestAsk())
+                || q.getBestBid() > q.getBestAsk() || q.getLastBookAt() == null || q.getLastBookAt().isAfter(now)
+                || q.getLastBookAt().isBefore(now.minusSeconds(15)) || !"SHAREKHAN_WS".equals(q.getBookSource())
+                || !("scrip:" + trade.getScripCode()).equals(q.getBookProviderIdentity())) {
+            if (buy) throw new org.com.sharekhan.exception.EntryNotReadyException("Simulator waiting for a fresh MCX option book");
+            throw new IllegalStateException("MCX simulator exit waiting for a fresh option bid; position remains open");
+        }
+        if (buy && q.getBestAsk() > fallback + 0.0000001) throw new org.com.sharekhan.exception.EntryNotReadyException("MCX ask moved above the simulator entry limit");
+        return buy ? q.getBestAsk() : q.getBestBid();
+    }
+
 
     @Override
     public Broker getBroker() {
@@ -20,6 +38,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
+        ltp = naturalGasFill(trade, ltp, true);
         log.info("🚀 [SIMULATOR] Placing {} entry order for {} at {}", TradeSide.entry(trade), trade.getSymbol(), ltp);
         String orderId = "SIM-" + System.currentTimeMillis();
         
@@ -37,6 +56,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
                                                  BrokerContext context,
                                                  String orderId,
                                                  double newPrice) {
+        newPrice = naturalGasFill(trade, newPrice, true);
         log.info("🔁 [SIMULATOR] Modifying BUY order {} for {} to {}", orderId, trade.getSymbol(), newPrice);
         String effectiveOrderId = orderId != null && !orderId.isBlank()
                 ? orderId
@@ -60,6 +80,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
+        exitPrice = naturalGasFill(trade, exitPrice, false);
         log.info("🚀 [SIMULATOR] Placing {} exit order for {} at {}", TradeSide.exit(trade), trade.getSymbol(), exitPrice);
         String orderId = "SIM-EXIT-" + System.currentTimeMillis();
         
