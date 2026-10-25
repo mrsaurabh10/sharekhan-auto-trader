@@ -129,53 +129,62 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                 logQualification(selection, "DAILY_ENTRY_LIMIT_REACHED", null, null);
                 continue;
             }
-            evaluated++;
-            support.warmUpStockFeed(selection.spot());
-            Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualifyWithDirectionalCandle(selection, now);
-            if (!qualification.qualified()) {
-                support.auditStrategy(request, METADATA, selection.symbol(),
-                        "STRATEGY_EVALUATION", "REJECTED", qualification.reason(), null, null);
-                logQualification(selection, "WAITING", qualification.reason(), null);
-                waiting.add(selection.symbol() + ": " + qualification.reason());
-                continue;
-            }
-            qualified++;
-            TriggerRequest trigger = buildTrigger(request, selection, qualification.signal());
-            if (trigger.getQuantity() < 1) {
-                waiting.add(selection.symbol() + ": investment per stock is below the price of one share");
-                continue;
-            }
-            support.auditStrategy(request, METADATA, selection.symbol(),
-                    "STRATEGY_EVALUATION", "QUALIFIED", qualification.signal().setup(), qualification.signal(), trigger);
-            TriggerTradeRequestEntity existing = support.findActiveSetup(trigger, strategySource);
-            if (existing != null) {
-                logQualification(selection, "DUPLICATE", null, qualification.signal());
-                triggered.add(new Triggered(selection, trigger, existing, true, qualification.signal().setup()));
-                submitted.add(selection.symbol());
-                continue;
-            }
             if (entryQualificationService.isCycleExpired()) {
                 waiting.add(selection.symbol() + ": mover evaluation expired; waiting for a fresh cycle");
                 continue;
             }
-            log.info("MOVER_ENTRY_CHECK | template={} | userId={} | brokerCredentialsId={} | symbol={} | signalCandleAt={} | {}",
-                    TEMPLATE_ID, request.getUserId(), request.getBrokerCredentialsId(), selection.symbol(),
-                    qualification.signal().breakoutCandle().date().atTime(qualification.signal().breakoutCandle().time()),
-                    entryQualificationService.cycleTiming());
-            TriggerTradeRequestEntity trade;
             try {
-                trade = support.executeTriggeredTrade(trigger);
-            } catch (org.com.sharekhan.exception.EntryNotReadyException notReady) {
+                evaluated++;
+                support.warmUpStockFeed(selection.spot());
+                Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualifyWithDirectionalCandle(selection, now);
+                if (!qualification.qualified()) {
+                    support.auditStrategy(request, METADATA, selection.symbol(),
+                            "STRATEGY_EVALUATION", "REJECTED", qualification.reason(), null, null);
+                    logQualification(selection, "WAITING", qualification.reason(), null);
+                    waiting.add(selection.symbol() + ": " + qualification.reason());
+                    continue;
+                }
+                qualified++;
+                TriggerRequest trigger = buildTrigger(request, selection, qualification.signal());
+                if (trigger.getQuantity() < 1) {
+                    waiting.add(selection.symbol() + ": investment per stock is below the price of one share");
+                    continue;
+                }
                 support.auditStrategy(request, METADATA, selection.symbol(),
-                        "STRATEGY_EVALUATION", "WAITING", notReady.getMessage(), qualification.signal(), trigger);
-                logQualification(selection, "WAITING", notReady.getMessage(), qualification.signal());
-                waiting.add(selection.symbol() + ": " + notReady.getMessage());
-                continue;
+                        "STRATEGY_EVALUATION", "QUALIFIED", qualification.signal().setup(), qualification.signal(), trigger);
+                TriggerTradeRequestEntity existing = support.findActiveSetup(trigger, strategySource);
+                if (existing != null) {
+                    logQualification(selection, "DUPLICATE", null, qualification.signal());
+                    triggered.add(new Triggered(selection, trigger, existing, true, qualification.signal().setup()));
+                    submitted.add(selection.symbol());
+                    continue;
+                }
+                if (entryQualificationService.isCycleExpired()) {
+                    waiting.add(selection.symbol() + ": mover evaluation expired; waiting for a fresh cycle");
+                    continue;
+                }
+                log.info("MOVER_ENTRY_CHECK | template={} | userId={} | brokerCredentialsId={} | symbol={} | signalCandleAt={} | {}",
+                        TEMPLATE_ID, request.getUserId(), request.getBrokerCredentialsId(), selection.symbol(),
+                        qualification.signal().breakoutCandle().date().atTime(qualification.signal().breakoutCandle().time()),
+                        entryQualificationService.cycleTiming());
+                TriggerTradeRequestEntity trade;
+                try {
+                    trade = support.executeTriggeredTrade(trigger);
+                } catch (org.com.sharekhan.exception.EntryNotReadyException notReady) {
+                    support.auditStrategy(request, METADATA, selection.symbol(),
+                            "STRATEGY_EVALUATION", "WAITING", notReady.getMessage(), qualification.signal(), trigger);
+                    logQualification(selection, "WAITING", notReady.getMessage(), qualification.signal());
+                    waiting.add(selection.symbol() + ": " + notReady.getMessage());
+                    continue;
+                }
+                support.auditTradeRequest(request, METADATA, selection.symbol(), "CREATED", trigger, trade);
+                logQualification(selection, "SUBMITTED", null, qualification.signal());
+                triggered.add(new Triggered(selection, trigger, trade, false, qualification.signal().setup()));
+                submitted.add(selection.symbol());
+            } catch (SharedMarketDecisions.ExpiredDecisionException expired) {
+                waiting.add(selection.symbol() + ": " + expired.getMessage());
+                logQualification(selection, "WAITING", expired.getMessage(), null);
             }
-            support.auditTradeRequest(request, METADATA, selection.symbol(), "CREATED", trigger, trade);
-            logQualification(selection, "SUBMITTED", null, qualification.signal());
-            triggered.add(new Triggered(selection, trigger, trade, false, qualification.signal().setup()));
-            submitted.add(selection.symbol());
         }
         log.info("STOCK_QUALIFICATION_SUMMARY | template={} | selected={} | evaluated={} | qualified={} | submitted={} | waiting={}",
                 TEMPLATE_ID, selections.size(), evaluated, qualified,
