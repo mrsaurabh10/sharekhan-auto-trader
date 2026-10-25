@@ -6,6 +6,7 @@ public interface WebSocketSubscriptionService {
     /** Observer may retain only an already active route. Implementations without ownership support refuse. */
     default boolean retainObserverFeed(String owner,String key,boolean full) { return false; }
     default void releaseObserverFeed(String owner) { }
+    default java.util.Set<String> getObserverOnlyScripKeys() { return java.util.Set.of(); }
 
     /**
      * Subscribe to LTP for a given scrip key.

@@ -52,6 +52,9 @@ The observer directly reads caches; it never calls REST quote/authentication API
 It can retain reference-counted ownership only of routes already subscribed by
 normal market processing. It does not create new standalone feed routes. Retained
 routes remain subject to the application's unchanged polling/rate limits.
+Observer-only routes are explicitly excluded from fallback REST polling, so
+retaining an observation cannot consume live quote slots or initiate authentication.
+When no live route or websocket updates remain, the report records a data gap.
 Provider quantities are optional: Shoonya bq1/sq1 are copied when present; missing
 fields are unknown. Mixed-provider LTP/book values are not used for model exits.
 
