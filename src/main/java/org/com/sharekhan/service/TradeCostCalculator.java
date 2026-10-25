@@ -1,5 +1,7 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.util.TradeSide;
+
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.springframework.stereotype.Component;
 
@@ -48,8 +50,8 @@ public class TradeCostCalculator {
         }
 
         BigDecimal quantity = BigDecimal.valueOf(trade.getQuantity());
-        BigDecimal buyPremium = BigDecimal.valueOf(entryPrice).multiply(quantity);
-        BigDecimal sellPremium = BigDecimal.valueOf(exitPrice).multiply(quantity);
+        BigDecimal buyPremium = BigDecimal.valueOf(TradeSide.isShort(trade) ? exitPrice : entryPrice).multiply(quantity);
+        BigDecimal sellPremium = BigDecimal.valueOf(TradeSide.isShort(trade) ? entryPrice : exitPrice).multiply(quantity);
         BigDecimal turnover = buyPremium.add(sellPremium);
 
         int lots = resolveLots(trade);
@@ -93,7 +95,7 @@ public class TradeCostCalculator {
      * brokerage and statutory charges. A spot target must not close an option at break-even.
      */
     public static Double minimumProfitableExitPrice(TriggeredTradeSetupEntity trade, double tickSize) {
-        if (trade == null || trade.getQuantity() == null || trade.getQuantity() <= 0 || tickSize <= 0d || !Double.isFinite(tickSize)) {
+        if (trade == null || TradeSide.isShort(trade) || trade.getQuantity() == null || trade.getQuantity() <= 0 || tickSize <= 0d || !Double.isFinite(tickSize)) {
             return null;
         }
         Double entryPrice = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
@@ -110,6 +112,21 @@ public class TradeCostCalculator {
                 return candidate.doubleValue();
             }
             candidate = candidate.add(tick);
+        }
+        return null;
+    }
+
+    /** Highest tick-aligned buy-back price with positive estimated net P&L for a short. */
+    public static Double maximumProfitableCoverPrice(TriggeredTradeSetupEntity trade, double tickSize) {
+        if (!TradeSide.isShort(trade) || trade.getQuantity() == null || trade.getQuantity() <= 0
+                || !Double.isFinite(tickSize) || tickSize <= 0) return null;
+        Double entry = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
+        if (entry == null || !Double.isFinite(entry) || entry <= 0) return null;
+        BigDecimal tick = BigDecimal.valueOf(tickSize);
+        BigDecimal candidate = BigDecimal.valueOf(entry).divide(tick, 0, RoundingMode.CEILING).subtract(BigDecimal.ONE).multiply(tick);
+        for (int attempt=0; attempt<10_000 && candidate.signum()>0; attempt++, candidate=candidate.subtract(tick)) {
+            TradeCharges charges = calculateCharges(trade, entry, candidate.doubleValue(), null);
+            if (charges != null && charges.effectivePnl()>0) return candidate.doubleValue();
         }
         return null;
     }

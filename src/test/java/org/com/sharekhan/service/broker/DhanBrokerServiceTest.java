@@ -48,6 +48,26 @@ class DhanBrokerServiceTest {
             .put("transactionType","BUY").put("exchangeSegment","NSE_EQ").put("securityId","11536")
             .put("productType","CNC").put("orderType","LIMIT").put("quantity",10).put("filledQty",filled).put("remainingQuantity",remaining).put("averageTradedPrice",100.5);
     }
+    @Test void cashShortUsesSellEntryAndBuyCoverWithSeparateExitJournal() throws Exception {
+        trade.setEntryAction("SELL"); trade.setTriggerRequestId(55L);
+        when(client.exchange(eq("POST"),eq("/orders"),anyString(),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","PENDING")));
+        assertThat(service.placeOrder(trade,context,100d).isSuccess()).isTrue();
+        verify(claims).claim(anyString(),eq(7L),contains("REQUEST:55"),eq("SELL"));
+        when(client.exchange(eq("GET"),eq("/positions"),anyString(),isNull())).thenReturn(new DhanOrderClient.Response(200,new org.json.JSONArray().put(new JSONObject()
+            .put("dhanClientId","1000000001").put("securityId","11536").put("exchangeSegment","NSE_EQ").put("productType","INTRADAY").put("netQty",-10).put("positionType","SHORT")).toString()));
+        assertThat(service.placeExitOrder(trade,context,95d).isSuccess()).isTrue();
+        verify(claims).claimExit(anyString(),eq(7L),contains("EXIT:1"),eq(1),eq("BUY"));
+        var body=ArgumentCaptor.forClass(JSONObject.class);verify(client,times(2)).exchange(eq("POST"),eq("/orders"),anyString(),body.capture());
+        assertThat(body.getAllValues()).extracting(b->b.getString("transactionType")).containsExactly("SELL","BUY");
+        assertThat(body.getAllValues()).allSatisfy(b->assertThat(b.getString("productType")).isEqualTo("INTRADAY"));
+    }
+    @Test void shortEntryStillRequiresTradingEnabledAndCoverRequiresVerifiedShortPosition() throws Exception {
+        trade.setEntryAction("SELL");
+        when(credentials.findById(7L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(7L).appUserId(4L).brokerName("Dhan").clientCode("encrypted-client").active(true).tradingEnabled(false).build()));
+        assertThat(service.placeOrder(trade,context,100d).isSuccess()).isFalse();
+        assertThat(service.placeExitOrder(trade,context,95d).isSuccess()).isFalse();
+        verify(client,never()).exchange(eq("POST"),anyString(),anyString(),any());
+    }
     @Test void placesScopedCashLimitWithUnitsAndNeverConfirmsAcknowledgementAsFill() throws Exception {
         when(client.exchange(eq("POST"),eq("/orders"),eq("test-token"),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","TRADED")));
         var result=service.placeOrder(trade,context,100.5);

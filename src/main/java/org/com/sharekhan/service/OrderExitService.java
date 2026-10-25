@@ -1,5 +1,7 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.util.TradeSide;
+
 import com.sharekhan.SharekhanConnect;
 import com.sharekhan.model.OrderParams;
 import jakarta.transaction.Transactional;
@@ -107,10 +109,10 @@ public class OrderExitService {
         exitOrder.tradingSymbol = trade.getSymbol();
         exitOrder.quantity = trade.getQuantity().longValue();
         exitOrder.instrumentType = trade.getInstrumentType();
-        exitOrder.productType = "INVESTMENT";
+        exitOrder.productType = trade.getBrokerExecutionProduct() != null ? trade.getBrokerExecutionProduct() : "INVESTMENT";
         exitOrder.price = String.valueOf(org.com.sharekhan.util.SharekhanTickPrices.round(
                 scriptMasterRepository, trade.getScripCode(), trade.getExchange(), exitPrice)); //0.0 means Market Price
-        exitOrder.transactionType = "S"; // Assuming original was "B"
+        exitOrder.transactionType = TradeSide.isShort(trade) ? "B" : "S";
         exitOrder.orderType = "NORMAL";
         exitOrder.expiry = trade.getExpiry();
         exitOrder.requestType = "NEW";

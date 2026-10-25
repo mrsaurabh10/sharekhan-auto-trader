@@ -1,5 +1,7 @@
 package org.com.sharekhan.service;
 
+import org.com.sharekhan.util.TradeSide;
+
 import org.com.sharekhan.exception.EntryNotReadyException;
 import com.sharekhan.http.exceptions.SharekhanAPIException;
 import com.sharekhan.model.OrderParams;
@@ -642,6 +644,7 @@ public class TradeExecutionService {
         if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(request.getUserId(), request.getBrokerCredentialsId());
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
         normalizeCashEquityExchange(request);
+        normalizedEntryAction(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
         final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
@@ -793,6 +796,7 @@ public class TradeExecutionService {
         }
 
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
+                .entryAction(normalizedEntryAction(request))
                 .symbol(request.getInstrument())
                 .scripCode(script.getScripCode())
                 .exchange(script.getExchange())
@@ -1247,7 +1251,7 @@ public class TradeExecutionService {
         trade.setUseSpotForTarget(requestEntity.getUseSpotForTarget());
         trade.setUseSpotPrice(requestEntity.getUseSpotPrice());
         trade.setSpotScripCode(requestEntity.getSpotScripCode());
-        trade.setSource(requestEntity.getSource());
+        trade.setSource(requestEntity.getSource()); trade.setEntryAction(requestEntity.getEntryAction());
         trade.setStrategyRunId(requestEntity.getStrategyRunId());
         trade.setBrokerProductType(requestEntity.getBrokerProductType());
         trade.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
@@ -1420,6 +1424,14 @@ public class TradeExecutionService {
      * the execution boundary as well as at the message-ingestion boundary so
      * direct API calls cannot be sent down the F&O lookup path.
      */
+    private static String normalizedEntryAction(TriggerRequest request) {
+        String action = request.getAction() == null ? (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(request.getSource()) ? "SELL" : "BUY") : request.getAction().trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("BUY", "SELL").contains(action)) throw new InvalidTradeRequestException("Entry action must be BUY or SELL");
+        if ("SELL".equals(action) && (!isCashEquityExchange(request.getExchange()) || (request.getOptionType() != null && !request.getOptionType().isBlank()) || !Boolean.TRUE.equals(request.getIntraday())))
+            throw new InvalidTradeRequestException("SELL entries require intraday cash equity");
+        return action;
+    }
+
     static void normalizeCashEquityExchange(TriggerRequest request) {
         if (request == null || request.getOptionType() != null && !request.getOptionType().isBlank()) {
             return;
@@ -1445,6 +1457,7 @@ public class TradeExecutionService {
         }
 
         normalizeCashEquityExchange(request);
+        normalizedEntryAction(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
         final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
@@ -1516,6 +1529,7 @@ public class TradeExecutionService {
         }
 
         TriggerTradeRequestEntity entity = TriggerTradeRequestEntity.builder()
+                .entryAction(normalizedEntryAction(request))
                 .symbol(request.getInstrument())
                 .scripCode(script.getScripCode())
                 .exchange(script.getExchange())
@@ -1585,7 +1599,7 @@ public class TradeExecutionService {
     public void squareOffStrategyRunTrade(Long id,String runId,String reason) {
         var trade=triggeredTradeRepo.findById(id).orElseThrow();
         if(!Objects.equals(runId,trade.getStrategyRunId())) throw new IllegalArgumentException("Trade does not belong to run");
-        Double price=strategyProfitExitQuote(trade,Instant.now()).map(q -> org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource()) ? q.getBestAsk() : q.getBestBid())
+        Double price=strategyProfitExitQuote(trade,Instant.now()).map(q -> TradeSide.isShort(trade) ? q.getBestAsk() : q.getBestBid())
                 .orElseGet(()->resolveEntryReferencePrice(trade.getScripCode(),"strategyRunExit"));
         if(price==null) throw new IllegalStateException("Fresh traded exit price unavailable");
         squareOff(trade,price,reason);
@@ -1661,6 +1675,7 @@ public class TradeExecutionService {
         }
 
         normalizeCashEquityExchange(request);
+        normalizedEntryAction(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase(Locale.ROOT);
         final boolean isNoStrikeExchange = isCashEquityExchange(exch);
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
@@ -1862,6 +1877,7 @@ public class TradeExecutionService {
         LocalTime cutoff = optionExpiryCutoff(request);
 
         normalizeCashEquityExchange(request);
+        normalizedEntryAction(request);
         final String exch = request.getExchange() == null ? null : request.getExchange().toUpperCase();
         final boolean isNoStrikeExchange = isCashEquityExchange(exch);
 
@@ -2039,7 +2055,7 @@ public class TradeExecutionService {
         trade.setUseSpotForTarget(useSpotForTarget);
         trade.setUseSpotPrice(request.getUseSpotPrice()); // Store legacy flag
         trade.setSpotScripCode(spotScripCode);
-        trade.setSource(request.getSource()); // Copy source
+        trade.setSource(request.getSource()); trade.setEntryAction(normalizedEntryAction(request)); // Copy source
         trade.setBrokerProductType(request.getBrokerProductType());
         // Set a dummy orderId to indicate manual entry, or leave null?
         // If null, polling service might be confused. Better to set a marker.
@@ -2106,7 +2122,9 @@ public class TradeExecutionService {
         // An option price at its entry premium still loses money once the round-trip
         // brokerage and statutory charges are applied. Set the SL at the smallest
         // tick-aligned premium that leaves a positive effective P&L instead.
-        Double netProfitableExitPrice = TradeCostCalculator.minimumProfitableExitPrice(trade, ENTRY_TICK_SIZE);
+        Double netProfitableExitPrice = TradeSide.isShort(trade)
+                ? TradeCostCalculator.maximumProfitableCoverPrice(trade, ENTRY_TICK_SIZE)
+                : TradeCostCalculator.minimumProfitableExitPrice(trade, ENTRY_TICK_SIZE);
         if (netProfitableExitPrice == null) return MoveStopLossToCostResult.INVALID_COST_PRICE;
         trade.setStopLoss(netProfitableExitPrice);
         trade.setUseSpotForSl(Boolean.FALSE);
@@ -2178,7 +2196,7 @@ public class TradeExecutionService {
                 rejected.setEntryPrice(ltp);
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
-                rejected.setSource(trigger.getSource());
+                rejected.setSource(trigger.getSource()); rejected.setEntryAction(trigger.getEntryAction());
                 rejected.setStrategyRunId(trigger.getStrategyRunId());
                 rejected.setBrokerProductType(trigger.getBrokerProductType());
                 try { triggeredTradeRepo.save(rejected); } catch (Exception ignore) { }
@@ -2285,7 +2303,7 @@ public class TradeExecutionService {
                 rejected.setEntryPrice(ltp);
                 rejected.setOptionType(trigger.getOptionType());
                 rejected.setIntraday(trigger.getIntraday());
-                rejected.setSource(trigger.getSource());
+                rejected.setSource(trigger.getSource()); rejected.setEntryAction(trigger.getEntryAction());
                 rejected.setStrategyRunId(trigger.getStrategyRunId());
                 rejected.setBrokerProductType(trigger.getBrokerProductType());
                 if (isUsableBrokerOrderId(result.getOrderId())) {
@@ -2358,7 +2376,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotForTarget(trigger.getUseSpotForTarget());
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
-            triggeredTradeSetupEntity.setSource(trigger.getSource());
+            triggeredTradeSetupEntity.setSource(trigger.getSource()); triggeredTradeSetupEntity.setEntryAction(trigger.getEntryAction());
             triggeredTradeSetupEntity.setStrategyRunId(trigger.getStrategyRunId());
             triggeredTradeSetupEntity.setBrokerProductType(trigger.getBrokerProductType());
             triggeredTradeSetupEntity.setGapProtectionEnabled(trigger.getGapProtectionEnabled());
@@ -2753,8 +2771,9 @@ public class TradeExecutionService {
                 }
                 consecutiveWideSpreads = 0;
 
-                if (entryDiagnostics.bestAsk() != null
-                        && entryDiagnostics.bestAsk() > entryPriceCeiling(trigger, ltp) + 0.000001d) {
+                if (TradeSide.isShort(trigger)
+                        ? entryDiagnostics.bestBid() != null && entryDiagnostics.bestBid() < entryPriceFloor(trigger, ltp) - 0.000001d
+                        : entryDiagnostics.bestAsk() != null && entryDiagnostics.bestAsk() > entryPriceCeiling(trigger, ltp) + 0.000001d) {
                     return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                             requestedQuantity, "ENTRY_MAX_SLIPPAGE_EXCEEDED", lastResult);
                 }
@@ -2994,7 +3013,12 @@ public class TradeExecutionService {
             return true;
         }
         double ceiling = entryPriceCeiling(trigger, initialOptionPrice);
-        return attemptedPrice > ceiling + 0.000001d;
+        return TradeSide.isShort(trigger) ? attemptedPrice < entryPriceFloor(trigger, initialOptionPrice) - 0.000001d
+                : attemptedPrice > ceiling + 0.000001d;
+    }
+
+    private double entryPriceFloor(TriggeredTradeSetupEntity trigger, double reference) {
+        return Math.ceil((reference * (1d - configuredEntryMaxSlippagePercent(trigger) / 100d) - 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
     }
 
     private double entryPriceCeiling(TriggeredTradeSetupEntity trigger, double initialOptionPrice) {
@@ -3394,7 +3418,7 @@ public class TradeExecutionService {
                     }
 
                     double ceiling = entryPriceCeiling(latest, latest.getEntryPrice());
-                    if (candidatePrice > ceiling + 0.000001d) {
+                    if (isEntrySlippageLimitReached(latest, candidatePrice, latest.getEntryPrice())) {
                         pauseEntryChase(latest, currentControl, "Automatic entry slippage limit reached");
                         return;
                     }
@@ -3545,13 +3569,14 @@ public class TradeExecutionService {
             Double price = null;
             if ("market".equals(action)) {
                 EntryDiagnostics book = analyseEntry(trade, null);
-                // All supported entry adapters submit BUY LIMIT orders (including PE entries).
+                // Use the executable side for this entry, including cash shorts.
                 // Keep the original total quantity: broker modification reprices only the unfilled remainder.
-                if (!hasFreshEntryBook(book) || book.bestAsk() == null
-                        || !Double.isFinite(book.bestAsk()) || book.bestAsk() <= 0d) {
+                Double executable = TradeSide.isShort(trade) ? book.bestBid() : book.bestAsk();
+                if (!hasFreshEntryBook(book) || executable == null
+                        || !Double.isFinite(executable) || executable <= 0d) {
                     return "No fresh best ask available. No modification sent; try again.";
                 }
-                price = normalisePriceToTick(book.bestAsk());
+                price = normalisePriceToTick(executable);
             }
             // Invalidate this generation before broker I/O, including ambiguous timeouts/restarts.
             control.setState(EntryChaseControl.State.ACTION_PENDING);
@@ -3995,10 +4020,10 @@ public class TradeExecutionService {
                 .filter(q->q.hasBook() && q.getBestBid()<=q.getBestAsk())
                 .filter(q->!quoteCacheService.isBookStale(q,DEFAULT_QUOTE_STALENESS))
                 .map(q->{
-                    double bid=q.getBestBid();
+                    double bid=TradeSide.isShort(trade) ? q.getBestAsk() : q.getBestBid();
                     if("TARGET_HIT".equals(trade.getExitReason()) && !isSpotTarget(trade)) {
                         Double target=pickTargetPrice(trade);
-                        if(target!=null)bid=Math.max(bid,target);
+                        if(target!=null)bid=TradeSide.isShort(trade) ? Math.min(bid,target) : Math.max(bid,target);
                     }
                     return sanitizeExitPriceCandidate(trade,bid,"EXIT_CHASE_FRESH_BID");
                 }).orElse(null);
@@ -4035,16 +4060,17 @@ public class TradeExecutionService {
         } else {
             double spread = Math.max(0d, ask - bid);
             int fractionIndex = Math.min(Math.max(attemptIndex, 0), ENTRY_SPREAD_FRACTIONS.length - 1);
-            rawPrice = mid + spread * ENTRY_SPREAD_FRACTIONS[fractionIndex];
+            rawPrice = mid + TradeSide.sign(trigger) * spread * ENTRY_SPREAD_FRACTIONS[fractionIndex];
             if (fractionIndex == ENTRY_SPREAD_FRACTIONS.length - 1) {
-                rawPrice = ask + ENTRY_TICK_SIZE;
+                rawPrice = TradeSide.isShort(trigger) ? bid - ENTRY_TICK_SIZE : ask + ENTRY_TICK_SIZE;
             } else {
-                rawPrice = Math.min(ask, rawPrice);
+                rawPrice = TradeSide.isShort(trigger) ? Math.max(bid, rawPrice) : Math.min(ask, rawPrice);
             }
         }
 
         if (!manualChase && fallbackLtp > 0d) {
-            rawPrice = Math.min(rawPrice, entryPriceCeiling(trigger, fallbackLtp));
+            rawPrice = TradeSide.isShort(trigger) ? Math.max(rawPrice, entryPriceFloor(trigger, fallbackLtp))
+                    : Math.min(rawPrice, entryPriceCeiling(trigger, fallbackLtp));
         }
 
         return normalisePriceToTick(diagnostics, rawPrice);
@@ -4381,7 +4407,7 @@ public class TradeExecutionService {
                 Double entryPriceForPnl = resolveEntryPriceForPnl(persisted);
                 if (pnlVal == null && entryPriceForPnl != null && persisted.getQuantity() != null) {
                     pnlVal = java.math.BigDecimal.valueOf(exitPriceVal)
-                            .subtract(java.math.BigDecimal.valueOf(entryPriceForPnl))
+                            .subtract(java.math.BigDecimal.valueOf(entryPriceForPnl)).multiply(java.math.BigDecimal.valueOf(TradeSide.sign(persisted)))
                             .multiply(java.math.BigDecimal.valueOf(persisted.getQuantity()))
                             .setScale(2, java.math.RoundingMode.HALF_UP)
                             .doubleValue();
@@ -4972,7 +4998,7 @@ public class TradeExecutionService {
         leg.setStopLoss(root.getStopLoss()); leg.setTarget1(target); leg.setTrailingSl(root.getTrailingSl());
         leg.setTslEnabled(true); leg.setUseSpotPrice(root.getUseSpotPrice());
         leg.setUseSpotForEntry(root.getUseSpotForEntry()); leg.setUseSpotForSl(false); leg.setUseSpotForTarget(false);
-        leg.setSpotScripCode(root.getSpotScripCode()); leg.setIntraday(root.getIntraday()); leg.setSource(root.getSource()); leg.setStrategyRunId(root.getStrategyRunId());
+        leg.setSpotScripCode(root.getSpotScripCode()); leg.setIntraday(root.getIntraday()); leg.setSource(root.getSource()); leg.setEntryAction(root.getEntryAction()); leg.setStrategyRunId(root.getStrategyRunId());
         leg.setBrokerExecutionProduct(root.getBrokerExecutionProduct());
         leg.setBrokerSecurityId(root.getBrokerSecurityId());
         leg.setStatus(TriggeredTradeStatus.EXECUTED); leg.setTriggeredAt(root.getTriggeredAt()); leg.setEntryAt(root.getEntryAt());
@@ -5564,7 +5590,7 @@ public class TradeExecutionService {
 
                         Double entryForPnl = resolveEntryPriceForPnl(tradeSetupEntity);
                         if (entryForPnl != null && tradeSetupEntity.getQuantity() != null) {
-                            double pnl = (price - entryForPnl)
+                            double pnl = TradeSide.sign(tradeSetupEntity) * (price - entryForPnl)
                                     * tradeSetupEntity.getQuantity();
                             // just keep integer part, positive/negative safe
                             pnl = pnl > 0 ? Math.floor(pnl) : Math.ceil(pnl);
@@ -6173,7 +6199,7 @@ public class TradeExecutionService {
         temp.setTarget2(requestEntity.getTarget2());
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
-        temp.setSource(requestEntity.getSource());
+        temp.setSource(requestEntity.getSource()); temp.setEntryAction(requestEntity.getEntryAction());
         temp.setStrategyRunId(requestEntity.getStrategyRunId());
         // This value decides whether Sharekhan submits the documented BKT
         // BIGTRADEPLUS payload or the normal INVESTMENT order.  Retain it when

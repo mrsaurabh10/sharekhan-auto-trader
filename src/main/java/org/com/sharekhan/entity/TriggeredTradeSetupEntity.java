@@ -38,6 +38,10 @@ public class TriggeredTradeSetupEntity {
     private Long appUserId;
 
     private String exchange;
+
+    /** NULL is a legacy BUY, except the existing BTP short source. */
+    @Column(name = "entry_action", length = 4)
+    private String entryAction;
     private String instrumentType;
     private Double strikePrice;
     private String optionType;

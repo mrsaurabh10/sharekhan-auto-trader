@@ -18,7 +18,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -26,7 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
-/** Buy-only cash-equity version of the 09:25 mover breakout, sized by rupees per stock. */
+/** Long/short cash-equity version of the 09:25 mover breakout, sized by rupees per stock. */
 @Slf4j
 @Component
 public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
@@ -35,10 +34,9 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID,
             "Stocks 9:25 Mover Breakout",
-            "At 9:25 selects the top 5 gainers from the F&O stock universe. Buys cash shares on a qualified opening-range or VWAP-reclaim breakout with a bullish completed five-minute signal candle, sized by investment per stock.",
+            "Shares the F&O 9:25 mover shortlist: buys gainers on bullish breakouts or sells losers intraday on bearish breakdowns. Cash shares are sized by investment per stock; short positions are bought back on exit.",
             "");
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
-    private static final int TOP_COUNT = 5;
     private static final double STOP_ATR_MULTIPLIER = 1.5d;
     private static final double TARGET1_ATR_MULTIPLIER = 2d;
     private static final double TARGET2_ATR_MULTIPLIER = 3d;
@@ -91,7 +89,7 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             return support.waiting(METADATA, symbol, "Waiting for the 09:25 stock mover snapshot.");
         }
 
-        var snapshot = snapshotStore.loadOrCapture(TEMPLATE_ID, now, this::snapshotUniverse);
+        var snapshot = snapshotStore.loadOrCapture(Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID, now, this::snapshotUniverse);
         if (snapshot.isEmpty()) {
             return support.waiting(METADATA, symbol,
                     "Missing original 09:25 stock mover snapshot; refusing to select later movers today.");
@@ -204,7 +202,7 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                         + "; remaining candidates continue to be monitored.")
                 .templateId(TEMPLATE_ID)
                 .symbol(first.selection().symbol())
-                .direction("BUY")
+                .direction(first.trigger().getAction())
                 .breakoutClose(support.roundPrice(first.trigger().getEntryPrice()))
                 .triggerRequest(first.trigger())
                 .tradeRequest(first.request())
@@ -212,39 +210,19 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     }
 
     private List<Fno925Candidate> snapshotUniverse() {
-        Set<String> fnoUniverse = new HashSet<>(scriptMasterRepository.findDistinctOptionUnderlyingSymbols());
-        List<MStockGainerLoserService.Mover> gainers = gainerLoserService.topGainers().stream()
-                .filter(mover -> fnoUniverse.contains(mover.symbol()))
-                .toList();
-        List<MStockGainerLoserService.Mover> chosen = gainers.stream()
-                .filter(mover -> Double.isFinite(mover.changePercent()) && mover.changePercent() > 0)
-                .sorted(Comparator.comparingDouble(MStockGainerLoserService.Mover::changePercent).reversed())
-                .toList();
-        List<Fno925Candidate> selections = new ArrayList<>();
-        Set<String> seen = new HashSet<>();
-        for (MStockGainerLoserService.Mover mover : chosen) {
-            if (selections.size() == TOP_COUNT) break;
-            if (!seen.add(mover.symbol())) continue;
-            try {
-                ScriptMasterEntity spot = support.resolveSpotScript(mover.symbol());
-                if ("NC".equalsIgnoreCase(spot.getExchange())) {
-                    selections.add(new Fno925Candidate(mover.symbol(), spot, "CE"));
-                }
-            } catch (Exception e) {
-                log.debug("Skipping stock mover candidate {}: {}", mover.symbol(), e.getMessage());
-            }
-        }
-        log.info("Stock 09:25 snapshot: selected={}", selections.stream().map(Fno925Candidate::symbol).toList());
-        return selections;
+        return MoverOpeningSelection.capture(scriptMasterRepository, gainerLoserService, support);
     }
 
     private TriggerRequest buildTrigger(StrategyApplyRequest request,
                                         Fno925Candidate selection,
                                         Fno925EntryQualificationService.Signal signal) {
         double entry = support.roundPrice(signal.entryPrice());
-        double stop = support.roundPrice(Math.min(signal.stopLoss(), entry - STOP_ATR_MULTIPLIER * signal.atr()));
+        boolean buy = "CE".equals(selection.optionType());
+        double stop = support.roundPrice(buy
+                ? Math.min(signal.stopLoss(), entry - STOP_ATR_MULTIPLIER * signal.atr())
+                : Math.max(signal.stopLoss(), entry + STOP_ATR_MULTIPLIER * signal.atr()));
         if (!Double.isFinite(entry) || entry <= 0 || !Double.isFinite(signal.atr()) || signal.atr() <= 0
-                || !Double.isFinite(stop) || stop <= 0 || stop >= entry) {
+                || !Double.isFinite(stop) || stop <= 0 || (buy ? stop >= entry : stop <= entry)) {
             throw new IllegalArgumentException("Invalid stock entry, ATR or stop loss");
         }
         BigDecimal shares = request.getInvestmentPerStock().divide(BigDecimal.valueOf(entry),
@@ -256,13 +234,13 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         TriggerRequest trigger = new TriggerRequest();
         trigger.setInstrument(selection.symbol());
         trigger.setExchange("NC");
-        trigger.setAction("BUY");
+        trigger.setAction(buy ? "BUY" : "SELL");
         trigger.setEntryPrice(entry);
         trigger.setStopLoss(stop);
-        trigger.setTarget1(support.roundPrice(entry + TARGET1_ATR_MULTIPLIER * signal.atr()));
-        trigger.setTarget2(support.roundPrice(entry + TARGET2_ATR_MULTIPLIER * signal.atr()));
-        trigger.setTarget3(support.roundPrice(entry + TARGET3_ATR_MULTIPLIER * signal.atr()));
-        trigger.setIntraday(request.getIntraday() == null || request.getIntraday());
+        trigger.setTarget1(support.roundPrice(entry + (buy ? 1 : -1) * TARGET1_ATR_MULTIPLIER * signal.atr()));
+        trigger.setTarget2(support.roundPrice(entry + (buy ? 1 : -1) * TARGET2_ATR_MULTIPLIER * signal.atr()));
+        trigger.setTarget3(support.roundPrice(entry + (buy ? 1 : -1) * TARGET3_ATR_MULTIPLIER * signal.atr()));
+        trigger.setIntraday(!buy || request.getIntraday() == null || request.getIntraday());
         trigger.setUserId(request.getUserId());
         trigger.setBrokerCredentialsId(request.getBrokerCredentialsId());
         trigger.setSource(sourceFor(request));
@@ -291,14 +269,14 @@ public class Stock0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                                   String reason,
                                   Fno925EntryQualificationService.Signal signal) {
         if (signal == null) {
-            log.info("STOCK_QUALIFICATION | template={} | symbol={} | side=BUY | outcome={} | reason={}",
-                    TEMPLATE_ID, candidate.symbol(), outcome,
+            log.info("STOCK_QUALIFICATION | template={} | symbol={} | side={} | outcome={} | reason={}",
+                    TEMPLATE_ID, candidate.symbol(), "CE".equals(candidate.optionType()) ? "BUY" : "SELL", outcome,
                     reason == null ? "NA" : reason);
             return;
         }
-        log.info("STOCK_QUALIFICATION | template={} | symbol={} | side=BUY | outcome={} | setup={} | "
+        log.info("STOCK_QUALIFICATION | template={} | symbol={} | side={} | outcome={} | setup={} | "
                         + "breakoutTime={} | entry={} | stop={} | rangeHigh={} | rangeLow={}",
-                TEMPLATE_ID, candidate.symbol(), outcome, signal.setup(),
+                TEMPLATE_ID, candidate.symbol(), "CE".equals(candidate.optionType()) ? "BUY" : "SELL", outcome, signal.setup(),
                 signal.breakoutCandle().time(), support.roundPrice(signal.entryPrice()), support.roundPrice(signal.stopLoss()),
                 support.roundPrice(signal.openingRangeHigh()), support.roundPrice(signal.openingRangeLow()));
     }

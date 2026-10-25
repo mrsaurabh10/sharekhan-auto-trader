@@ -87,13 +87,13 @@ public class ShareKhanOrderUtil {
         orderParams.exchange = tradeSetupEntity.getExchange();
         orderParams.orderType ="NORMAL";
         orderParams.tradingSymbol = tradeSetupEntity.getSymbol();
-        orderParams.productType = "INVESTMENT"; //(INVESTMENT or (INV), BIGTRADE or (BT), BIGTRADEPLUS or (BT+))
+        orderParams.productType = tradeSetupEntity.getBrokerExecutionProduct() != null ? tradeSetupEntity.getBrokerExecutionProduct() : "INVESTMENT"; //(INVESTMENT or (INV), BIGTRADE or (BT), BIGTRADEPLUS or (BT+))
         // Transaction type should match the intent: entry orders are Buys (B), exit modifications must be Sell (S)
         if (TriggeredTradeStatus.EXIT_ORDER_PLACED.equals(tradeSetupEntity.getStatus())
                 || TriggeredTradeStatus.TARGET_ORDER_PLACED.equals(tradeSetupEntity.getStatus())) {
-            orderParams.transactionType = "S";
+            orderParams.transactionType = TradeSide.isShort(tradeSetupEntity) ? "B" : "S";
         } else {
-            orderParams.transactionType = "B";
+            orderParams.transactionType = TradeSide.isShort(tradeSetupEntity) ? "S" : "B";
         }
         orderParams.price = String.valueOf(orderPrice);
         orderParams.triggerPrice = "0";
@@ -131,8 +131,8 @@ public class ShareKhanOrderUtil {
         orderParams.exchange = tradeSetupEntity.getExchange();
         orderParams.quantity = tradeSetupEntity.getQuantity() != null ? tradeSetupEntity.getQuantity().longValue() : 0L;
         orderParams.tradingSymbol = tradeSetupEntity.getSymbol();
-        orderParams.productType = "INVESTMENT";
-        orderParams.transactionType = "B";
+        orderParams.productType = tradeSetupEntity.getBrokerExecutionProduct() != null ? tradeSetupEntity.getBrokerExecutionProduct() : "INVESTMENT";
+        orderParams.transactionType = TradeSide.isShort(tradeSetupEntity) ? "S" : "B";
         orderParams.orderType = "NORMAL";
         orderParams.validity = "GFD";
         orderParams.afterHour = isAfterHours() ? "Y" : "N";

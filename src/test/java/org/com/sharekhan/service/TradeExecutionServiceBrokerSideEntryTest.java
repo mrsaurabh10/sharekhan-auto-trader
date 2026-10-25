@@ -228,6 +228,20 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(allocation).containsExactly(66, 66, 68);
     }
 
+    @Test void shortSlippageRejectsLowerPricesAndTargetChildrenRetainSellDirection() {
+        TestContext ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        ReflectionTestUtils.setField(ctx.service,"entryMaxSlippagePercent",2d);
+        var root=TriggeredTradeSetupEntity.builder().id(1L).exchange("NC").entryAction("SELL").originalLots(13).quantity(13L)
+                .intraday(true).brokerExecutionProduct("INTRADAY").build();
+        Boolean tooLow=ReflectionTestUtils.invokeMethod(ctx.service,"isEntrySlippageLimitReached",root,97d,100d);
+        Boolean acceptable=ReflectionTestUtils.invokeMethod(ctx.service,"isEntrySlippageLimitReached",root,101d,100d);
+        assertThat(tooLow).isTrue(); assertThat(acceptable).isFalse();
+        TriggeredTradeSetupEntity leg=ReflectionTestUtils.invokeMethod(ctx.service,"copyTargetLeg",root,1L,2,4,95d,13L);
+        assertThat(leg.getEntryAction()).isEqualTo("SELL");
+        assertThat(leg.getQuantity()).isEqualTo(4L);
+        assertThat(leg.getBrokerExecutionProduct()).isEqualTo("INTRADAY");
+    }
+
     @Test void stagedTargetsRetainBrokerExecutionProductAndAppManagedSameDayExit() {
         TestContext ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
         var root=TriggeredTradeSetupEntity.builder().id(1L).originalLots(3).quantity(195L)

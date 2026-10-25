@@ -151,7 +151,7 @@ public class StrategyRunService {
         var total=fresh?realized.add(open):null;
         return new Pnl(money(realized),fresh?money(open):null,total==null?null:money(total),costsKnown?money(costs):null,total!=null && costsKnown?money(total.subtract(costs)):null,fresh,count);
     }
-    private static boolean sellSide(TriggeredTradeSetupEntity trade) {return org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(trade.getSource());}
+    private static boolean sellSide(TriggeredTradeSetupEntity trade) {return org.com.sharekhan.util.TradeSide.isShort(trade);}
     private static boolean flat(TriggeredTradeSetupEntity trade) {return trade.getStatus()!=null && FLAT.contains(trade.getStatus());}
     private static boolean uncertain(String reason) {return reason!=null && (reason.contains("UNKNOWN") || reason.contains("UNCONFIRMED") || reason.contains("RECONCILIATION_REQUIRED"));}
     private static BigDecimal money(BigDecimal value) {return value.setScale(2,RoundingMode.HALF_UP);}

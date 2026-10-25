@@ -16,7 +16,6 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -41,7 +40,6 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             "At 9:25 chooses top 5 F&O gainers when gainers outnumber losers, otherwise top 5 losers. It enters ATM CE/PE only on a qualified morning opening-range breakout or VWAP-reclaim base breakout. CE requires a bullish completed five-minute signal candle; PE requires a bearish one.",
             "AUTO");
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
-    private static final int TOP_COUNT = 5;
     private static final int DEFAULT_LOTS = 3;
     private static final double STOP_ATR_MULTIPLIER = 1.5d;
     private static final double TARGET1_ATR_MULTIPLIER = 2d;
@@ -209,33 +207,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     }
 
     private List<Fno925Candidate> snapshotUniverse() {
-        Set<String> fnoUniverse = new HashSet<>(scriptMasterRepository.findDistinctOptionUnderlyingSymbols());
-        List<MStockGainerLoserService.Mover> gainers = gainerLoserService.topGainers().stream()
-                .filter(mover -> fnoUniverse.contains(mover.symbol()))
-                .toList();
-        List<MStockGainerLoserService.Mover> losers = gainerLoserService.topLosers().stream()
-                .filter(mover -> fnoUniverse.contains(mover.symbol()))
-                .toList();
-        boolean chooseGainers = gainers.size() > losers.size();
-        List<MStockGainerLoserService.Mover> chosen = (chooseGainers ? gainers : losers).stream()
-                .sorted(chooseGainers
-                        ? Comparator.comparingDouble(MStockGainerLoserService.Mover::changePercent).reversed()
-                        : Comparator.comparingDouble(MStockGainerLoserService.Mover::changePercent))
-                .limit(TOP_COUNT)
-                .toList();
-        String optionType = chooseGainers ? "CE" : "PE";
-        List<Fno925Candidate> selections = new ArrayList<>();
-        for (MStockGainerLoserService.Mover mover : chosen) {
-            try {
-                ScriptMasterEntity spot = support.resolveSpotScript(mover.symbol());
-                selections.add(new Fno925Candidate(mover.symbol(), spot, optionType));
-            } catch (Exception e) {
-                log.debug("Skipping F&O mover candidate {}: {}", mover.symbol(), e.getMessage());
-            }
-        }
-        log.info("F&O 09:25 MStock snapshot: fnoGainers={}, fnoLosers={}, selectedSide={}, selected={}",
-                gainers.size(), losers.size(), optionType, selections.stream().map(Fno925Candidate::symbol).toList());
-        return selections;
+        return MoverOpeningSelection.capture(scriptMasterRepository, gainerLoserService, support);
     }
 
     private TriggerRequest buildTrigger(StrategyApplyRequest request,

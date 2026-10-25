@@ -48,7 +48,7 @@
     rows.forEach(row => { const tr = node('tr'); columns.forEach(c => { const td = node('td', null, c[2]); const value = typeof c[1] === 'function' ? c[1](row) : row[c[1]]; if (value instanceof Node) td.append(value); else td.textContent = value == null ? '—' : String(value); tr.append(td); }); if (action) { const td = node('td'); action(row, td); tr.append(td); } body.append(tr); });
     t.append(body); container.append(t);
   }
-  const orderColumns = [['Instrument', 'symbol'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => window.StrategyRunView?.statusTag(row.status || 'PENDING',row.reason) || badge(row.status || 'PENDING')], ['Source', r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified']];
+  const orderColumns = [['Instrument', 'symbol'], ['Side', r=>r.entryAction || 'BUY'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => window.StrategyRunView?.statusTag(row.status || 'PENDING',row.reason) || badge(row.status || 'PENDING')], ['Source', r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified']];
   function readyBrokers() { return state.brokers.filter(b => ['Sharekhan','Dhan'].includes(b.brokerName) && b.connected && b.active && b.tradingEnabled); }
   function brokerLabel(b) { return b.brokerName + ' · ' + (b.clientCode || 'Account ' + b.id); }
   function refreshSelectors() {
@@ -217,7 +217,7 @@
       if (!await confirmAction('Cancel this order request?')) return;
       await api('/api/trades/cancel-request/'+row.id,'POST',{}); notify('Request cancelled.'); await loadOrders();
     })));
-    table($('#executions'),[['Instrument','symbol'],['Source',r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Costs',r=>money(r.totalTradeCost),'numeric'],['Net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>window.StrategyRunView?.statusTag(r.status,r.reason) || badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
+    table($('#executions'),[['Instrument','symbol'],['Side',r=>r.entryAction || 'BUY'],['Source',r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Costs',r=>money(r.totalTradeCost),'numeric'],['Net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>window.StrategyRunView?.statusTag(r.status,r.reason) || badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
       window.PersonalTradeActions.mount(td, row, {api, refresh:loadOrders, notify, button});
     });
     $('#requestPage').textContent='Page '+(state.requestPage+1); $('#executionPage').textContent='Page '+(state.executionPage+1);

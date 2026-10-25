@@ -55,7 +55,7 @@ public class MonitoringSnapshotService {
         Integer spotScripCode = trade.getSpotScripCode();
         return new MonitoringTradeSnapshot(
                 trade.getId(), trade.getAppUserId(), trade.getSymbol(), scripCode, spotScripCode,
-                trade.getExchange(), trade.getInstrumentType(), trade.getStrikePrice(), trade.getOptionType(),
+                trade.getExchange(), org.com.sharekhan.util.TradeSide.entry(trade), trade.getInstrumentType(), trade.getStrikePrice(), trade.getOptionType(),
                 trade.getExpiry(), trade.getQuantity(), trade.getLots(), trade.getEntryPrice(),
                 trade.getActualEntryPrice(), trade.getStopLoss(), trade.getTarget1(), trade.getTarget2(),
                 trade.getTarget3(), trade.getTrailingSl(), trade.getTslEnabled(), trade.getUseSpotForEntry(),

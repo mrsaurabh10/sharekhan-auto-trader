@@ -39,7 +39,7 @@ class Stock0925MoverAtrBreakoutStrategyTest {
     void setup() {
         // Model the committed shortlist: later evaluations never invoke the supplier again.
         java.util.concurrent.atomic.AtomicReference<List<Fno925Candidate>> saved = new java.util.concurrent.atomic.AtomicReference<>();
-        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), any(), any())).thenAnswer(call -> {
+        when(snapshots.loadOrCapture(eq(Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID), any(), any())).thenAnswer(call -> {
             if (saved.get() == null) saved.set(((java.util.function.Supplier<List<Fno925Candidate>>) call.getArgument(2)).get());
             return java.util.Optional.of(saved.get());
         });
@@ -100,7 +100,7 @@ class Stock0925MoverAtrBreakoutStrategyTest {
             assertThat(t.getTslEnabled()).isTrue(); assertThat(t.getUserId()).isEqualTo(1L); assertThat(t.getBrokerCredentialsId()).isEqualTo(2L);
             strategy.apply(request("10000"));
             verify(support, times(1)).executeTriggeredTrade(any());
-            verify(movers, times(1)).topGainers(); verify(movers, never()).topLosers();
+            verify(movers, times(1)).topGainers(); verify(movers, times(1)).topLosers();
             verify(support, never()).resolveFnoEntryContract(any(),any(),any(),any(),anyDouble());
         }
     }
@@ -137,23 +137,38 @@ class Stock0925MoverAtrBreakoutStrategyTest {
         verify(qualification, never()).qualify(any(), any());
         verify(support, times(1)).executeTriggeredTrade(any());
     }
-    @Test void snapshotChoosesFivePositiveFnoGainersAndIgnoresDuplicatesAndOtherStocks() {
-        setup(); when(scripts.findDistinctOptionUnderlyingSymbols()).thenReturn(List.of("ABC","B","C","D","E","F","DOWN"));
-        when(movers.topGainers()).thenReturn(List.of(
-                new MStockGainerLoserService.Mover("OTHER",1,99), new MStockGainerLoserService.Mover("ABC",1,8),
-                new MStockGainerLoserService.Mover("ABC",1,8), new MStockGainerLoserService.Mover("B",1,7),
-                new MStockGainerLoserService.Mover("C",1,6), new MStockGainerLoserService.Mover("D",1,5),
-                new MStockGainerLoserService.Mover("E",1,4), new MStockGainerLoserService.Mover("F",1,3),
-                new MStockGainerLoserService.Mover("DOWN",1,-1)));
-        when(support.resolveSpotScript(anyString())).thenAnswer(c -> ScriptMasterEntity.builder().exchange("NC").tradingSymbol(c.getArgument(0)).build());
+    @Test void selectionMatchesFnoAndTiesSelectLosersForCashShorts() {
+        setup();
+        when(movers.topLosers()).thenReturn(List.of(new MStockGainerLoserService.Mover("ABC",750,-5)));
         List<Fno925Candidate> selected = ReflectionTestUtils.invokeMethod(strategy,"snapshotUniverse");
-        assertThat(selected).extracting(Fno925Candidate::symbol).containsExactly("ABC","B","C","D","E");
-        assertThat(selected).allMatch(c -> "CE".equals(c.optionType()));
+        assertThat(selected).extracting(Fno925Candidate::optionType).containsExactly("PE");
+        assertThat(selected).isEqualTo(MoverOpeningSelection.capture(scripts, movers, support));
+    }
+    @Test void bearishSignalSellsWholeSharesIntradayWithStopAboveAndTargetsBelowEntry() {
+        setup();
+        when(movers.topLosers()).thenReturn(List.of(new MStockGainerLoserService.Mover("ABC",750,-5)));
+        var bearish = new Fno925EntryQualificationService.Signal(750d, 760d, 10d, 770d, 755d,
+                new StrategyCandle(now.toLocalDate(), LocalTime.of(9,55), 755, 760, 745, 750, 1000L), "MORNING_ORB");
+        when(qualification.qualifyWithDirectionalCandle(any(), any())).thenReturn(Fno925EntryQualificationService.Qualification.qualified(bearish));
+        var request = request("10000"); request.setIntraday(false);
+        var response = strategy.apply(request);
+        var trigger = response.getTriggerRequest();
+        assertThat(response.getDirection()).isEqualTo("SELL");
+        assertThat(trigger.getAction()).isEqualTo("SELL");
+        assertThat(trigger.getIntraday()).isTrue();
+        assertThat(trigger.getQuantity()).isEqualTo(13);
+        assertThat(trigger.getStopLoss()).isEqualTo(765d);
+        assertThat(trigger.getTarget1()).isEqualTo(730d);
+        assertThat(trigger.getTarget2()).isEqualTo(720d);
+        assertThat(trigger.getTarget3()).isEqualTo(710d);
+        assertThat(trigger.getOptionType()).isNull();
+        verify(qualification).qualifyWithDirectionalCandle(argThat(c -> "PE".equals(c.optionType())), eq(now));
+        verify(support).executeTriggeredTrade(trigger);
     }
     @Test void restartedCashStrategyUsesOriginalSnapshotWithoutLookingAtCurrentGainers() {
         setup();
         var original = new Fno925Candidate("ABC", spot, "CE");
-        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+        when(snapshots.loadOrCapture(eq(Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
                 .thenReturn(java.util.Optional.of(List.of(original)));
         var restarted = new Stock0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, snapshots, clock);
         assertThat(restarted.apply(request("10000")).getStatus()).isEqualTo("triggered");
@@ -163,7 +178,7 @@ class Stock0925MoverAtrBreakoutStrategyTest {
     }
     @Test void missingOpeningSnapshotAfterRestartDoesNotSelectLaterMoversOrSubmit() {
         setup();
-        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+        when(snapshots.loadOrCapture(eq(Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
                 .thenReturn(java.util.Optional.empty());
         assertThat(strategy.apply(request("10000")).getMessage()).contains("Missing original 09:25 stock mover snapshot");
         verifyNoInteractions(movers, qualification);
@@ -171,7 +186,7 @@ class Stock0925MoverAtrBreakoutStrategyTest {
     }
     @Test void storedEmptyOpeningListDoesNotBecomeANewSelectionAfterRestart() {
         setup();
-        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+        when(snapshots.loadOrCapture(eq(Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
                 .thenReturn(java.util.Optional.of(List.of()));
         assertThat(strategy.apply(request("10000")).getMessage()).contains("No eligible stock movers");
         verifyNoInteractions(movers, qualification);
@@ -179,7 +194,7 @@ class Stock0925MoverAtrBreakoutStrategyTest {
     }
     @Test void restartedCashStrategyStillHonorsPersistedDailyAttemptGuard() {
         setup();
-        when(snapshots.loadOrCapture(eq(Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
+        when(snapshots.loadOrCapture(eq(Fno0925MoverAtrBreakoutStrategy.TEMPLATE_ID), eq(now), any()))
                 .thenReturn(java.util.Optional.of(List.of(new Fno925Candidate("ABC", spot, "CE"))));
         when(support.hasStockMoverRequestOn(anyString(), any(), eq(1L), eq("ABC"))).thenReturn(true);
         var restarted = new Stock0925MoverAtrBreakoutStrategy(support, scripts, movers, qualification, snapshots, clock);
