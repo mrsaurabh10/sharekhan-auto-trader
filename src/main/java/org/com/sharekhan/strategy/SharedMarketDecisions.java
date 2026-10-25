@@ -84,6 +84,7 @@ public class SharedMarketDecisions {
         recordSignal(id);
         return value;
     }
+    public java.util.List<String> currentSignalIds() { return trace.get()==null?java.util.List.of():java.util.List.copyOf(trace.get()); }
     public LocalDateTime currentTime() { return LocalDateTime.now(clock); }
     public boolean executionFresh() {
         return executeBefore.get() == null || LocalDateTime.now(clock).isBefore(executeBefore.get());

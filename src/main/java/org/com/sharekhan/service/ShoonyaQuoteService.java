@@ -45,7 +45,10 @@ public class ShoonyaQuoteService {
                             String returnedToken,
                             Double lastPrice,
                             Double bestBid,
-                            Double bestAsk) {
+                            Double bestAsk, Double bidQuantity, Double askQuantity) {
+        public LiveQuote(String symbol,String token,String returnedSymbol,String returnedToken,Double ltp,Double bid,Double ask) {
+            this(symbol,token,returnedSymbol,returnedToken,ltp,bid,ask,null,null);
+        }
         /** Convenience constructor retained for tests and explicitly trusted callers. */
         public LiveQuote(String tradingSymbol, String token, Double lastPrice, Double bestBid, Double bestAsk) {
             this(tradingSymbol, token, tradingSymbol, token, lastPrice, bestBid, bestAsk);
@@ -119,7 +122,7 @@ public class ShoonyaQuoteService {
             if (!"Ok".equalsIgnoreCase(quote.optString("stat"))) return Optional.empty();
             LiveQuote result = new LiveQuote(resolved.getTradingSymbol(), resolved.getToken(),
                     firstText(quote, "tsym", "trading_symbol"), firstText(quote, "tk", "token"),
-                    decimal(quote, "lp"), decimal(quote, "bp1"), decimal(quote, "sp1"));
+                    decimal(quote, "lp"), decimal(quote, "bp1"), decimal(quote, "sp1"), decimal(quote, "bq1"), decimal(quote, "sq1"));
             return result.hasUsablePrice() ? Optional.of(result) : Optional.empty();
         } catch (Exception e) {
             return Optional.empty();

@@ -320,7 +320,7 @@ public class WebSocketClientService  {
         }
 
         try {
-            quoteCacheService.recordQuote(sc, bestBid, bestAsk, lv);
+            quoteCacheService.recordQuote(sc, bestBid, bestAsk, lv,"SHAREKHAN_WS",null,"scrip:"+sc,null,null);
         } catch (Exception e) {
             log.warn("Failed to record quote snapshot for {}: {}", sc, e.getMessage());
         }

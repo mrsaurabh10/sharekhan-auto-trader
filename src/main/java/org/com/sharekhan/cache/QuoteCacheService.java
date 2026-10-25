@@ -25,6 +25,15 @@ public class QuoteCacheService {
     @Builder
     public static class QuoteSnapshot {
         Integer scripCode;
+        String ltpSource;
+        String ltpExchange;
+        String ltpProviderIdentity;
+        String bookSource;
+        String bookExchange;
+        String bookProviderIdentity;
+        Double bidQuantity;
+        Double askQuantity;
+        boolean coherentBook;
         Double bestBid;
         Double bestAsk;
         Double lastTradedPrice;
@@ -47,14 +56,20 @@ public class QuoteCacheService {
     }
 
     public void recordQuote(int scripCode, Double bestBid, Double bestAsk, Double ltp) {
-        quotesByScrip.compute(scripCode, (code, existing) -> merge(existing, code, bestBid, bestAsk, ltp));
+        recordQuote(scripCode,bestBid,bestAsk,ltp,"UNKNOWN",null,null,null,null);
+    }
+
+    public void recordQuote(int scripCode, Double bid, Double ask, Double ltp, String source,
+                            String exchange, String identity, Double bidQuantity, Double askQuantity) {
+        quotesByScrip.compute(scripCode, (code, existing) -> merge(existing, code, bid, ask, ltp,
+                source,exchange,identity,bidQuantity,askQuantity));
     }
 
     private QuoteSnapshot merge(QuoteSnapshot existing,
                                 int scripCode,
                                 Double newBid,
                                 Double newAsk,
-                                Double newLtp) {
+                                Double newLtp, String source, String exchange, String identity, Double bidQuantity, Double askQuantity) {
         Instant receivedAt = Instant.now();
         Double bid = coalesce(newBid, existing != null ? existing.getBestBid() : null);
         Double ask = coalesce(newAsk, existing != null ? existing.getBestAsk() : null);
@@ -78,6 +93,15 @@ public class QuoteCacheService {
 
         QuoteSnapshot snapshot = QuoteSnapshot.builder()
                 .scripCode(scripCode)
+                .ltpSource(receivedLtp ? source : existing != null ? existing.getLtpSource() : null)
+                .ltpExchange(receivedLtp ? exchange : existing != null ? existing.getLtpExchange() : null)
+                .ltpProviderIdentity(receivedLtp ? identity : existing != null ? existing.getLtpProviderIdentity() : null)
+                .bookSource(receivedCompleteBook ? source : existing != null ? existing.getBookSource() : null)
+                .bookExchange(receivedCompleteBook ? exchange : existing != null ? existing.getBookExchange() : null)
+                .bookProviderIdentity(receivedCompleteBook ? identity : existing != null ? existing.getBookProviderIdentity() : null)
+                .bidQuantity(receivedCompleteBook ? usableQuantity(bidQuantity) : existing != null ? existing.getBidQuantity() : null)
+                .askQuantity(receivedCompleteBook ? usableQuantity(askQuantity) : existing != null ? existing.getAskQuantity() : null)
+                .coherentBook(receivedCompleteBook || (!isUsablePrice(newBid) && !isUsablePrice(newAsk) && existing != null && existing.isCoherentBook()))
                 .bestBid(bid)
                 .bestAsk(ask)
                 .lastTradedPrice(ltp)
@@ -95,6 +119,7 @@ public class QuoteCacheService {
         return snapshot;
     }
 
+    private Double usableQuantity(Double quantity) { return quantity!=null&&Double.isFinite(quantity)&&quantity>=0?quantity:null; }
     private Double coalesce(Double candidate, Double fallback) {
         if (isUsablePrice(candidate)) {
             return candidate;

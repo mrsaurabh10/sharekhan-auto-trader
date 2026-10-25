@@ -19,7 +19,19 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
 
     private final WebSocketConnector connector;
 
-    public void reset() {
+    private final java.util.Map<String,String> observerRefs = new java.util.HashMap<>();
+    @Override public synchronized boolean retainObserverFeed(String owner,String key,boolean full) {
+        if(observerRefs.containsKey(owner)) return true;
+        if(!getActiveScripKeys().contains(key)) return false;
+        String mode=full?"full":"ltp";
+        subscribe(key,mode);observerRefs.put(owner,mode+"|"+key);return true;
+    }
+    @Override public synchronized void releaseObserverFeed(String owner) {
+        String ref=observerRefs.remove(owner);
+        if(ref!=null)unsubscribe(scripKey(ref),ref.substring(0,ref.indexOf('|')));
+    }
+    public synchronized void reset() {
+        observerRefs.clear();
         log.info("🧹 Resetting WebSocket subscription reference counts");
         refCounts.clear();
     }
