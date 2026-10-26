@@ -69,13 +69,16 @@ public class NaturalGasAtmStrategy implements StrategyEvaluator {
         data.watch(future.getScripCode());
         execution.warmUpSpotLtp(future,"MCX Natural Gas strategy");
         var brokerName=brokers.findById(r.getBrokerCredentialsId()).orElseThrow().getBrokerName();
-        var evaluation=NaturalGasSignals.inspect(data.candles(future.getScripCode(),now),now,future.getTickSize(),dataPolicy.forBroker(brokerName));
-        String dataContext=evaluation.dataContext().isBlank()?"":"; "+evaluation.dataContext();
-        log.info("MCX_DATA_EVALUATION | subscription={} broker={} reason={} context={}",r.getSubscriptionId(),brokerName,evaluation.reason(),evaluation.dataContext());
+        var source=dataPolicy.sourceForBroker(brokerName);
+        var candles=source==NaturalGasCandleSource.SHOONYA_TPS?data.shoonyaCandles(future,now):data.candles(future.getScripCode(),now);
+        var evaluation=NaturalGasSignals.inspect(candles,now,future.getTickSize(),dataPolicy.forBroker(brokerName));
+        String dataContext=(evaluation.dataContext().isBlank()?"":"; "+evaluation.dataContext())+"; candleSource="+source
+                +(source==NaturalGasCandleSource.SHOONYA_TPS?" (prior seed=Sharekhan; today=Shoonya TPSeries)":"");
+        log.info("MCX_DATA_EVALUATION | subscription={} broker={} reason={} context={}",r.getSubscriptionId(),brokerName,evaluation.reason(),dataContext);
         if(evaluation.signal().isEmpty()) {
             String reason=evaluation.reason();
             if(reason.startsWith("No MCX candles") || reason.startsWith("No completed MCX") || reason.startsWith("Incomplete MCX") || reason.startsWith("Gap in MCX") || reason.startsWith("Stale MCX"))
-                reason += "; "+data.status(future.getScripCode());
+                reason += "; "+(source==NaturalGasCandleSource.SHOONYA_TPS?data.shoonyaStatus(future.getScripCode()):data.status(future.getScripCode()));
             return waitFor(reason+dataContext);
         }
         var signal=evaluation.signal().get();

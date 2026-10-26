@@ -12,6 +12,7 @@ import java.util.*;
 public class NaturalGasMarketData {
     private final SharekhanHistoricalService history;
     private final NaturalGasLiveCandles live;
+    private final NaturalGasShoonyaCandles shoonya;
     private final Map<Integer, Cached> cache=new HashMap<>();
     private record Cached(LocalDateTime loaded, List<StrategyCandle> candles) { }
     public void watch(Integer code) { live.watch(code); }
@@ -27,7 +28,10 @@ public class NaturalGasMarketData {
                     .filter(c->c.time()!=null && !c.time().isBefore(NaturalGasSession.OPEN) && c.time().isBefore(NaturalGasSession.CLOSE))
                     .toList();
             if(cache.size()>=16 && !cache.containsKey(code))cache.clear();
-            prior=new Cached(now,rows);cache.put(code,prior);
+            // A transient empty refresh must not discard the last verified prior-session seed.
+            if(!rows.isEmpty() || prior==null)prior=new Cached(now,rows);
+            else prior=new Cached(now,prior.candles());
+            cache.put(code,prior);
         }
         // A snapshot cache must never delay a newly completed live bar.
         var rows=new ArrayList<>(prior.candles());
@@ -38,6 +42,12 @@ public class NaturalGasMarketData {
         rows.addAll(observed);
         return List.copyOf(rows);
     }
+    public synchronized List<StrategyCandle> shoonyaCandles(org.com.sharekhan.entity.ScriptMasterEntity future,LocalDateTime now) {
+        // Source boundary is explicit: Sharekhan prior sessions, Shoonya current day only.
+        var rows=new ArrayList<>(candles(future.getScripCode(),now).stream().filter(c->c.date().isBefore(now.toLocalDate())).toList());
+        rows.addAll(shoonya.completed(future,now));return List.copyOf(rows);
+    }
+    public String shoonyaStatus(Integer code){return shoonya.diagnostics(code).toString();}
     /** Verified (start,end] provider buckets: an exact boundary belongs to the interval ending there. */
     static StrategyCandle intervalStart(StrategyCandle c) {
         if(c.date()==null || c.time()==null)return c;

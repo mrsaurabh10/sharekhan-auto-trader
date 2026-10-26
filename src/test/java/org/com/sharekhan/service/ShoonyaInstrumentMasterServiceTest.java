@@ -116,4 +116,17 @@ class ShoonyaInstrumentMasterServiceTest {
         }
         return new ByteArrayInputStream(bytes.toByteArray());
     }
+    @Test void resolvesExactMcxFutureAndChecksExpiryLotAndTickInsteadOfAssumingTokenEquality() throws Exception {
+        var repo=mock(ShoonyaInstrumentRepository.class);var service=org.mockito.Mockito.spy(new ShoonyaInstrumentMasterService(repo,mock(ShoonyaInstrumentMasterWriter.class)));
+        var now=java.time.LocalDateTime.of(2026,10,26,19,0);
+        var future=ScriptMasterEntity.builder().exchange("MX").tradingSymbol("NATURALGAS").instrumentType("FS").expiry("24/11/2026").lotSize(1250).tickSize(.1).build();
+        var row=ShoonyaInstrumentEntity.builder().exchange("MCX").token("provider-token").tradingSymbol("NATURALGAS24NOV26").symbol("NATURALGAS")
+            .instrument("FUTCOM").expiry("24-NOV-2026").lotSize(1250).tickSize(.1).fetchedAt(now).build();
+        when(repo.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MCX","NATURALGAS24NOV26")).thenReturn(java.util.Optional.of(row));
+        assertThat(service.resolveNaturalGasFuture(future,now).getToken()).isEqualTo("provider-token");
+        row.setLotSize(250);org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->service.resolveNaturalGasFuture(future,now));
+        row.setLotSize(1250);row.setFetchedAt(now.minusDays(1));org.mockito.Mockito.doReturn(1).when(service).refresh("MCX");
+        service.resolveNaturalGasFuture(future,now);verify(service).refresh("MCX");
+    }
+
 }
