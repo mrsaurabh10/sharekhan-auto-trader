@@ -87,6 +87,19 @@ class TradeExecutionServiceIntradayExitChaseTest {
     }
 
     @Test
+    void noProgressExitReusesSameOrderAndRetriesFailedModifyWithoutLosingIntent() {
+        when(broker.modifyEntryOrder(any(),any(),anyString(),anyDouble()))
+                .thenReturn(OrderPlacementResult.builder().success(false).build())
+                .thenReturn(OrderPlacementResult.builder().success(true).orderId("211652102").build());
+        assertThat(service.modifyExitOrderForProtectiveExit(trade,38.9,FnoMoverExitPolicyService.NO_PROGRESS)).isFalse();
+        tick.run();
+        assertThat(trade.getExitReason()).isEqualTo(FnoMoverExitPolicyService.NO_PROGRESS);
+        assertThat(trade.getExitOrderId()).isEqualTo("211652102");
+        verify(broker,never()).placeExitOrder(any(),any(),anyDouble());
+        verify(future,never()).cancel(anyBoolean());
+    }
+
+    @Test
     void squareOffReusesExistingSellInsteadOfPlacingAnother() {
         trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);
         service.squareOff(trade, 38.9, "STOP_LOSS_HIT");

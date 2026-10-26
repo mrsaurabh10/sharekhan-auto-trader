@@ -40,6 +40,85 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PriceTriggerServiceTest {
+    @Test void fnoProtectiveExitClosesWholePositionOnceInsteadOfPartialTargetBooking() {
+        for(String reason:List.of(FnoMoverExitPolicyService.NO_PROGRESS,FnoMoverExitPolicyService.PROFIT_PROTECTION)) {
+            org.mockito.Mockito.reset(triggeredRepo,tradeExecutionService);
+            var policy=mock(FnoMoverExitPolicyService.class);
+            ReflectionTestUtils.setField(service,"fnoMoverExitPolicy",policy);
+            when(policy.enabled()).thenReturn(true);
+            var trade=TriggeredTradeSetupEntity.builder().id(8800L).appUserId(4L).brokerCredentialsId(6L)
+                    .symbol("TEST").exchange("NF").source(FnoMoverExitPolicyService.SOURCE).optionType("PE")
+                    .scripCode(123).spotScripCode(456).intraday(true).entryPrice(100d).actualEntryPrice(10d)
+                    .stopLoss(102d).useSpotForSl(true).useSpotForTarget(true).lots(3).originalLots(3).quantity(300L)
+                    .tslEnabled(true).status(TriggeredTradeStatus.EXECUTED).exitClaimedAt(LocalDateTime.of(2026,7,3,10,0)).build();
+            when(triggeredRepo.findById(8800L)).thenReturn(Optional.of(trade));
+            when(policy.evaluate(eq(trade),any())).thenReturn(new FnoMoverExitPolicyService.Decision(reason,9.5));
+            when(policy.currentExitBid(eq(trade),any())).thenReturn(9.5);
+            when(tradeExecutionService.hasUsableTradedExitPrice(trade,9.5)).thenReturn(true);
+            when(triggeredRepo.claimIfStatusEquals(8800L,"EXECUTED","EXIT_TRIGGERED",reason)).thenAnswer(c->{trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason(reason);return 1;});
+            service.handleTradeWithLock(8800L,10d,100d);
+            service.handleTradeWithLock(8800L,10d,100d);
+            verify(tradeExecutionService).squareOff(trade,9.5,reason);
+            verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),eq("TARGET_HIT_PARTIAL"));
+            org.junit.jupiter.api.Assertions.assertEquals(300L,trade.getQuantity());
+        }
+    }
+
+    @Test void fnoPolicyCannotSubmitWhenAnotherWorkerWinsTheClaim() {
+        var policy=mock(FnoMoverExitPolicyService.class);ReflectionTestUtils.setField(service,"fnoMoverExitPolicy",policy);
+        when(policy.enabled()).thenReturn(true);
+        var trade=TriggeredTradeSetupEntity.builder().id(8801L).symbol("TEST").exchange("NF")
+                .source(FnoMoverExitPolicyService.SOURCE).optionType("PE").scripCode(123).spotScripCode(456)
+                .intraday(true).useSpotForSl(true).entryPrice(100d).stopLoss(102d).quantity(100L).lots(1)
+                .status(TriggeredTradeStatus.EXECUTED).build();
+        when(triggeredRepo.findById(8801L)).thenReturn(Optional.of(trade));
+        when(policy.evaluate(eq(trade),any())).thenReturn(new FnoMoverExitPolicyService.Decision(FnoMoverExitPolicyService.NO_PROGRESS,9.5));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade,9.5)).thenReturn(true);
+        service.handleTradeWithLock(8801L,10d,100d);
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
+    }
+
+    @Test void abandonedFnoProtectiveExitRecoveryNeverUsesPartialTargetBooking() {
+        var trade=TriggeredTradeSetupEntity.builder().id(8803L).symbol("TEST").exchange("NF")
+                .source(FnoMoverExitPolicyService.SOURCE).optionType("PE").scripCode(123).spotScripCode(456)
+                .intraday(true).quantity(300L).lots(3).tslEnabled(true).useSpotForSl(true).useSpotForTarget(true)
+                .entryPrice(100d).stopLoss(102d).target1(99d).status(TriggeredTradeStatus.EXIT_TRIGGERED)
+                .exitClaimedAt(LocalDateTime.of(2026,7,3,9,59)).exitReason(FnoMoverExitPolicyService.NO_PROGRESS).build();
+        when(triggeredRepo.findById(8803L)).thenReturn(Optional.of(trade));
+        service.handleTradeWithLock(8803L,10d,100d);
+        verify(tradeExecutionService).squareOff(trade,10d,FnoMoverExitPolicyService.NO_PROGRESS);
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),eq("TARGET_HIT_PARTIAL"));
+    }
+
+    @Test void fnoStateFailureDoesNotPreventOriginalPremiumStop() {
+        var policy=mock(FnoMoverExitPolicyService.class);ReflectionTestUtils.setField(service,"fnoMoverExitPolicy",policy);
+        when(policy.enabled()).thenReturn(true);
+        var trade=TriggeredTradeSetupEntity.builder().id(8804L).symbol("TEST").exchange("NF")
+                .source(FnoMoverExitPolicyService.SOURCE).optionType("PE").scripCode(123).spotScripCode(456)
+                .intraday(true).quantity(100L).lots(1).useSpotForSl(false).entryPrice(100d).stopLoss(9d)
+                .status(TriggeredTradeStatus.EXECUTED).build();
+        when(triggeredRepo.findById(8804L)).thenReturn(Optional.of(trade));
+        when(policy.evaluate(eq(trade),any())).thenThrow(new IllegalStateException("state storage unavailable"));
+        when(tradeExecutionService.hasUsableTradedExitPrice(trade,8d)).thenReturn(true);
+        when(triggeredRepo.claimIfStatusEquals(8804L,"EXECUTED","EXIT_TRIGGERED","STOP_LOSS_HIT")).thenAnswer(c->{trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason("STOP_LOSS_HIT");return 1;});
+        service.handleTradeWithLock(8804L,8d,100d);
+        verify(tradeExecutionService).squareOff(trade,8d,"STOP_LOSS_HIT");
+    }
+
+    @Test void fnoTimerUsesFreshExactBidAndDoesNotEvaluateOutsideRegularMarket() {
+        var policy=mock(FnoMoverExitPolicyService.class);ReflectionTestUtils.setField(service,"fnoMoverExitPolicy",policy);
+        when(policy.enabled()).thenReturn(true);
+        var trade=TriggeredTradeSetupEntity.builder().id(8802L).symbol("TEST").exchange("NF")
+                .source(FnoMoverExitPolicyService.SOURCE).optionType("PE").scripCode(123).spotScripCode(456)
+                .intraday(true).status(TriggeredTradeStatus.EXECUTED).build();
+        when(triggeredRepo.findBySourceAndStatusIn(eq(FnoMoverExitPolicyService.SOURCE),anyList())).thenReturn(List.of(trade));
+        service.pollFnoMoverExits();
+        verify(triggeredRepo,never()).findById(8802L); // no fresh exact bid: no replay of a stale cached LTP
+        var afterHours=spy(service);doReturn(LocalDateTime.of(2026,7,3,15,30)).when(afterHours).nowIst();
+        org.mockito.Mockito.clearInvocations(triggeredRepo);afterHours.pollFnoMoverExits();
+        verify(triggeredRepo,never()).findBySourceAndStatusIn(anyString(),anyList());
+    }
+
 
     @Test void stockShortStopsAboveEntryAndTargetsBelowEntry() {
         for (boolean stop : new boolean[]{true,false}) {
