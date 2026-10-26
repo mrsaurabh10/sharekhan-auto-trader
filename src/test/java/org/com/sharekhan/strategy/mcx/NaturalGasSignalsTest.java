@@ -7,6 +7,58 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 class NaturalGasSignalsTest {
+    static NaturalGasSignals.Evaluation fiveMinute(List<StrategyCandle> rows,LocalDateTime now) {
+        return NaturalGasSignals.inspect(rows,now,.1,NaturalGasDataMode.ROLLING_WINDOW,NaturalGasTrendTimeframe.FIVE_MINUTE);
+    }
+    static double metric(NaturalGasSignals.Evaluation evaluation,String key) {
+        return Arrays.stream(evaluation.dataContext().split("; ")).filter(s->s.startsWith(key+"="))
+                .mapToDouble(s->Double.parseDouble(s.substring(key.length()+1))).findFirst().orElseThrow();
+    }
+    static List<StrategyCandle> risingFiveMinuteBars(int count) {
+        var rows=new ArrayList<StrategyCandle>();
+        for(int i=0;i<count;i++) {
+            double p=100+i*.1;
+            rows.add(bar(DAY,LocalTime.of(9,0).plusMinutes(i*5),p-.05,p+.2,p-.2,p,100L));
+        }
+        return rows;
+    }
+    @Test void fiveMinuteTrendUsesEachCompletedCloseAndThreeFiveMinuteBarsForSlope() {
+        var rows=risingFiveMinuteBars(60);var now=DAY.atTime(14,0,5);
+        var e=fiveMinute(rows,now);
+        assertEquals(104.95,metric(e,"EMA20"),1e-9);
+        assertEquals(103.45,metric(e,"EMA50"),1e-9);
+        assertEquals(104.65,metric(e,"EMA20ThreeBarsAgo"),1e-9);
+        assertEquals(.3,metric(e,"EMA20SlopeChange"),1e-9);
+        assertEquals(105.9,metric(e,"futuresClose"),1e-9);
+        assertEquals(104.75,e.vwap(),1e-9);
+        assertTrue(e.dataContext().contains("trendTimeframe=FIVE_MINUTE"));
+        assertTrue(e.reason().startsWith("MCX trend aligned"));
+        assertTrue(flexible(rows,now).reason().startsWith("Insufficient completed MCX history"));
+        var later=risingFiveMinuteBars(61);var updated=fiveMinute(later,now.plusMinutes(5));
+        assertEquals(105.05,metric(updated,"EMA20"),1e-9);
+        assertEquals(103.55,metric(updated,"EMA50"),1e-9);
+        // The 14:00-14:05 close updates the trend without waiting for 14:15.
+        assertEquals(106.0,metric(updated,"futuresClose"),1e-9);
+    }
+    @Test void fiveMinuteHistoryNeedsFiftyThreeBarsAndNeverUsesTheFormingBar() {
+        var rows=risingFiveMinuteBars(53);var now=DAY.atTime(13,25,5);
+        var baseline=fiveMinute(rows,now);
+        assertEquals(104.25,metric(baseline,"EMA20"),1e-9);
+        rows.add(bar(DAY,LocalTime.of(13,25),105,1000,1,900,100L));
+        assertEquals(baseline,fiveMinute(rows,now));
+        assertTrue(fiveMinute(risingFiveMinuteBars(52),now.minusMinutes(5)).reason().contains("52/53"));
+    }
+    @Test void fiveMinuteModePreservesBreakoutRetestBothDirectionsAndDataGuards() {
+        for(boolean bull:List.of(true,false)) {
+            var now=DAY.atTime(19,0,5);var rows=lateCandles(bull,LocalTime.of(17,0));
+            assertEquals(bull?"CE":"PE",fiveMinute(rows,now).signal().orElseThrow().side());
+            assertTrue(fiveMinute(rows,now.plusMinutes(2)).reason().startsWith("Stale MCX candle"));
+            var c=rows.getLast();rows.add(c);
+            assertTrue(fiveMinute(rows,now).reason().startsWith("Duplicate MCX"));rows.removeLast();
+            rows.removeIf(x->x.date().equals(DAY)&&x.time().equals(LocalTime.of(18,0)));
+            assertTrue(fiveMinute(rows,now).reason().contains("11/24"));
+        }
+    }
     static final LocalDate DAY=LocalDate.of(2026,10,26);
     static final LocalDateTime NOW=DAY.atTime(11,20,5);
     static List<StrategyCandle> candles(boolean bullish) {

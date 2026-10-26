@@ -17,7 +17,9 @@ class NaturalGasDataDiagnosticsControllerTest {
         mvc.perform(get("/api/sharekhan/historical/mcx-capture").header("X-Admin-Token","test-key").param("scripCode","42"))
             .andExpect(status().isOk()).andExpect(jsonPath("$.armed").value(true))
             .andExpect(jsonPath("$.simulatorDataMode").value("ROLLING_WINDOW"))
-            .andExpect(jsonPath("$.brokerDataMode").value("FULL_SESSION"));
+            .andExpect(jsonPath("$.brokerDataMode").value("FULL_SESSION"))
+            .andExpect(jsonPath("$.simulatorTrendTimeframe").value("FIFTEEN_MINUTE"))
+            .andExpect(jsonPath("$.brokerTrendTimeframe").value("FIFTEEN_MINUTE"));
         verify(live).diagnostics(42);
     }
 }
