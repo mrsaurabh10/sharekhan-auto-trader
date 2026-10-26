@@ -163,3 +163,9 @@ historical endpoint. The strategy continues to refuse entry until it has a compl
 session from 09:00, sufficient prior history, valid volume and a qualifying setup.
 The 24-bar warmup, one-attempt/day guard, max-loss settings and order/exit rules are
 unchanged. NYMEX is not part of this repair.
+
+Live verification found `lastUpdatedTime=10/26/2026 11:30:56` with cumulative
+`qty=11378`. WebSocket dates therefore use **MM/dd/yyyy**, independently of
+historical `tradeDate` (dd/MM/yyyy). The live parser prioritizes month/day for
+ambiguous slash dates; ISO offsets are converted to IST and Unix timestamps are
+accepted. The 15-second freshness check remains mandatory for every format.

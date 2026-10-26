@@ -82,6 +82,8 @@ class NaturalGasLiveCandlesTest {
         assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime("2026-10-26 11:24:00"));
         assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime("2026-10-26T05:54:00Z"));
         assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime("26/10/2026 11:24:00"));
+        assertEquals(day.atTime(11,30,56),NaturalGasLiveCandles.providerTime("10/26/2026 11:30:56"));
+        assertEquals(LocalDateTime.of(2026,11,6,9,0),NaturalGasLiveCandles.providerTime("11/06/2026 09:00:00"));
         var instant=day.atTime(11,24).atZone(ZoneId.of("Asia/Kolkata")).toInstant();
         assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime(Long.toString(instant.toEpochMilli())));
         assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime(Long.toString(instant.getEpochSecond())));

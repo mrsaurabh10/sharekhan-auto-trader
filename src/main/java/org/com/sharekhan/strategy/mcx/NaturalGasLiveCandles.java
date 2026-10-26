@@ -25,7 +25,7 @@ public class NaturalGasLiveCandles {
         watched.values().forEach(s->{s.previousAt=null;s.previousQuantity=null;s.bar=null;});
     }
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("dd/MM/uuuu HH:mm:ss").withResolverStyle(ResolverStyle.STRICT);
+    private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("MM/dd/uuuu HH:mm:ss").withResolverStyle(ResolverStyle.STRICT);
     private final StrategyCandleHistoryRepository repository;
     private final Map<Integer, State> watched = new HashMap<>();
     private static class State {
@@ -148,7 +148,9 @@ public class NaturalGasLiveCandles {
             long epoch=Long.parseLong(value);
             return LocalDateTime.ofInstant(value.length()==13?Instant.ofEpochMilli(epoch):Instant.ofEpochSecond(epoch),IST);
         }
+        // Verified production feed: 10/26/2026; historical tradeDate uses the opposite order.
         try {return LocalDateTime.parse(value,TIME);}catch(java.time.format.DateTimeParseException ignored){}
+        try {return LocalDateTime.parse(value,DateTimeFormatter.ofPattern("dd/MM/uuuu HH:mm:ss").withResolverStyle(ResolverStyle.STRICT));}catch(java.time.format.DateTimeParseException ignored){}
         try {return java.time.OffsetDateTime.parse(value).atZoneSameInstant(IST).toLocalDateTime();}catch(java.time.format.DateTimeParseException ignored){}
         return LocalDateTime.parse(value.replace(' ','T'),DateTimeFormatter.ISO_LOCAL_DATE_TIME);
     }
