@@ -78,4 +78,12 @@ class NaturalGasLiveCandlesTest {
         live.record(data,day.atTime(9,4,56).atZone(ZoneId.of("Asia/Kolkata")).toInstant());
         tick(LocalTime.of(9,5,5),302,420);assertTrue(live.completed(42,day.atTime(9,6)).isEmpty());
     }
+    @Test void acceptsProviderIsoLocalAndOffsetTimestampsWithoutDroppingTimezone() {
+        assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime("2026-10-26 11:24:00"));
+        assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime("2026-10-26T05:54:00Z"));
+        assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime("26/10/2026 11:24:00"));
+        var instant=day.atTime(11,24).atZone(ZoneId.of("Asia/Kolkata")).toInstant();
+        assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime(Long.toString(instant.toEpochMilli())));
+        assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime(Long.toString(instant.getEpochSecond())));
+    }
 }
