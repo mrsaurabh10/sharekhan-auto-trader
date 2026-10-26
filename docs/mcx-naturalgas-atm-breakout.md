@@ -205,3 +205,43 @@ Post-rollout raw-history verification matched all **1,644** in-session five-minu
 records, including 14 October's valid 23:30:00 end stamp (volume 121), which maps
 to 23:25. The initial 1,643-record comparison had excluded that exact close before
 normalization. Zero duplicate intervals remain.
+
+## Flexible Simulator window
+
+`app.strategy.naturalgas.simulator-data-mode` (`APP_STRATEGY_NATURALGAS_SIMULATOR_DATA_MODE`)
+accepts `FULL_SESSION` (default) or `ROLLING_WINDOW`. Only Simulator accounts use
+this setting. Sharekhan broker accounts always retain `FULL_SESSION`; neither
+request fields nor the Simulator setting can promote live accounts. No schema or
+saved subscription change is required. Deployment may opt Simulator into rolling
+mode while retaining full-session mode as a configuration rollback.
+
+Rolling mode selects the latest 24 **completed five-minute bars from today**.
+They must form a consecutive two-hour window with positive volume, valid OHLC,
+freshness and sufficient trusted historical seed. Missing opening data and gaps
+before the selected window do not block. A gap inside it waits until 24 consecutive
+completed bars follow the gap. Prior days cannot satisfy today's 24-bar warmup.
+Saved complete bars are reused after restart; partial bars are still discarded.
+No missing candle, trade, volume or opening time is invented.
+
+VWAP uses volume-weighted `(high+low+close)/3` across exactly these 24 bars and
+slides every five minutes. It is explicitly **rolling VWAP**, not 09:00 session
+VWAP. Breakout lookback20, retest1–3, ATR14 and the entry/risk/quote/exit guards
+remain unchanged. A 17:00 start can become eligible at19:00 if every interval is
+complete; starting capture at19:00 does not make it immediately tradable. Keep
+capture running from08:55 rather than introducing a hard-coded US-opening gate.
+
+Trend EMA20/50 and slope retain the existing calculation over available complete
+fifteen-minute groups, with at least53 groups including trusted historical seed.
+A group requires all three adjacent five-minute bars; incomplete groups are
+omitted. This is an EMA over available observations, and earlier missing groups
+mean it may differ from the broker's uninterrupted chart EMA. Rolling-mode status
+and `MCX_DATA_EVALUATION` logs explicitly disclose this; no artificial EMA updates
+are inserted for missing data. This limitation requires Simulator review before
+any separate live-broker promotion. Existing full-session mode is unchanged.
+
+Readiness messages report consecutive count/24, theoretical earliest readiness,
+selected window, rolling VWAP value when available and EMA data convention.
+`mcx-capture` diagnostics expose Simulator/broker modes without changing a feed.
+The 23:00 entry cutoff,23:20 square-off, one-entry/day, premium stops/targets and
+rupee-risk settings are preserved. Tests/replays establish data eligibility and
+guards; they do not establish profitable evening trades or exchange-complete OHLC.

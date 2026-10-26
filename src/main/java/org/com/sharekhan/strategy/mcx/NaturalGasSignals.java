@@ -7,13 +7,35 @@ import java.util.*;
 /** Completed candles only. Missing volume, incomplete fifteen-minute groups and gaps fail closed. */
 public final class NaturalGasSignals {
     public record Signal(String side, double trigger, double stop, double atr, LocalDateTime candleEnd) { }
-    public record Evaluation(Optional<Signal> signal, String reason) { }
+    public record Evaluation(Optional<Signal> signal, String reason, String dataContext, Double vwap) {
+        public Evaluation(Optional<Signal> signal,String reason){this(signal,reason,"",null);}
+    }
     private static Evaluation waiting(String reason){return new Evaluation(Optional.empty(),reason);}
     private NaturalGasSignals() { }
     public static Optional<Signal> evaluate(List<StrategyCandle> input, LocalDateTime now, double tick) {
         return inspect(input,now,tick).signal();
     }
     public static Evaluation inspect(List<StrategyCandle> input, LocalDateTime now, double tick) {
+        return inspect(input,now,tick,NaturalGasDataMode.FULL_SESSION);
+    }
+    public static Evaluation inspect(List<StrategyCandle> input, LocalDateTime now, double tick, NaturalGasDataMode mode) {
+        Objects.requireNonNull(mode,"MCX data mode");
+        var result=inspectData(input,now,tick,mode);
+        if(mode==NaturalGasDataMode.FULL_SESSION)return result;
+        // Explicitly distinguish sampled-bar EMAs from an uninterrupted full-session chart EMA.
+        String context="dataMode=ROLLING_WINDOW; rolling VWAP=24 completed 5m bars; EMA20/50=available complete 15m bars, missing groups omitted";
+        if(input!=null && now!=null) {
+            var completed=input.stream().filter(c->valid(c)&&c.date().equals(now.toLocalDate())&&!at(c).plusMinutes(5).isAfter(now))
+                    .sorted(Comparator.comparing(NaturalGasSignals::at)).toList();
+            if(!completed.isEmpty()) {
+                var window=completed.subList(Math.max(0,completed.size()-24),completed.size());
+                context+="; window="+at(window.getFirst())+"/"+at(window.getLast()).plusMinutes(5)+" ("+window.size()+" bars)";
+            }
+        }
+        if(result.vwap()!=null)context+="; rollingVWAPValue="+result.vwap();
+        return new Evaluation(result.signal(),result.reason(),context,result.vwap());
+    }
+    private static Evaluation inspectData(List<StrategyCandle> input, LocalDateTime now, double tick, NaturalGasDataMode mode) {
         if (!NaturalGasSession.entryAllowed(now)) return waiting("Outside MCX entry window 09:00-23:00 IST");
         if (!Double.isFinite(tick) || tick <= 0) return waiting("Invalid MCX futures tick metadata");
         if(input==null || input.isEmpty())return waiting("No MCX futures candles available; waiting for historical seed and live session capture");
@@ -32,8 +54,15 @@ public final class NaturalGasSignals {
         if (bars.size() < 153) return waiting("Insufficient completed MCX history: "+bars.size()+"/153 five-minute candles");
         var today = bars.stream().filter(c -> c.date().equals(now.toLocalDate())).toList();
         if(today.isEmpty())return waiting("No completed MCX candles for today; waiting for live capture");
-        if(!today.get(0).time().equals(NaturalGasSession.OPEN))return waiting("Incomplete MCX session: first captured interval="+today.get(0).time()+", required=09:00; missing opening candles cannot be reconstructed");
-        if(today.size()<24)return waiting("MCX session warmup: "+today.size()+"/24 completed five-minute candles; earliest entry 11:00 IST");
+        if(mode==NaturalGasDataMode.FULL_SESSION) {
+            if(!today.get(0).time().equals(NaturalGasSession.OPEN))return waiting("Incomplete MCX session: first captured interval="+today.get(0).time()+", required=09:00; missing opening candles cannot be reconstructed");
+            if(today.size()<24)return waiting("MCX session warmup: "+today.size()+"/24 completed five-minute candles; earliest entry 11:00 IST");
+        } else {
+            today=today.subList(Math.max(0,today.size()-24),today.size());
+            int consecutive=1;
+            for(int i=today.size()-1;i>0&&at(today.get(i)).equals(at(today.get(i-1)).plusMinutes(5));i--)consecutive++;
+            if(consecutive<24)return waiting("MCX rolling warmup: "+consecutive+"/24 consecutive completed five-minute candles; earliest readiness="+at(today.get(today.size()-consecutive)).plusHours(2));
+        }
         for (int i=1;i<today.size();i++) if (!at(today.get(i)).equals(at(today.get(i-1)).plusMinutes(5))) return waiting("Gap in MCX session candles after "+at(today.get(i-1))+"; waiting for complete data");
         var last = today.get(today.size()-1);
         var end = at(last).plusMinutes(5);
@@ -46,21 +75,22 @@ public final class NaturalGasSignals {
         if (fifteen.size()<53) return waiting("EMA warmup: "+fifteen.size()+"/53 complete fifteen-minute candles");
         double fast=ema(fifteen,20,fifteen.size()), slow=ema(fifteen,50,fifteen.size());
         double priorFast=ema(fifteen,20,fifteen.size()-3);
+        String vwapName=mode==NaturalGasDataMode.ROLLING_WINDOW?"rolling VWAP":"session VWAP";
         double totalVolume=0, weighted=0;
         for(var c:today) {
-            if(c.volume()==null || c.volume()<=0) return waiting("Missing or zero MCX interval volume at "+at(c)+"; session VWAP unavailable");
+            if(c.volume()==null || c.volume()<=0) return waiting("Missing or zero MCX interval volume at "+at(c)+"; "+vwapName+" unavailable");
             totalVolume+=c.volume();weighted+=(c.high()+c.low()+c.close())/3*c.volume();
         }
         double vwap=weighted/totalVolume;
         boolean bull=fast>slow && fast>priorFast && last.close()>vwap;
         boolean bear=fast<slow && fast<priorFast && last.close()<vwap;
-        if(!bull && !bear) return waiting("MCX EMA20/50 trend, EMA20 slope and session VWAP are not aligned");
+        if(!bull && !bear) return new Evaluation(Optional.empty(),"MCX EMA20/50 trend, EMA20 slope and "+vwapName+" are not aligned","",vwap);
         double atr=0;
         for(int i=today.size()-14;i<today.size();i++) {
             var c=today.get(i);double p=today.get(i-1).close();
             atr+=Math.max(c.high()-c.low(),Math.max(Math.abs(c.high()-p),Math.abs(c.low()-p)))/14;
         }
-        if(!Double.isFinite(atr)||atr<=0) return waiting("MCX ATR unavailable or non-positive");
+        if(!Double.isFinite(atr)||atr<=0) return new Evaluation(Optional.empty(),"MCX ATR unavailable or non-positive","",vwap);
         int n=today.size();
         // Latest bar must reject a prior 20-bar boundary, 1-3 bars after its breakout.
         for(int b=n-2;b>=Math.max(20,n-4);b--) {
@@ -79,9 +109,9 @@ public final class NaturalGasSignals {
             double structure=bull?last.low()-.2*atr:last.high()+.2*atr;
             double risk=Math.max(atr,Math.abs(trigger-structure));
             if(risk>2*atr) continue;
-            return new Evaluation(Optional.of(new Signal(bull?"CE":"PE",trigger,bull?trigger-risk:trigger+risk,atr,end)),"Qualified MCX breakout/retest");
+            return new Evaluation(Optional.of(new Signal(bull?"CE":"PE",trigger,bull?trigger-risk:trigger+risk,atr,end)),"Qualified MCX breakout/retest","",vwap);
         }
-        return waiting("MCX trend aligned; waiting for a qualifying 20-bar breakout and 1-3-bar retest");
+        return new Evaluation(Optional.empty(),"MCX trend aligned; waiting for a qualifying 20-bar breakout and 1-3-bar retest","",vwap);
     }
     private static boolean valid(StrategyCandle c) {
         return c!=null && c.date()!=null && c.time()!=null && !c.time().isBefore(NaturalGasSession.OPEN)

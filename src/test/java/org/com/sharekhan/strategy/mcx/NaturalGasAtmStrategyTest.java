@@ -24,7 +24,7 @@ class NaturalGasAtmStrategyTest {
     final QuoteCacheService quotes=mock(QuoteCacheService.class);
     final TradeExecutionService execution=mock(TradeExecutionService.class);
     final StrategySupport support=mock(StrategySupport.class);
-    final NaturalGasAtmStrategy strategy=new NaturalGasAtmStrategy(scripts,brokers,requests,setups,data,quotes,execution,support);
+    final NaturalGasAtmStrategy strategy=new NaturalGasAtmStrategy(scripts,brokers,requests,setups,data,quotes,execution,support,new NaturalGasDataPolicy(NaturalGasDataMode.FULL_SESSION));
     final LocalDateTime now=NaturalGasSignalsTest.NOW;
     final StrategyApplyRequest request=new StrategyApplyRequest();
     ScriptMasterEntity future=NaturalGasContractsTest.row(1,"FUTC",null,"24/11/2026",0);
@@ -67,4 +67,27 @@ class NaturalGasAtmStrategyTest {
                 .status(org.com.sharekhan.enums.TriggeredTradeStatus.FAILED).reason("ENTRY_SUBMISSION_STATE_UNKNOWN").build()));
         assertEquals("waiting",strategy.apply(request,now).getStatus());verifyNoInteractions(data,execution);
     }
+    @Test void flexibleSimulatorCanEvaluateLateCaptureWhileSharekhanStillRequiresOpening() {
+        var evening=now.withHour(19).withMinute(0);
+        when(data.candles(1,evening)).thenReturn(NaturalGasSignalsTest.lateCandles(true,LocalTime.of(17,0)));
+        when(quotes.getSnapshot(1)).thenReturn(Optional.of(futureQuote(evening)));
+        when(quotes.getSnapshot(2)).thenReturn(Optional.of(book(evening.atZone(StrategySupport.MARKET_ZONE).toInstant(),"SHAREKHAN_WS",4.95,5)));
+        var flexible=new NaturalGasAtmStrategy(scripts,brokers,requests,setups,data,quotes,execution,support,new NaturalGasDataPolicy(NaturalGasDataMode.ROLLING_WINDOW));
+        var simulated=flexible.apply(request,evening);assertEquals("triggered",simulated.getStatus());
+        assertTrue(simulated.getMessage().contains("rolling VWAP"));assertTrue(simulated.getMessage().contains("17:00/2026-10-26T19:00"));
+        verify(support).executeTriggeredTrade(any());clearInvocations(support);
+        when(brokers.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(2L).appUserId(1L).brokerName("Sharekhan").build()));
+        var live=flexible.apply(request,evening);assertEquals("waiting",live.getStatus());assertTrue(live.getMessage().startsWith("Incomplete MCX session"));
+        verify(support,never()).executeTriggeredTrade(any());
+    }
+    @Test void flexibleSimulatorStillRejectsExcessRiskAndStaleQuotes() {
+        var flexible=new NaturalGasAtmStrategy(scripts,brokers,requests,setups,data,quotes,execution,support,new NaturalGasDataPolicy(NaturalGasDataMode.ROLLING_WINDOW));
+        request.getRiskSettings().setMaxLoss(new BigDecimal("100"));
+        assertTrue(flexible.apply(request,now).getMessage().contains("rupee loss limit"));
+        request.getRiskSettings().setMaxLoss(new BigDecimal("2000"));
+        when(quotes.getSnapshot(1)).thenReturn(Optional.of(futureQuote(now.minusSeconds(16))));
+        assertTrue(flexible.apply(request,now).getMessage().contains("fresh exact-contract"));
+        verify(support,never()).executeTriggeredTrade(any());
+    }
+
 }

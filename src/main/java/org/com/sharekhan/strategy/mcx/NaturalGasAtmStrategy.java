@@ -12,7 +12,7 @@ import java.math.*;
 import java.time.*;
 import java.util.*;
 
-@Component @RequiredArgsConstructor
+@Component @RequiredArgsConstructor @lombok.extern.slf4j.Slf4j
 public class NaturalGasAtmStrategy implements StrategyEvaluator {
     private final ScriptMasterRepository scripts;
     private final BrokerCredentialsRepository brokers;
@@ -22,9 +22,10 @@ public class NaturalGasAtmStrategy implements StrategyEvaluator {
     private final QuoteCacheService quotes;
     private final TradeExecutionService execution;
     private final StrategySupport support;
+    private final NaturalGasDataPolicy dataPolicy;
     private static final StrategyMetadata META=new StrategyMetadata(NaturalGasSession.TEMPLATE,
             "MCX Natural Gas · ATM CE / PE breakout",
-            "MCX futures 15-minute EMA20/50 + session VWAP; 5-minute breakout/retest. Buys ATM CE/PE. Simulator or Sharekhan only. One entry per broker/day; 25% premium stop, 50% target; required rupee max loss. Entries before 23:00; square-off from 23:20 IST.","AUTO");
+            "MCX futures 15-minute EMA20/50 + VWAP; Simulator can opt into a rolling 2h window, broker accounts require the full session. 5-minute breakout/retest. Buys ATM CE/PE. Simulator or Sharekhan only. One entry per broker/day; 25% premium stop, 50% target; required rupee max loss. Entries before 23:00; square-off from 23:20 IST.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r) {
         if(r.getSymbol()!=null && !r.getSymbol().isBlank() && !"NATURALGAS".equalsIgnoreCase(r.getSymbol().trim())) throw new IllegalArgumentException("This strategy supports MCX NATURALGAS only");
@@ -67,12 +68,15 @@ public class NaturalGasAtmStrategy implements StrategyEvaluator {
         if(future.getTickSize()==null || !Double.isFinite(future.getTickSize()) || future.getTickSize()<=0) return waitFor("Futures tick metadata unavailable");
         data.watch(future.getScripCode());
         execution.warmUpSpotLtp(future,"MCX Natural Gas strategy");
-        var evaluation=NaturalGasSignals.inspect(data.candles(future.getScripCode(),now),now,future.getTickSize());
+        var brokerName=brokers.findById(r.getBrokerCredentialsId()).orElseThrow().getBrokerName();
+        var evaluation=NaturalGasSignals.inspect(data.candles(future.getScripCode(),now),now,future.getTickSize(),dataPolicy.forBroker(brokerName));
+        String dataContext=evaluation.dataContext().isBlank()?"":"; "+evaluation.dataContext();
+        log.info("MCX_DATA_EVALUATION | subscription={} broker={} reason={} context={}",r.getSubscriptionId(),brokerName,evaluation.reason(),evaluation.dataContext());
         if(evaluation.signal().isEmpty()) {
             String reason=evaluation.reason();
             if(reason.startsWith("No MCX candles") || reason.startsWith("No completed MCX") || reason.startsWith("Incomplete MCX") || reason.startsWith("Gap in MCX") || reason.startsWith("Stale MCX"))
                 reason += "; "+data.status(future.getScripCode());
-            return waitFor(reason);
+            return waitFor(reason+dataContext);
         }
         var signal=evaluation.signal().get();
         var futureQuote=quotes.getSnapshot(future.getScripCode()).orElse(null);
@@ -81,28 +85,28 @@ public class NaturalGasAtmStrategy implements StrategyEvaluator {
                 || futureQuote.getLastTradedPrice()<=0 || futureQuote.getLastLtpAt()==null || futureQuote.getLastLtpAt().isAfter(instant)
                 || futureQuote.getLastLtpAt().isBefore(instant.minusSeconds(15)) || !"SHAREKHAN_WS".equals(futureQuote.getLtpSource())
                 || !("scrip:"+future.getScripCode()).equals(futureQuote.getLtpProviderIdentity()))
-            return waitFor("Waiting for fresh exact-contract Sharekhan MCX futures price");
+            return waitFor("Waiting for fresh exact-contract Sharekhan MCX futures price"+dataContext);
         double price=futureQuote.getLastTradedPrice();
         boolean ce="CE".equals(signal.side());double risk=Math.abs(signal.trigger()-signal.stop());
-        if(!(ce?price>=signal.trigger():price<=signal.trigger()) || Math.abs(price-signal.trigger())>.5*risk)return waitFor("Waiting for rejection-candle breakout without chasing more than 0.5R");
+        if(!(ce?price>=signal.trigger():price<=signal.trigger()) || Math.abs(price-signal.trigger())>.5*risk)return waitFor("Waiting for rejection-candle breakout without chasing more than 0.5R"+dataContext);
         var option=NaturalGasContracts.atm(rows,pair.optionExpiry(),signal.side(),price);
         TriggerRequest t=new TriggerRequest();t.setInstrument("NATURALGAS");t.setExchange("MX");t.setOptionType(signal.side());
         t.setExpiry(option.getExpiry());t.setStrikePrice(option.getStrikePrice());t.setUserId(r.getUserId());t.setBrokerCredentialsId(r.getBrokerCredentialsId());
         t.setSource(NaturalGasSession.SOURCE);t.setAction("BUY");t.setLots(r.getLots());t.setQuantity(r.getLots());t.setIntraday(true);
         execution.warmUpOptionLtp(t,"MCX Natural Gas exact ATM option");
         var q=quotes.getSnapshot(option.getScripCode()).orElse(null);
-        if(!usableBook(q,instant,option.getScripCode()))return waitFor("Waiting for fresh coherent ATM option bid/ask (maximum 2% spread)");
+        if(!usableBook(q,instant,option.getScripCode()))return waitFor("Waiting for fresh coherent ATM option bid/ask (maximum 2% spread)"+dataContext);
         double premium=round(q.getBestAsk(),option.getTickSize(),RoundingMode.CEILING);
         double stop=round(premium*.75,option.getTickSize(),RoundingMode.FLOOR);
-        if(stop<=0 || stop>=premium)return waitFor("Option premium too small for a valid tick-aligned stop");
+        if(stop<=0 || stop>=premium)return waitFor("Option premium too small for a valid tick-aligned stop"+dataContext);
         double estimatedRisk=(premium-stop)*option.getLotSize()*r.getLots();
         var budget=r.getRiskSettings().scale(r.getRiskSettings().getMaxLoss(),r.getLots());
-        if(BigDecimal.valueOf(estimatedRisk).compareTo(budget)>0)return waitFor("Selected lots exceed the rupee loss limit at the 25% premium stop; reduce lots or adjust the limit");
+        if(BigDecimal.valueOf(estimatedRisk).compareTo(budget)>0)return waitFor("Selected lots exceed the rupee loss limit at the 25% premium stop; reduce lots or adjust the limit"+dataContext);
         t.setEntryPrice(premium);t.setStopLoss(stop);t.setTarget1(round(premium*1.5,option.getTickSize(),RoundingMode.CEILING));
         t.setUseSpotPrice(false);t.setUseSpotForEntry(false);t.setUseSpotForSl(false);t.setUseSpotForTarget(false);t.setTslEnabled(false);
         var trade=support.executeTriggeredTrade(t);
         return StrategyApplyResponse.builder().templateId(META.id()).symbol("NATURALGAS").direction(signal.side()).status("triggered")
-                .message("MCX ATM "+signal.side()+" entry requested; premium SL/target and run risk apply. Simulator assumes full top-of-book quantity; depth is unverified.")
+                .message("MCX ATM "+signal.side()+" entry requested; premium SL/target and run risk apply. Simulator assumes full top-of-book quantity; depth is unverified."+dataContext)
                 .triggerRequest(t).tradeRequest(trade).breakoutClose(signal.trigger()).build();
     }
     static boolean usableBook(QuoteCacheService.QuoteSnapshot q,Instant now,Integer code){
