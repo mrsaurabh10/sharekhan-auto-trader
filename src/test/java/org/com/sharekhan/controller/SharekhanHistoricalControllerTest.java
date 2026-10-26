@@ -251,6 +251,18 @@ class SharekhanHistoricalControllerTest {
                 .andExpect(status().isForbidden());
     }
 
+    @Test void rawDiagnosticPreservesProviderTimeAndRequiresAuthorization() throws Exception {
+        var history=mock(SharekhanHistoricalService.class);var scripts=mock(ScriptMasterRepository.class);
+        var controller=new SharekhanHistoricalController(history,scripts,mock(ScriptMasterService.class));
+        ReflectionTestUtils.setField(controller,"adminToken","secret-token");
+        when(scripts.findByScripCode(42)).thenReturn(ScriptMasterEntity.builder().scripCode(42).exchange("MX").tradingSymbol("NATURALGAS").build());
+        when(history.getRecentRawHistoricalCandles(42,"5minute")).thenReturn(List.of(new SharekhanHistoricalService.HistoricalCandle(LocalDate.of(2026,10,19),LocalTime.of(13,4,59),300,301,299,300,38L)));
+        var mvc=mockMvc(controller);
+        mvc.perform(get("/api/sharekhan/historical/raw-candles").param("scripCode","42")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/sharekhan/historical/raw-candles").header("X-Admin-Token","secret-token").param("scripCode","42"))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.candles[0].time",is("13:04:59"))).andExpect(jsonPath("$.candles[0].volume",is(38)));
+    }
+
     private MockMvc mockMvc(SharekhanHistoricalController controller) {
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())

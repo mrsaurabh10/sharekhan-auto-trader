@@ -21,7 +21,7 @@ public class NaturalGasMarketData {
         cache.entrySet().removeIf(e->e.getValue().loaded().isBefore(now.minusDays(1)));
         var prior=cache.get(code);
         if(prior==null || !prior.loaded().isAfter(now.minusMinutes(5))) {
-            var rows=history.getRecentHistoricalCandles(code,"5minute").stream()
+            var rows=history.getRecentRawHistoricalCandles(code,"5minute").stream()
                     .map(c->new StrategyCandle(c.date(),c.time(),c.open(),c.high(),c.low(),c.close(),c.volume()))
                     .map(NaturalGasMarketData::intervalStart)
                     .filter(c->c.time()!=null && !c.time().isBefore(NaturalGasSession.OPEN) && c.time().isBefore(NaturalGasSession.CLOSE))
@@ -38,10 +38,12 @@ public class NaturalGasMarketData {
         rows.addAll(observed);
         return List.copyOf(rows);
     }
-    /** Historical tradeTime is the last trade in the bucket, not necessarily xx:x4:59. MCX scope only. */
+    /** Verified (start,end] provider buckets: an exact boundary belongs to the interval ending there. */
     static StrategyCandle intervalStart(StrategyCandle c) {
-        if(c.time()==null)return c;
-        var time=c.time().withMinute(c.time().getMinute()/5*5).withSecond(0).withNano(0);
-        return new StrategyCandle(c.date(),time,c.open(),c.high(),c.low(),c.close(),c.volume());
+        if(c.date()==null || c.time()==null)return c;
+        var at=LocalDateTime.of(c.date(),c.time());
+        if(at.getMinute()%5==0 && at.getSecond()==0 && at.getNano()==0)at=at.minusNanos(1);
+        at=at.withMinute(at.getMinute()/5*5).withSecond(0).withNano(0);
+        return new StrategyCandle(at.toLocalDate(),at.toLocalTime(),c.open(),c.high(),c.low(),c.close(),c.volume());
     }
 }
