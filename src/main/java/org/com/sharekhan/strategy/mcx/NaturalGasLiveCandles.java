@@ -66,7 +66,9 @@ public class NaturalGasLiveCandles {
         var state=watched.get(code);
         if(state==null)return;
         try {
-            var at=LocalDateTime.parse(data.path("lastUpdatedTime").asText(),TIME);
+            String providerStamp=data.path("lastUpdatedTime").asText();
+            if(providerStamp.isBlank())providerStamp=data.path("ltt").asText();
+            var at=providerTime(providerStamp);
             var received=LocalDateTime.ofInstant(receivedAt,IST);
             if(at.isAfter(received) || at.isBefore(received.minusSeconds(15)) || !NaturalGasSession.marketOpen(at)) {
                 state.problem="Rejected stale/future/out-of-session provider timestamp "+at;
@@ -112,7 +114,9 @@ public class NaturalGasLiveCandles {
         } catch(RuntimeException invalid) {
             // A malformed or ambiguous broker observation cannot extend a complete bar.
             if(state.bar!=null)state.bar.valid=false;
-            state.problem="Invalid provider timestamp, quantity or candle persistence";
+            state.problem="Invalid live observation ("+invalid.getClass().getSimpleName()+"): lastUpdatedTime="
+                    +data.path("lastUpdatedTime").asText().replace('\r',' ').replace('\n',' ').substring(0,Math.min(64,data.path("lastUpdatedTime").asText().length()))
+                    +", qty="+data.path("qty").asText().substring(0,Math.min(24,data.path("qty").asText().length()));
         }
     }
     public synchronized String status(Integer code) {
@@ -137,6 +141,16 @@ public class NaturalGasLiveCandles {
         if(state==null)return List.of();
         return state.completed.entrySet().stream().filter(e->!e.getKey().plusMinutes(5).isAfter(now)
                 && !e.getKey().isBefore(now.minusDays(14))).map(Map.Entry::getValue).toList();
+    }
+    static LocalDateTime providerTime(String value) {
+        value=value.trim();
+        if(value.matches("[0-9]{10}|[0-9]{13}")) {
+            long epoch=Long.parseLong(value);
+            return LocalDateTime.ofInstant(value.length()==13?Instant.ofEpochMilli(epoch):Instant.ofEpochSecond(epoch),IST);
+        }
+        try {return LocalDateTime.parse(value,TIME);}catch(java.time.format.DateTimeParseException ignored){}
+        try {return java.time.OffsetDateTime.parse(value).atZoneSameInstant(IST).toLocalDateTime();}catch(java.time.format.DateTimeParseException ignored){}
+        return LocalDateTime.parse(value.replace(' ','T'),DateTimeFormatter.ISO_LOCAL_DATE_TIME);
     }
     private static String key(int code){return "SHAREKHAN_MCX_LIVE:"+code;}
 }
