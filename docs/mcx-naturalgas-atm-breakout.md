@@ -284,3 +284,33 @@ contract provenance, lot/risk limits, daily entry cap and exit times are unchang
 A complete feed removes capture gaps; a trade still requires a qualified signal
 and executable option quotes. Simulator observation remains necessary before any
 separate live-broker promotion.
+
+## Five-minute Simulator trend
+
+`APP_STRATEGY_NATURALGAS_SIMULATOR_TREND_TIMEFRAME=FIVE_MINUTE` changes Simulator
+EMA20/50 inputs to every completed five-minute close. Default `FIFTEEN_MINUTE`
+and live broker subscriptions retain the original fifteen-minute trend. This
+setting is independent of source and rolling/full-session mode; the production
+Simulator uses Shoonya current-day candles, rolling mode and five-minute trend.
+
+Periods remain20 and50. Slope compares current EMA20 with EMA20 calculated three
+completed five-minute bars earlier (15minutes of the consecutive current window),
+rather than three fifteen-minute groups. Both EMAs update at every five-minute
+close. At least53 completed five-minute observations, including available trusted
+prior-session seed, are required. EMA uses available completed observations;
+missing historical intervals are omitted, never invented. The existing24-bar
+consecutive current-day window and all data validation/freshness guards remain.
+
+CE requires EMA20>EMA50, EMA20>its three-bar-earlier value, and last completed
+five-minute close>rolling VWAP. PE requires all three opposite comparisons.
+Directional alignment still precedes the20-bar breakout/1–3bar retest, ATR,
+exact-contract option quote, spread, rupee-risk, daily-cap and exit checks.
+Rolling VWAP remains24 five-minute bars. No forming candle enters any indicator.
+
+Strategy status/log context now reports effective timeframe, EMA20, EMA50,
+EMA20ThreeBarsAgo, EMA20SlopeChange, futuresClose and rollingVWAPValue whenever
+fresh data reaches indicator evaluation. Stale/missing-data evaluations report
+the timeframe and blocking reason without claiming fresh indicator values.
+Switching the Simulator flag back to FIFTEEN_MINUTE restores the prior trend
+calculation without a subscription/schema change. Simulator performance still
+needs observation; timeframe changes alone do not validate profitability.

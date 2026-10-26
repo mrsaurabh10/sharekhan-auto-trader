@@ -71,7 +71,7 @@ public class NaturalGasAtmStrategy implements StrategyEvaluator {
         var brokerName=brokers.findById(r.getBrokerCredentialsId()).orElseThrow().getBrokerName();
         var source=dataPolicy.sourceForBroker(brokerName);
         var candles=source==NaturalGasCandleSource.SHOONYA_TPS?data.shoonyaCandles(future,now):data.candles(future.getScripCode(),now);
-        var evaluation=NaturalGasSignals.inspect(candles,now,future.getTickSize(),dataPolicy.forBroker(brokerName));
+        var evaluation=NaturalGasSignals.inspect(candles,now,future.getTickSize(),dataPolicy.forBroker(brokerName),dataPolicy.trendForBroker(brokerName));
         String dataContext=(evaluation.dataContext().isBlank()?"":"; "+evaluation.dataContext())+"; candleSource="+source
                 +(source==NaturalGasCandleSource.SHOONYA_TPS?" (prior seed=Sharekhan; today=Shoonya TPSeries)":"");
         log.info("MCX_DATA_EVALUATION | subscription={} broker={} reason={} context={}",r.getSubscriptionId(),brokerName,evaluation.reason(),dataContext);

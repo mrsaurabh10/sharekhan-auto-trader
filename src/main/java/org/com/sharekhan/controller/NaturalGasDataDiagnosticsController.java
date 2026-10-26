@@ -26,6 +26,8 @@ public class NaturalGasDataDiagnosticsController {
         result.put("brokerDataMode",policy.forBroker("SHAREKHAN"));
         result.put("simulatorCandleSource",policy.simulatorSource());
         result.put("brokerCandleSource",policy.sourceForBroker("SHAREKHAN"));
+        result.put("simulatorTrendTimeframe",policy.simulatorTrendTimeframe());
+        result.put("brokerTrendTimeframe",policy.trendForBroker("SHAREKHAN"));
         result.put("shoonya",shoonya.diagnostics(scripCode));
         return ResponseEntity.ok(result);
     }

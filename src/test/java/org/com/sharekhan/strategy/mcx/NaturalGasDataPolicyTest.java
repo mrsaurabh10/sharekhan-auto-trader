@@ -4,6 +4,18 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class NaturalGasDataPolicyTest {
+    @Test void fiveMinuteTrendIsExplicitAndSimulatorOnly() {
+        var runner=new org.springframework.boot.test.context.runner.ApplicationContextRunner().withUserConfiguration(NaturalGasDataPolicy.class);
+        runner.run(c->assertEquals(NaturalGasTrendTimeframe.FIFTEEN_MINUTE,c.getBean(NaturalGasDataPolicy.class).trendForBroker("Simulator")));
+        runner.withPropertyValues("app.strategy.naturalgas.simulator-trend-timeframe=FIVE_MINUTE").run(c->{
+            var policy=c.getBean(NaturalGasDataPolicy.class);
+            assertEquals(NaturalGasTrendTimeframe.FIVE_MINUTE,policy.trendForBroker("Simulator"));
+            for(String name:new String[]{"Sharekhan","Shoonya","MStock","",null})
+                assertEquals(NaturalGasTrendTimeframe.FIFTEEN_MINUTE,policy.trendForBroker(name));
+        });
+        runner.withPropertyValues("app.strategy.naturalgas.simulator-trend-timeframe=UNKNOWN")
+                .run(c->assertNotNull(c.getStartupFailure()));
+    }
     @Test void flexibleModeIsRestrictedToSimulatorRegardlessOfOtherBrokerNames() {
         var policy=new NaturalGasDataPolicy(NaturalGasDataMode.ROLLING_WINDOW);
         assertEquals(NaturalGasDataMode.ROLLING_WINDOW,policy.forBroker("Simulator"));
