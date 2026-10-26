@@ -245,3 +245,42 @@ selected window, rolling VWAP value when available and EMA data convention.
 The 23:00 entry cutoff,23:20 square-off, one-entry/day, premium stops/targets and
 rupee-risk settings are preserved. Tests/replays establish data eligibility and
 guards; they do not establish profitable evening trades or exchange-complete OHLC.
+
+## Shoonya current-day candles for Simulator
+
+`APP_STRATEGY_NATURALGAS_SIMULATOR_CANDLE_SOURCE=SHOONYA_TPS` opts Simulator into
+Shoonya TPSeries for today's MCX futures candles. Default `SHAREKHAN_LIVE` and
+all live broker subscriptions retain the existing Sharekhan capture path. This
+source setting is independent of the rolling/full-session mode above.
+
+The reader resolves the exact option-month futures contract against Shoonya's
+daily public MCX master and verifies GetSecurityInfo token, symbol, expiry,
+FUTCOM, lot size and tick size. It does not assume matching provider token IDs.
+It uses the configured global Shoonya UID and today's existing saved session;
+local configured token expiry is an estimate, so Shoonya decides whether that
+same-day session is still valid. No login, token refresh, expiry extension or
+other user's session is used. A rejected/missing session waits for the normal
+operator reconnection process.
+
+TPSeries requests today from09:00 at five-minute interval. `time` and `ssboe`
+must agree as IST interval starts; only completed candles enter the strategy.
+OHLC and `intv` interval volume are validated; cumulative `v` is not substituted.
+Duplicates and invalid clocks reject the response. Missing intervals remain
+missing and the existing consecutive-window guard applies. Provider failures
+return no current-day candles, never cached/stale rows or a mixed tick fallback.
+
+Public-master mapping and candles are cached. Minute-boundary prefetch runs only
+with an active Simulator subscription; evaluation shares its30-second cache and
+refetches on each new five-minute boundary. Completed bars persist separately as
+`SHOONYA_MCX_TPS:<providerToken>:<expiry>` with14-day retention. Prior-session
+Sharekhan historical seed remains explicit; today's Sharekhan tick bars are
+excluded from this path. Saved rows avoid unnecessary rewrites after restart,
+but are not used as an offline substitute for a successful fresh provider call.
+
+Admin `mcx-capture` diagnostics expose source, status, count, forming exclusions
+and latest end without fetching, logging credentials or creating orders. Entry
+logs disclose the cross-provider historical seed. Quote freshness, spread,
+contract provenance, lot/risk limits, daily entry cap and exit times are unchanged.
+A complete feed removes capture gaps; a trade still requires a qualified signal
+and executable option quotes. Simulator observation remains necessary before any
+separate live-broker promotion.

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 public class NaturalGasDataDiagnosticsController {
     private final NaturalGasLiveCandles live;
     private final NaturalGasDataPolicy policy;
+    private final org.com.sharekhan.strategy.mcx.NaturalGasShoonyaCandles shoonya;
     @Value("${app.admin.token:}") private String adminToken;
     @GetMapping("/mcx-capture")
     public ResponseEntity<?> capture(@RequestHeader(value="X-Admin-Token",required=false) String token,@RequestParam(name="scripCode") Integer scripCode) {
@@ -23,6 +24,9 @@ public class NaturalGasDataDiagnosticsController {
         var result=new java.util.LinkedHashMap<String,Object>(live.diagnostics(scripCode));
         result.put("simulatorDataMode",policy.simulatorMode());
         result.put("brokerDataMode",policy.forBroker("SHAREKHAN"));
+        result.put("simulatorCandleSource",policy.simulatorSource());
+        result.put("brokerCandleSource",policy.sourceForBroker("SHAREKHAN"));
+        result.put("shoonya",shoonya.diagnostics(scripCode));
         return ResponseEntity.ok(result);
     }
 }

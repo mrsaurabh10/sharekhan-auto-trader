@@ -17,18 +17,26 @@ public class NaturalGasFeedWarmup {
     private final ScriptMasterRepository scripts;
     private final NaturalGasLiveCandles live;
     private final TradeExecutionService execution;
+    private final org.com.sharekhan.repository.BrokerCredentialsRepository brokers;
+    private final NaturalGasDataPolicy policy;
+    private final NaturalGasShoonyaCandles shoonya;
     @Scheduled(cron="0 * 8-23 * * MON-FRI",zone="Asia/Kolkata")
     public void scheduled(){warm(LocalDateTime.now(ZoneId.of("Asia/Kolkata")));}
     void warm(LocalDateTime now) {
         if(now.getDayOfWeek()==DayOfWeek.SATURDAY||now.getDayOfWeek()==DayOfWeek.SUNDAY
                 ||now.toLocalTime().isBefore(LocalTime.of(8,55))||!now.toLocalTime().isBefore(NaturalGasSession.CLOSE))return;
-        boolean active=subscriptions.findByStatusInOrderByIdDesc(List.of("ACTIVE","TRIGGERED")).stream()
-                .anyMatch(s->NaturalGasSession.TEMPLATE.equals(s.getTemplateId()));
-        if(!active)return;
+        var active=subscriptions.findByStatusInOrderByIdDesc(List.of("ACTIVE","TRIGGERED")).stream()
+                .filter(s->NaturalGasSession.TEMPLATE.equals(s.getTemplateId())).toList();
+        if(active.isEmpty())return;
         try {
             var pair=NaturalGasContracts.resolve(scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MX","NATURALGAS"),now.toLocalDate());
             live.watch(pair.future().getScripCode());
             execution.warmUpSpotLtp(pair.future(),"MCX Natural Gas candle capture");
+            // Minute-boundary prefetch normally completes before entry evaluation at :05.
+            if(policy.simulatorSource()==NaturalGasCandleSource.SHOONYA_TPS && !now.toLocalTime().isBefore(LocalTime.of(9,5))
+                && active.stream().anyMatch(s->s.getBrokerCredentialsId()!=null && brokers.findById(s.getBrokerCredentialsId())
+                    .map(b->"SIMULATOR".equalsIgnoreCase(b.getBrokerName())).orElse(false)))
+                shoonya.completed(pair.future(),now);
         }catch(RuntimeException e){log.warn("MCX Natural Gas candle feed not ready ({})",e.getClass().getSimpleName());}
     }
 }

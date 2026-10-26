@@ -76,6 +76,30 @@ public class ShoonyaInstrumentMasterService {
                         + " master: " + tradingSymbol + ". Refresh the symbol master first."));
     }
 
+    /** Exact MCX Natural Gas future; never reuse a token solely because providers happen to share it. */
+    public ShoonyaInstrumentEntity resolveNaturalGasFuture(ScriptMasterEntity script, LocalDateTime now) {
+        var expiry=org.com.sharekhan.strategy.mcx.NaturalGasContracts.expiry(script);
+        if(!"MX".equalsIgnoreCase(script.getExchange()) || !"NATURALGAS".equalsIgnoreCase(script.getTradingSymbol())
+                || script.getInstrumentType()==null || !script.getInstrumentType().toUpperCase(Locale.ROOT).startsWith("F")
+                || Set.of("CE","PE").contains(Objects.toString(script.getOptionType(),""))
+                || (script.getStrikePrice()!=null && script.getStrikePrice()!=0) || expiry==null || expiry.isBefore(now.toLocalDate()))
+            throw new IllegalArgumentException("Exact MCX Natural Gas future required");
+        String symbol="NATURALGAS"+expiry.format(DateTimeFormatter.ofPattern("ddMMMyy",Locale.ENGLISH)).toUpperCase(Locale.ROOT);
+        var found=repository.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MCX",symbol);
+        if(found.isEmpty() || found.get().getFetchedAt()==null || found.get().getFetchedAt().toLocalDate().isBefore(now.toLocalDate())) {
+            refresh("MCX");found=repository.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MCX",symbol);
+        }
+        var row=found.orElseThrow(()->new IllegalStateException("Exact Shoonya MCX future is absent from master"));
+        String expectedExpiry=expiry.format(DateTimeFormatter.ofPattern("dd-MMM-uuuu",Locale.ENGLISH)).toUpperCase(Locale.ROOT);
+        if(!"MCX".equalsIgnoreCase(row.getExchange()) || !symbol.equals(row.getTradingSymbol())
+                || !"NATURALGAS".equalsIgnoreCase(row.getSymbol()) || !"FUTCOM".equalsIgnoreCase(row.getInstrument())
+                || !expectedExpiry.equalsIgnoreCase(row.getExpiry()) || !StringUtils.hasText(row.getToken())
+                || script.getLotSize()==null || !Objects.equals(script.getLotSize(),row.getLotSize())
+                || script.getTickSize()==null || row.getTickSize()==null || !Double.isFinite(row.getTickSize()) || row.getTickSize()<=0 || Math.abs(script.getTickSize()-row.getTickSize())>1e-9)
+            throw new IllegalStateException("Shoonya MCX future master identity mismatch");
+        return row;
+    }
+
     /** Resolves an F&O option from the existing Sharekhan script master to Shoonya's daily symbol master. */
     public Optional<ShoonyaInstrumentEntity> resolveOption(ScriptMasterEntity script) {
         if (script == null || !StringUtils.hasText(script.getOptionType()) || script.getStrikePrice() == null) return Optional.empty();

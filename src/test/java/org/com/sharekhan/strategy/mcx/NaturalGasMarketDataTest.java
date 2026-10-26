@@ -11,7 +11,7 @@ import static org.mockito.Mockito.*;
 class NaturalGasMarketDataTest {
     final SharekhanHistoricalService history=mock(SharekhanHistoricalService.class);
     final NaturalGasLiveCandles live=mock(NaturalGasLiveCandles.class);
-    final NaturalGasMarketData data=new NaturalGasMarketData(history,live);
+    final NaturalGasMarketData data=new NaturalGasMarketData(history,live,mock(NaturalGasShoonyaCandles.class));
     final LocalDateTime now=LocalDateTime.of(2026,10,26,11,5);
     @Test void normalizesActualBrokerLastTradeStampsWithinTheirIntervalAndDropsClosingStub() {
         when(history.getRecentRawHistoricalCandles(42,"5minute")).thenReturn(List.of(
@@ -45,13 +45,28 @@ class NaturalGasMarketDataTest {
         var saved=rows.stream().filter(c->c.date().equals(NaturalGasSignalsTest.DAY)).map(c->org.com.sharekhan.entity.StrategyCandleHistoryEntity.builder()
             .instrumentKey("SHAREKHAN_MCX_LIVE:42").candleTime(LocalDateTime.of(c.date(),c.time())).openPrice(c.open()).highPrice(c.high()).lowPrice(c.low()).closePrice(c.close()).volume(c.volume()).build()).toList();
         when(repository.findTop1000ByInstrumentKeyOrderByCandleTimeDesc("SHAREKHAN_MCX_LIVE:42")).thenReturn(saved);
-        var restarted=new NaturalGasLiveCandles(repository);var reloaded=new NaturalGasMarketData(history,restarted);
+        var restarted=new NaturalGasLiveCandles(repository);var reloaded=new NaturalGasMarketData(history,restarted,mock(NaturalGasShoonyaCandles.class));
         when(history.getRecentRawHistoricalCandles(42,"5minute")).thenReturn(rows.stream().filter(c->!c.date().equals(NaturalGasSignalsTest.DAY))
             .map(c->new SharekhanHistoricalService.HistoricalCandle(c.date(),c.time().plusMinutes(4).plusSeconds(59),c.open(),c.high(),c.low(),c.close(),c.volume())).toList());
         var evening=NaturalGasSignalsTest.DAY.atTime(19,0,5);var candles=reloaded.candles(42,evening);
         assertTrue(NaturalGasSignals.inspect(candles,evening,.1,NaturalGasDataMode.ROLLING_WINDOW).signal().isPresent());
         assertTrue(NaturalGasSignals.inspect(candles,evening,.1).reason().startsWith("Incomplete MCX session"));
         verify(repository,never()).save(any());
+    }
+
+    @Test void shoonyaIsAuthoritativeForTodayAndNeverInterleavesTickBarsOnFailure() {
+        var future=org.com.sharekhan.entity.ScriptMasterEntity.builder().scripCode(42).build();var provider=mock(NaturalGasShoonyaCandles.class);
+        var mixed=new NaturalGasMarketData(history,live,provider);
+        when(history.getRecentRawHistoricalCandles(42,"5minute")).thenReturn(List.of(new SharekhanHistoricalService.HistoricalCandle(now.toLocalDate().minusDays(3),LocalTime.of(9,4,59),300,301,299,300,100L)));
+        var tick=new StrategyCandle(now.toLocalDate(),LocalTime.of(9,0),300,302,298,301,999L);when(live.completed(42,now)).thenReturn(List.of(tick));
+        var broker=new StrategyCandle(now.toLocalDate(),LocalTime.of(9,0),300,303,297,302,123L);when(provider.completed(future,now)).thenReturn(List.of(broker));
+        var rows=mixed.shoonyaCandles(future,now);assertEquals(2,rows.size());assertEquals(broker,rows.getLast());assertFalse(rows.contains(tick));
+        when(provider.completed(future,now)).thenReturn(List.of());assertTrue(mixed.shoonyaCandles(future,now).stream().noneMatch(c->c.date().equals(now.toLocalDate())));
+        assertTrue(mixed.candles(42,now).contains(tick));
+    }
+    @Test void emptyPriorRefreshRetainsVerifiedSeedRatherThanErasingIt() {
+        when(history.getRecentRawHistoricalCandles(42,"5minute")).thenReturn(List.of(new SharekhanHistoricalService.HistoricalCandle(now.toLocalDate().minusDays(3),LocalTime.of(9,4,59),300,301,299,300,100L)),List.of());
+        var first=data.candles(42,now);assertEquals(first,data.candles(42,now.plusMinutes(6)));
     }
 
 }

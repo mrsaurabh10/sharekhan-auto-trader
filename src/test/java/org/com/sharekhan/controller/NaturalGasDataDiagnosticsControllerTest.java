@@ -9,7 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 class NaturalGasDataDiagnosticsControllerTest {
     @Test void rejectsUnauthenticatedDiagnosticReadsAndReturnsOnlyCollectorSnapshot() throws Exception {
-        var live=mock(NaturalGasLiveCandles.class);var controller=new NaturalGasDataDiagnosticsController(live,new org.com.sharekhan.strategy.mcx.NaturalGasDataPolicy(org.com.sharekhan.strategy.mcx.NaturalGasDataMode.ROLLING_WINDOW));
+        var live=mock(NaturalGasLiveCandles.class);var controller=new NaturalGasDataDiagnosticsController(live,new org.com.sharekhan.strategy.mcx.NaturalGasDataPolicy(org.com.sharekhan.strategy.mcx.NaturalGasDataMode.ROLLING_WINDOW),mock(org.com.sharekhan.strategy.mcx.NaturalGasShoonyaCandles.class));
         ReflectionTestUtils.setField(controller,"adminToken","test-key");
         when(live.diagnostics(42)).thenReturn(Map.of("armed",true));
         var mvc=MockMvcBuilders.standaloneSetup(controller).build();

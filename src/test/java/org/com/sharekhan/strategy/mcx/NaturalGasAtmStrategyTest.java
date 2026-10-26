@@ -90,4 +90,17 @@ class NaturalGasAtmStrategyTest {
         verify(support,never()).executeTriggeredTrade(any());
     }
 
+    @Test void shoonyaCandlesRouteOnlySimulatorAndRetainSharekhanExecutionAndRiskGuards() {
+        var p=new NaturalGasDataPolicy(NaturalGasDataMode.ROLLING_WINDOW,NaturalGasCandleSource.SHOONYA_TPS);
+        var s=new NaturalGasAtmStrategy(scripts,brokers,requests,setups,data,quotes,execution,support,p);
+        when(data.shoonyaCandles(future,now)).thenReturn(NaturalGasSignalsTest.candles(true));
+        var response=s.apply(request,now);assertEquals("triggered",response.getStatus());assertTrue(response.getMessage().contains("candleSource=SHOONYA_TPS"));
+        assertEquals(2L,response.getTriggerRequest().getBrokerCredentialsId());assertEquals(3.75,response.getTriggerRequest().getStopLoss());
+        verify(data).shoonyaCandles(future,now);verify(data,never()).candles(anyInt(),any());
+        clearInvocations(data,support);request.getRiskSettings().setMaxLoss(new BigDecimal("100"));
+        assertEquals("waiting",s.apply(request,now).getStatus());verify(support,never()).executeTriggeredTrade(any());
+        clearInvocations(data);when(brokers.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(2L).appUserId(1L).brokerName("Sharekhan").build()));
+        s.apply(request,now);verify(data).candles(1,now);verify(data,never()).shoonyaCandles(any(),any());
+    }
+
 }
