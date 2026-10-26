@@ -120,3 +120,46 @@ See project handoff for the actual final test counts and commit/publication stat
 No historical option replay, profitability/win-rate result or production fill is
 claimed. Deploy only the reviewed, tested commit through the normal app-only
 release procedure. Deployment and activation remain separate user actions.
+
+## Current-session candles and diagnostics (26 October 2026)
+
+Sharekhan's historical endpoint explicitly supplies candles **up to the last traded
+ day**. It cannot supply today's session. For this strategy only, historical
+`tradeTime` values are mapped to their containing five-minute interval: `09:04:57`
+becomes `09:00:00`. The incomplete stub at/after 23:30 is excluded. Equity candle
+normalization is unchanged. Duplicate intervals and invalid OHLC still block signals.
+
+An active subscription now retains its exact resolved MCX futures full feed before
+09:00. The WebSocket connection can open from 08:55 for active Natural Gas
+subscriptions; the normal equity connection start stays 09:10. The collector accepts
+only armed scrip codes and `exchangeCode=MX`, parses the documented
+`lastUpdatedTime`, and rejects timestamps older than 15 seconds or in the future.
+Five-minute candles use observed prices and differences of the provider's cumulative
+`qty`. Repeated snapshots do not add volume. Session-wide OHLC is used **only** to
+seed the first interval when the first valid snapshot arrives within 15 seconds of
+09:00. It is never reused as a later interval's OHLC.
+
+Only completed intervals with observations on both sides of the close and no gaps
+longer than 15 seconds are retained. Reconnects, decreasing quantity counters,
+malformed observations and late subscriptions invalidate partial intervals. No
+missing interval is manufactured. Sampled/conflated quotes cannot guarantee every
+exchange trade or intrabar extreme was observed; Simulator evaluation must be
+reviewed against the broker chart before live use.
+
+Completed live intervals survive restarts in the existing `strategy_candle_history`
+table, under `SHAREKHAN_MCX_LIVE:<scrip>`. Retain at most 1,000 loaded bars and prune
+older than 14 days as candles complete. No new schema is required. An incomplete
+bar is deliberately discarded on restart. Live completed candles take precedence
+at matching historical timestamps and are read without the five-minute historical
+cache delay.
+
+Waiting messages distinguish absent current-session data, missing 09:00 capture,
+gaps, stale candles, warmup, missing volume, trend disagreement and an absent retest.
+Data waits also show the latest valid live observation time and cumulative quantity.
+`MCX_LIVE_CANDLES` / `MCX_LIVE_CANDLE` logs provide market-data-only capture evidence.
+
+Installing after the open cannot recover missed current-day intervals from this
+historical endpoint. The strategy continues to refuse entry until it has a complete
+session from 09:00, sufficient prior history, valid volume and a qualifying setup.
+The 24-bar warmup, one-attempt/day guard, max-loss settings and order/exit rules are
+unchanged. NYMEX is not part of this repair.

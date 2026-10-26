@@ -31,4 +31,17 @@ class NaturalGasSignalsTest {
     @Test void duplicateTimestampsFailClosed(){var rows=candles(true);rows.add(rows.getLast());assertTrue(NaturalGasSignals.evaluate(rows,NOW,.1).isEmpty());}
     @Test void sessionStartsAtNineAndHasBufferedCutoffs(){assertFalse(NaturalGasSession.entryAllowed(DAY.atTime(8,59)));assertTrue(NaturalGasSession.entryAllowed(DAY.atTime(9,0)));assertTrue(NaturalGasSession.entryAllowed(DAY.atTime(22,59,59)));assertFalse(NaturalGasSession.entryAllowed(DAY.atTime(23,0)));assertTrue(NaturalGasSession.marketOpen(DAY.atTime(23,29,59)));assertFalse(NaturalGasSession.marketOpen(DAY.atTime(23,30)));assertFalse(NaturalGasSession.entryAllowed(DAY.minusDays(1).atTime(12,0)));}
     @Test void neverUsesIncompleteFutureBar(){var rows=candles(true);rows.add(bar(DAY,LocalTime.of(11,20),152.9,160,150,155,100L));assertEquals(NaturalGasSignals.evaluate(candles(true),NOW,.1),NaturalGasSignals.evaluate(rows,NOW,.1));}
+    @Test void explainsStaleHistoryWithoutClaimingSignalFailure() {
+        var rows=candles(true);rows.removeIf(c->c.date().equals(DAY));
+        assertTrue(NaturalGasSignals.inspect(rows,NOW,.1).reason().startsWith("No MCX candles for today"));
+    }
+    @Test void explainsMissingOpeningCaptureInsteadOfTradingPartialSession() {
+        var rows=candles(true);rows.removeIf(c->c.date().equals(DAY)&&c.time().equals(LocalTime.of(9,0)));
+        var result=NaturalGasSignals.inspect(rows,NOW,.1);assertTrue(result.signal().isEmpty());assertTrue(result.reason().startsWith("Incomplete MCX session"));
+    }
+    @Test void explainsStaleCompletedCandleAndMissingVolume() {
+        assertTrue(NaturalGasSignals.inspect(candles(true),NOW.plusMinutes(2),.1).reason().startsWith("Stale MCX candle"));
+        var rows=candles(true);var c=rows.getLast();rows.set(rows.size()-1,bar(c.date(),c.time(),c.open(),c.high(),c.low(),c.close(),null));
+        assertTrue(NaturalGasSignals.inspect(rows,NOW,.1).reason().startsWith("Missing or zero MCX interval volume"));
+    }
 }

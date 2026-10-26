@@ -92,6 +92,7 @@ public class WebSocketClientService  {
     @OnOpen
     public void onOpen(Session session) {
         log.info("✅ Connected to Sharekhan WebSocket");
+        eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
         this.session = session;
         webSocketConnector.setSession(session);
         
@@ -169,6 +170,12 @@ public class WebSocketClientService  {
                                     bestBid != null ? bestBid : "NA",
                                     bestAsk != null ? bestAsk : "NA",
                                     ltp != null ? ltp : "NA");
+                        }
+                        // Independent collector; quote ingestion/order monitoring must survive a persistence error.
+                        try {
+                            eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.Tick(data,java.time.Instant.now()));
+                        } catch (Exception collectorError) {
+                            log.warn("MCX live candle observation failed for scrip {} ({})",scripCode,collectorError.getClass().getSimpleName());
                         }
                         processLtpUpdate(scripCode, ltp, bestBid, bestAsk);
                     }
@@ -444,6 +451,7 @@ public class WebSocketClientService  {
 
     @OnError
     public void onError(Session session, Throwable thr) {
+        eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
         log.error("❗ WebSocket error", thr);
     }
 
@@ -454,6 +462,7 @@ public class WebSocketClientService  {
 
     @OnClose
     public void onClose(Session session, CloseReason closeReason) {
+        eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
         log.warn("🔌 WebSocket closed: {}", closeReason);
 
         LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
