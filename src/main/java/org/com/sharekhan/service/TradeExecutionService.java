@@ -1778,6 +1778,10 @@ public class TradeExecutionService {
             saved.setReason(executed.getReason());
             saved.setComment(executed.getComment());
             triggerTradeRequestRepository.save(saved);
+            if (EntryNotReadyException.isNoOrderReason(executed.getReason())
+                    && !isUsableBrokerOrderId(executed.getOrderId())) {
+                throw new EntryNotReadyException("Mover entry window expired before submission; waiting for a fresh evaluation. No order submitted.");
+            }
             throw new InvalidTradeRequestException("Strategy entry order was rejected: " + executed.getExitReason());
         }
 
@@ -2472,6 +2476,8 @@ public class TradeExecutionService {
             }
             return triggeredTradeSetupEntity;
 
+        } catch (EntryNotReadyException waiting) {
+            throw waiting;
         } catch (Exception e) {
             log.error("❌ Error executing trade for trigger {}: {}", triggerLogId(trigger), e.getMessage(), e);
         }
@@ -2824,6 +2830,9 @@ public class TradeExecutionService {
             OrderPlacementResult result;
             if (attempt == 0) {
                 if (!sharedDecisionExecutable() || !entryQuoteWindowOpen(trigger.getSource())) {
+                    // This is before the first broker call: no order ID or fill can exist.
+                    if (isMoverSource(trigger.getSource()))
+                        throw new EntryNotReadyException("Mover entry window expired before submission; waiting for a fresh evaluation. No order submitted.");
                     return OrderPlacementResult.builder().success(false)
                             .rejectionReason("ENTRY_WINDOW_ELAPSED: no order submitted").build();
                 }
@@ -6173,18 +6182,21 @@ public class TradeExecutionService {
         }
 
         // The simulator fills immediately at the price passed to placeOrder.  It
-        // must therefore retain the local "buy above" gate instead of treating a
-        // direct/replayed execution call as authority to fill below the trigger.
+        // must retain the directional trigger: BUY above, cash SELL below. A
+        // direct/replayed call cannot authorize an entry on the wrong side.
         // Real brokers can hold a trigger order themselves; the simulator cannot.
         if (isSimulatorBrokerRequest(requestEntity)
                 && !chaseEntryUntilExecuted
                 && !useSpotForEntry
                 && requestEntity.getEntryPrice() != null
-                && ltp + 0.000001d < requestEntity.getEntryPrice()) {
-            log.info("Simulator entry request {} remains pending: option LTP {} is below buy-above entry {}.",
-                    requestEntity.getId(), formatPrice(ltp), formatPrice(requestEntity.getEntryPrice()));
+                && (TradeSide.isShort(requestEntity)
+                    ? ltp - 0.000001d > requestEntity.getEntryPrice()
+                    : ltp + 0.000001d < requestEntity.getEntryPrice())) {
+            String side = TradeSide.isShort(requestEntity) ? "sell" : "buy";
+            log.info("Simulator entry request {} remains pending: traded LTP {} has not reached {} trigger {}.",
+                    requestEntity.getId(), formatPrice(ltp), side, formatPrice(requestEntity.getEntryPrice()));
             if (reportSimulatorWait)
-                throw new EntryNotReadyException("Simulator waiting for traded LTP to reach the buy trigger; no order submitted.");
+                throw new EntryNotReadyException("Simulator waiting for traded LTP to reach the " + side + " trigger; no order submitted.");
             return null;
         }
 
@@ -6247,6 +6259,11 @@ public class TradeExecutionService {
                     e.getMessage());
             return null;
         }
+    }
+
+    private static boolean isMoverSource(String source) {
+        return source != null && (source.contains("STOCK_0925_MOVER_ATR_BREAKOUT")
+                || source.contains("FNO_0925_MOVER_ATR_BREAKOUT"));
     }
 
     private boolean entryQuoteWindowOpen(String source) {

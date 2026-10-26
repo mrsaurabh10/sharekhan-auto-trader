@@ -19,6 +19,21 @@ import static org.mockito.Mockito.when;
 
 class MonitoringSnapshotServiceTest {
 
+    @Test void historicalCashSnapshotRecomputesEstimateWithoutChangingStoredFinancials() {
+        var repository=mock(TriggeredTradeSetupRepository.class); var cache=mock(LtpCacheService.class);
+        var trade=TriggeredTradeSetupEntity.builder().id(10494L).symbol("BANKINDIA").exchange("NC").entryAction("SELL").intraday(true)
+            .quantity(1327L).lots(1327).originalLots(3982).targetOrderGroupId(10494L).targetStage(1)
+            .actualEntryPrice(125.65).exitPrice(126.5).pnl(-1127.95).tradeCost(15969.08).effectivePnl(-17097.03)
+            .status(TriggeredTradeStatus.EXITED_SUCCESS).build();
+        when(repository.findByStatusIn(any())).thenReturn(List.of());
+        when(repository.findByStatusAndExitedAtBetweenOrderByExitedAtAsc(eq(TriggeredTradeStatus.EXITED_SUCCESS),any(),any())).thenReturn(List.of(trade));
+        var row=new MonitoringSnapshotService(repository,cache).snapshot().closedToday().getFirst();
+        org.assertj.core.api.Assertions.assertThat(row.tradeCost()).isLessThan(100d);
+        org.assertj.core.api.Assertions.assertThat(row.effectivePnl()).isGreaterThan(-1300d);
+        assertEquals(-17097.03,trade.getEffectivePnl());assertEquals(15969.08,trade.getTradeCost());
+        org.mockito.Mockito.verify(repository,org.mockito.Mockito.never()).save(any());
+    }
+
     @Test
     void returnsActiveTradeWithInstrumentAndSpotPrices() {
         TriggeredTradeSetupRepository repository = mock(TriggeredTradeSetupRepository.class);
