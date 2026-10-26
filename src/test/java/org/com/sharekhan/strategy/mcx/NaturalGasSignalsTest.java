@@ -44,4 +44,64 @@ class NaturalGasSignalsTest {
         var rows=candles(true);var c=rows.getLast();rows.set(rows.size()-1,bar(c.date(),c.time(),c.open(),c.high(),c.low(),c.close(),null));
         assertTrue(NaturalGasSignals.inspect(rows,NOW,.1).reason().startsWith("Missing or zero MCX interval volume"));
     }
+    static List<StrategyCandle> lateCandles(boolean bullish, LocalTime start) {
+        var original=candles(bullish);var rows=new ArrayList<StrategyCandle>();
+        rows.addAll(original.stream().filter(c->!c.date().equals(DAY)).toList());
+        var session=original.stream().filter(c->c.date().equals(DAY)).toList();
+        for(int i=0;i<24;i++){var c=session.get(i+4);rows.add(bar(DAY,start.plusMinutes(i*5),c.open(),c.high(),c.low(),c.close(),c.volume()));}
+        return rows;
+    }
+    static NaturalGasSignals.Evaluation flexible(List<StrategyCandle> rows,LocalDateTime now){return NaturalGasSignals.inspect(rows,now,.1,NaturalGasDataMode.ROLLING_WINDOW);}
+    @Test void lateStartWithTwentyFourContiguousBarsCanSignalBothDirections() {
+        var evening=DAY.atTime(19,0,5);
+        for(boolean bull:List.of(true,false)) {
+            var rows=lateCandles(bull,LocalTime.of(17,0));var e=flexible(rows,evening);
+            assertEquals(bull?"CE":"PE",e.signal().orElseThrow().side());
+            assertTrue(e.dataContext().contains("ROLLING_WINDOW"));
+            assertTrue(e.dataContext().contains("2026-10-26T17:00/2026-10-26T19:00 (24 bars)"));
+            assertTrue(e.dataContext().contains("missing groups omitted"));
+            assertTrue(NaturalGasSignals.inspect(rows,evening,.1).reason().startsWith("Incomplete MCX session"));
+        }
+    }
+    @Test void twentyThreeBarsNeverBorrowPriorSessionCandlesForWarmup() {
+        var rows=lateCandles(true,LocalTime.of(17,0));rows.removeLast();
+        var e=flexible(rows,DAY.atTime(18,55,5));assertTrue(e.signal().isEmpty());
+        assertTrue(e.reason().contains("23/24"));assertTrue(e.reason().contains("19:00"));assertNull(e.vwap());
+    }
+    @Test void gapRecoversOnlyAfterTwentyFourConsecutiveBarsAfterIt() {
+        var rows=lateCandles(true,LocalTime.of(17,0));
+        var old=bar(DAY,LocalTime.of(14,0),149,150,148,149,null);rows.add(old);
+        var complete=flexible(rows,DAY.atTime(19,0,5));assertTrue(complete.signal().isPresent());
+        var missing=rows.stream().filter(c->!c.date().equals(DAY)||!c.time().equals(LocalTime.of(17,0))).toList();
+        var incomplete=flexible(missing,DAY.atTime(19,0,5));assertTrue(incomplete.signal().isEmpty());
+        assertTrue(incomplete.reason().contains("23/24"));assertTrue(incomplete.reason().contains("19:05"));
+        var insideGap=new ArrayList<>(rows);insideGap.removeIf(c->c.date().equals(DAY)&&c.time().equals(LocalTime.of(18,0)));
+        assertTrue(flexible(insideGap,DAY.atTime(19,0,5)).reason().contains("11/24"));
+    }
+    @Test void rollingVwapUsesOnlySelectedBarsWithActualVolumeWeights() {
+        var rows=lateCandles(true,LocalTime.of(17,0));var original=rows.getLast();
+        rows.set(rows.size()-1,bar(original.date(),original.time(),original.open(),original.high(),original.low(),original.close(),300L));
+        double sum=0;long volume=0;
+        for(var c:rows)if(c.date().equals(DAY)){sum+=(c.high()+c.low()+c.close())/3*c.volume();volume+=c.volume();}
+        var expected=flexible(rows,DAY.atTime(19,0,5));assertEquals(sum/volume,expected.vwap(),1e-9);
+        rows.add(bar(DAY,LocalTime.of(14,0),200,201,199,200,1000000000L));
+        var actual=flexible(rows,DAY.atTime(19,0,5));assertEquals(expected.vwap(),actual.vwap());assertEquals(expected.signal(),actual.signal());
+        assertTrue(actual.dataContext().contains("rollingVWAPValue="));
+    }
+    @Test void currentWindowStillRejectsMissingVolumeStaleDataAndDuplicateBars() {
+        var rows=lateCandles(true,LocalTime.of(17,0));var c=rows.getLast();
+        rows.set(rows.size()-1,bar(c.date(),c.time(),c.open(),c.high(),c.low(),c.close(),null));
+        assertTrue(flexible(rows,DAY.atTime(19,0,5)).reason().contains("rolling VWAP unavailable"));
+        assertTrue(flexible(lateCandles(true,LocalTime.of(17,0)),DAY.atTime(19,2)).reason().startsWith("Stale MCX candle"));
+        rows=lateCandles(true,LocalTime.of(17,0));rows.add(rows.getLast());assertTrue(flexible(rows,DAY.atTime(19,0,5)).reason().startsWith("Duplicate MCX"));
+    }
+    @Test void flexibleModeRetainsHistoryWarmupCutoffsAndCompletedCandleRule() {
+        var rows=lateCandles(true,LocalTime.of(17,0));
+        var baseline=flexible(rows,DAY.atTime(19,0,5));
+        rows.add(bar(DAY,LocalTime.of(19,0),152.9,170,150,165,100L));
+        assertEquals(baseline,flexible(rows,DAY.atTime(19,0,5)));
+        assertTrue(flexible(rows,DAY.atTime(23,0)).reason().startsWith("Outside MCX"));
+        rows.removeIf(c->!c.date().equals(DAY));assertTrue(flexible(rows,DAY.atTime(19,0,5)).reason().startsWith("Insufficient completed MCX history"));
+    }
+
 }
