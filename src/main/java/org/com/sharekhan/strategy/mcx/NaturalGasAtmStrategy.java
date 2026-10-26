@@ -65,10 +65,16 @@ public class NaturalGasAtmStrategy implements StrategyEvaluator {
         var rows=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MX","NATURALGAS");
         var pair=NaturalGasContracts.resolve(rows,now.toLocalDate());var future=pair.future();
         if(future.getTickSize()==null || !Double.isFinite(future.getTickSize()) || future.getTickSize()<=0) return waitFor("Futures tick metadata unavailable");
+        data.watch(future.getScripCode());
         execution.warmUpSpotLtp(future,"MCX Natural Gas strategy");
-        var found=NaturalGasSignals.evaluate(data.candles(future.getScripCode(),now),now,future.getTickSize());
-        if(found.isEmpty())return waitFor("Waiting for fresh complete MCX candles, volume, EMA/VWAP alignment and breakout/retest");
-        var signal=found.get();
+        var evaluation=NaturalGasSignals.inspect(data.candles(future.getScripCode(),now),now,future.getTickSize());
+        if(evaluation.signal().isEmpty()) {
+            String reason=evaluation.reason();
+            if(reason.startsWith("No MCX candles") || reason.startsWith("No completed MCX") || reason.startsWith("Incomplete MCX") || reason.startsWith("Gap in MCX") || reason.startsWith("Stale MCX"))
+                reason += "; "+data.status(future.getScripCode());
+            return waitFor(reason);
+        }
+        var signal=evaluation.signal().get();
         var futureQuote=quotes.getSnapshot(future.getScripCode()).orElse(null);
         var instant=now.atZone(StrategySupport.MARKET_ZONE).toInstant();
         if (futureQuote==null || futureQuote.getLastTradedPrice()==null || !Double.isFinite(futureQuote.getLastTradedPrice())

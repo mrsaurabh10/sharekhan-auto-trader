@@ -14,14 +14,24 @@ import java.time.ZoneId;
 public class WebSocketLifecycleScheduler {
 
     private final WebSocketClientService webSocketClientService;
+    private final org.com.sharekhan.repository.StrategySubscriptionRepository subscriptions;
     private static final LocalTime START_TIME = LocalTime.of(9, 10);
     private static final LocalTime END_TIME = LocalTime.of(23, 30);
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
 
     @Scheduled(fixedRate = 30_000) // every 30 seconds
     public void manageWebSocketConnection() {
-        LocalTime now = LocalTime.now(IST);
+        manage(java.time.LocalDateTime.now(IST));
+    }
+    void manage(java.time.LocalDateTime dateTime) {
+        LocalTime now = dateTime.toLocalTime();
         boolean inWindow = !now.isBefore(START_TIME) && !now.isAfter(END_TIME);
+        // MCX session candles need a connection before 09:00; equity entry clocks stay unchanged.
+        if(!inWindow && !now.isBefore(LocalTime.of(8,55)) && now.isBefore(START_TIME)
+                && dateTime.getDayOfWeek()!=java.time.DayOfWeek.SATURDAY && dateTime.getDayOfWeek()!=java.time.DayOfWeek.SUNDAY) {
+            inWindow=subscriptions.findByStatusInOrderByIdDesc(java.util.List.of("ACTIVE","TRIGGERED")).stream()
+                    .anyMatch(s->org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equals(s.getTemplateId()));
+        }
 
         if (inWindow) {
             if (!webSocketClientService.isConnected()) {

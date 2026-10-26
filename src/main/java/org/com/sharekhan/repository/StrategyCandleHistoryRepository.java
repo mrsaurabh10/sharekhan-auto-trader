@@ -7,6 +7,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 public interface StrategyCandleHistoryRepository extends JpaRepository<StrategyCandleHistoryEntity, String> {
+    List<StrategyCandleHistoryEntity> findTop1000ByInstrumentKeyOrderByCandleTimeDesc(String instrumentKey);
     List<StrategyCandleHistoryEntity> findTop250ByInstrumentKeyOrderByCandleTimeDesc(String instrumentKey);
+    @org.springframework.transaction.annotation.Transactional
     void deleteByInstrumentKeyAndCandleTimeBefore(String instrumentKey, LocalDateTime cutoff);
 }
