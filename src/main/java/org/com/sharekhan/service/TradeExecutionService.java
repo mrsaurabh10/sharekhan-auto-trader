@@ -5372,6 +5372,11 @@ public class TradeExecutionService {
         return repriceExistingExitAndChase(trade, newPrice, "STOP_LOSS_HIT");
     }
 
+    public boolean modifyExitOrderForProtectiveExit(TriggeredTradeSetupEntity trade,double newPrice,String reason) {
+        if(!FnoMoverExitPolicyService.isExitReason(reason)) throw new IllegalArgumentException("Unsupported protective exit reason");
+        return repriceExistingExitAndChase(trade,newPrice,reason);
+    }
+
     private boolean repriceExistingExitAndChase(TriggeredTradeSetupEntity trade, double newPrice, String reason) {
         if (trade == null || trade.getId() == null) return false;
         TriggeredTradeSetupEntity latest = triggeredTradeRepo.findById(trade.getId()).orElse(null);
@@ -5401,7 +5406,7 @@ public class TradeExecutionService {
     }
 
     private boolean isStopExit(TriggeredTradeSetupEntity trade) {
-        return "STOP_LOSS_HIT".equals(trade.getExitReason());
+        return "STOP_LOSS_HIT".equals(trade.getExitReason()) || FnoMoverExitPolicyService.isExitReason(trade.getExitReason());
     }
 
     public boolean modifyExitOrderForTarget(TriggeredTradeSetupEntity trade, double newPrice) {

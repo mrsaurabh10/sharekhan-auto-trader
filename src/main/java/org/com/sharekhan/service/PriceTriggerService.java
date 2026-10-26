@@ -97,6 +97,23 @@ public class PriceTriggerService {
     @Autowired(required = false)
     private AtrPreviousDayEntryQualityService atrPreviousDayEntryQualityService;
 
+    @Autowired(required = false)
+    private FnoMoverExitPolicyService fnoMoverExitPolicy;
+
+    /** Cache-only timer makes the 45-minute rule independent of a new option tick. */
+    @Scheduled(fixedDelayString = "${app.strategy.fno-mover-exits.poll-ms:5000}")
+    public void pollFnoMoverExits() {
+        LocalDateTime now=nowIst();
+        if(fnoMoverExitPolicy==null || !fnoMoverExitPolicy.enabled() || !isTradingDay(now)
+                || now.toLocalTime().isBefore(LocalTime.of(9,15)) || !now.toLocalTime().isBefore(LocalTime.of(15,30))) return;
+        for(var trade:triggeredRepo.findBySourceAndStatusIn(FnoMoverExitPolicyService.SOURCE,MONITORABLE_TRADE_STATUSES)) {
+            if(!FnoMoverExitPolicyService.owns(trade)) continue;
+            // No REST fallback, broker authentication or orders in this timer.
+            var price=fnoMoverExitPolicy.currentExitBid(trade,now.atZone(IST_ZONE).toInstant());
+            if(price!=null && Double.isFinite(price) && price>0) handleTradeWithLock(trade.getId(),price,ltpCacheService.getLtp(trade.getSpotScripCode()));
+        }
+    }
+
     public void evaluatePriceTrigger(Integer scripCode, double ltp) {
         LocalDateTime nowIst = nowIst();
         if (!isIntradayEntryWindowOpen(nowIst)) {
@@ -861,6 +878,19 @@ public class PriceTriggerService {
                 && scripCode.equals(trade.getSpotScripCode());
     }
 
+    private FnoMoverExitPolicyService.Decision planFnoMoverExit(Long tradeId) {
+        if(fnoMoverExitPolicy==null || !fnoMoverExitPolicy.enabled()) return FnoMoverExitPolicyService.Decision.waitForData();
+        try {
+            var trade=triggeredRepo.findById(tradeId).orElse(null);
+            if(trade==null || isBigTradePlus(trade) || (trade.getStatus()!=TriggeredTradeStatus.EXECUTED
+                    && trade.getStatus()!=TriggeredTradeStatus.TARGET_ORDER_PLACED)) return FnoMoverExitPolicyService.Decision.waitForData();
+            return fnoMoverExitPolicy.evaluate(trade,nowIst().atZone(IST_ZONE).toInstant());
+        } catch(Exception policyFailure) {
+            log.warn("FNO mover exit policy unavailable for trade {}: {}",tradeId,policyFailure.getClass().getSimpleName());
+            return FnoMoverExitPolicyService.Decision.waitForData();
+        }
+    }
+
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
         try {
             OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(tradeId, tradedLtp);
@@ -868,6 +898,9 @@ public class PriceTriggerService {
                 return;
             }
             final double confirmedTradedLtp = confirmedStopPrice.getAsDouble();
+            // Persist observation state before opening the trade-claim transaction:
+            // nested REQUIRES_NEW connections must not exhaust the trade-worker pool.
+            final var moverDecision=planFnoMoverExit(tradeId);
             final TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
 
             // Execute quick transaction: read the current trade and attempt atomic claim if condition met
@@ -970,6 +1003,13 @@ public class PriceTriggerService {
                     return updated;
                 }
 
+                if(moverDecision.exit() && FnoMoverExitPolicyService.owns(persisted)
+                        && hasSafeTradedExitPrice(persisted,moverDecision.bid(),spotLtp,moverDecision.bid(),moverDecision.reason())) {
+                    int updated=triggeredRepo.claimIfStatusEquals(tradeId,TriggeredTradeStatus.EXECUTED.name(),TriggeredTradeStatus.EXIT_TRIGGERED.name(),moverDecision.reason());
+                    if(updated==0) updated=triggeredRepo.claimIfStatusEquals(tradeId,TriggeredTradeStatus.TARGET_ORDER_PLACED.name(),TriggeredTradeStatus.EXIT_TRIGGERED.name(),moverDecision.reason());
+                    return updated;
+                }
+
                 // Check if any target hit and if we need to book lots
                 if (targetRefPrice != null) {
                     // A staged target leg already represents its own allocated quantity and
@@ -1058,7 +1098,12 @@ public class PriceTriggerService {
                 String exitReason = reloaded.getExitReason();
                 TradeEventLogger.logExitTriggered(reloaded, exitReason, slRefPrice, targetRefPrice, confirmedTradedLtp, spotLtp);
                 boolean exitOrderAlreadyPresent = reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank();
-                if ("STOP_LOSS_HIT".equals(exitReason) || GAP_FILL_EXIT_REASON.equals(exitReason)) {
+                if(FnoMoverExitPolicyService.isExitReason(exitReason)) {
+                    var decisionPrice=fnoMoverExitPolicy==null?null:fnoMoverExitPolicy.currentExitBid(reloaded,nowIst().atZone(IST_ZONE).toInstant());
+                    if(decisionPrice==null) decisionPrice=confirmedTradedLtp;
+                    if(exitOrderAlreadyPresent) tradeExecutionService.modifyExitOrderForProtectiveExit(reloaded,decisionPrice,exitReason);
+                    else dispatchSquareOff(reloaded,decisionPrice,exitReason);
+                } else if ("STOP_LOSS_HIT".equals(exitReason) || GAP_FILL_EXIT_REASON.equals(exitReason)) {
                     Double stopPriceOption = GAP_FILL_EXIT_REASON.equals(exitReason)
                             ? reloaded.getGapStopLoss()
                             : reloaded.getStopLoss();
@@ -1280,7 +1325,8 @@ public class PriceTriggerService {
         log.warn("Recovering trade {} stuck in EXIT_TRIGGERED without exitOrderId. reason={} tradedLtp={} spotLtp={}",
                 trade.getId(), exitReason, tradedLtp, spotLtp);
 
-        if ("STOP_LOSS_HIT".equals(exitReason)
+        if (FnoMoverExitPolicyService.isExitReason(exitReason)
+                || "STOP_LOSS_HIT".equals(exitReason)
                 || GAP_FILL_EXIT_REASON.equals(exitReason)
                 || "TARGET_HIT_PARTIAL".equals(exitReason)
                 || "TARGET_HIT_FULL".equals(exitReason)) {
@@ -1457,6 +1503,10 @@ public class PriceTriggerService {
             }
 
             triggeredRepo.save(remainingTrade);
+            if(fnoMoverExitPolicy!=null && fnoMoverExitPolicy.enabled() && FnoMoverExitPolicyService.owns(trade)) {
+                try { fnoMoverExitPolicy.inherit(trade,remainingTrade); }
+                catch(Exception stateFailure) { log.warn("FNO mover state inheritance unavailable for remaining trade {}",remainingTrade.getId()); }
+            }
 
             // Update current trade to be the exited portion and SAVE it so squareOff sees the new quantity
             trade.setQuantity(qtyToBook);

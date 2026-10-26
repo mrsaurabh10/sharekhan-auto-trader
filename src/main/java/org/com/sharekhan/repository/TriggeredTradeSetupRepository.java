@@ -50,6 +50,8 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
 
     List<TriggeredTradeSetupEntity> findByStatus(TriggeredTradeStatus status);
 
+    List<TriggeredTradeSetupEntity> findBySourceAndStatusIn(String source,List<TriggeredTradeStatus> statuses);
+
     List<TriggeredTradeSetupEntity> findByStatusIn(List<TriggeredTradeStatus> statuses);
 
     List<TriggeredTradeSetupEntity> findByStatusAndExitedAtBetweenOrderByExitedAtAsc(

@@ -26,7 +26,7 @@ public class ExitChaseControlService {
     public ExitChaseControl begin(TriggeredTradeSetupEntity trade,Instant proposedStart) {
         ExitChaseControl control=controls.findById(trade.getId()).orElseGet(ExitChaseControl::new);
         if(Objects.equals(control.getOrderId(),trade.getExitOrderId()) && control.getStartedAt()!=null) {
-            boolean protectiveTransition=("STOP_LOSS_HIT".equals(trade.getExitReason()) || "INTRADAY_CLOSE".equals(trade.getExitReason()))
+            boolean protectiveTransition=("STOP_LOSS_HIT".equals(trade.getExitReason()) || "INTRADAY_CLOSE".equals(trade.getExitReason()) || FnoMoverExitPolicyService.isExitReason(trade.getExitReason()))
                     && !Objects.equals(control.getIntent(),trade.getExitReason());
             if(!protectiveTransition)return control;
         }
