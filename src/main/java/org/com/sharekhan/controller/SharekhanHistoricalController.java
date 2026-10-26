@@ -95,6 +95,20 @@ public class SharekhanHistoricalController {
         ));
     }
 
+    /** Admin-only diagnostic view: identical provider data without legacy timestamp rewriting. */
+    @GetMapping("/raw-candles")
+    public ResponseEntity<?> rawCandles(
+            @RequestHeader(value="X-Admin-Token",required=false) String headerToken,
+            @RequestParam(name="scripCode") Integer scripCode,@RequestParam(name="interval",defaultValue="5minute") String interval) {
+        if(!authorized(headerToken))return ResponseEntity.status(403).body(error("Invalid or missing X-Admin-Token"));
+        String segment=normalizeInterval(interval);
+        if(!StringUtils.hasText(segment))return badRequest("Invalid interval");
+        var script=scriptMasterRepository.findByScripCode(scripCode);
+        if(script==null)return ResponseEntity.status(404).body(error("Unknown scrip code"));
+        var candles=historicalService.getRecentRawHistoricalCandles(scripCode,segment);
+        return ResponseEntity.ok(new HistoricalCandlesResponse("success",scripCode,script.getTradingSymbol(),script.getExchange(),segment,null,null,candles.size(),candles));
+    }
+
     private Optional<ScriptMasterEntity> resolveScript(Integer scripCode,
                                                        String exchange,
                                                        String instrument,

@@ -88,4 +88,15 @@ class NaturalGasLiveCandlesTest {
         assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime(Long.toString(instant.toEpochMilli())));
         assertEquals(day.atTime(11,24),NaturalGasLiveCandles.providerTime(Long.toString(instant.getEpochSecond())));
     }
+    @Test void diagnosticsIdentifyWhyBarsAreDroppedAndBoundSampleHistory() throws Exception {
+        for(int i=5;i<300;i+=20)tick(LocalTime.of(9,0).plusSeconds(i),300,100+i);
+        tick(LocalTime.of(9,5,5),301,420);
+        var diagnostics=live.diagnostics(42);
+        var rejections=(java.util.Map<?,?>)diagnostics.get("rejections");
+        assertTrue(rejections.containsKey("SYMBOL_OBSERVATION_GAP"));
+        assertTrue(rejections.containsKey("DROPPED_BAR:SYMBOL_OBSERVATION_GAP"));
+        for(int i=6;i<35;i++)tick(LocalTime.of(9,5,i),301,420+i);
+        assertEquals(20,((java.util.List<?>)live.diagnostics(42).get("samples")).size());
+        assertTrue(live.completed(42,day.atTime(9,6)).isEmpty());
+    }
 }

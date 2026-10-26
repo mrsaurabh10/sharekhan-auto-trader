@@ -125,8 +125,9 @@ release procedure. Deployment and activation remain separate user actions.
 
 Sharekhan's historical endpoint explicitly supplies candles **up to the last traded
  day**. It cannot supply today's session. For this strategy only, historical
-`tradeTime` values are mapped to their containing five-minute interval: `09:04:57`
-becomes `09:00:00`. The incomplete stub at/after 23:30 is excluded. Equity candle
+raw `tradeTime` values use right-closed `(start,end]` intervals: `09:04:57`
+becomes `09:00:00`, and an exact `13:00:00` belongs to `12:55:00`. The strategy
+uses the raw history service to avoid the shared legacy five-minute rewriting. The incomplete stub at/after 23:30 is excluded. Equity candle
 normalization is unchanged. Duplicate intervals and invalid OHLC still block signals.
 
 An active subscription now retains its exact resolved MCX futures full feed before
@@ -169,3 +170,21 @@ Live verification found `lastUpdatedTime=10/26/2026 11:30:56` with cumulative
 historical `tradeDate` (dd/MM/yyyy). The live parser prioritizes month/day for
 ambiguous slash dates; ISO offsets are converted to IST and Unix timestamps are
 accepted. The 15-second freshness check remains mandatory for every format.
+
+## Provider verification, 26 October 2026
+
+Repeated actual Sharekhan requests returned 7,922 one-minute, 1,654 five-minute
+and 558 fifteen-minute records, ending 23 October; none contained today. Applying
+right-closed minute buckets, all 1,643 in-session five-minute and all 548
+fifteen-minute records matched aggregated minute OHLCV exactly. Six apparent
+five-minute duplicate intervals were boundary assignments, not duplicate trades.
+For example, 19 October 13:00:00 volume 65 belongs to 12:55; 13:04:56 volume 38
+belongs to 13:00. Prices and volumes are preserved; conflicting bars are not summed
+or silently discarded. Equity/shared consumers retain their prior normalization.
+
+Admin-only GET diagnostics under `/api/sharekhan/historical`: `raw-candles`
+accepts `scripCode` and `interval`; `mcx-capture` accepts `scripCode` and reports
+rejection counts, current incomplete-bar reason and at most 20 market-field
+samples (receipt/message/provider clocks, last price and cumulative quantity).
+Neither endpoint arms a feed or submits orders. Live rejection rules remain
+unchanged until observed feed behavior justifies a separate correction.

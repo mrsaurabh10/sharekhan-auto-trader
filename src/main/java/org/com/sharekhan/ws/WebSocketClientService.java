@@ -173,7 +173,7 @@ public class WebSocketClientService  {
                         }
                         // Independent collector; quote ingestion/order monitoring must survive a persistence error.
                         try {
-                            eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.Tick(data,java.time.Instant.now()));
+                            eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.Tick(data,java.time.Instant.now(),json.path("timestamp").asText(null)));
                         } catch (Exception collectorError) {
                             log.warn("MCX live candle observation failed for scrip {} ({})",scripCode,collectorError.getClass().getSimpleName());
                         }

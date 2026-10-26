@@ -83,4 +83,19 @@ class SharekhanHistoricalServiceTest {
         assertThat(rows).extracting(SharekhanHistoricalService.HistoricalCandle::volume).containsExactly(1234L,456L,null);
         assertThat(rows).extracting(SharekhanHistoricalService.HistoricalCandle::time).containsExactly(LocalTime.of(9,0),LocalTime.of(9,5),LocalTime.of(9,10));
     }
+    @Test void rawHistoryRetainsExactProviderBoundaryAndEndStamps() throws Exception {
+        var scripts=mock(ScriptMasterRepository.class);var tokens=mock(TokenStoreService.class);var crypto=mock(CryptoService.class);
+        when(scripts.findByScripCode(42)).thenReturn(ScriptMasterEntity.builder().exchange("MX").scripCode(42).build());
+        when(tokens.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN)).thenReturn(new TokenStoreService.TokenInfo("test-token","test-key"));
+        when(crypto.decrypt("test-key")).thenReturn("test-key");
+        var service=spy(new SharekhanHistoricalService(scripts,tokens,crypto,new SharekhanProperties()));
+        doReturn(new JSONObject("""
+            {"data":[["2026-10-19T13:00:00",324.5,324.7,324.5,324.7,65],
+            ["2026-10-19T13:04:59",324.6,324.7,324.4,324.4,38]]}
+            """)).when(service).requestHistorical("MX","42","5minute","test-key","test-token");
+        assertThat(service.getRecentRawHistoricalCandles(42,"5minute"))
+            .extracting(SharekhanHistoricalService.HistoricalCandle::time).containsExactly(LocalTime.of(13,0),LocalTime.of(13,4,59));
+        assertThat(service.getRecentHistoricalCandles(42,"5minute"))
+            .extracting(SharekhanHistoricalService.HistoricalCandle::time).containsExactly(LocalTime.of(13,0),LocalTime.of(13,0));
+    }
 }

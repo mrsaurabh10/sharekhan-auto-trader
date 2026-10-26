@@ -145,6 +145,15 @@ public class SharekhanHistoricalService {
 
     /** Sharekhan returns available recent history; dates are filtered locally by callers needing a range. */
     public List<HistoricalCandle> getRecentHistoricalCandles(Integer scripCode, String intervalSegment) {
+        return loadRecentHistoricalCandles(scripCode,intervalSegment,true);
+    }
+
+    /** Preserve provider end stamps for consumers with a verified interval convention. */
+    public List<HistoricalCandle> getRecentRawHistoricalCandles(Integer scripCode, String intervalSegment) {
+        return loadRecentHistoricalCandles(scripCode,intervalSegment,false);
+    }
+
+    private List<HistoricalCandle> loadRecentHistoricalCandles(Integer scripCode, String intervalSegment, boolean legacyNormalization) {
         if (scripCode == null) {
             return List.of();
         }
@@ -172,7 +181,7 @@ public class SharekhanHistoricalService {
             String intervalPath = StringUtils.hasText(intervalSegment) ? intervalSegment.trim() : DEFAULT_INTERVAL_SEGMENT;
             JSONObject response = requestHistorical(exchange, String.valueOf(scripCode), intervalPath, apiKey, accessToken);
             List<HistoricalCandle> candles = parseHistoricalCandles(response);
-            if ("5minute".equalsIgnoreCase(intervalPath)) {
+            if (legacyNormalization && "5minute".equalsIgnoreCase(intervalPath)) {
                 candles = candles.stream().map(this::normalizeFiveMinuteCandle).toList();
             }
             log.info("SHAREKHAN_HISTORY | exchange={} scrip={} interval={} parsed={}",
