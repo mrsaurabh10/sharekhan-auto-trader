@@ -99,4 +99,53 @@ class NaturalGasLiveCandlesTest {
         assertEquals(20,((java.util.List<?>)live.diagnostics(42).get("samples")).size());
         assertTrue(live.completed(42,day.atTime(9,6)).isEmpty());
     }
+    void trade(LocalTime t,double price,long quantity,Long lastQuantity,String lastTrade) {
+        var data=mapper.createObjectNode().put("scripCode",42).put("exchangeCode","MX")
+            .put("lastUpdatedTime",day.atTime(t).toString()).put("ltt",lastTrade)
+            .put("ltp",price).put("qty",quantity).put("open",300).put("high",301).put("low",299);
+        if(lastQuantity!=null)data.put("ltq",lastQuantity);
+        live.record(data,day.atTime(t).atZone(ZoneId.of("Asia/Kolkata")).toInstant());
+    }
+    @Test void observedTwentyNineSecondSingleContractGapIsAccountedWithoutLeakingBoundaryTrade() throws Exception {
+        firstBar(); // previous accepted trade09:04:55, cumulative395
+        trade(LocalTime.of(9,5,24),302,396,1L,day.atTime(9,5,24).toString());
+        var first=live.completed(42,day.atTime(9,6)).getFirst();
+        assertEquals(395L,first.volume());assertTrue(first.high()<302);
+        assertNull(live.diagnostics(42).get("currentBarInvalidReason"));
+        trade(LocalTime.of(9,10,24),303,397,1L,day.atTime(9,10,24).toString());
+        var second=live.completed(42,day.atTime(9,11)).getLast();
+        assertEquals(LocalTime.of(9,5),second.time());assertEquals(1L,second.volume());
+        assertEquals(302,second.open());assertEquals(302,second.close());
+    }
+    @Test void lastTradeQuantityCanAccountForEntireDeltaButNotAnUnseenIntermediateTrade() throws Exception {
+        firstBar();trade(LocalTime.of(9,5,24),302,400,5L,day.atTime(9,5,24).toString());
+        assertEquals(1,live.completed(42,day.atTime(9,6)).size());
+        trade(LocalTime.of(9,6),303,406,5L,day.atTime(9,6).toString());
+        assertEquals("SYMBOL_OBSERVATION_GAP",live.diagnostics(42).get("currentBarInvalidReason"));
+    }
+    @Test void staleTradeClockOrConflictingLastQuantityCannotExplainQuietGap() throws Exception {
+        firstBar();trade(LocalTime.of(9,5,24),302,396,1L,day.atTime(9,4,55).toString());
+        assertTrue(live.completed(42,day.atTime(9,6)).isEmpty());
+        assertEquals("PARTIAL_START",live.diagnostics(42).get("currentBarInvalidReason"));
+        live.interrupted(new NaturalGasLiveCandles.StreamInterrupted());
+        firstBar();trade(LocalTime.of(9,5,24),302,396,2L,day.atTime(9,5,24).toString());
+        assertTrue(live.completed(42,day.atTime(9,6)).isEmpty());
+    }
+    @Test void singleCumulativeContractRemainsProofWhenOptionalLastQuantityIsAbsent() throws Exception {
+        firstBar();trade(LocalTime.of(9,5,24),302,396,null,day.atTime(9,5,24).toString());
+        assertEquals(1,live.completed(42,day.atTime(9,6)).size());
+    }
+
+    @Test void unchangedCounterPriceAndOldTradeClockProveNoBoundaryTrades() throws Exception {
+        firstBar();trade(LocalTime.of(9,5,24),300.1,395,10L,day.atTime(9,4,55).toString());
+        assertEquals(395L,live.completed(42,day.atTime(9,6)).getFirst().volume());
+        assertNull(live.diagnostics(42).get("currentBarInvalidReason"));
+    }
+    @Test void tradeAccountingCannotBridgeAnActualDisconnect() throws Exception {
+        firstBar();live.interrupted(new NaturalGasLiveCandles.StreamInterrupted());
+        trade(LocalTime.of(9,5,24),302,396,1L,day.atTime(9,5,24).toString());
+        assertTrue(live.completed(42,day.atTime(9,6)).isEmpty());
+        assertEquals("PARTIAL_START",live.diagnostics(42).get("currentBarInvalidReason"));
+    }
+
 }
