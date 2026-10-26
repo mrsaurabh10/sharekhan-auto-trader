@@ -39,6 +39,7 @@ public class NaturalGasLiveCandles {
         Instant lastFrameReceivedAt;
         long maxProviderGapSeconds;
         long completedCount;
+        long accountedQuietGaps;
         LocalDateTime previousAt;
         Long previousQuantity;
         Bar bar;
@@ -77,7 +78,7 @@ public class NaturalGasLiveCandles {
         state.lastFrameReceivedAt=receivedAt;
         var sample=new LinkedHashMap<String,String>();
         sample.put("receivedAt",receivedAt.toString());sample.put("messageTimestamp",bounded(messageTimestamp));
-        for(String field:List.of("lastUpdatedTime","ltt","ltp","qty"))sample.put(field,bounded(data.path(field).asText()));
+        for(String field:List.of("lastUpdatedTime","ltt","ltp","qty","ltq"))sample.put(field,bounded(data.path(field).asText()));
         state.samples.addLast(Collections.unmodifiableMap(sample));while(state.samples.size()>20)state.samples.removeFirst();
         try {
             String providerStamp=data.path("lastUpdatedTime").asText();
@@ -102,17 +103,19 @@ public class NaturalGasLiveCandles {
             if(at.equals(state.previousAt) && Objects.equals(state.previousQuantity,quantity))return;
             var start=at.withMinute(at.getMinute()/5*5).withSecond(0).withNano(0);
             if(state.previousAt!=null)state.maxProviderGapSeconds=Math.max(state.maxProviderGapSeconds,Duration.between(state.previousAt,at).getSeconds());
-            boolean continuous=state.previousAt!=null && !state.previousAt.isBefore(at.minusSeconds(15))
-                    && quantity>=state.previousQuantity;
+            boolean accountedGap=accountsForQuietGap(data,state,at,quantity,price);
+            boolean continuous=state.previousAt!=null && quantity>=state.previousQuantity
+                    && (!state.previousAt.isBefore(at.minusSeconds(15)) || accountedGap);
+            if(accountedGap && state.previousAt.isBefore(at.minusSeconds(15)))state.accountedQuietGaps++;
             if(state.bar!=null && !start.equals(state.bar.start)) {
                 if(!continuous)invalidate(state,"BOUNDARY_GAP_OR_COUNTER_RESET");
-                if(!at.isBefore(start.plusSeconds(16)))invalidate(state,"LATE_BOUNDARY");
-                finish(code,state,start);
+                if(!at.isBefore(start.plusSeconds(16)) && !accountedGap)invalidate(state,"LATE_BOUNDARY");
+                finish(code,state,start,accountedGap);
                 state.bar=null;
             }
             if(state.bar==null) {
                 // Need observations on both sides of the boundary. A late subscription cannot backfill.
-                boolean full=continuous && state.previousAt.isBefore(start) && at.isBefore(start.plusSeconds(16));
+                boolean full=continuous && state.previousAt.isBefore(start) && (at.isBefore(start.plusSeconds(16)) || accountedGap);
                 state.bar=new Bar(start,price,full);
                 // First interval may seed from today's session OHLC and cumulative volume within 15s of open.
                 if(start.toLocalTime().equals(NaturalGasSession.OPEN) && state.previousAt==null && at.isBefore(start.plusSeconds(16))) {
@@ -137,16 +140,34 @@ public class NaturalGasLiveCandles {
                     +", qty="+data.path("qty").asText().substring(0,Math.min(24,data.path("qty").asText().length()));
         }
     }
+    /** Cumulative volume proves quiet time only when every new unit is the current last trade.
+     * No inference from elapsed time, a healthy socket, or unchanged endpoint prices alone. */
+    private static boolean accountsForQuietGap(JsonNode data,State state,LocalDateTime at,long quantity,double price) {
+        if(state.previousAt==null || state.previousQuantity==null || quantity<state.previousQuantity)return false;
+        long delta=quantity-state.previousQuantity;
+        String lastTrade=data.path("ltt").asText();
+        if(lastTrade.isBlank())return false;
+        try {
+            var tradedAt=providerTime(lastTrade);
+            // An unchanged counter proves no trades, provided the price and trade clock also did not move.
+            if(delta==0)return state.bar!=null && price==state.bar.close && !tradedAt.isAfter(state.previousAt);
+            if(!tradedAt.equals(at))return false;
+            // One cumulative contract cannot hide an intermediate positive-quantity execution.
+            if(!data.hasNonNull("ltq"))return delta==1;
+            long lastQuantity=new java.math.BigDecimal(data.path("ltq").asText()).longValueExact();
+            return lastQuantity>0 && lastQuantity==delta;
+        } catch(RuntimeException invalid){return false;}
+    }
     public synchronized String status(Integer code) {
         var state=watched.get(code);
         if(state==null)return "Live capture not armed";
         return "live last observation="+state.previousAt+", cumulative qty="+state.previousQuantity
                 +(state.problem==null?"":", "+state.problem);
     }
-    private void finish(int code, State state, LocalDateTime nextStart) {
+    private void finish(int code, State state, LocalDateTime nextStart, boolean accountedGap) {
         var b=state.bar;
         if(!b.start.plusMinutes(5).equals(nextStart))invalidate(state,"MISSING_INTERVAL");
-        if(state.previousAt.isBefore(nextStart.minusSeconds(15)))invalidate(state,"STALE_AT_CLOSE");
+        if(state.previousAt.isBefore(nextStart.minusSeconds(15)) && !accountedGap)invalidate(state,"STALE_AT_CLOSE");
         if(!b.valid) {
             state.rejections.merge("DROPPED_BAR:"+b.invalidReason,1L,Long::sum);
             log.info("MCX_LIVE_CANDLE_REJECTED | scrip={} start={} reason={}",code,b.start,b.invalidReason);
@@ -171,6 +192,7 @@ public class NaturalGasLiveCandles {
         if(state==null)return out;
         out.put("lastFrameReceivedAt",state.lastFrameReceivedAt);out.put("lastAcceptedProviderTime",state.previousAt);
         out.put("lastCumulativeQuantity",state.previousQuantity);out.put("maxProviderGapSeconds",state.maxProviderGapSeconds);
+        out.put("accountedQuietGaps",state.accountedQuietGaps);
         out.put("completedSinceStart",state.completedCount);out.put("loadedCompletedCount",state.completed.size());
         out.put("rejections",new TreeMap<>(state.rejections));out.put("samples",List.copyOf(state.samples));
         out.put("currentBarStart",state.bar==null?null:state.bar.start);out.put("currentBarInvalidReason",state.bar==null?null:state.bar.invalidReason);

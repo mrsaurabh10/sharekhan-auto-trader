@@ -140,8 +140,8 @@ Five-minute candles use observed prices and differences of the provider's cumula
 seed the first interval when the first valid snapshot arrives within 15 seconds of
 09:00. It is never reused as a later interval's OHLC.
 
-Only completed intervals with observations on both sides of the close and no gaps
-longer than 15 seconds are retained. Reconnects, decreasing quantity counters,
+Only completed intervals with observations on both sides of the close and no unexplained
+gaps longer than 15 seconds are retained (verified quiet-gap accounting is described below). Reconnects, decreasing quantity counters,
 malformed observations and late subscriptions invalidate partial intervals. No
 missing interval is manufactured. Sampled/conflated quotes cannot guarantee every
 exchange trade or intrabar extreme was observed; Simulator evaluation must be
@@ -186,5 +186,22 @@ Admin-only GET diagnostics under `/api/sharekhan/historical`: `raw-candles`
 accepts `scripCode` and `interval`; `mcx-capture` accepts `scripCode` and reports
 rejection counts, current incomplete-bar reason and at most 20 market-field
 samples (receipt/message/provider clocks, last price and cumulative quantity).
-Neither endpoint arms a feed or submits orders. Live rejection rules remain
-unchanged until observed feed behavior justifies a separate correction.
+Neither endpoint arms a feed or submits orders. The initial diagnostic release preserved all rejection rules; the subsequent
+observed quiet-trade correction is described below.
+
+Live verification at 15:56:30–15:56:59 found a 29-second gap but cumulative
+quantity increased by exactly one contract (23,230 → 23,231), with a fresh matching
+last-trade clock. Quiet gaps can be accounted for when the current last-trade
+quantity equals the entire positive cumulative delta; if `ltq` is absent, only
+a one-contract delta is sufficient. `ltt` must equal the fresh provider timestamp.
+An unchanged counter also accounts for silence only when price is unchanged and
+last-trade time has not advanced. This permits a known late first trade across a
+bar boundary without assigning its price/volume to the preceding bar. Conflicting
+or missing trade clocks, unexplained multi-trade deltas, stale snapshots, resets,
+disconnects and genuinely missing intervals still invalidate capture. The shared
+feed is sampled; this accounting does not certify exchange-complete intrabar OHLC.
+
+Post-rollout raw-history verification matched all **1,644** in-session five-minute
+records, including 14 October's valid 23:30:00 end stamp (volume 121), which maps
+to 23:25. The initial 1,643-record comparison had excluded that exact close before
+normalization. Zero duplicate intervals remain.
