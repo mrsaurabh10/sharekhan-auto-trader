@@ -74,7 +74,7 @@ public class StrategyRunService {
         if(time.toLocalTime().isBefore(LocalTime.of(9,0)) || !time.toLocalTime().isBefore(LocalTime.of(23,30))) return;
         for(var run:runs.findByStatusIn(List.of("OPEN","CLOSING"))) {
             try {
-                boolean naturalGas=org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(run.getTemplateId());
+                boolean naturalGas=org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(run.getTemplateId());
                 if (naturalGas) {
                     if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.marketOpen(time)) continue;
                     if (run.getTradingDay().isBefore(time.toLocalDate()) || !time.toLocalTime().isBefore(org.com.sharekhan.strategy.mcx.NaturalGasSession.SQUARE_OFF))

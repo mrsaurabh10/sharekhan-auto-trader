@@ -30,7 +30,7 @@ public class WebSocketLifecycleScheduler {
         if(!inWindow && !now.isBefore(LocalTime.of(8,55)) && now.isBefore(START_TIME)
                 && dateTime.getDayOfWeek()!=java.time.DayOfWeek.SATURDAY && dateTime.getDayOfWeek()!=java.time.DayOfWeek.SUNDAY) {
             inWindow=subscriptions.findByStatusInOrderByIdDesc(java.util.List.of("ACTIVE","TRIGGERED")).stream()
-                    .anyMatch(s->org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equals(s.getTemplateId()));
+                    .anyMatch(s->org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId()));
         }
 
         if (inWindow) {

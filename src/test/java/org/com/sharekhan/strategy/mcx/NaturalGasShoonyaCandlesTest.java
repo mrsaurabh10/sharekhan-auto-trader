@@ -47,6 +47,17 @@ class NaturalGasShoonyaCandlesTest {
         when(crypto.decrypt("encrypted-fixture")).thenReturn("fixture-session");
         when(master.resolveNaturalGasFuture(eq(future),any())).thenReturn(instrument);service=client();
     }
+    @Test void threeMinuteIntervalsHaveSeparateCacheAndPersistenceIdentity()throws Exception {
+        doReturn(new JSONArray().put(row("18:39:00",288,289,287,288,10)).put(row("18:45:00",288,289,287,288,10)).toString())
+            .when(service).post(eq("TPSeries"),argThat(j->j.getString("intrv").equals("3")),anyString());
+        assertEquals(1,service.completed(future,now,3).size());
+        assertEquals(2,service.completed(future,now).size());
+        verify(service).post(eq("TPSeries"),argThat(j->j.getString("intrv").equals("3")),anyString());
+        assertEquals(3,service.diagnostics(574319,3).get("intervalMinutes"));
+        assertEquals(5,service.diagnostics(574319).get("intervalMinutes"));
+        assertThrows(IllegalArgumentException.class,()->service.completed(future,now,1));
+        assertThrows(RuntimeException.class,()->NaturalGasShoonyaCandles.parse(new JSONArray().put(row("18:40:00",288,289,287,288,10)).toString(),now,3));
+    }
     @Test void actualMissingIntervalsUseIntervalVolumeAndExcludeFormingCandle() {
         var parsed=NaturalGasShoonyaCandles.parse(actualResponse(),now);
         assertEquals(1,parsed.forming());assertEquals(List.of(LocalTime.of(18,15),LocalTime.of(18,20)),parsed.completed().stream().map(c->c.time()).toList());

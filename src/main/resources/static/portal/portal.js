@@ -159,7 +159,7 @@
         window.StrategyRunView?.resetRisk($('#subscriptionRunRisk'));
         const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
-        const naturalGas = template.id === 'MCX_NATURALGAS_ATM_BREAKOUT';
+        const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(template.id);
         f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE' || naturalGas;
         if (f.elements.intraday.disabled) f.elements.intraday.checked = true;
         const straddle = template.id === 'EXPIRY_LONG_STRADDLE';
@@ -169,6 +169,10 @@
         const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
         f.elements.symbol.value = naturalGas ? 'NATURALGAS' : automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
         f.elements.symbol.readOnly = automatic || naturalGas;
+        if (template.id === 'MCX_NATURALGAS_SCALPING') {
+          f.elements.lots.value='1';
+          $('#subscriptionRunRisk').querySelector('[data-risk-field=maxLoss]').value='2500';
+        }
         $('#subscriptionLotsRow').hidden = stockMover;
         f.elements.lots.disabled = stockMover;
         $('#subscriptionInvestmentRow').hidden = !stockMover;
@@ -208,10 +212,11 @@
       body.investmentPerStock = Number(amount); body.lots = null;
     } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
     body.riskSettings=window.StrategyRunView?.readRisk($('#subscriptionRunRisk')) || null;
-    if (body.templateId === 'MCX_NATURALGAS_ATM_BREAKOUT') {
+    if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(body.templateId)) {
       body.symbol='NATURALGAS'; body.intraday=true;
       if (!body.riskSettings?.maxLoss) throw new Error('Set a maximum rupee loss for the Natural Gas strategy run.');
       const broker=state.brokers.find(b=>b.id===body.brokerCredentialsId);
+      if (body.templateId === 'MCX_NATURALGAS_SCALPING' && (String(broker?.brokerName || '').toUpperCase() !== 'SIMULATOR' || body.lots !== 1 || body.riskSettings.maxLoss > 2500)) throw new Error('Scalping requires Simulator, one lot and a total daily loss limit up to ₹2,500.');
       if (!['SIMULATOR','SHAREKHAN'].includes(String(broker?.brokerName || '').toUpperCase())) throw new Error('Choose Simulator or Sharekhan for MCX Natural Gas.');
     }
     await api('/api/strategies/start','POST',body); $('#strategyDialog').close(); notify('Strategy subscription activated.'); await loadStrategies(); await loadOrders();
