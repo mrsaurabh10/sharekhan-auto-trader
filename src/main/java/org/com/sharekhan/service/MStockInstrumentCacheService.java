@@ -41,7 +41,7 @@ public class MStockInstrumentCacheService {
     private final MStockProperties mStockProperties;
     private final MStockInstrumentMasterWriter masterWriter;
 
-    public boolean refreshInstrumentMasterIfEmpty() {
+    public boolean refreshInstrumentMasterIfStale() {
         long rows = repository.count();
         LocalDateTime latest = repository.latestFetchTime();
         if (rows > 0 && repository.existsByExchangeTokenIsNotNull() && latest != null
@@ -55,18 +55,9 @@ public class MStockInstrumentCacheService {
         return refreshInstrumentMaster();
     }
 
-    @org.springframework.scheduling.annotation.Scheduled(cron = "${app.mstock.master-refresh-cron:0 15 8 * * MON-FRI}", zone = "Asia/Kolkata")
+    @org.springframework.scheduling.annotation.Scheduled(cron = "${app.mstock.master-refresh-cron:0 0 7 * * MON-FRI}", zone = "Asia/Kolkata")
     public void refreshDaily() {
-        refreshInstrumentMasterIfEmpty();
-    }
-
-    // Credentials may become available after the startup or pre-open refresh.
-    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${app.mstock.master-refresh-check-ms:300000}", initialDelay = 60000)
-    public void retryStaleMasterDuringSession() {
-        var now = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
-        if (now.getDayOfWeek().getValue() <= 5 && now.getHour() >= 8 && now.getHour() < 16) {
-            refreshInstrumentMasterIfEmpty();
-        }
+        refreshInstrumentMasterIfStale();
     }
 
     public synchronized boolean refreshInstrumentMaster() {

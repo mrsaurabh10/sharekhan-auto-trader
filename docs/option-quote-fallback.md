@@ -14,9 +14,9 @@ connect and 750ms socket read timeouts. These are socket limits, not a whole-ope
 wall-clock guarantee; entry deadlines are checked again before using the result and
 submitting an order. Manual Shoonya controller requests retain explicit login support.
 
-The MStock master refreshes at startup when older than today, at 08:15 IST weekdays,
-and retries a stale master every five minutes during 08:00–16:00 IST weekdays in case
-credentials were unavailable earlier. Download/validation must succeed before an
+The MStock master refreshes at 07:00 IST weekdays when older than today. There is
+no startup or in-session scheduled refresh; a failed morning refresh leaves the
+previous master intact and requires an explicit operator retry. Download/validation must succeed before an
 atomic replacement transaction; a failed persistence batch rolls back the replacement.
 Old contracts never substitute for the requested expiry, strike or option side.
 

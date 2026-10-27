@@ -17,7 +17,7 @@ import static org.mockito.Mockito.when;
 class MStockInstrumentCacheServiceTest {
 
     @Test
-    void startupRefreshesLegacyMasterWithoutExchangeTokens() {
+    void morningRefreshesLegacyMasterWithoutExchangeTokens() {
         MStockInstrumentRepository repository = mock(MStockInstrumentRepository.class);
         MStockInstrumentCacheService service = spy(new MStockInstrumentCacheService(
                 repository,
@@ -28,12 +28,12 @@ class MStockInstrumentCacheServiceTest {
         when(repository.existsByExchangeTokenIsNotNull()).thenReturn(false);
         doReturn(true).when(service).refreshInstrumentMaster();
 
-        assertThat(service.refreshInstrumentMasterIfEmpty()).isTrue();
+        assertThat(service.refreshInstrumentMasterIfStale()).isTrue();
         verify(service).refreshInstrumentMaster();
     }
 
     @Test
-    void startupKeepsTodaysPopulatedMasterWithExchangeTokens() {
+    void morningKeepsTodaysPopulatedMasterWithExchangeTokens() {
         MStockInstrumentRepository repository = mock(MStockInstrumentRepository.class);
         MStockInstrumentCacheService service = spy(new MStockInstrumentCacheService(
                 repository,
@@ -44,7 +44,7 @@ class MStockInstrumentCacheServiceTest {
         when(repository.existsByExchangeTokenIsNotNull()).thenReturn(true);
         when(repository.latestFetchTime()).thenReturn(java.time.LocalDateTime.now());
 
-        assertThat(service.refreshInstrumentMasterIfEmpty()).isFalse();
+        assertThat(service.refreshInstrumentMasterIfStale()).isFalse();
         verify(service, never()).refreshInstrumentMaster();
     }
 
@@ -58,7 +58,7 @@ class MStockInstrumentCacheServiceTest {
         when(repository.existsByExchangeTokenIsNotNull()).thenReturn(true);
         when(repository.latestFetchTime()).thenReturn(java.time.LocalDateTime.of(2026, 8, 13, 23, 9));
         doReturn(true).when(service).refreshInstrumentMaster();
-        assertThat(service.refreshInstrumentMasterIfEmpty()).isTrue();
+        assertThat(service.refreshInstrumentMasterIfStale()).isTrue();
         verify(service).refreshInstrumentMaster();
     }
 
