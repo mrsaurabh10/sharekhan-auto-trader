@@ -248,6 +248,10 @@
     await loadOnboarding();
   }
   $('#executionFilters').addEventListener('submit',event=>{event.preventDefault();state.executionPage=0;busy(event.target.querySelector('button'),loadOrders);});
+  $('#allExecutionStatuses').addEventListener('click',event=>{
+    for (const option of $('#executionFilters').elements.status.options) option.selected=false;
+    state.executionPage=0;busy(event.target,loadOrders);
+  });
   $('#refreshOrders').addEventListener('click',event=>busy(event.target,loadOrders));
   for (const [id,key,delta] of [['previousRequests','requestPage',-1],['nextRequests','requestPage',1],['previousExecutions','executionPage',-1],['nextExecutions','executionPage',1]]) $('#'+id).addEventListener('click',event=>busy(event.target,async()=>{state[key]=Math.max(0,state[key]+delta);await loadOrders();}));
   const query = object => new URLSearchParams(object).toString();

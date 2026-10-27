@@ -258,19 +258,23 @@
 <div id="strategyRuns"></div>
 <h3>Individual executions, including manual and historical trades</h3>
 <form id="executionFilters" class="analytics-filters">
-<label>Status<select name="status">
-<option value="">All statuses</option>
-<option value="EXECUTED">Executed</option>
-<option value="TARGET_ORDER_PLACED">Target order placed</option>
-<option value="EXIT_ORDER_PLACED">Exit order placed</option>
+<label>Statuses<select name="status" multiple size="5" aria-describedby="executionStatusHelp">
+<option value="EXECUTED" selected>Executed</option>
+<option value="TARGET_ORDER_PLACED" selected>Target order placed</option>
+<option value="EXIT_ORDER_PLACED" selected>Exit order placed</option>
+<option value="EXIT_TRIGGERED">Exit triggered</option>
 <option value="EXITED_SUCCESS">Exited</option>
+<option value="EXIT_FAILED">Exit failed</option>
+<option value="PLACED_PENDING_CONFIRMATION">Pending confirmation</option>
 <option value="REJECTED">Rejected</option>
 <option value="FAILED">Failed</option>
 </select>
+<small id="executionStatusHelp">Hold Ctrl (Windows) or Command (Mac) to select multiple statuses. No selection shows all statuses.</small>
 </label>
 <label>Source<input name="source" placeholder="All sources">
 </label>
 <button class="secondary" type="submit">Apply filter</button>
+<button class="text-button" type="button" id="allExecutionStatuses">All statuses</button>
 </form>
 <div id="executions" class="table-wrap">
 </div>
@@ -452,7 +456,7 @@
 </dialog>
 <script src="/portal/trade-actions.js?v=20261021-exit-safety" defer></script>
 <script src="/portal/telegram-settings.js?v=20261021-personal-telegram" defer></script>
-<script src="/portal/portal.js?v=20261028-ngas-averaging" defer>
+<script src="/portal/portal.js?v=20261029-execution-status-filter" defer>
 </script>
 </body>
 </html>
