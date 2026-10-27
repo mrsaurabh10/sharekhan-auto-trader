@@ -23,7 +23,7 @@ class MStockInstrumentCacheServiceTest {
                 repository,
                 mock(TokenStoreService.class),
                 mock(CryptoService.class),
-                mock(MStockProperties.class)));
+                mock(MStockProperties.class), mock(MStockInstrumentMasterWriter.class)));
         when(repository.count()).thenReturn(50_000L);
         when(repository.existsByExchangeTokenIsNotNull()).thenReturn(false);
         doReturn(true).when(service).refreshInstrumentMaster();
@@ -33,17 +33,42 @@ class MStockInstrumentCacheServiceTest {
     }
 
     @Test
-    void startupKeepsPopulatedMasterWithExchangeTokens() {
+    void startupKeepsTodaysPopulatedMasterWithExchangeTokens() {
         MStockInstrumentRepository repository = mock(MStockInstrumentRepository.class);
         MStockInstrumentCacheService service = spy(new MStockInstrumentCacheService(
                 repository,
                 mock(TokenStoreService.class),
                 mock(CryptoService.class),
-                mock(MStockProperties.class)));
+                mock(MStockProperties.class), mock(MStockInstrumentMasterWriter.class)));
         when(repository.count()).thenReturn(50_000L);
         when(repository.existsByExchangeTokenIsNotNull()).thenReturn(true);
+        when(repository.latestFetchTime()).thenReturn(java.time.LocalDateTime.now());
 
         assertThat(service.refreshInstrumentMasterIfEmpty()).isFalse();
         verify(service, never()).refreshInstrumentMaster();
     }
+
+    @Test
+    void populatedAugustMasterMustRefreshForNovemberContracts() {
+        var repository = mock(MStockInstrumentRepository.class);
+        var writer = mock(MStockInstrumentMasterWriter.class);
+        var service = spy(new MStockInstrumentCacheService(repository, mock(TokenStoreService.class),
+                mock(CryptoService.class), mock(MStockProperties.class), writer));
+        when(repository.count()).thenReturn(50000L);
+        when(repository.existsByExchangeTokenIsNotNull()).thenReturn(true);
+        when(repository.latestFetchTime()).thenReturn(java.time.LocalDateTime.of(2026, 8, 13, 23, 9));
+        doReturn(true).when(service).refreshInstrumentMaster();
+        assertThat(service.refreshInstrumentMasterIfEmpty()).isTrue();
+        verify(service).refreshInstrumentMaster();
+    }
+
+    @Test
+    void failedDownloadNeverReplacesExistingMaster() {
+        var writer = mock(MStockInstrumentMasterWriter.class);
+        var service = new MStockInstrumentCacheService(mock(MStockInstrumentRepository.class),
+                mock(TokenStoreService.class), mock(CryptoService.class), mock(MStockProperties.class), writer);
+        assertThat(service.refreshInstrumentMaster()).isFalse();
+        org.mockito.Mockito.verifyNoInteractions(writer);
+    }
+
 }

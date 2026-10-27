@@ -49,6 +49,10 @@ public class MStockLtpService {
      * Returns a map from instrument -> object { instrument_token: long, last_price: double } or null when the API returns null for that instrument.
      */
     public Map<String, Map<String, Object>> fetchLtp(List<String> instruments) {
+        return fetchLtp(instruments, true);
+    }
+
+    private Map<String, Map<String, Object>> fetchLtp(List<String> instruments, boolean allowRefresh) {
         if (instruments == null || instruments.isEmpty()) return Collections.emptyMap();
 
         try {
@@ -66,15 +70,15 @@ public class MStockLtpService {
             log.debug("MStock LTP request ({} instruments): {}", instruments.size(), urlStr);
 
             // Attempt request with the required Authorization format: 'token {apiKey}:{accessToken}'
-            HttpResult res = doRequestWithApiKey(urlStr, credentials.accessToken(), credentials.apiKey());
+            HttpResult res = doRequestWithApiKey(urlStr, credentials.accessToken(), credentials.apiKey(), allowRefresh);
 
             // if token-related error, try refresh via provider and retry once
-            if (res.code == 401 || indicatesTokenException(res.body)) {
+            if (allowRefresh && (res.code == 401 || indicatesTokenException(res.body))) {
                 log.warn("MStock LTP returned token error (http {}), attempting refresh via provider", res.code);
                 RequestCredentials refreshedCredentials = refreshCredentials(credentials);
                 if (refreshedCredentials != null) {
                     credentials = refreshedCredentials;
-                    res = doRequestWithApiKey(urlStr, credentials.accessToken(), credentials.apiKey());
+                    res = doRequestWithApiKey(urlStr, credentials.accessToken(), credentials.apiKey(), allowRefresh);
                 } else {
                     log.warn("Unable to refresh MStock token for failed LTP request");
                 }
@@ -143,39 +147,39 @@ public class MStockLtpService {
         return map.get(instrument);
     }
 
+    public Map<String, Object> fetchLtpForInstrumentReadOnly(String instrument) {
+        return fetchLtp(Collections.singletonList(instrument), false).get(instrument);
+    }
+
     private HttpResult doRequestWithApiKey(String urlStr, String accessToken, String apiKey) throws Exception {
-        URL url = new URL(urlStr);
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("GET");
-        conn.setConnectTimeout(15_000);
-        conn.setReadTimeout(30_000);
-        conn.setRequestProperty("X-Mirae-Version", "1");
+        return doRequestWithApiKey(urlStr, accessToken, apiKey, true);
+    }
 
-        // Authorization must be: token {apiKey}:{accessToken}
-        String authValue;
-        if (apiKey != null && !apiKey.isBlank()) {
-            authValue = "token " + apiKey + ":" + accessToken;
-        } else {
-            // fallback to token {accessToken} if apiKey not present (avoid breaking existing setups)
-            authValue = "token " + accessToken;
+    private HttpResult doRequestWithApiKey(String urlStr, String accessToken, String apiKey, boolean interactive) throws Exception {
+        HttpURLConnection conn = openConnection(new URL(urlStr));
+        try {
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(interactive ? 15_000 : 500);
+            conn.setReadTimeout(interactive ? 30_000 : 750);
+            conn.setRequestProperty("X-Mirae-Version", "1");
+            conn.setRequestProperty("Authorization", apiKey != null && !apiKey.isBlank()
+                    ? "token " + apiKey + ":" + accessToken : "token " + accessToken);
+            int rc = conn.getResponseCode();
+            java.io.InputStream stream = rc >= 200 && rc < 300 ? conn.getInputStream() : conn.getErrorStream();
+            if (stream == null) return new HttpResult(rc, "");
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
+                StringBuilder out = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) out.append(line).append('\n');
+                return new HttpResult(rc, out.toString().trim());
+            }
+        } finally {
+            conn.disconnect();
         }
-        conn.setRequestProperty("Authorization", authValue);
+    }
 
-        int rc = conn.getResponseCode();
-        BufferedReader reader;
-        if (rc >= 200 && rc < 300) {
-            reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
-        } else {
-            reader = new BufferedReader(new InputStreamReader(conn.getErrorStream() != null ? conn.getErrorStream() : conn.getInputStream(), StandardCharsets.UTF_8));
-        }
-
-        StringBuilder out = new StringBuilder();
-        String line;
-        while ((line = reader.readLine()) != null) {
-            out.append(line).append('\n');
-        }
-        String resp = out.toString().trim();
-        return new HttpResult(rc, resp);
+    HttpURLConnection openConnection(URL url) throws java.io.IOException {
+        return (HttpURLConnection) url.openConnection();
     }
 
     private HttpResult doRequestWithApiKey(String urlStr, String accessToken) throws Exception {

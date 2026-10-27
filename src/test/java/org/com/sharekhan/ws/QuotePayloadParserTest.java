@@ -44,5 +44,19 @@ class QuotePayloadParserTest {
         assertNull(bidAsk.bid());
         assertNull(bidAsk.ask());
     }
+
+    @org.junit.jupiter.api.Test
+    void exchangeProvenanceRequiresExplicitAndConsistentProviderFields() throws Exception {
+        var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        org.assertj.core.api.Assertions.assertThat(QuotePayloadParser.exchange(mapper.readTree(
+                "{\"scripCode\":\"NF77351\"}"))).isEqualTo("NF");
+        org.assertj.core.api.Assertions.assertThat(QuotePayloadParser.exchange(mapper.readTree(
+                "{\"scripCode\":77351,\"exchange\":\"NFO\"}"))).isEqualTo("NF");
+        org.assertj.core.api.Assertions.assertThat(QuotePayloadParser.exchange(mapper.readTree(
+                "{\"scripCode\":77351}"))).isNull();
+        org.assertj.core.api.Assertions.assertThat(QuotePayloadParser.exchange(mapper.readTree(
+                "{\"scripCode\":\"NF77351\",\"exchange\":\"NSE\"}"))).isNull();
+    }
+
 }
 

@@ -1445,4 +1445,61 @@ class TradeExecutionServiceBrokerSideEntryTest {
     private interface TestBrokerService extends TriggerPriceEntryBrokerService,
             ModifiableEntryBrokerService, OrderStatusBrokerService {
     }
+
+    @Test
+    void freshExactSharekhanOptionFeedWorksForLiveAndSimulatorWithoutRestOrAuth() {
+        for (boolean simulator : List.of(false, true)) {
+            var ctx = new TestContext(pending("unused"));
+            if (simulator) ctx.useSimulatorBroker();
+            retryOption(ctx);
+            var shoonya = mock(ShoonyaQuoteService.class);
+            ReflectionTestUtils.setField(ctx.service, "shoonyaQuoteService", shoonya);
+            when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(optionFeed(Instant.now(), "NF", "scrip:123456")));
+            Double price = ReflectionTestUtils.invokeMethod(ctx.service, "resolveEntryReferencePrice", 123456, "executeTriggeredTrade");
+            assertThat(price).isEqualTo(125.6);
+            org.mockito.Mockito.verifyNoInteractions(shoonya, ctx.broker);
+        }
+    }
+
+    @Test
+    void sharekhanOptionFallbackRejectsStaleFutureMissingExchangeWrongScripAndMixedSource() {
+        for (String fault : List.of("stale", "future", "exchange", "identity", "source", "scrip")) {
+            var ctx = new TestContext(pending("unused")); retryOption(ctx);
+            var builder = QuoteCacheService.QuoteSnapshot.builder().scripCode(fault.equals("scrip") ? 999 : 123456)
+                    .ltpSource(fault.equals("source") ? "UNKNOWN" : "SHAREKHAN_WS")
+                    .ltpExchange(fault.equals("exchange") ? "NC" : "NF")
+                    .ltpProviderIdentity(fault.equals("identity") ? "scrip:999" : "scrip:123456")
+                    .lastTradedPrice(125.6).updatedAt(Instant.now())
+                    .lastLtpAt(fault.equals("stale") ? Instant.now().minusSeconds(60)
+                            : fault.equals("future") ? Instant.now().plusSeconds(60) : Instant.now());
+            when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(builder.build()));
+            Double price = ReflectionTestUtils.invokeMethod(ctx.service, "resolveEntryReferencePrice", 123456, "executeTriggeredTrade");
+            assertThat(price).as(fault).isNull();
+            org.mockito.Mockito.verifyNoInteractions(ctx.broker);
+        }
+    }
+
+    @Test
+    void mstockExactOptionFallbackUsesReadOnlyClientAndRejectsWrongToken() {
+        for (long returnedToken : List.of(123456L, 999L)) {
+            var ctx = new TestContext(pending("unused")); var script = retryOption(ctx);
+            var resolver = mock(MStockInstrumentResolver.class); var mstock = mock(MStockLtpService.class);
+            ReflectionTestUtils.setField(ctx.service, "mStockInstrumentResolver", resolver);
+            ReflectionTestUtils.setField(ctx.service, "mStockLtpService", mstock);
+            when(resolver.resolveInstrumentKey(script)).thenReturn(Optional.of("NFO:NIFTY26JUN25000CE"));
+            when(mstock.fetchLtpForInstrumentReadOnly("NFO:NIFTY26JUN25000CE"))
+                    .thenReturn(Map.of("instrument_token", returnedToken, "last_price", 125.6));
+            Double price = ReflectionTestUtils.invokeMethod(ctx.service, "resolveEntryReferencePrice", 123456, "executeTriggeredTrade");
+            if (returnedToken == 123456L) assertThat(price).isEqualTo(125.6); else assertThat(price).isNull();
+            verify(mstock, never()).fetchLtpForInstrument(anyString());
+            org.mockito.Mockito.verifyNoInteractions(ctx.broker);
+        }
+    }
+
+    private QuoteCacheService.QuoteSnapshot optionFeed(Instant received, String exchange, String identity) {
+        return QuoteCacheService.QuoteSnapshot.builder().scripCode(123456).ltpSource("SHAREKHAN_WS")
+                .ltpExchange(exchange).ltpProviderIdentity(identity).lastTradedPrice(125.6)
+                .lastLtpAt(received).updatedAt(Instant.now()).build();
+    }
+
 }

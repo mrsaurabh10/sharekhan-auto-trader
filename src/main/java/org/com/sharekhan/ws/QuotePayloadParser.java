@@ -13,6 +13,28 @@ final class QuotePayloadParser {
 
     record BidAsk(Double bid, Double ask) {}
 
+    /** Only a provider-echoed exchange or prefixed token establishes the feed segment. */
+    static String exchange(JsonNode data) {
+        String result = null;
+        for (String field : java.util.List.of("exchange", "Exchange", "exchangeCode", "ExchangeCode", "exch",
+                "scripCode", "ScripCode", "scripcode", "scrip_code", "scrip", "token")) {
+            JsonNode value = data.get(field);
+            if (value == null || !value.isTextual()) continue;
+            String text = value.asText().trim().toUpperCase(Locale.ROOT);
+            String candidate = switch (text) {
+                case "NF", "NFO" -> "NF";
+                case "BF", "BFO" -> "BF";
+                case "NC", "NSE" -> "NC";
+                case "BC", "BSE" -> "BC";
+                default -> text.matches("(NF|BF|NC|BC)[0-9]+") ? text.substring(0, 2) : null;
+            };
+            if (candidate == null) continue;
+            if (result != null && !result.equals(candidate)) return null;
+            result = candidate;
+        }
+        return result;
+    }
+
     static BidAsk extractBestBidAsk(JsonNode data) {
         if (data == null || data.isMissingNode()) {
             return new BidAsk(null, null);
