@@ -132,7 +132,7 @@ public class StrategySubscriptionService {
             return;
         }
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
-        evaluateBatch(active.stream().filter(s -> !org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
+        evaluateBatch(active.stream().filter(s -> !org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId())).toList());
     }
 
     /** MCX is evaluated independently of the NSE calendar and afternoon entry cutoff. */
@@ -140,7 +140,7 @@ public class StrategySubscriptionService {
     public void evaluateNaturalGasStrategies() {
         if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(MARKET_ZONE))) return;
         for (var subscription : repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED))) {
-            if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(subscription.getTemplateId())) evaluate(subscription);
+            if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(subscription.getTemplateId())) evaluate(subscription);
         }
     }
 
@@ -258,10 +258,11 @@ public class StrategySubscriptionService {
         if (!strategyTemplateService.supports(request.getTemplateId())) {
             throw new IllegalArgumentException("Unknown strategy template");
         }
-        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
-            org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
+            if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
+            else org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
             strategyTemplateService.validateConfiguration(request);
-            request.setSource(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE);
+            request.setSource("strategy:"+request.getTemplateId().trim().toUpperCase(java.util.Locale.ROOT));
         }
         if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             request.setLots(null);
@@ -283,10 +284,11 @@ public class StrategySubscriptionService {
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
         }
-        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
-            org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
+            if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
+            else org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
             strategyTemplateService.validateConfiguration(request);
-            request.setSource(org.com.sharekhan.strategy.mcx.NaturalGasSession.SOURCE);
+            request.setSource("strategy:"+request.getTemplateId().trim().toUpperCase(java.util.Locale.ROOT));
         }
         if (Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
@@ -338,7 +340,7 @@ public class StrategySubscriptionService {
 
     private boolean isContinuousFnoTemplate(String templateId) {
         return isAutomaticUniverseTemplate(templateId)
-                || org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(templateId)
+                || org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(templateId)
                 || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || isManualFnoTemplate(templateId);
     }

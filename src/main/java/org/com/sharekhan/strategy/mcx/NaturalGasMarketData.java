@@ -47,6 +47,10 @@ public class NaturalGasMarketData {
         var rows=new ArrayList<>(candles(future.getScripCode(),now).stream().filter(c->c.date().isBefore(now.toLocalDate())).toList());
         rows.addAll(shoonya.completed(future,now));return List.copyOf(rows);
     }
+    public List<StrategyCandle> threeMinuteCandles(org.com.sharekhan.entity.ScriptMasterEntity future,LocalDateTime now) {
+        return shoonya.completed(future,now,3);
+    }
+    public String threeMinuteStatus(Integer code){return shoonya.diagnostics(code,3).toString();}
     public String shoonyaStatus(Integer code){return shoonya.diagnostics(code).toString();}
     /** Verified (start,end] provider buckets: an exact boundary belongs to the interval ending there. */
     static StrategyCandle intervalStart(StrategyCandle c) {

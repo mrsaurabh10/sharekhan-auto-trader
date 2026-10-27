@@ -86,6 +86,10 @@ public class StrategyTemplateService {
     }
 
     public void validateConfiguration(StrategyApplyRequest request) {
+        if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
+            var evaluator=evaluators.get(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE);
+            if (evaluator instanceof org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy scalping) scalping.validateConfiguration(request);
+        }
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
             var evaluator = evaluators.get(org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE);
             if (evaluator instanceof org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy naturalGas)
@@ -100,7 +104,7 @@ public class StrategyTemplateService {
         if (!StringUtils.hasText(request.getTemplateId())) {
             throw new IllegalArgumentException("templateId is required");
         }
-        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))
+        if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim()))
             validateConfiguration(request);
         if (org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId().trim())) {
             request.setSymbol(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.symbol(request.getSymbol()));

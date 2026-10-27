@@ -2397,7 +2397,7 @@
     const updateSymbolInput = function () {
       if (!symbolInput) return;
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
-      const naturalGas = String((templateSelect && templateSelect.value) || '') === 'MCX_NATURALGAS_ATM_BREAKOUT';
+      const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(String((templateSelect && templateSelect.value) || ''));
       const profitRow = document.getElementById('strategyProfitTargetRow');
       const profitInput = document.getElementById('strategyProfitTargetPerLot');
       if (profitRow) profitRow.style.display = 'none';
@@ -2455,7 +2455,7 @@
       const investmentPerStock = Number(investmentText);
       let riskSettings;
       try {riskSettings=window.StrategyRunView?.readRisk(document.getElementById('adminRunRisk')) || null;} catch(error) {if(result)result.innerText=error.message;return;}
-      if (templateId === 'MCX_NATURALGAS_ATM_BREAKOUT' && !riskSettings?.maxLoss) {if(result)result.innerText='Set a maximum rupee loss for Natural Gas.';return;}
+      if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(templateId) && !riskSettings?.maxLoss) {if(result)result.innerText='Set a maximum rupee loss for Natural Gas.';return;}
       if (stockMover && (!/^\d+(\.\d{1,2})?$/.test(investmentText) || !Number.isFinite(investmentPerStock) || investmentPerStock <= 0 || investmentPerStock > 999999999.99)) {
         if (result) result.innerText = 'Enter a positive investment per stock with up to two decimal places.';
         return;
