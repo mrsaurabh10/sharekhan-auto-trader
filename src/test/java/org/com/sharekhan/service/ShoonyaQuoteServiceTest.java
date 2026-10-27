@@ -110,4 +110,22 @@ class ShoonyaQuoteServiceTest {
         exchange.getResponseBody().write(response.getBytes(StandardCharsets.UTF_8));
         exchange.close();
     }
+
+    @Test
+    void automatedOptionReadWithMissingSavedSessionNeverStartsAuthentication() {
+        var properties = new ShoonyaProperties();
+        var tokens = mock(TokenStoreService.class);
+        var registry = mock(BrokerAuthProviderRegistry.class);
+        var master = mock(ShoonyaInstrumentMasterService.class);
+        var script = org.com.sharekhan.entity.ScriptMasterEntity.builder().scripCode(77351).build();
+        when(master.resolveScript(script)).thenReturn(java.util.Optional.of(
+                org.com.sharekhan.entity.ShoonyaInstrumentEntity.builder()
+                        .exchange("NFO").token("77351").tradingSymbol("BANKINDIA23NOV26C130").build()));
+        var service = new ShoonyaQuoteService(properties, tokens, registry, master);
+        assertThat(service.getOptionQuote(script)).isEmpty();
+        verify(tokens).loadFromDb(Broker.SHOONYA);
+        verifyNoInteractions(registry);
+        verify(tokens, never()).updateToken(any(), anyString(), anyLong());
+    }
+
 }

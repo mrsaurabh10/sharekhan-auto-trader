@@ -189,4 +189,23 @@ class MStockInstrumentResolverTest {
                 .instrumentType("EQ")
                 .build();
     }
+
+    @Test
+    void novemberStockOptionIsUnresolvableInAugustMasterButResolvesAfterRefresh() {
+        var script = ScriptMasterEntity.builder().scripCode(77351).exchange("NF").tradingSymbol("BANKINDIA")
+                .instrumentType("OS").optionType("CE").expiry("23/11/2026").strikePrice(130d).build();
+        var old = MStockInstrumentEntity.builder().instrumentKey("NFO:BANKINDIA26OCT130CE")
+                .tradingSymbol("BANKINDIA26OCT130CE").name("BANKINDIA").exchange("NFO")
+                .instrumentType("CE").strike(130d).expiry("2026-10-27").exchangeToken("57447").build();
+        when(mStockInstrumentRepository.findByExchangeIgnoreCaseAndNameIgnoreCase("NFO", "BANKINDIA"))
+                .thenReturn(List.of(old));
+        assertThat(resolver.resolveInstrumentKey(script)).isEmpty();
+        var fresh = MStockInstrumentEntity.builder().instrumentKey("NFO:BANKINDIA26NOV130CE")
+                .tradingSymbol("BANKINDIA26NOV130CE").name("BANKINDIA").exchange("NFO")
+                .instrumentType("CE").strike(130d).expiry("2026-11-23").exchangeToken("77351").build();
+        when(mStockInstrumentRepository.findByExchangeIgnoreCaseAndNameIgnoreCase("NFO", "BANKINDIA"))
+                .thenReturn(List.of(old, fresh));
+        when(mStockInstrumentRepository.findByInstrumentKey(fresh.getInstrumentKey())).thenReturn(Optional.of(fresh));
+        assertThat(resolver.resolveInstrumentKey(script)).contains("NFO:BANKINDIA26NOV130CE");
+    }
 }

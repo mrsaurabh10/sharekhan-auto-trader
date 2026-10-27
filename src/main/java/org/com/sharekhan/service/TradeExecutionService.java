@@ -359,6 +359,9 @@ public class TradeExecutionService {
         ScriptMasterEntity script = scripCode == null ? null : scriptMasterRepository.findByScripCode(scripCode);
         if (isFnoOption(script) && !"strategyOptionWarmup".equals(context)) {
             boolean entryRead = Set.of("expiryStraddlePreflight", "executeTriggeredTrade", "executeTradeFromEntity").contains(context);
+            if (!quoteWindowOpen.getAsBoolean()) return null;
+            Double sharekhanPrice = freshSharekhanOptionPrice(script);
+            if (isUsableMarketPrice(sharekhanPrice)) return quoteWindowOpen.getAsBoolean() ? sharekhanPrice : null;
             long started = System.nanoTime();
             for (int attempt = 1; attempt <= (entryRead ? 3 : 1); attempt++) {
                 if (!quoteWindowOpen.getAsBoolean()) return null;
@@ -370,6 +373,8 @@ public class TradeExecutionService {
                         context, scripCode, attempt);
             }
             if (!quoteWindowOpen.getAsBoolean()) return null;
+            sharekhanPrice = freshSharekhanOptionPrice(script);
+            if (isUsableMarketPrice(sharekhanPrice)) return quoteWindowOpen.getAsBoolean() ? sharekhanPrice : null;
             log.warn("[{}] Shoonya option quote unavailable for scrip {}. Falling back to MStock LTP.", context, scripCode);
             Double fallback = fetchLtpViaMStockFallback(scripCode, context);
             return quoteWindowOpen.getAsBoolean() ? fallback : null;
@@ -395,6 +400,38 @@ public class TradeExecutionService {
 
         log.debug("[{}] No fresh Sharekhan quote/cache LTP for scrip {}. Trying MStock fallback.", context, scripCode);
         return fetchLtpViaMStockFallback(scripCode, context);
+    }
+
+    private Double freshSharekhanOptionPrice(ScriptMasterEntity script) {
+        if (quoteCacheService == null) return null;
+        var quote = quoteCacheService.getSnapshot(script.getScripCode()).orElse(null);
+        if (quote == null || !script.getScripCode().equals(quote.getScripCode())) return null;
+        String identity = "scrip:" + script.getScripCode();
+        Instant now = Instant.now();
+        if ("SHAREKHAN_WS".equals(quote.getLtpSource()) && identity.equals(quote.getLtpProviderIdentity())
+                && sameOptionExchange(script.getExchange(), quote.getLtpExchange())
+                && freshOptionTimestamp(quote.getLastLtpAt(), now) && isUsableMarketPrice(quote.getLastTradedPrice())) {
+            log.info("OPTION_QUOTE_FALLBACK_ACCEPTED | provider=SHAREKHAN_WS | scrip={}", script.getScripCode());
+            return quote.getLastTradedPrice();
+        }
+        if ("SHAREKHAN_WS".equals(quote.getBookSource()) && identity.equals(quote.getBookProviderIdentity())
+                && sameOptionExchange(script.getExchange(), quote.getBookExchange()) && quote.isCoherentBook()
+                && freshOptionTimestamp(quote.getLastBookAt(), now) && quote.hasBook()
+                && quote.getBestAsk() >= quote.getBestBid()) {
+            return (quote.getBestAsk() + quote.getBestBid()) / 2d;
+        }
+        return null;
+    }
+
+    private boolean freshOptionTimestamp(Instant received, Instant now) {
+        return received != null && !received.isAfter(now) && !received.isBefore(now.minus(entryQuoteMaxAge()));
+    }
+
+    private boolean sameOptionExchange(String expected, String actual) {
+        if (expected == null || actual == null) return false;
+        String a = expected.toUpperCase(Locale.ROOT), b = actual.toUpperCase(Locale.ROOT);
+        return (Set.of("NF", "NFO").contains(a) && Set.of("NF", "NFO").contains(b))
+                || (Set.of("BF", "BFO").contains(a) && Set.of("BF", "BFO").contains(b));
     }
 
     private boolean isFnoOption(ScriptMasterEntity script) {
@@ -6292,7 +6329,9 @@ public class TradeExecutionService {
             }
             String instrumentKey = instrumentKeyOpt.get();
             log.debug("[{}] Attempting MStock LTP fetch for instrument {} (scrip {}).", context, instrumentKey, scripCode);
-            Map<String, Object> payload = mStockLtpService.fetchLtpForInstrument(instrumentKey);
+            Map<String, Object> payload = isFnoOption(script)
+                    ? mStockLtpService.fetchLtpForInstrumentReadOnly(instrumentKey)
+                    : mStockLtpService.fetchLtpForInstrument(instrumentKey);
             if (payload == null) {
                 log.warn("[{}] MStock LTP API returned null data for instrument {} (scrip {}).", context, instrumentKey, scripCode);
                 return null;
@@ -6309,6 +6348,7 @@ public class TradeExecutionService {
             Object lastPriceObj = payload.get("last_price");
             if (lastPriceObj instanceof Number number) {
                 double fetchedLtp = number.doubleValue();
+                if (!isUsableMarketPrice(fetchedLtp)) return null;
                 ltpCacheService.updateLtp(scripCode, fetchedLtp);
                 log.info("[{}] Fetched verified LTP {} via MStock for scrip {} (instrument={}, returnedToken={}).",
                         context, fetchedLtp, scripCode, instrumentKey, returnedToken);

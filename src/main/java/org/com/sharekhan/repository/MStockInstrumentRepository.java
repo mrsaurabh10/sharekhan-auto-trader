@@ -30,4 +30,7 @@ public interface MStockInstrumentRepository extends JpaRepository<MStockInstrume
     boolean existsByInstrumentKey(String instrumentKey);
 
     boolean existsByExchangeTokenIsNotNull();
+
+    @Query("SELECT MAX(i.fetchedAt) FROM MStockInstrumentEntity i")
+    java.time.LocalDateTime latestFetchTime();
 }

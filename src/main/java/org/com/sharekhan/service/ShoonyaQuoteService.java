@@ -84,6 +84,10 @@ public class ShoonyaQuoteService {
     }
 
     public JSONObject getQuotes(String exchange, String token, String symbol) {
+        return getQuotes(exchange, token, symbol, true);
+    }
+
+    private JSONObject getQuotes(String exchange, String token, String symbol, boolean allowLogin) {
         if (!StringUtils.hasText(exchange)) throw new IllegalArgumentException("exchange is required");
         if (!StringUtils.hasText(token)) token = instrumentMasterService.resolveToken(exchange, symbol);
         String sessionToken = tokenStoreService.getAccessToken(Broker.SHOONYA);
@@ -93,6 +97,7 @@ public class ShoonyaQuoteService {
             sessionToken = tokenStoreService.getAccessToken(Broker.SHOONYA);
         }
         if (!StringUtils.hasText(sessionToken)) {
+            if (!allowLogin) throw new IllegalStateException("Shoonya saved session unavailable; quote read will not authenticate");
             BrokerAuthProvider provider = providerRegistry.getProvider(Broker.SHOONYA);
             if (provider == null) throw new IllegalStateException("Shoonya authentication provider is not registered");
             AuthTokenResult authenticated = provider.loginAndFetchToken();
@@ -104,7 +109,7 @@ public class ShoonyaQuoteService {
         // This is the wire-request identity, recorded immediately before the HTTP call.
         // Do not add uid or Authorization to this log.
         log.info("SHOONYA_QUOTE_REQUEST | requestId={} | exchange={} | token={}", quoteRequestId, exchange, token);
-        return post(request, sessionToken, quoteRequestId);
+        return post(request, sessionToken, quoteRequestId, allowLogin);
     }
 
     /** Fetches a current option quote using the persisted Shoonya symbol master mapping. */
@@ -118,7 +123,7 @@ public class ShoonyaQuoteService {
         if (instrument.isEmpty()) return Optional.empty();
         ShoonyaInstrumentEntity resolved = instrument.get();
         try {
-            JSONObject quote = getQuotes(resolved.getExchange(), resolved.getToken(), null);
+            JSONObject quote = getQuotes(resolved.getExchange(), resolved.getToken(), null, false);
             if (!"Ok".equalsIgnoreCase(quote.optString("stat"))) return Optional.empty();
             LiveQuote result = new LiveQuote(resolved.getTradingSymbol(), resolved.getToken(),
                     firstText(quote, "tsym", "trading_symbol"), firstText(quote, "tk", "token"),
@@ -143,12 +148,12 @@ public class ShoonyaQuoteService {
         return null;
     }
 
-    private JSONObject post(JSONObject request, String sessionToken, String quoteRequestId) {
+    private JSONObject post(JSONObject request, String sessionToken, String quoteRequestId, boolean interactive) {
         try {
             HttpURLConnection connection = (HttpURLConnection) URI.create(properties.getApiUrl() + "/GetQuotes").toURL().openConnection();
             connection.setRequestMethod("POST");
-            connection.setConnectTimeout(15_000);
-            connection.setReadTimeout(30_000);
+            connection.setConnectTimeout(interactive ? 15_000 : 500);
+            connection.setReadTimeout(interactive ? 30_000 : 750);
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8");
             connection.setRequestProperty("Authorization", "Bearer " + sessionToken);

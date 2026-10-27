@@ -26,7 +26,6 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.GZIPInputStream;
 
 @Service
@@ -35,26 +34,42 @@ import java.util.zip.GZIPInputStream;
 public class MStockInstrumentCacheService {
 
     private static final String SCRIPT_MASTER_URL = "https://api.mstock.trade/openapi/typea/instruments/scriptmaster";
-    private static final int BATCH_SIZE = 1_000;
 
     private final MStockInstrumentRepository repository;
     private final TokenStoreService tokenStoreService;
     private final CryptoService cryptoService;
     private final MStockProperties mStockProperties;
+    private final MStockInstrumentMasterWriter masterWriter;
 
     public boolean refreshInstrumentMasterIfEmpty() {
         long rows = repository.count();
-        if (rows > 0 && repository.existsByExchangeTokenIsNotNull()) {
-            log.info("✅ MStock instrument master already populated. Skipping refresh.");
+        LocalDateTime latest = repository.latestFetchTime();
+        if (rows > 0 && repository.existsByExchangeTokenIsNotNull() && latest != null
+                && !latest.toLocalDate().isBefore(java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")))) {
+            log.info("MStock instrument master already refreshed today. Skipping refresh.");
             return false;
         }
         if (rows > 0) {
-            log.warn("MStock instrument master has {} legacy rows without exchange tokens; refreshing it.", rows);
+            log.warn("MStock instrument master has {} stale or legacy rows; refreshing it.", rows);
         }
         return refreshInstrumentMaster();
     }
 
-    public boolean refreshInstrumentMaster() {
+    @org.springframework.scheduling.annotation.Scheduled(cron = "${app.mstock.master-refresh-cron:0 15 8 * * MON-FRI}", zone = "Asia/Kolkata")
+    public void refreshDaily() {
+        refreshInstrumentMasterIfEmpty();
+    }
+
+    // Credentials may become available after the startup or pre-open refresh.
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${app.mstock.master-refresh-check-ms:300000}", initialDelay = 60000)
+    public void retryStaleMasterDuringSession() {
+        var now = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+        if (now.getDayOfWeek().getValue() <= 5 && now.getHour() >= 8 && now.getHour() < 16) {
+            refreshInstrumentMasterIfEmpty();
+        }
+    }
+
+    public synchronized boolean refreshInstrumentMaster() {
         Optional<Credentials> credentialsOpt = resolveCredentials();
         if (credentialsOpt.isEmpty()) {
             log.warn("⚠️ Unable to resolve MStock credentials. Skipping instrument master fetch.");
@@ -162,7 +177,7 @@ public class MStockInstrumentCacheService {
                     return DownloadResult.FAILED;
                 }
 
-                persistRecords(records);
+                masterWriter.replace(records);
                 log.info("📥 Stored {} MStock instruments from script master.", records.size());
                 return DownloadResult.SUCCESS;
             }
@@ -182,23 +197,6 @@ public class MStockInstrumentCacheService {
             return new GZIPInputStream(raw);
         }
         return raw;
-    }
-
-    private void persistRecords(List<MStockInstrumentEntity> records) {
-        repository.deleteAllInBatch();
-
-        int size = records.size();
-        AtomicInteger saved = new AtomicInteger();
-        for (int from = 0; from < size; from += BATCH_SIZE) {
-            int to = Math.min(from + BATCH_SIZE, size);
-            List<MStockInstrumentEntity> batch = records.subList(from, to);
-            repository.saveAll(batch);
-            repository.flush();
-            saved.addAndGet(batch.size());
-            if (saved.get() % (BATCH_SIZE * 5) == 0) {
-                log.info("   ↳ Persisted {} instruments so far...", saved.get());
-            }
-        }
     }
 
     private List<MStockInstrumentEntity> parseCsv(BufferedReader reader) throws IOException {
