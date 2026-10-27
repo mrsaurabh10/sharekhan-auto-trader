@@ -18,7 +18,7 @@ public class ShoonyaAuthProvider implements BrokerAuthProvider {
     private final CryptoService cryptoService;
     @Override public Broker getBroker() { return Broker.SHOONYA; }
     @Override public AuthTokenResult loginAndFetchToken() {
-        return oauthService.exchangeAuthorizationCode(tokenFetcher.fetchAuthorizationCode(properties, oauthService.authorizationUrl()));
+        return loginAndFetchToken(null);
     }
 
     /** Uses the same encrypted broker_credentials fields as Sharekhan, falling back to SHOONYA_* properties. */
@@ -27,12 +27,27 @@ public class ShoonyaAuthProvider implements BrokerAuthProvider {
         resolved.setApiUrl(properties.getApiUrl());
         resolved.setOauthUrl(properties.getOauthUrl());
         resolved.setAccessTokenTtlSeconds(properties.getAccessTokenTtlSeconds());
+        resolved.setBrowserHeadless(properties.isBrowserHeadless());
         resolved.setClientId(first(decrypt(credentials == null ? null : credentials.getApiKey()), properties.getClientId()));
         resolved.setSecretCode(first(decrypt(credentials == null ? null : credentials.getSecretKey()), properties.getSecretCode()));
         resolved.setUid(first(decrypt(credentials == null ? null : credentials.getBrokerUsername()), decrypt(credentials == null ? null : credentials.getClientCode()), properties.getUid()));
-        resolved.setPassword(first(decrypt(credentials == null ? null : credentials.getBrokerPassword()), properties.getPassword()));
+        String scopedPassword = decrypt(credentials == null ? null : credentials.getBrokerPassword());
+        resolved.setPassword(scopedPassword != null ? scopedPassword : globalPassword());
         resolved.setTotpSecret(first(decrypt(credentials == null ? null : credentials.getTotpSecret()), properties.getTotpSecret()));
         return oauthService.exchangeAuthorizationCode(resolved, tokenFetcher.fetchAuthorizationCode(resolved, authorizationUrl(resolved)));
+    }
+
+    private String globalPassword() {
+        String value = properties.getPassword();
+        if (value == null || !value.startsWith("ENC(")) return value;
+        try {
+            if (!value.endsWith(")")) throw new IllegalArgumentException();
+            String plain = cryptoService.decrypt(value.substring(4, value.length() - 1));
+            if (plain == null || plain.isBlank()) throw new IllegalArgumentException();
+            return plain;
+        } catch (Exception ignored) {
+            throw new IllegalStateException("Unable to decrypt configured Shoonya password");
+        }
     }
 
     private String authorizationUrl(ShoonyaProperties resolved) {
