@@ -2397,7 +2397,7 @@
     const updateSymbolInput = function () {
       if (!symbolInput) return;
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
-      const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(String((templateSelect && templateSelect.value) || ''));
+      const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(String((templateSelect && templateSelect.value) || ''));
       const profitRow = document.getElementById('strategyProfitTargetRow');
       const profitInput = document.getElementById('strategyProfitTargetPerLot');
       if (profitRow) profitRow.style.display = 'none';
@@ -2413,6 +2413,18 @@
       symbolInput.style.display = btp ? 'none' : '';
       if (quantitiesRow) quantitiesRow.style.display = btp ? '' : 'none';
       const lotsInput = document.getElementById('strategyLots');
+      const averaging = String((templateSelect && templateSelect.value) || '') === 'MCX_NATURALGAS_TREND_AVERAGING';
+      if (lotsInput) {
+        lotsInput.readOnly=averaging;
+        if(averaging){lotsInput.value='4';lotsInput.dataset.averagingDefault='true';}
+        else if(lotsInput.dataset.averagingDefault){lotsInput.value='1';delete lotsInput.dataset.averagingDefault;}
+      }
+      window.StrategyRunView.averagingHelp(document.getElementById('adminRunRisk'),averaging);
+      document.querySelectorAll('#adminRunRisk [data-risk-field]').forEach(field=>{field.readOnly=averaging;if(field.tagName==='SELECT')field.disabled=averaging;});
+      if(averaging){
+        document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='3000';
+        document.querySelector('#adminRunRisk [data-risk-field=profitTarget]').value='1250';
+      }
       const investmentRow = document.getElementById('strategyInvestmentRow');
       if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';
       if (lotsInput && (btp || isStockMover())) lotsInput.closest('.form-row').style.display = 'none';
@@ -2455,7 +2467,7 @@
       const investmentPerStock = Number(investmentText);
       let riskSettings;
       try {riskSettings=window.StrategyRunView?.readRisk(document.getElementById('adminRunRisk')) || null;} catch(error) {if(result)result.innerText=error.message;return;}
-      if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(templateId) && !riskSettings?.maxLoss) {if(result)result.innerText='Set a maximum rupee loss for Natural Gas.';return;}
+      if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(templateId) && !riskSettings?.maxLoss) {if(result)result.innerText='Set a maximum rupee loss for Natural Gas.';return;}
       if (stockMover && (!/^\d+(\.\d{1,2})?$/.test(investmentText) || !Number.isFinite(investmentPerStock) || investmentPerStock <= 0 || investmentPerStock > 999999999.99)) {
         if (result) result.innerText = 'Enter a positive investment per stock with up to two decimal places.';
         return;

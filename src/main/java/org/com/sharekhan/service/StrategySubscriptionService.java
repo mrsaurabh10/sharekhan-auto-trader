@@ -259,7 +259,8 @@ public class StrategySubscriptionService {
             throw new IllegalArgumentException("Unknown strategy template");
         }
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
-            if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
+            if (org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.validate(request);
+            else if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
             else org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
             strategyTemplateService.validateConfiguration(request);
             request.setSource("strategy:"+request.getTemplateId().trim().toUpperCase(java.util.Locale.ROOT));
@@ -285,7 +286,8 @@ public class StrategySubscriptionService {
             throw new IllegalArgumentException("symbol is required");
         }
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
-            if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
+            if (org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.validate(request);
+            else if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
             else org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
             strategyTemplateService.validateConfiguration(request);
             request.setSource("strategy:"+request.getTemplateId().trim().toUpperCase(java.util.Locale.ROOT));

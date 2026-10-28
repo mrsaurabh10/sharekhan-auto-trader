@@ -71,4 +71,19 @@ class StrategyRunCoordinatorTest {
             assertThatThrownBy(am::ensureCurrentRun).hasMessageContaining("paused");return null;
         });assertThat(saved).isEmpty();
     }
+
+    @Test void averagingReusesOpenBasketAndCreatesNextOnlyAfterConfirmedClosure() {
+        var c=coordinator("11:00:05");var r=request();r.setTemplateId(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE);r.setSymbol("NATURALGAS");r.setLots(4);
+        org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.validate(r);
+        subs.findById(10L).orElseThrow().setTemplateId(r.getTemplateId());
+        when(runs.findByAppUserIdAndBrokerCredentialsIdAndTemplateIdAndTradingDayOrderByCreatedAtAsc(any(),any(),any(),any()))
+            .thenAnswer(x->saved.values().stream().sorted(Comparator.comparing(StrategyRun::getInstance)).toList());
+        assertThatThrownBy(c::currentId).hasMessageContaining("context");
+        c.evaluate(r,()->{assertThat(saved).isEmpty();c.ensureCurrentRun();return null;});
+        var first=saved.values().iterator().next();assertThat(first.getInstance()).isEqualTo("BASKET1");
+        c.evaluate(r,()->{assertThat(c.currentId()).isEqualTo(first.getId());c.ensureCurrentRun();return null;});assertThat(saved).hasSize(1);
+        first.setStatus("CLOSING");assertThat(c.evaluate(r,()->{throw new AssertionError("must not evaluate a closing basket");}).getStatus()).isEqualTo("waiting");
+        first.setStatus("CLOSED");c.evaluate(r,()->{c.ensureCurrentRun();return null;});
+        assertThat(saved).hasSize(2);assertThat(saved.values()).extracting(StrategyRun::getInstance).containsExactlyInAnyOrder("BASKET1","BASKET2");
+    }
 }
