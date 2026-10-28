@@ -2515,6 +2515,9 @@ public class TradeExecutionService {
             return triggeredTradeSetupEntity;
 
         } catch (Exception e) {
+            if (e instanceof EntryNotReadyException waiting
+                    && org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(trigger.getSource()))
+                throw waiting; // Preserve explicit pre-order waiting instead of ENTRY_EXECUTION_UNAVAILABLE.
             log.error("❌ Error executing trade for trigger {}: {}", triggerLogId(trigger), e.getMessage(), e);
         }
         return null;
@@ -4105,6 +4108,25 @@ public class TradeExecutionService {
                                             int attemptIndex,
                                             double fallbackLtp,
                                             boolean manualChase) {
+        // Averaging admits an executable ask against a fixed basket budget. Generic
+        // midpoint probing cannot fill the Simulator and must not widen that budget.
+        if (org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(trigger.getSource())) {
+            var q = quoteCacheService.getSnapshot(trigger.getScripCode()).orElse(null);
+            var now = Instant.now();
+            if (TradeSide.isShort(trigger) || trigger.getEntryPrice()==null || !Double.isFinite(trigger.getEntryPrice())
+                    || trigger.getEntryPrice()<=0 || q==null || !q.hasBook() || !q.isCoherentBook()
+                    || !Double.isFinite(q.getBestBid()) || !Double.isFinite(q.getBestAsk()) || q.getBestBid()<=0
+                    || q.getBestBid()>q.getBestAsk() || q.getLastBookAt()==null || q.getLastBookAt().isAfter(now)
+                    || q.getLastBookAt().isBefore(now.minusSeconds(5)) || !"SHAREKHAN_WS".equals(q.getBookSource())
+                    || !("scrip:"+trigger.getScripCode()).equals(q.getBookProviderIdentity())
+                    || (q.getBestAsk()-q.getBestBid())/q.getBestAsk()>.02)
+                throw new EntryNotReadyException("Averaging waiting for a fresh executable option ask within spread limits; no order submitted");
+            double price = java.math.BigDecimal.valueOf(q.getBestAsk()).divide(java.math.BigDecimal.valueOf(.05),0,java.math.RoundingMode.CEILING)
+                    .multiply(java.math.BigDecimal.valueOf(.05)).doubleValue();
+            if (price>trigger.getEntryPrice()+.0000001)
+                throw new EntryNotReadyException("Averaging ask exceeds its originally admitted basket budget; no order submitted");
+            return price;
+        }
         Double bid = diagnostics.bestBid();
         Double ask = diagnostics.bestAsk();
         Double mid = diagnostics.recommendedLimit();

@@ -29,7 +29,8 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
         if (buy && q.getBestAsk() > fallback + 0.0000001) throw new org.com.sharekhan.exception.EntryNotReadyException("MCX ask moved above the simulator entry limit");
         if(buy && org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(trade.getSource())
                 && (trade.getEntryPrice()==null || !Double.isFinite(trade.getEntryPrice()) || q.getBestAsk()>trade.getEntryPrice()+0.0000001
-                    || q.getLastBookAt().isBefore(now.minusSeconds(5))))
+                    || q.getLastBookAt().isBefore(now.minusSeconds(5)) || q.getBestBid()<=0
+                    || (q.getBestAsk()-q.getBestBid())/q.getBestAsk()>.02))
             throw new org.com.sharekhan.exception.EntryNotReadyException("Averaging ask moved or book aged beyond its admitted basket budget");
         return buy ? q.getBestAsk() : q.getBestBid();
     }
