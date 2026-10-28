@@ -94,8 +94,10 @@ class NaturalGasShoonyaCandlesTest {
     @Test void neverUsesAnotherUsersSessionOrPriorDaySavedSession()throws Exception {
         when(tokens.findAllByBrokerName("Shoonya")).thenReturn(List.of(AccessTokenEntity.builder().token("foreign").brokerCredentialsId(9L).expiry(now.atZone(ZoneId.of("Asia/Kolkata")).toInstant()).build()));
         assertTrue(service.completed(future,now).isEmpty());verify(crypto,never()).decrypt(anyString());verify(service,never()).post(anyString(),any(),anyString());
+        assertTrue(service.diagnostics(574319).get("status").toString().contains("No saved current-day global Shoonya session"));
         when(tokens.findAllByBrokerName("Shoonya")).thenReturn(List.of(AccessTokenEntity.builder().token("old").expiry(now.minusDays(1).atZone(ZoneId.of("Asia/Kolkata")).toInstant()).build()));
         assertTrue(service.completed(future,now.plusMinutes(1)).isEmpty());verify(crypto,never()).decrypt(anyString());
+        assertTrue(service.diagnostics(574319).get("status").toString().contains("reconnect Shoonya"));
     }
     @Test void cacheRefetchesAtNewFiveMinuteBoundaryEvenWithinThirtySeconds()throws Exception {
         service.completed(future,now.withMinute(49).withSecond(59));service.completed(future,now.withMinute(50).withSecond(5));
