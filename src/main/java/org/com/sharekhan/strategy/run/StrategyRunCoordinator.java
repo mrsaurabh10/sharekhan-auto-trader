@@ -37,6 +37,12 @@ public class StrategyRunCoordinator {
         if(context.get()!=null) throw new IllegalStateException("Nested strategy evaluation is not supported");
         var now=LocalDateTime.now(clock);
         String instance="DAY";
+        if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId())) {
+            var baskets=runs.findByAppUserIdAndBrokerCredentialsIdAndTemplateIdAndTradingDayOrderByCreatedAtAsc(
+                    request.getUserId(),request.getBrokerCredentialsId(),org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE,now.toLocalDate()).stream()
+                    .filter(r->Objects.equals(r.getSubscriptionId(),request.getSubscriptionId()) && Objects.equals(r.getSymbol(),request.getSymbol())).toList();
+            instance=!baskets.isEmpty() && !"CLOSED".equals(baskets.getLast().getStatus())?baskets.getLast().getInstance():"BASKET"+(baskets.size()+1);
+        }
         if(ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId())) {
             var slot=ExpiryStraddleRules.SESSIONS.stream().filter(s->s.entryWindow(now.toLocalTime())).findFirst();
             if(slot.isEmpty()) return action.get(); // No new instance for a missed entry minute.
@@ -77,6 +83,10 @@ public class StrategyRunCoordinator {
             });
         } catch(jakarta.persistence.EntityExistsException | org.hibernate.exception.ConstraintViolationException | org.springframework.dao.DataIntegrityViolationException conflict) {if(!runs.existsById(run.getId())) throw conflict;}
         requireOpen(run.getId());return run.getId();
+    }
+    public String currentId() {
+        var run=context.get();if(run==null)throw new IllegalStateException("A strategy run context is required for an averaging basket");
+        return run.getId();
     }
     public void attach(TriggerRequest request) {
         var run=context.get();if(run==null) {request.setStrategyRunId(null);return;}

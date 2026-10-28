@@ -678,6 +678,8 @@ public class TradeExecutionService {
                                                    boolean attemptBrokerSideEntryOrder) {
 
         if(runCoordinator!=null) runCoordinator.attach(request);
+        if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(request.getSource()) && request.getStrategyRunId()==null)
+            throw new InvalidTradeRequestException("NG averaging entries require a server-owned strategy basket");
         if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(request.getUserId(), request.getBrokerCredentialsId());
         // Determine exchange and whether it's a no-strike exchange (NC/BC)
         normalizeCashEquityExchange(request);
@@ -2316,6 +2318,9 @@ public class TradeExecutionService {
             }
 
             BrokerService brokerService = brokerServiceFactory.getService(ctx.getBrokerName());
+            if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(trigger.getSource())
+                    && !Broker.SIMULATOR.getDisplayName().equalsIgnoreCase(ctx.getBrokerName()))
+                throw new InvalidTradeRequestException("NG Trend Averaging supports Simulator only");
             if (brokerService == null) {
                 throw new IllegalStateException("No broker service found for: " + ctx.getBrokerName());
             }
@@ -6219,6 +6224,7 @@ public class TradeExecutionService {
         // direct/replayed execution call as authority to fill below the trigger.
         // Real brokers can hold a trigger order themselves; the simulator cannot.
         if (isSimulatorBrokerRequest(requestEntity)
+                && !org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(requestEntity.getSource())
                 && !chaseEntryUntilExecuted
                 && !useSpotForEntry
                 && requestEntity.getEntryPrice() != null

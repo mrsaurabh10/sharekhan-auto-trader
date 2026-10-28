@@ -40,8 +40,18 @@ public class StrategyRunService {
     public View view(StrategyRun run) {
         var members=members(run);
         var values=pnl(members,Instant.now());
+        boolean averaging=org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(run.getTemplateId());
+        if(averaging && values.marksFresh() && values.totalGross()!=null && members.stream().allMatch(t->t.getTradeCost()==null || (Double.isFinite(t.getTradeCost()) && t.getTradeCost()>=0))) {
+            double reserve=members.stream().filter(t->t.getActualEntryPrice()!=null && t.getQuantity()!=null && t.getQuantity()>0)
+                    .mapToDouble(t->Math.max(org.com.sharekhan.strategy.mcx.NaturalGasAveragingBook.COST_PER_LOT,
+                            t.getTradeCost()!=null && Double.isFinite(t.getTradeCost()) && t.getTradeCost()>=0?t.getTradeCost():0)).sum();
+            var costs=money(BigDecimal.valueOf(reserve));
+            values=new Pnl(values.realizedGross(),values.openGross(),values.totalGross(),costs,money(values.totalGross().subtract(costs)),true,values.openPositions());
+        }
         if(!entriesResolved(run)) values=new Pnl(values.realizedGross(),null,null,null,null,false,values.openPositions());
-        return new View(run,values,members,requests.findByStrategyRunId(run.getId()).size(),"GROSS_INR; net includes estimated app charges, not broker-reconciled fees");
+        return new View(run,values,members,requests.findByStrategyRunId(run.getId()).size(),averaging
+                ?"PAPER_NET_INR; ₹100 roundtrip cost reserve per filled lot or higher recorded costs; not verified MCX brokerage"
+                :"GROSS_INR; net includes estimated app charges, not broker-reconciled fees");
     }
     public View close(String id,Long userId,boolean admin) {
         var run=owned(id,userId,admin);
@@ -97,6 +107,8 @@ public class StrategyRunService {
         }
     }
     private boolean riskReady(StrategyRun run,List<TriggeredTradeSetupEntity> members) {
+        // Averaging owns paper-net basket targets, daily loss accounting and its monotone premium floor.
+        if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(run.getTemplateId()))return false;
         if(members.isEmpty()) return false;
         if(!org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(run.getTemplateId())) return true;
         return members.size()==2 && members.stream().allMatch(t->t.getStatus()==TriggeredTradeStatus.EXECUTED)

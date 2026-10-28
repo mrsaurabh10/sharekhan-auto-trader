@@ -86,6 +86,10 @@ public class StrategyTemplateService {
     }
 
     public void validateConfiguration(StrategyApplyRequest request) {
+        if (org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
+            var evaluator=evaluators.get(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE);
+            if(evaluator instanceof org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy averaging)averaging.validateConfiguration(request);
+        }
         if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
             var evaluator=evaluators.get(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE);
             if (evaluator instanceof org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy scalping) scalping.validateConfiguration(request);

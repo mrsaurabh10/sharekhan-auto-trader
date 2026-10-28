@@ -75,6 +75,20 @@ class StrategyRunServiceTest {
         var value=service.pnl(List.of(leg(1,TriggeredTradeStatus.EXECUTED)),Instant.now());assertThat(value.totalGross()).isNull();assertThat(value.marksFresh()).isFalse();
     }
 
+    @Test void averagingShowsReservedPaperNetAndBypassesGenericGrossTarget() {
+        am.setTemplateId(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE);
+        var position=leg(1,TriggeredTradeStatus.EXECUTED);position.setExchange("MX");position.setQuantity(1250L);
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(position));
+        when(execution.strategyProfitExitQuote(eq(position),any())).thenReturn(Optional.of(QuoteCacheService.QuoteSnapshot.builder().bestBid(101d).bestAsk(101.05d).lastBookAt(Instant.now()).build()));
+        var view=service.view(am);assertThat(view.pnl().totalGross()).isEqualByComparingTo("1250");
+        assertThat(view.pnl().estimatedCosts()).isEqualByComparingTo("100");assertThat(view.pnl().estimatedNet()).isEqualByComparingTo("1150");
+        assertThat(view.pnlBasis()).contains("PAPER_NET_INR");
+        var risk=new StrategyRiskSettings();risk.setProfitTarget(new java.math.BigDecimal("1250"));am.setRiskSettings(risk);
+        when(runs.findByStatusIn(anyList())).thenReturn(List.of(am));
+        service.monitor(am.getTradingDay().atTime(12,0));verify(runs,never()).requestClose(anyString(),eq("STRATEGY_PROFIT_TARGET"),any());
+        position.setTradeCost(Double.NaN);assertThat(service.view(am).pnl().estimatedNet()).isNull();
+    }
+
     private void naturalGasRun() {
         am.setTemplateId(org.com.sharekhan.strategy.mcx.NaturalGasSession.TEMPLATE);
         am.setTradingDay(LocalDate.of(2026,10,26));

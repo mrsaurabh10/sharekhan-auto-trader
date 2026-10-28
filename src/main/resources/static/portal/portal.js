@@ -159,7 +159,7 @@
         window.StrategyRunView?.resetRisk($('#subscriptionRunRisk'));
         const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
-        const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(template.id);
+        const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(template.id);
         f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE' || naturalGas;
         if (f.elements.intraday.disabled) f.elements.intraday.checked = true;
         const straddle = template.id === 'EXPIRY_LONG_STRADDLE';
@@ -172,6 +172,15 @@
         if (template.id === 'MCX_NATURALGAS_SCALPING') {
           f.elements.lots.value='1';
           $('#subscriptionRunRisk').querySelector('[data-risk-field=maxLoss]').value='2500';
+        }
+        const averaging = template.id === 'MCX_NATURALGAS_TREND_AVERAGING';
+        f.elements.lots.readOnly = averaging;
+        window.StrategyRunView.averagingHelp($('#subscriptionRunRisk'),averaging);
+        $('#subscriptionRunRisk').querySelectorAll('[data-risk-field]').forEach(field=>{field.readOnly=averaging;if(field.tagName==='SELECT')field.disabled=averaging;});
+        if (averaging) {
+          f.elements.lots.value='4';
+          $('#subscriptionRunRisk').querySelector('[data-risk-field=maxLoss]').value='3000';
+          $('#subscriptionRunRisk').querySelector('[data-risk-field=profitTarget]').value='1250';
         }
         $('#subscriptionLotsRow').hidden = stockMover;
         f.elements.lots.disabled = stockMover;
@@ -212,11 +221,12 @@
       body.investmentPerStock = Number(amount); body.lots = null;
     } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
     body.riskSettings=window.StrategyRunView?.readRisk($('#subscriptionRunRisk')) || null;
-    if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING'].includes(body.templateId)) {
+    if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(body.templateId)) {
       body.symbol='NATURALGAS'; body.intraday=true;
       if (!body.riskSettings?.maxLoss) throw new Error('Set a maximum rupee loss for the Natural Gas strategy run.');
       const broker=state.brokers.find(b=>b.id===body.brokerCredentialsId);
       if (body.templateId === 'MCX_NATURALGAS_SCALPING' && (String(broker?.brokerName || '').toUpperCase() !== 'SIMULATOR' || body.lots !== 1 || body.riskSettings.maxLoss > 2500)) throw new Error('Scalping requires Simulator, one lot and a total daily loss limit up to ₹2,500.');
+      if (body.templateId === 'MCX_NATURALGAS_TREND_AVERAGING' && (String(broker?.brokerName || '').toUpperCase() !== 'SIMULATOR' || body.lots !== 4 || body.riskSettings.maxLoss !== 3000 || body.riskSettings.profitTarget !== 1250 || body.riskSettings.amountMode !== 'TOTAL')) throw new Error('NG Trend Averaging requires Simulator, maximum four lots, ₹1,250 basket target and ₹3,000 daily loss allowance.');
       if (!['SIMULATOR','SHAREKHAN'].includes(String(broker?.brokerName || '').toUpperCase())) throw new Error('Choose Simulator or Sharekhan for MCX Natural Gas.');
     }
     await api('/api/strategies/start','POST',body); $('#strategyDialog').close(); notify('Strategy subscription activated.'); await loadStrategies(); await loadOrders();

@@ -55,15 +55,17 @@
           for(const source of new Set(view.positions.length ? view.positions.map(leg=>sourceName(leg.source)) : ['Unspecified'])) sources.append(sourceTag(source));
           summary.append(sources);
           details.append(node('p','Run '+run.id.slice(0,10)+' · '+run.symbol+' · broker #'+run.brokerCredentialsId+' · '+pnl.openPositions+' open · '+view.requests+' requests','muted'));
+          const averaging=run.templateId==='MCX_NATURALGAS_TREND_AVERAGING';
           const values=node('div',null,'run-pnl');
-          for(const [label,value] of [['Realized gross',pnl.realizedGross],['Open gross',pnl.openGross],['Combined gross',pnl.totalGross],['Estimated charges',pnl.estimatedCosts],['Estimated net',pnl.estimatedNet],['Peak gross',run.peakPnl],['Active stop floor',run.stopFloor]]) values.append(node('span',label+': '+money(value)));
+          for(const [label,value] of [['Realized gross',pnl.realizedGross],['Open gross',pnl.openGross],['Combined gross',pnl.totalGross],[averaging?'Paper cost reserve':'Estimated charges',pnl.estimatedCosts],[averaging?'Paper net':'Estimated net',pnl.estimatedNet],['Peak gross',run.peakPnl],['Active stop floor',run.stopFloor]]) values.append(node('span',label+': '+money(value)));
           details.append(values);
           if(!pnl.marksFresh)details.append(node('p','Current combined P&L unavailable: waiting for fresh, synchronized quotes or entry confirmation.','notice'));
           if(run.riskSettings) {
             const scale=run.riskSettings.amountMode==='PER_LOT' ? (run.lots||1) : 1;
             const rules=fields.filter(([key])=>run.riskSettings[key]!=null).map(([key,label])=>label+' '+money(run.riskSettings[key]*scale)).join(' · ');
-            details.append(node('p','Run controls (total gross ₹): '+rules,'muted'));
+            details.append(node('p',(averaging?'Basket paper-net target / daily loss allowance (₹): ':'Run controls (total gross ₹): ')+rules,'muted'));
           }
+          if(averaging)details.append(node('p',view.pnlBasis||'Paper cost reserve; not broker-reconciled MCX fees.','muted'));
           details.append(node('p',run.message||'','muted'));
           const actions=node('div',null,'actions');
           const close=node('button',run.status==='CLOSING'?'Retry close this instance':'Close this instance','danger');close.type='button';close.disabled=run.status==='CLOSED';
@@ -97,6 +99,13 @@
     fieldset.append(grid,node('small','Combined gross P&L across all positions, before costs/slippage. Blank/zero disables a rule. Set both profit-trail fields together; trailing SL requires max loss and both step fields. Stops never move backwards.'));
     container.append(fieldset);
   }
+  function averagingHelp(container,enabled) {
+    if(!container)return;
+    for(const element of container.querySelectorAll('legend,small')) {
+      if(!element.dataset.originalText)element.dataset.originalText=element.textContent;
+      element.textContent=enabled?(element.tagName==='LEGEND'?'NG averaging: basket and daily controls':'₹60,000 capital including cost reserves; up to four lots, added one at a time. ₹1,250 paper-net basket target after a provisional ₹100 round-trip reserve per filled lot or higher recorded costs. ₹3,000 total daily loss allowance; profits do not replenish it. These Simulator settings are fixed for the trial.'):element.dataset.originalText;
+    }
+  }
   function readRisk(container) {
     if(!container)return null;const risk={};let enabled=false;
     for(const input of container.querySelectorAll('[data-risk-field]')) {
@@ -107,5 +116,5 @@
     return enabled?risk:null;
   }
   function resetRisk(container) {if(container)for(const input of container.querySelectorAll('[data-risk-field]'))if(input.tagName==='SELECT')input.value='TOTAL';else input.value='';}
-  window.StrategyRunView={mount,riskForm,readRisk,resetRisk,sourceTag,statusTag,timestamp};
+  window.StrategyRunView={mount,riskForm,averagingHelp,readRisk,resetRisk,sourceTag,statusTag,timestamp};
 })();

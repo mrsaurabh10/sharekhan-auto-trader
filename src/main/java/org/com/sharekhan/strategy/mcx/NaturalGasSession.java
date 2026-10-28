@@ -11,8 +11,8 @@ public final class NaturalGasSession {
     public static final LocalTime SQUARE_OFF = LocalTime.of(23, 20);
     public static final LocalTime CLOSE = LocalTime.of(23, 30);
     private NaturalGasSession() { }
-    public static boolean isTemplate(String id) { return TEMPLATE.equalsIgnoreCase(id) || NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(id); }
-    public static boolean owns(String source) { return SOURCE.equalsIgnoreCase(source) || NaturalGasScalpingStrategy.SOURCE.equalsIgnoreCase(source); }
+    public static boolean isTemplate(String id) { return TEMPLATE.equalsIgnoreCase(id) || NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(id) || NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(id); }
+    public static boolean owns(String source) { return SOURCE.equalsIgnoreCase(source) || NaturalGasScalpingStrategy.SOURCE.equalsIgnoreCase(source) || NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(source); }
     public static boolean entryAllowed(LocalDateTime now) {
         return weekday(now) && !now.toLocalTime().isBefore(OPEN) && now.toLocalTime().isBefore(ENTRY_CUTOFF);
     }

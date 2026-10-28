@@ -51,4 +51,15 @@ class SimulatorBrokerServiceTest {
         cache.recordQuote(42,5.9,6d,6d,"SHAREKHAN_WS",null,"scrip:42",null,null);
         org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(trade,null,5d));
     }
+
+    @Test void averagingCannotFillAboveItsOriginallyAdmittedAskEvenIfGenericEntryLimitAllowsIt() {
+        var cache=new org.com.sharekhan.cache.QuoteCacheService();
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"quotes",cache);
+        cache.recordQuote(42,20d,20.05,20d,"SHAREKHAN_WS",null,"scrip:42",null,null);
+        var trade=TriggeredTradeSetupEntity.builder().scripCode(42).source(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE)
+                .entryPrice(20d).quantity(1250L).optionType("PE").entryAction("BUY").build();
+        org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(trade,null,20.1));
+        cache.recordQuote(42,19.85,19.95,19.9,"SHAREKHAN_WS",null,"scrip:42",null,null);
+        assertThat(service.placeOrder(trade,null,20d).getExecutedPrice()).isEqualTo(19.95);
+    }
 }
