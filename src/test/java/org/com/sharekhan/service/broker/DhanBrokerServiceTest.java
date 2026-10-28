@@ -48,6 +48,17 @@ class DhanBrokerServiceTest {
             .put("transactionType","BUY").put("exchangeSegment","NSE_EQ").put("securityId","11536")
             .put("productType","CNC").put("orderType","LIMIT").put("quantity",10).put("filledQty",filled).put("remainingQuantity",remaining).put("averageTradedPrice",100.5);
     }
+    @Test void fundsLookupIsScopedReadOnlyAndRejectsWrongClientAndErrors() throws Exception {
+        when(client.exchange("GET","/fundlimit","test-token",null)).thenReturn(response(200,new JSONObject()
+            .put("dhanClientId","1000000001").put("availabelBalance",12345.67)));
+        assertThat(service.availableOptionBuyingFunds(trade,context)).hasValue(12345.67);
+        when(client.exchange("GET","/fundlimit","test-token",null)).thenReturn(response(200,new JSONObject()
+            .put("dhanClientId","999").put("availabelBalance",999999)));
+        assertThat(service.availableOptionBuyingFunds(trade,context)).isEmpty();
+        when(client.exchange("GET","/fundlimit","test-token",null)).thenThrow(new IllegalStateException());
+        assertThat(service.availableOptionBuyingFunds(trade,context)).isEmpty();
+        verify(client,never()).exchange(eq("POST"),anyString(),anyString(),any());
+    }
     @Test void cashShortUsesSellEntryAndBuyCoverWithSeparateExitJournal() throws Exception {
         trade.setEntryAction("SELL"); trade.setTriggerRequestId(55L);
         when(client.exchange(eq("POST"),eq("/orders"),anyString(),any())).thenReturn(response(200,new JSONObject().put("orderId","12345").put("orderStatus","PENDING")));

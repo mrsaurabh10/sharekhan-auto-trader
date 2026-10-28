@@ -54,6 +54,19 @@ public class MStockBrokerService implements ModifiableEntryBrokerService, Trigge
     }
 
     @Override
+    public java.util.OptionalDouble availableOptionBuyingFunds(TriggeredTradeSetupEntity trade, BrokerContext context) {
+        try {
+            if (context == null || context.getBrokerCredentialsId() == null) return java.util.OptionalDouble.empty();
+            var token = tokenStoreService.getSavedTokenInfoForBrokerCredentials(Broker.MSTOCK, context.getBrokerCredentialsId());
+            if (token == null || !java.util.Objects.equals(token.getAppUserId(), trade.getAppUserId())) return java.util.OptionalDouble.empty();
+            var credentials = new RequestCredentials(token.getToken(), firstText(context.getApiKey(), resolveTokenInfoApiKey(token)), token);
+            var response = doGet("https://api.mstock.trade/openapi/typea/user/fundsummary", credentials);
+            if (response.code() != 200) return java.util.OptionalDouble.empty();
+            return OptionBuyingFunds.mstock(new JSONObject(response.body()));
+        } catch (Exception ignored) { return java.util.OptionalDouble.empty(); }
+    }
+
+    @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
         return placeMStockOrder(trade, context, ltp, TradeSide.entry(trade), "LIMIT", null);
     }

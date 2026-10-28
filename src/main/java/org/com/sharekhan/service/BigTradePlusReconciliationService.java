@@ -23,6 +23,8 @@ import java.util.*;
 /** Continues monitoring broker exits after the entry poll has finished; recovers on restart. */
 @Service @RequiredArgsConstructor @Slf4j
 public class BigTradePlusReconciliationService {
+    @org.springframework.beans.factory.annotation.Autowired
+    private TradeExecutionService tradeExecutionService;
     private final TriggeredTradeSetupRepository trades;
     private final BrokerCredentialsRepository credentials;
     private final CryptoService crypto;
@@ -86,6 +88,7 @@ public class BigTradePlusReconciliationService {
                 trade.setExitReason("Book Profit Triggered".equals(child.optString("childTriggered")) ? "TARGET_HIT" : "BROKER_BRACKET_EXIT");
                 trade.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
                 trades.save(trade);
+                if (tradeExecutionService != null) tradeExecutionService.brokerFundsMayBeReleased(trade);
                 log.info("BTP exit reconciled trade={} child={} price={} pnl={}", trade.getId(), trade.getExitOrderId(), exit, trade.getPnl());
             }
         }

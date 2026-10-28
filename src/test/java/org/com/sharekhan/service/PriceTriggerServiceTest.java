@@ -40,6 +40,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PriceTriggerServiceTest {
+    @Test void fundsManagedPremiumRequestCannotBypassQueueOnPriceTick() {
+        var request=TriggerTradeRequestEntity.builder().id(700L).scripCode(20000).optionType("CE")
+                .entryPrice(100d).useSpotForEntry(false).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build();
+        when(triggerRepo.findByScripCodeAndStatus(20000,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION)).thenReturn(List.of(request));
+        when(tradeExecutionService.isFundsManagedOptionRequest(request)).thenReturn(true);
+        service.evaluatePriceTrigger(20000,101d);
+        verify(triggerRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString());
+        verify(tradeExecutionService,never()).executeTradeFromEntity(any());
+        verify(tradeExecutionService,never()).maybePreArmBigTradePlusEntry(any(),anyDouble());
+    }
+
     @Test void fnoProtectiveExitClosesWholePositionOnceInsteadOfPartialTargetBooking() {
         for(String reason:List.of(FnoMoverExitPolicyService.NO_PROGRESS,FnoMoverExitPolicyService.PROFIT_PROTECTION)) {
             org.mockito.Mockito.reset(triggeredRepo,tradeExecutionService);
