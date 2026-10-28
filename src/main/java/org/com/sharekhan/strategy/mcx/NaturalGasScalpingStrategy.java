@@ -80,7 +80,7 @@ public class NaturalGasScalpingStrategy implements StrategyEvaluator {
         log.info("MCX_DATA_EVALUATION | subscription={} broker={} reason={} context={}",r.getSubscriptionId(),brokerName,evaluation.reason(),dataContext);
         if(evaluation.signal().isEmpty()) {
             String reason=evaluation.reason();
-            if(reason.startsWith("No MCX candles") || reason.startsWith("No completed MCX") || reason.startsWith("Incomplete MCX") || reason.startsWith("Gap in MCX") || reason.startsWith("Stale MCX"))
+            if(reason.startsWith("Scalp warmup") || reason.startsWith("Scalp EMA warmup") || reason.startsWith("No MCX candles") || reason.startsWith("No completed MCX") || reason.startsWith("Incomplete MCX") || reason.startsWith("Gap in MCX") || reason.startsWith("Stale MCX"))
                 reason += "; "+(source==NaturalGasCandleSource.SHOONYA_TPS?data.shoonyaStatus(future.getScripCode()):data.status(future.getScripCode()));
             reason+="; "+data.threeMinuteStatus(future.getScripCode());
             return waitFor(reason+dataContext);

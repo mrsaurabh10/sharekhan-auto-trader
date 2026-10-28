@@ -8,6 +8,7 @@ import org.com.sharekhan.repository.*;
 import org.com.sharekhan.service.ShoonyaInstrumentMasterService;
 import org.com.sharekhan.strategy.StrategyCandle;
 import org.com.sharekhan.util.CryptoService;
+import org.com.sharekhan.auth.ShoonyaSavedSession;
 import org.json.*;
 import org.springframework.stereotype.Service;
 import java.net.*;
@@ -79,19 +80,17 @@ public class NaturalGasShoonyaCandles {
             return state.rows;
         } catch(Exception invalid) {
             // No provider body, UID, credential or exception message is logged/exposed.
-            state.problem="Shoonya candle fetch/identity/validation unavailable ("+invalid.getClass().getSimpleName()+")";
+            state.problem=invalid instanceof ShoonyaSavedSession.Unavailable ? invalid.getMessage()
+                    : "Shoonya candle fetch/identity/validation unavailable ("+invalid.getClass().getSimpleName()+")";
             log.warn("MCX_SHOONYA_CANDLES_WAIT | scrip={} type={} interval={}",code,invalid.getClass().getSimpleName(),interval);
             return List.of();
         }
     }
     private String existingSession(LocalDateTime now) {
-        var saved=tokens.findAllByBrokerName("Shoonya").stream()
-            .filter(t->t.getBrokerCredentialsId()==null&&t.getUserId()==null&&t.getExpiry()!=null&&t.getToken()!=null)
-            .max(Comparator.comparing(AccessTokenEntity::getExpiry)).orElseThrow();
         // OAuth expiry is a configured local estimate. Test today's saved session at the broker;
         // never extend it in storage, re-login, or select another user's credentials.
-        var issued=saved.getExpiry().minusSeconds(properties.getAccessTokenTtlSeconds()).atZone(IST).toLocalDate();
-        if(!issued.equals(now.toLocalDate()))throw new IllegalStateException("A saved current-day Shoonya session is required");
+        var saved=ShoonyaSavedSession.currentGlobal(tokens.findAllByBrokerName("Shoonya"),now,
+                properties.getAccessTokenTtlSeconds()).orElseThrow(ShoonyaSavedSession.Unavailable::new);
         return Objects.requireNonNull(crypto.decrypt(saved.getToken()));
     }
     String post(String endpoint,JSONObject request,String session)throws Exception {

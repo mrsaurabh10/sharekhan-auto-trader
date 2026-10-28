@@ -54,8 +54,8 @@ public class ShoonyaTokenFetcher {
             log.info("Shoonya OAuth authorization redirect received");
             return code;
         } catch (Exception e) {
-            log.warn("Shoonya OAuth browser login stopped: {}", e.getMessage());
-            throw new IllegalStateException("Shoonya browser OAuth login failed: " + e.getMessage(), e);
+            log.warn("Shoonya OAuth browser login stopped: {}", e.getClass().getSimpleName());
+            throw new IllegalStateException("Shoonya browser OAuth login failed");
         }
     }
     private static Locator visible(Page page, List<String> selectors) {
