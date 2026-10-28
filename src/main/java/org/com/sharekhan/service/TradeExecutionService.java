@@ -916,6 +916,71 @@ public class TradeExecutionService {
                 || "Sharekhan".equalsIgnoreCase(source);
     }
 
+    private java.time.Clock entryClock = java.time.Clock.system(MARKET_ZONE);
+    private final Object[] optionFundsLocks = java.util.stream.IntStream.range(0, 128)
+            .mapToObj(i -> new Object()).toArray();
+    private record RecentOptionAdmission(double amount, java.time.Instant until) {}
+    private final java.util.concurrent.ConcurrentMap<Long, java.util.List<RecentOptionAdmission>> recentOptionAdmissions = new java.util.concurrent.ConcurrentHashMap<>();
+    private double recentOptionCommitments(Long account) {
+        var entries = recentOptionAdmissions.get(account);
+        if (entries == null) return 0d;
+        entries.removeIf(entry -> !entryClock.instant().isBefore(entry.until()));
+        if (entries.isEmpty()) recentOptionAdmissions.remove(account);
+        return entries.stream().mapToDouble(RecentOptionAdmission::amount).sum();
+    }
+
+    private final java.util.concurrent.ConcurrentMap<Long, java.time.Instant> optionFundsNextAttempt = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<Long> optionFundsReleasedAccounts = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** True only for queued live long options whose three levels use option premiums. */
+    public boolean isFundsManagedOptionRequest(TriggerTradeRequestEntity request) {
+        if (request == null || !hasOptionType(request.getOptionType()) || usesSpotForEntry(request)
+                || spotFlag(request.getUseSpotForSl(), request.getUseSpotPrice())
+                || spotFlag(request.getUseSpotForTarget(), request.getUseSpotPrice())
+                || TradeSide.isShort(request) || isBigTradePlusRequest(request)
+                || request.getBrokerCredentialsId() == null
+                || org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(request.getSource())
+                || org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(request.getSource())) return false;
+        return brokerCredentialsRepository.findById(request.getBrokerCredentialsId())
+                .map(b -> java.util.Set.of("sharekhan", "dhan", "mstock").contains(
+                        Objects.toString(b.getBrokerName(), "").toLowerCase(java.util.Locale.ROOT))).orElse(false);
+    }
+
+    private boolean spotFlag(Boolean granular, Boolean legacy) {
+        return Boolean.TRUE.equals(granular) || (granular == null && Boolean.TRUE.equals(legacy));
+    }
+
+    /** Called only after a confirmed exit is persisted. Actual broker balance is fetched on retry. */
+    public void brokerFundsMayBeReleased(TriggeredTradeSetupEntity exited) {
+        if (exited != null && exited.getBrokerCredentialsId() != null) optionFundsReleasedAccounts.add(exited.getBrokerCredentialsId());
+    }
+
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "${app.option-entry-funds.poll-ms:5000}")
+    public void retryFundsManagedOptionRequests() {
+        var now = LocalDateTime.now(entryClock);
+        if (now.getDayOfWeek() == java.time.DayOfWeek.SATURDAY || now.getDayOfWeek() == java.time.DayOfWeek.SUNDAY
+                || now.toLocalTime().isBefore(LocalTime.of(9, 20)) || !now.toLocalTime().isBefore(INTRADAY_ENTRY_CUTOFF)) return;
+        var released = new java.util.HashSet<>(optionFundsReleasedAccounts);
+        optionFundsReleasedAccounts.removeAll(released);
+        var requests = triggerTradeRequestRepository.findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        requests.stream().sorted(java.util.Comparator.comparing(TriggerTradeRequestEntity::getId)).forEach(request -> {
+            try {
+                if (!isFundsManagedOptionRequest(request)) return;
+                var expiry = parseFutureExpiry(request.getExpiry());
+                if (expiry == null || expiry.isBefore(now.toLocalDate())
+                        || (isIntradayRequest(request) && (request.getCreatedAt() == null || !request.getCreatedAt().toLocalDate().equals(now.toLocalDate())))) return;
+                var price = ltpCacheService.getLtp(request.getScripCode());
+                if (price == null || !Double.isFinite(price) || price <= 0 || request.getEntryPrice() == null
+                        || price > request.getEntryPrice() * 1.10
+                        || (request.getTarget1() != null && price >= request.getTarget1())) return;
+                var observed = ltpCacheService.getObservedAt(request.getScripCode());
+                if (observed == null || observed.isBefore(now.minusSeconds(15)) || observed.isAfter(now.plusSeconds(1))) return;
+                if (released.contains(request.getBrokerCredentialsId())) optionFundsNextAttempt.remove(request.getId());
+                tryPlaceBrokerSideEntryOrder(request);
+            } catch (Exception ignored) { log.debug("Deferred option funds retry for request {}", request.getId()); }
+        });
+    }
+
     private void tryPlaceBrokerSideEntryOrder(TriggerTradeRequestEntity requestEntity) {
         tryPlaceBrokerSideEntryOrder(requestEntity, false);
     }
@@ -1005,7 +1070,17 @@ public class TradeExecutionService {
                     return null;
                 }
                 try {
-                    placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker, allowBigTradePlus);
+                    if (isFundsManagedOptionRequest(requestEntity)) {
+                        synchronized (optionFundsLocks[Math.floorMod(ctx.getBrokerCredentialsId().hashCode(), optionFundsLocks.length)]) {
+                            var next = optionFundsNextAttempt.get(requestEntity.getId());
+                            if (next == null || !entryClock.instant().isBefore(next)) {
+                                optionFundsNextAttempt.put(requestEntity.getId(), entryClock.instant().plusSeconds(30));
+                                placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker, allowBigTradePlus);
+                            }
+                        }
+                    } else {
+                        placeBrokerSideEntryOrderWithClaim(requestEntity, ctx, triggerPriceEntryBroker, allowBigTradePlus);
+                    }
                 } finally {
                     brokerTriggerEntriesInFlight.remove(requestEntity.getId());
                 }
@@ -1031,6 +1106,8 @@ public class TradeExecutionService {
             return;
         }
 
+        if (isFundsManagedOptionRequest(latest) && !triggeredTradeRepo.findByTriggerRequestId(latest.getId()).isEmpty()) return;
+
         int claimed = triggerTradeRequestRepository.claimIfStatusEquals(
                 latest.getId(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
@@ -1043,6 +1120,8 @@ public class TradeExecutionService {
         latest.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
         requestEntity.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);
         boolean brokerAccepted = false;
+        boolean brokerAttempted = false;
+        double optionFundsRequired = 0d;
 
         try {
             double entryPrice = isBigTradePlusRequest(latest)
@@ -1051,9 +1130,42 @@ public class TradeExecutionService {
                     ? normalisePriceToTick(entryPrice + (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(latest.getSource()) ? -ENTRY_TICK_SIZE : ENTRY_TICK_SIZE))
                     : brokerTriggerEntryLimitPrice(entryPrice);
             TriggeredTradeSetupEntity pendingTrade = buildPendingEntryTradeFromRequest(latest, LocalDateTime.now(), ctx);
+            if (isFundsManagedOptionRequest(latest)) {
+                var available = brokerService.availableOptionBuyingFunds(pendingTrade, ctx);
+                double premium = limitPrice * (pendingTrade.getQuantity() == null ? 0 : pendingTrade.getQuantity());
+                double required = premium + Math.max(100d, premium * 0.01d);
+                optionFundsRequired = required;
+                double recentCommitments = recentOptionCommitments(ctx.getBrokerCredentialsId());
+                if (available == null || available.isEmpty() || !Double.isFinite(available.getAsDouble())
+                        || premium <= 0 || !Double.isFinite(required) || available.getAsDouble() - recentCommitments < required) {
+                    String reason = available == null || available.isEmpty() || !Double.isFinite(available.getAsDouble())
+                            ? "BROKER_FUNDS_UNAVAILABLE" : "WAITING_FOR_BROKER_FUNDS";
+                    String comment = "No broker order submitted. Waiting for available funds; required including reserve: " + formatPrice(required);
+                    int reverted = triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(latest.getId(),
+                            TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(), reason, comment);
+                    if (reverted == 1) {
+                        latest.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+                        requestEntity.setStatus(latest.getStatus());
+                        latest.setReason(reason); latest.setComment(comment);
+                        requestEntity.setReason(reason); requestEntity.setComment(comment);
+                    }
+                    return;
+                }
+                // Clear an earlier wait diagnostic only while this worker owns the claim.
+                triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(latest.getId(),
+                        TriggeredTradeStatus.ENTRY_SUBMITTING.name(), TriggeredTradeStatus.ENTRY_SUBMITTING.name(), null, null);
+                latest.setReason(null); latest.setComment(null);
+                requestEntity.setReason(null); requestEntity.setComment(null);
+            }
             TradeEventLogger.logOrderAttempt("ENTRY_TRIGGER", pendingTrade, 1, "PLACE_TRIGGER", limitPrice, null);
 
             if (!sharedDecisionExecutable()) throw new InvalidTradeRequestException("Shared strategy signal expired before order submission; no order submitted");
+            if (optionFundsRequired > 0) {
+                // Brief conservative shadow covers sequential reads before the broker reflects a new debit.
+                recentOptionAdmissions.computeIfAbsent(ctx.getBrokerCredentialsId(), key -> new java.util.ArrayList<>())
+                        .add(new RecentOptionAdmission(optionFundsRequired, entryClock.instant().plusSeconds(30)));
+            }
+            brokerAttempted = true;
             OrderPlacementResult result = brokerService.placeTriggerPriceEntryOrder(pendingTrade, ctx, entryPrice, limitPrice);
             if (result != null && result.getAttemptedPrice() == null) {
                 result.setAttemptedPrice(limitPrice);
@@ -1086,6 +1198,11 @@ public class TradeExecutionService {
                     log.warn("Broker rejected entry request {}; terminal transition count={}", latest.getId(), rejected);
                     return;
                 }
+                if (isFundsManagedOptionRequest(latest)) {
+                    // No reliable order identity: retain the submission claim for reconciliation.
+                    log.warn("Option entry request {} needs broker reconciliation before retry", latest.getId());
+                    return;
+                }
                 revertBrokerSideEntryClaim(latest, requestEntity);
                 log.warn("⚠️ Broker-side entry trigger rejected for request {}. Continuing earlier websocket trigger flow. Reason={}",
                         latest.getId(), reason);
@@ -1115,6 +1232,11 @@ public class TradeExecutionService {
                     latest.getId(), result.getOrderId(), formatPrice(entryPrice), formatPrice(limitPrice));
         } catch (Exception e) {
             if (!brokerAccepted) {
+                if (brokerAttempted && isFundsManagedOptionRequest(latest)) {
+                    // No reliable order identity: retain the submission claim for reconciliation.
+                    log.warn("Option entry request {} needs broker reconciliation before retry", latest.getId());
+                    return;
+                }
                 revertBrokerSideEntryClaim(latest, requestEntity);
                 log.warn("⚠️ Broker-side entry trigger failed before broker acceptance for request {}. Earlier trigger flow remains active: {}",
                         latest.getId(), e.getMessage());
@@ -1166,7 +1288,7 @@ public class TradeExecutionService {
     }
 
     private boolean isEquityMarketOpen() {
-        LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
+        LocalTime time = LocalDateTime.now(entryClock).toLocalTime();
         return !time.isBefore(LocalTime.of(9, 15)) && !time.isAfter(LocalTime.of(15, 30));
     }
 
@@ -1176,13 +1298,13 @@ public class TradeExecutionService {
      * cutoff itself.
      */
     boolean isIntradayEntryWindowOpen() {
-        LocalTime time = LocalDateTime.now(MARKET_ZONE).toLocalTime();
+        LocalTime time = LocalDateTime.now(entryClock).toLocalTime();
         return time.isBefore(INTRADAY_ENTRY_CUTOFF);
     }
 
     boolean isIntradayEntryWindowOpen(String source) {
         return org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source)
-                ? org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(MARKET_ZONE))
+                ? org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(entryClock))
                 : isIntradayEntryWindowOpen();
     }
 
@@ -4503,6 +4625,7 @@ public class TradeExecutionService {
                         charges != null ? charges.effectivePnl() : null);
                 if (updated == 1) {
                     TradeEventLogger.logOrderExecuted("EXIT", persisted, exitPriceVal, result.getStatus());
+                    brokerFundsMayBeReleased(persisted);
                     advanceStagedTargetStopsAfterTargetExit(persisted);
                     rearmGapFillRequestAfterImmediateExit(persisted);
                     try {
@@ -6138,6 +6261,11 @@ public class TradeExecutionService {
     private TriggeredTradeSetupEntity executeTradeFromEntity(TriggerTradeRequestEntity requestEntity,
                                                             boolean chaseEntryUntilExecuted,
                                                             boolean reportSimulatorWait) {
+        if (!reportSimulatorWait && requestEntity.getStatus() == TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                && isFundsManagedOptionRequest(requestEntity)) {
+            tryPlaceBrokerSideEntryOrder(requestEntity);
+            return triggeredTradeRepo.findByTriggerRequestId(requestEntity.getId()).stream().findFirst().orElse(null);
+        }
         if(runCoordinator!=null && !runCoordinator.isOpen(requestEntity.getStrategyRunId())) {
             triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(requestEntity.getId(),requestEntity.getStatus().name(),TriggeredTradeStatus.CANCELLED.name(),"STRATEGY_RUN_CLOSED","No entry submitted: strategy instance is closing/closed");
             return null;
@@ -6321,7 +6449,7 @@ public class TradeExecutionService {
 
     private boolean entryQuoteWindowOpen(String source) {
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source))
-            return org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(MARKET_ZONE));
+            return org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(entryClock));
         return !org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(source)
                 || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(source,
                         LocalDateTime.now(ZoneId.of("Asia/Kolkata")));

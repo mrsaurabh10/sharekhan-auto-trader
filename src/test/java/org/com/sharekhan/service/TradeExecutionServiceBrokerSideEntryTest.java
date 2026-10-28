@@ -406,6 +406,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
     @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"CE","PE"})
     void averagingPlacementUsesExecutableAskThroughRealSimulator(String side) {
         var ctx=new TestContext(pending("unused"));configureFiveAttemptPolicy(ctx);
+        ReflectionTestUtils.setField(ctx.service, "entryClock", java.time.Clock.fixed(
+                java.time.ZonedDateTime.of(2026,10,28,12,0,0,0,java.time.ZoneId.of("Asia/Kolkata")).toInstant(), java.time.ZoneId.of("Asia/Kolkata")));
         var cache=new QuoteCacheService();cache.recordQuote(123456,20.3,20.4,20.4,"SHAREKHAN_WS",null,"scrip:123456",null,null);
         ReflectionTestUtils.setField(ctx.service,"quoteCacheService",cache);
         var simulator=new org.com.sharekhan.service.broker.SimulatorBrokerService();ReflectionTestUtils.setField(simulator,"quotes",cache);
@@ -698,7 +700,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
-    void rejectedBrokerSideEntryTriggerLeavesRequestPendingForOriginalFlow() {
+    void uncertainBrokerSideOptionEntryRetainsClaimAndBlocksRetry() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder()
                 .success(false)
                 .status("Rejected")
@@ -708,9 +710,9 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
         TriggerTradeRequestEntity saved = ctx.service.executeTrade(optionRequest());
 
-        assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(saved.getStatus()).isEqualTo(TriggeredTradeStatus.ENTRY_SUBMITTING);
         assertThat(ctx.savedTrade.get()).isNull();
-        verify(ctx.triggerRepo).claimIfStatusEquals(
+        verify(ctx.triggerRepo, never()).claimIfStatusEquals(
                 77L,
                 TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name());
@@ -1372,6 +1374,143 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(ctx.service.strategyProfitExitQuote(trade,now)).isPresent();
     }
 
+    private TestContext fundsQueue(java.util.OptionalDouble balance) {
+        var ctx = new TestContext(pending("FUNDED-1"));
+        when(ctx.broker.availableOptionBuyingFunds(any(), any())).thenReturn(balance);
+        when(ctx.triggerRepo.claimIfStatusEqualsWithOutcome(eq(77L), eq("ENTRY_SUBMITTING"),
+                eq("PLACED_PENDING_CONFIRMATION"), anyString(), anyString())).thenReturn(1);
+        var request = triggerRequestEntity(); request.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        request.setExpiry("23/11/2026"); request.setCreatedAt(LocalDateTime.of(2026,10,28,10,0));
+        ctx.savedRequest.set(request);
+        var clock = java.time.Clock.fixed(java.time.ZonedDateTime.of(2026,10,28,12,0,0,0,
+                java.time.ZoneId.of("Asia/Kolkata")).toInstant(),java.time.ZoneId.of("Asia/Kolkata"));
+        ReflectionTestUtils.setField(ctx.service,"entryClock",clock);
+        when(ctx.triggerRepo.findByStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION))
+                .thenAnswer(i -> ctx.savedRequest.get().getStatus() == TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION
+                        ? List.of(ctx.savedRequest.get()) : List.of());
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(120d);
+        when(ctx.ltpCache.getObservedAt(123456)).thenReturn(LocalDateTime.now(clock));
+        return ctx;
+    }
+
+    @Test void insufficientFundsKeepsOnlyRequestAndDoesNotReachBroker() {
+        var ctx = fundsQueue(java.util.OptionalDouble.of(6000));
+        ctx.service.retryFundsManagedOptionRequests();
+        assertThat(ctx.savedRequest.get().getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        assertThat(ctx.savedRequest.get().getReason()).isEqualTo("WAITING_FOR_BROKER_FUNDS");
+        verify(ctx.broker,never()).placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble());
+        verify(ctx.triggeredRepo,never()).save(any());
+    }
+
+    @Test void missingBalanceFailsClosedAndAdminCannotBypassQueue() {
+        var ctx = fundsQueue(java.util.OptionalDouble.empty());
+        assertThat(ctx.service.executeTradeFromEntity(ctx.savedRequest.get())).isNull();
+        assertThat(ctx.savedRequest.get().getReason()).isEqualTo("BROKER_FUNDS_UNAVAILABLE");
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+        verify(ctx.broker,never()).placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble());
+    }
+
+    @Test void fundedRequestUsesFullQuantityAndReserveBeforeCreatingPendingOrder() {
+        var ctx = fundsQueue(java.util.OptionalDouble.of(10000));
+        ctx.service.retryFundsManagedOptionRequests();
+        verify(ctx.broker).placeTriggerPriceEntryOrder(any(),any(),eq(123.45),anyDouble());
+        assertThat(ctx.savedTrade.get().getQuantity()).isEqualTo(50);
+        assertThat(ctx.savedTrade.get().getOrderId()).isEqualTo("FUNDED-1");
+    }
+
+    @Test void fundsForPremiumAloneDoNotCoverReserve() {
+        var ctx = fundsQueue(java.util.OptionalDouble.of(6200));
+        ctx.service.retryFundsManagedOptionRequests();
+        verify(ctx.broker,never()).placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble());
+    }
+
+    @Test void confirmedExitWakesWaitingAccountAndStillRequiresFreshBalance() {
+        var ctx = fundsQueue(java.util.OptionalDouble.of(0));
+        ctx.service.retryFundsManagedOptionRequests();
+        when(ctx.broker.availableOptionBuyingFunds(any(),any())).thenReturn(java.util.OptionalDouble.of(10000));
+        ctx.service.retryFundsManagedOptionRequests(); // Normal cooldown: no second balance call.
+        verify(ctx.broker).availableOptionBuyingFunds(any(),any());
+        ctx.service.brokerFundsMayBeReleased(TriggeredTradeSetupEntity.builder().brokerCredentialsId(99L).build());
+        ctx.service.retryFundsManagedOptionRequests();
+        verify(ctx.broker).availableOptionBuyingFunds(any(),any());
+        ctx.service.brokerFundsMayBeReleased(TriggeredTradeSetupEntity.builder().brokerCredentialsId(55L).build());
+        ctx.service.retryFundsManagedOptionRequests();
+        verify(ctx.broker,times(2)).availableOptionBuyingFunds(any(),any());
+        assertThat(ctx.savedTrade.get().getOrderId()).isEqualTo("FUNDED-1");
+    }
+
+    @Test void periodicRetryRechecksWithoutAnyExitAndSurvivesLostWakeup() {
+        var ctx = fundsQueue(java.util.OptionalDouble.of(0));
+        ctx.service.retryFundsManagedOptionRequests();
+        when(ctx.broker.availableOptionBuyingFunds(any(),any())).thenReturn(java.util.OptionalDouble.of(10000));
+        var next = java.time.Clock.fixed(java.time.ZonedDateTime.of(2026,10,28,12,0,31,0,
+                java.time.ZoneId.of("Asia/Kolkata")).toInstant(), java.time.ZoneId.of("Asia/Kolkata"));
+        ReflectionTestUtils.setField(ctx.service,"entryClock",next);
+        when(ctx.ltpCache.getObservedAt(123456)).thenReturn(LocalDateTime.now(next));
+        ctx.service.retryFundsManagedOptionRequests();
+        assertThat(ctx.savedTrade.get().getOrderId()).isEqualTo("FUNDED-1");
+    }
+
+    @Test void staleExpiredPriorDayAndTargetReachedRequestsNeverSubmit() {
+        for (String scenario : List.of("stale", "expired", "priorDay", "target", "cutoff", "closedRun", "persisted")) {
+            var ctx = fundsQueue(java.util.OptionalDouble.of(10000));
+            switch (scenario) {
+                case "stale" -> when(ctx.ltpCache.getObservedAt(123456)).thenReturn(LocalDateTime.of(2026,10,28,11,0));
+                case "expired" -> ctx.savedRequest.get().setExpiry("27/10/2026");
+                case "priorDay" -> {ctx.savedRequest.get().setIntraday(true);ctx.savedRequest.get().setCreatedAt(LocalDateTime.of(2026,10,27,10,0));}
+                case "target" -> when(ctx.ltpCache.getLtp(123456)).thenReturn(150d);
+                case "cutoff" -> ReflectionTestUtils.setField(ctx.service,"entryClock",java.time.Clock.fixed(
+                        java.time.ZonedDateTime.of(2026,10,28,15,20,0,0,java.time.ZoneId.of("Asia/Kolkata")).toInstant(),java.time.ZoneId.of("Asia/Kolkata")));
+                case "closedRun" -> {var runs=mock(org.com.sharekhan.strategy.run.StrategyRunCoordinator.class);
+                    ReflectionTestUtils.setField(ctx.service,"runCoordinator",runs);ctx.savedRequest.get().setStrategyRunId("CLOSED");}
+                case "persisted" -> when(ctx.triggeredRepo.findByTriggerRequestId(77L)).thenReturn(List.of(TriggeredTradeSetupEntity.builder().id(88L).build()));
+            }
+            ctx.service.retryFundsManagedOptionRequests();
+            verify(ctx.broker,never()).placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble());
+        }
+    }
+
+    @Test void uncertainSubmissionNeverAutomaticallyRetries() {
+        var ctx = fundsQueue(java.util.OptionalDouble.of(10000));
+        when(ctx.broker.placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble())).thenThrow(new IllegalStateException("transport unavailable"));
+        ctx.service.retryFundsManagedOptionRequests();
+        ctx.service.brokerFundsMayBeReleased(TriggeredTradeSetupEntity.builder().brokerCredentialsId(55L).build());
+        ctx.service.retryFundsManagedOptionRequests();
+        assertThat(ctx.savedRequest.get().getStatus()).isEqualTo(TriggeredTradeStatus.ENTRY_SUBMITTING);
+        verify(ctx.broker).placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble());
+    }
+
+    @Test void concurrentWorkersCannotSpendTheSameUnreflectedBalance() throws Exception {
+        var ctx=fundsQueue(java.util.OptionalDouble.of(10000));
+        var first=ctx.savedRequest.get();
+        var second=triggerRequestEntity();second.setId(78L);second.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        second.setExpiry("23/11/2026");second.setCreatedAt(first.getCreatedAt());
+        when(ctx.triggerRepo.findById(78L)).thenReturn(Optional.of(second));
+        when(ctx.triggerRepo.claimIfStatusEquals(78L,"PLACED_PENDING_CONFIRMATION","ENTRY_SUBMITTING")).thenAnswer(i->{second.setStatus(TriggeredTradeStatus.ENTRY_SUBMITTING);return 1;});
+        when(ctx.triggerRepo.claimIfStatusEqualsWithOutcome(eq(78L),eq("ENTRY_SUBMITTING"),eq("PLACED_PENDING_CONFIRMATION"),anyString(),anyString())).thenReturn(1);
+        var pool=java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            var start=new java.util.concurrent.CountDownLatch(1);
+            var one=pool.submit(()->{try {start.await();}catch(InterruptedException e){throw new RuntimeException(e);}
+                ReflectionTestUtils.invokeMethod(ctx.service,"tryPlaceBrokerSideEntryOrder",first);});
+            var two=pool.submit(()->{try {start.await();}catch(InterruptedException e){throw new RuntimeException(e);}
+                ReflectionTestUtils.invokeMethod(ctx.service,"tryPlaceBrokerSideEntryOrder",second);});
+            start.countDown();one.get(5,java.util.concurrent.TimeUnit.SECONDS);two.get(5,java.util.concurrent.TimeUnit.SECONDS);
+            verify(ctx.broker,times(2)).availableOptionBuyingFunds(any(),any());
+            verify(ctx.broker).placeTriggerPriceEntryOrder(any(),any(),anyDouble(),anyDouble());
+            assertThat(List.of(first.getStatus(),second.getStatus())).containsExactlyInAnyOrder(
+                    TriggeredTradeStatus.ENTRY_SUBMITTING,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        } finally {pool.shutdownNow();}
+    }
+
+    @Test void spotLevelsAndSimulatorRemainOutsideLiveFundsQueue() {
+        var ctx = fundsQueue(java.util.OptionalDouble.empty());
+        ctx.savedRequest.get().setUseSpotForSl(true);
+        assertThat(ctx.service.isFundsManagedOptionRequest(ctx.savedRequest.get())).isFalse();
+        ctx.savedRequest.get().setUseSpotForSl(false);ctx.useSimulatorBroker();
+        assertThat(ctx.service.isFundsManagedOptionRequest(ctx.savedRequest.get())).isFalse();
+    }
+
     private static class TestContext {
         private final TriggerTradeRequestRepository triggerRepo = mock(TriggerTradeRequestRepository.class);
         private final TriggeredTradeSetupRepository triggeredRepo = mock(TriggeredTradeSetupRepository.class);
@@ -1448,6 +1587,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
                     .active(true)
                     .build()));
             when(brokerServiceFactory.getService(anyString())).thenReturn(broker);
+            when(broker.availableOptionBuyingFunds(any(), any())).thenReturn(java.util.OptionalDouble.of(1000000d));
             when(broker.placeTriggerPriceEntryOrder(any(), any(BrokerContext.class), anyDouble(), anyDouble()))
                     .thenReturn(brokerResult);
 

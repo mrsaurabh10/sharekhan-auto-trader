@@ -228,6 +228,19 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
             return adapt(row,orderId,orderId.equals(trade.getExitOrderId()));
         } catch(Exception ignored) {return null;}
     }
+    @Override
+    public java.util.OptionalDouble availableOptionBuyingFunds(TriggeredTradeSetupEntity trade, BrokerContext context) {
+        try {
+            Session session = session(trade, context);
+            var response = client.exchange("GET", "/fundlimit", session.token(), null);
+            if (!response.ok()) return java.util.OptionalDouble.empty();
+            var row = response.json();
+            if (!session.clientId().equals(row.getString("dhanClientId"))) return java.util.OptionalDouble.empty();
+            double balance = row.getDouble("availabelBalance"); // Provider spelling.
+            return Double.isFinite(balance) ? java.util.OptionalDouble.of(balance) : java.util.OptionalDouble.empty();
+        } catch (Exception ignored) { return java.util.OptionalDouble.empty(); }
+    }
+
     private Session session(TriggeredTradeSetupEntity trade, BrokerContext context) {
         if (trade == null || context == null || context.getBrokerCredentialsId() == null || !"Dhan".equalsIgnoreCase(context.getBrokerName())
                 || !Objects.equals(trade.getBrokerCredentialsId(),context.getBrokerCredentialsId())) throw new IllegalArgumentException();

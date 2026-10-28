@@ -45,6 +45,19 @@ public class SharekhanBrokerService implements ModifiableEntryBrokerService, Tri
     }
 
     @Override
+    public java.util.OptionalDouble availableOptionBuyingFunds(TriggeredTradeSetupEntity trade, BrokerContext context) {
+        try {
+            if (context == null || context.getBrokerCredentialsId() == null || context.getCustomerId() == null) return java.util.OptionalDouble.empty();
+            var token = tokenStoreService.getSavedTokenInfoForBrokerCredentials(Broker.SHAREKHAN, context.getBrokerCredentialsId());
+            if (token == null || !java.util.Objects.equals(token.getAppUserId(), trade.getAppUserId())
+                    || !java.util.Objects.equals(token.getCustomerId(), context.getCustomerId())) return java.util.OptionalDouble.empty();
+            var client = createClient(context.getApiKey(), token.getToken());
+            var response = SharekhanConsoleSilencer.call(() -> client.getFunds(trade.getExchange(), context.getCustomerId()));
+            return OptionBuyingFunds.sharekhan(response, context.getCustomerId());
+        } catch (Exception ignored) { return java.util.OptionalDouble.empty(); }
+    }
+
+    @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
         if (isBigTradePlus(trade)) {
             return placeBigTradePlusBracket(trade, context);

@@ -144,6 +144,9 @@ public class PriceTriggerService {
                 
                 if (trigger.getEntryPrice() == null) continue;
 
+                // Live premium-based option requests belong to the funds-gated broker queue.
+                if (tradeExecutionService.isFundsManagedOptionRequest(trigger)) continue;
+
                 // A BTP parent can be pre-armed at Sharekhan only when the
                 // breakout is nearby.  Until then this remains a margin-free
                 // local trigger.  If accepted, its status changes atomically
@@ -1898,6 +1901,7 @@ public class PriceTriggerService {
             saved.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
 
             triggeredRepo.save(saved);
+            tradeExecutionService.brokerFundsMayBeReleased(saved);
             log.info("💾 Persisted PnL {} and marked EXITED_SUCCESS for trade {}", saved.getPnl(), saved.getId());
         } catch (Exception e) {
             log.error("❌ Error saving PnL for trade {}: {}", originalTrade == null ? "null" : originalTrade.getId(), e.getMessage(), e);

@@ -631,6 +631,18 @@ public class TokenStoreService {
         return new TokenInfo(token, null, customerId, null, null);
     }
 
+    /** Saved scoped session only. Funds polling must never initiate authentication. */
+    public TokenInfo getSavedTokenInfoForBrokerCredentials(Broker broker, Long brokerCredentialsId) {
+        if (broker == null || brokerCredentialsId == null) return null;
+        try {
+            var saved = persistenceService.findLatestByBrokerAndBrokerCredentialsId(broker.getDisplayName(), brokerCredentialsId).orElse(null);
+            var credentials = brokerCredentialsRepository.findById(brokerCredentialsId).orElse(null);
+            if (saved == null || credentials == null || !broker.getDisplayName().equalsIgnoreCase(credentials.getBrokerName())
+                    || saved.getToken() == null || saved.getToken().isBlank() || saved.getExpiry() == null || !saved.getExpiry().isAfter(Instant.now())) return null;
+            return new TokenInfo(saved.getToken(), credentials.getApiKey(), credentials.getCustomerId(), credentials.getAppUserId(), credentials.getId());
+        } catch (Exception ignored) { return null; }
+    }
+
     public TokenInfo getTokenInfoForBrokerCredentials(Broker broker, Long brokerCredentialsId) {
         if (broker == null || brokerCredentialsId == null) {
             return null;

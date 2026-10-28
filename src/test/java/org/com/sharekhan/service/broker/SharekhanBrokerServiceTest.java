@@ -10,6 +10,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class SharekhanBrokerServiceTest {
 
+    @Test void fundsUseOnlySavedScopedSessionAndValidateReturnedCustomer() throws Exception {
+        var tokens=org.mockito.Mockito.mock(org.com.sharekhan.auth.TokenStoreService.class);
+        var sdk=org.mockito.Mockito.mock(com.sharekhan.SharekhanConnect.class);
+        var service=org.mockito.Mockito.spy(new SharekhanBrokerService(tokens,null));
+        var context=new BrokerContext(123L,"test-key","CLIENT","Sharekhan",55L);
+        var trade=TriggeredTradeSetupEntity.builder().appUserId(9L).brokerCredentialsId(55L).exchange("NF").build();
+        org.mockito.Mockito.when(tokens.getSavedTokenInfoForBrokerCredentials(org.com.sharekhan.enums.Broker.SHAREKHAN,55L))
+                .thenReturn(new org.com.sharekhan.auth.TokenStoreService.TokenInfo("saved-test-token","test-key",123L,9L,55L));
+        org.mockito.Mockito.doReturn(sdk).when(service).createClient("test-key","saved-test-token");
+        var body=new JSONObject().put("status",200).put("data",new org.json.JSONArray().put(new JSONObject()
+            .put("customerId",123L).put("currentCashBalance",10000).put("pendingWithdrawalRequest",0)
+            .put("cashBpl",0).put("fnoBpl",0).put("cashPreviousSettlementExposure",0)
+            .put("intradayMarginCash",0).put("fnoPremium",0).put("intradayMarginFno",0).put("holdFunds",0)));
+        org.mockito.Mockito.when(sdk.getFunds("NF",123L)).thenReturn(body);
+        assertThat(service.availableOptionBuyingFunds(trade,context)).hasValue(10000);
+        org.mockito.Mockito.when(tokens.getSavedTokenInfoForBrokerCredentials(org.com.sharekhan.enums.Broker.SHAREKHAN,55L)).thenReturn(null);
+        assertThat(service.availableOptionBuyingFunds(trade,context)).isEmpty();
+        org.mockito.Mockito.verify(sdk).getFunds("NF",123L);
+        org.mockito.Mockito.verify(tokens,org.mockito.Mockito.never()).getAccessToken(org.mockito.ArgumentMatchers.any(org.com.sharekhan.enums.Broker.class));
+        org.mockito.Mockito.verify(tokens,org.mockito.Mockito.never()).getTokenInfoForBrokerCredentials(org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.any());
+    }
+
     @Test void cashShortSellsThenBuysBackAndModifiesCoverAsBuy() throws Throwable {
         var repository = org.mockito.Mockito.mock(org.com.sharekhan.repository.ScriptMasterRepository.class);
         var tokens = org.mockito.Mockito.mock(org.com.sharekhan.auth.TokenStoreService.class);

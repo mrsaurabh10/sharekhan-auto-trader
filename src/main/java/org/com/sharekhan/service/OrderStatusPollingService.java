@@ -495,6 +495,7 @@ public class OrderStatusPollingService {
                         TriggeredTradeSetupEntity executedTrade = reloaded != null ? reloaded : currentTrade;
                         tradeExecutionService.handleEntryOrderExecution(executedTrade);
                     } else {
+                        tradeExecutionService.brokerFundsMayBeReleased(reloaded != null ? reloaded : currentTrade);
                         tradeExecutionService.advanceStagedTargetStopsAfterTargetExit(reloaded != null ? reloaded : currentTrade);
                         rearmGapFillRequest(reloaded != null ? reloaded : currentTrade);
                     }

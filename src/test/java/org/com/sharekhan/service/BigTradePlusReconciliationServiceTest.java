@@ -16,6 +16,8 @@ import static org.mockito.Mockito.*;
 class BigTradePlusReconciliationServiceTest {
 
     @Test void shortProfitUsesBuybackAndMovesStopDownToCost() {
+        var funds=mock(TradeExecutionService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"tradeExecutionService",funds);
         var first=trade(1); var second=trade(2);
         first.setSource("spot-atr-pdl-bigtradeplus"); second.setSource("spot-atr-pdl-bigtradeplus");
         second.setStopLoss(86d);
@@ -23,6 +25,7 @@ class BigTradePlusReconciliationServiceTest {
         var c2=child(2,false).put("triggerPrice",86d).put("buySell","BMP");
         service.reconcileReport(context,List.of(first,second),report(parent(1,84d).put("buySell","SMP"),
                 child(1,true).put("execPrice",84d).put("buySell","BMP"),p2,c2));
+        var ordered=inOrder(repo,funds);ordered.verify(repo).save(first);ordered.verify(funds).brokerFundsMayBeReleased(first);
         assertThat(first.getPnl()).isEqualTo(2.46);
         assertThat(first.getStatus()).isEqualTo(TriggeredTradeStatus.EXITED_SUCCESS);
         verify(broker).modifyBracketStop(context,p2,c2,84.80);
