@@ -393,6 +393,59 @@ class TradeExecutionServiceBrokerSideEntryTest {
         org.mockito.Mockito.verifyNoInteractions(ctx.broker);
     }
 
+    private TriggeredTradeSetupEntity averagingTrade(String side,double admitted) {
+        return TriggeredTradeSetupEntity.builder().scripCode(123456).symbol("NATURALGAS").exchange("MX")
+                .quantity(1250L).lots(1).entryAction("BUY").optionType(side).entryPrice(admitted)
+                .source(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE).build();
+    }
+    private QuoteCacheService.QuoteSnapshot averagingQuote(double bid,double ask,Instant at) {
+        return QuoteCacheService.QuoteSnapshot.builder().bestBid(bid).bestAsk(ask).midPrice((bid+ask)/2).spreadPercent((ask-bid)/ask*100).lastTradedPrice(ask)
+                .lastBookAt(at).updatedAt(at).coherentBook(true).bookSource("SHAREKHAN_WS")
+                .bookProviderIdentity("scrip:123456").build();
+    }
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"CE","PE"})
+    void averagingPlacementUsesExecutableAskThroughRealSimulator(String side) {
+        var ctx=new TestContext(pending("unused"));configureFiveAttemptPolicy(ctx);
+        var cache=new QuoteCacheService();cache.recordQuote(123456,20.3,20.4,20.4,"SHAREKHAN_WS",null,"scrip:123456",null,null);
+        ReflectionTestUtils.setField(ctx.service,"quoteCacheService",cache);
+        var simulator=new org.com.sharekhan.service.broker.SimulatorBrokerService();ReflectionTestUtils.setField(simulator,"quotes",cache);
+        var context=new BrokerContext();context.setBrokerName("Simulator");
+        OrderPlacementResult result=ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",averagingTrade(side,20.4),20.4,context,simulator,false);
+        assertThat(result.isSuccess()).isTrue();assertThat(result.getExecutedPrice()).isEqualTo(20.4);
+        assertThat(result.getAttemptedPrice()).isEqualTo(20.4);
+    }
+    @Test void averagingPlacementWaitsIfAskRisesBeyondOriginalAdmission() {
+        var ctx=new TestContext(pending("unused"));configureFiveAttemptPolicy(ctx);
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(averagingQuote(20.4,20.45,Instant.now())));
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",
+                averagingTrade("CE",20.4),20.4,new BrokerContext(),ctx.broker,false))
+                .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class).hasMessageContaining("originally admitted");
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+    }
+    @Test void averagingPreOrderWaitSurvivesExecutionWrapperWithoutFabricatedFailure() {
+        var ctx=new TestContext(pending("unused"));ctx.useSimulatorBroker();configureFiveAttemptPolicy(ctx);
+        var trade=averagingTrade("CE",20.4);trade.setBrokerCredentialsId(55L);trade.setAppUserId(9L);
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(averagingQuote(20.4,20.45,Instant.now())));
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->ReflectionTestUtils.invokeMethod(ctx.service,"executeWithoutLock",trade,20.4,LocalDateTime.now(),false))
+                .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class);
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+        verify(ctx.triggeredRepo,never()).save(any());
+    }
+    @Test void averagingPriceRechecksFreshnessIdentitySpreadAndAllowsCheaperAsk() {
+        var ctx=new TestContext(pending("unused"));var trade=averagingTrade("PE",20.4);
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(averagingQuote(20.2,20.3,Instant.now())));
+        Object diagnostics=ReflectionTestUtils.invokeMethod(ctx.service,"analyseEntry",trade,20.4);
+        for(var q:List.of(averagingQuote(20.2,20.3,Instant.now().minusSeconds(6)),
+                averagingQuote(19,20.3,Instant.now()),QuoteCacheService.QuoteSnapshot.builder().bestBid(20.2).bestAsk(20.3).lastBookAt(Instant.now()).coherentBook(true).bookSource("SHAREKHAN_WS").bookProviderIdentity("scrip:9").build())) {
+            when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(q));
+            org.assertj.core.api.Assertions.assertThatThrownBy(()->ReflectionTestUtils.invokeMethod(ctx.service,"resolveEntryAttemptPrice",trade,diagnostics,0,20.4,false))
+                    .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class);
+        }
+        when(ctx.quoteCache.getSnapshot(123456)).thenReturn(Optional.of(averagingQuote(20.2,20.3,Instant.now())));
+        Double price=ReflectionTestUtils.invokeMethod(ctx.service,"resolveEntryAttemptPrice",trade,diagnostics,4,20.4,true);
+        assertThat(price).isEqualTo(20.3);
+    }
+
     private ScriptMasterEntity retryOption(TestContext ctx) {
         var option = ScriptMasterEntity.builder().scripCode(123456).tradingSymbol("NIFTY").exchange("NF")
                 .instrumentType("OI").strikePrice(25000d).optionType("CE").expiry("30/06/2026").build();

@@ -54,7 +54,10 @@ information blocks additions; trend exits can be requested without an option quo
 
 Use exact Sharekhan WS futures marks at most 15 seconds old and coherent option
 books at most five seconds old. Entry spread must be at most 2%; exit risk checks
-still work with a wider spread. Paper entries fill at executable ask, never above
+still work with a wider spread. Averaging execution submits the current ask instead of the generic midpoint,
+rounded upward to the option tick and capped by the original admitted price.
+Known pre-order quote waits retain the explicit no-order outcome. Paper entries
+fill at executable ask, never above
 the admitted ask; exits use executable bid. Missing quotes do not create fills.
 The ₹3,000 guard is an exit trigger, not a guaranteed final loss cap; gaps, stale
 feeds, execution delays and underestimated costs can produce a larger loss.
