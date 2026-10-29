@@ -23,7 +23,9 @@ public class SwingPlanner {
                 return result(symbol,code,"UNAVAILABLE","Invalid OHLC or conflicting daily timestamps.",c.date(),false,false,null);
         }
         LocalDate lastDate = ordered.isEmpty() ? null : ordered.lastKey();
-        if (!day.equals(lastDate)) return result(symbol,code,"UNAVAILABLE","Daily source has not published the required session.",lastDate,false,false,null);
+        if (!day.equals(lastDate)) return result(symbol,code,"UNAVAILABLE",lastDate==null
+                ?"No daily bars returned; shared-session access or provider data may be unavailable."
+                :"Returned daily history does not yet include the required session.",lastDate,false,false,null);
         var all = new ArrayList<>(ordered.values());
         if (all.size()<220) return result(symbol,code,"UNAVAILABLE","Requires at least 220 completed daily bars.",lastDate,false,false,null);
         var rows = all.subList(Math.max(0,all.size()-260),all.size());

@@ -33,6 +33,7 @@ class SwingPlannerTest {
         assertThat(planner.evaluate(stock(),rows,day,valid)).isEqualTo(before);
     }
     @Test void staleMalformedAndConflictingDataFailClosed(){
+        assertThat(planner.evaluate(stock(),List.of(),day,valid).detail()).contains("shared-session access");
         assertThat(planner.evaluate(stock(),prices(),day.plusDays(1),valid).status()).isEqualTo("UNAVAILABLE");
         var malformed=prices();malformed.add(candle(day,100,90,95,99));
         assertThat(planner.evaluate(stock(),malformed,day,valid).status()).isEqualTo("UNAVAILABLE");
