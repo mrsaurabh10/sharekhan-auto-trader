@@ -16,7 +16,7 @@ class StockAnalysisShoonyaFeedTest {
     private final StockAnalysisService.Instrument nse = new StockAnalysisService.Instrument(2885,"RELIANCE","NC");
     private final Instant now = LocalDate.of(2026,10,29).atTime(23,0).atZone(StockAnalysisService.IST).toInstant();
     private JSONObject identity(String exchange, String token, String symbol) {
-        return new JSONObject().put("stat","Ok").put("exch",exchange).put("token",token).put("tsym",symbol);
+        return new JSONObject().put("stat","Ok").put("exch",exchange).put("token",token).put("tsym",symbol).put("ti","0.05");
     }
     private JSONObject row(boolean intraday) {
         var at = LocalDate.of(2026,10,28).atTime(9,15);
@@ -68,6 +68,7 @@ class StockAnalysisShoonyaFeedTest {
         doReturn(identity("NSE","2885","RELIANCE-EQ").toString()).when(feed).post(eq("GetSecurityInfo"),any(),eq("session"));
         doReturn(new JSONArray().put(row(false).toString()).toString()).when(feed).post(eq("EODChartData"),any(),eq("session"));
         assertThat(feed.fetch(nse,"SWING",now)).hasSize(1);assertThat(saved.getExpiry()).isEqualTo(expiry);
+        assertThat(feed.dailyInput(nse,now).tickSize()).isEqualTo(.05);
         verify(tokens,never()).save(any());
     }
 }

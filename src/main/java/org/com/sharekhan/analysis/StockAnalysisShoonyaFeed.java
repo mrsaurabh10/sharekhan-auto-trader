@@ -27,7 +27,15 @@ public class StockAnalysisShoonyaFeed {
     private final AccessTokenRepository tokens;
     private final CryptoService crypto;
 
+    public record DailyInput(List<HistoricalCandle> candles, Double tickSize) { }
+
     public List<HistoricalCandle> fetch(StockAnalysisService.Instrument instrument, String mode, Instant now) {
+        return fetchInput(instrument,mode,now,false).candles();
+    }
+    public DailyInput dailyInput(StockAnalysisService.Instrument instrument, Instant now) {
+        return fetchInput(instrument,"SWING",now,true);
+    }
+    private DailyInput fetchInput(StockAnalysisService.Instrument instrument, String mode, Instant now, boolean paced) {
         try {
             var local = LocalDateTime.ofInstant(now, IST);
             var saved = ShoonyaSavedSession.currentGlobal(tokens.findAllByBrokerName("Shoonya"), local,
@@ -37,16 +45,19 @@ public class StockAnalysisShoonyaFeed {
             String token = String.valueOf(instrument.scripCode());
             var identity = new JSONObject(post("GetSecurityInfo", new JSONObject().put("exch", exchange).put("token", token), session));
             String symbol = verifiedSymbol(identity, instrument);
+            if(paced)Thread.sleep(1100); // research worker: space same-instrument REST calls
             boolean intraday = mode.equals("INTRADAY");
             var request = new JSONObject();
             String start = String.valueOf(local.toLocalDate().minusDays(intraday ? 7 : 800).atStartOfDay(IST).toEpochSecond());
             String end = String.valueOf(now.getEpochSecond());
             if (intraday) request.put("exch", exchange).put("token", token).put("st", start).put("et", end).put("intrv", "5");
             else request.put("sym", exchange + ":" + symbol).put("from", start).put("to", end);
-            return parse(post(intraday ? "TPSeries" : "EODChartData", request, session), intraday);
+            double tick=identity.optDouble("ti",Double.NaN);
+            return new DailyInput(parse(post(intraday ? "TPSeries" : "EODChartData", request, session), intraday),Double.isFinite(tick)&&tick>0?tick:null);
         } catch (Exception unavailable) {
+            if(unavailable instanceof InterruptedException)Thread.currentThread().interrupt();
             // Neither provider bodies nor credential-bearing exception messages leave this boundary.
-            return List.of();
+            return new DailyInput(List.of(),null);
         }
     }
 

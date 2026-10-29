@@ -3,10 +3,12 @@
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Indian Stock Analysis · AutoTrader</title>
+<meta name="swing-csrf-header" th:content="${_csrf.headerName}"><meta name="swing-csrf-token" th:content="${_csrf.token}">
 <link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
 <link rel="stylesheet" href="/portal/stock-analysis.css?v=20261029">
-<script src="/portal/stock-analysis-math.js?v=20261029" defer></script>
+<script src="/portal/stock-analysis-math.js?v=20261029-swing1" defer></script>
 <script src="/portal/stock-analysis.js?v=20261029-feed2" defer></script>
+<script src="/portal/swing-ideas.js?v=20261029-1" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -21,6 +23,17 @@
 <div class="identity"><a href="/dashboard" class="text-button">My workspace</a><form action="/logout" method="post"><input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"><button class="text-button" type="submit">Sign out</button></form></div></header>
 <main class="page" id="main" tabindex="-1">
 <div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with broker market data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
+<section class="card section-gap" aria-label="Daily Swing Ideas" id="swingIdeas">
+<div class="row"><div><div class="eyebrow">DAILY SWING IDEAS · NSE CASH</div><h2>Plan the next session</h2><p class="muted">Conditional breakout and pullback research. Entries, stops and 2R/3R targets from completed daily candles.</p></div><button type="button" class="secondary" id="swingScan">Refresh daily scan</button></div>
+<p id="swingStatus" class="notice" role="status" aria-live="polite">Loading saved daily research…</p>
+<div class="row"><label>Saved report<select id="swingHistory"><option value="">Latest report</option></select></label><span id="swingMeta" class="muted"></span><button type="button" class="secondary" id="swingDownload" disabled>Download swing report</button></div>
+<details class="section-gap"><summary>Set your planning budget · INR</summary><p class="muted">Hypothetical inputs for one idea at a time. Existing risk is your estimate; holdings are not read. Combining multiple ideas needs a fresh portfolio-risk calculation. Inputs stay in this page.</p>
+<form id="swingBudget" class="form-grid"><label>Planning capital (₹)<input name="capital" type="number" min="0.01" step="0.01" placeholder="500000" required></label><label>Risk budget per idea (₹)<input name="risk" type="number" min="0.01" step="0.01" placeholder="2500" required></label><label>Maximum position (%)<input name="maxPositionPct" type="number" min="0.01" max="100" step="0.01" value="10" required></label><label>Maximum portfolio stop risk (%)<input name="maxHeatPct" type="number" min="0.01" max="100" step="0.01" value="6" required></label><label>Existing planned stop risk (₹)<input name="openRisk" type="number" min="0" step="0.01" placeholder="0" required></label><button type="submit" class="secondary">Update hypothetical quantities</button></form><p id="swingSizingStatus" role="status" class="muted"></p></details>
+<div id="swingPlans" class="section-gap"></div>
+<details class="section-gap"><summary>Scan coverage, filters and method limits</summary><p id="swingUniverse" class="muted"></p><ul id="swingNotes" class="data-warnings"></ul><div id="swingAudit" class="table-wrap"></div>
+<p class="muted">Skill methods adapted: breakout-trade-planner (maximum-entry risk, chase limit, R targets), position-sizer (whole shares, position and portfolio-risk caps), backtest-expert (explicit rules, no look-ahead, ambiguous outcomes). This is a native technical preset, not full VCP/CANSLIM screening or a validated trading edge. Fundamental, earnings/news and sector-exposure checks are not included.</p></details>
+<p class="muted">Scans retry after EOD at 19:15–23:15 IST and at 08:55 on weekdays. An absent daily candle produces a data-pending result. In-app alerts show saved reports and observed levels; no orders or external messages are sent.</p>
+</section>
 <section class="card analysis-controls" aria-label="Choose a stock">
 <form id="analysisForm">
 <label>Exchange<select id="exchange"><option value="NC">NSE cash</option><option value="BC">BSE cash</option></select></label>
