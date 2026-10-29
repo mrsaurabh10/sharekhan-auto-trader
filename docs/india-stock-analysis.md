@@ -62,3 +62,7 @@ Read-only comparison: Shoonya returned450 valid five-minute rows across six comp
 A clean retained data window is still required for all indicators. The daily current-date exclusion remains, so the last daily candle can differ from the latest intraday session. No corporate-action normalization or source interchangeability is claimed.
 
 The live NSE intraday feed also contains a negative15:20 volume correction on each returned session. Invalid volume is shown as unavailable and blocks affected volume calculations (including session VWAP), while valid OHLC still supports SMA/RSI/ATR. BSE RELIANCE's session VWAP was available. No absolute-value conversion or invented volume is used.
+
+## Daily Swing Ideas
+
+The page also contains the native India research workflow documented in [daily-swing-ideas.md](daily-swing-ideas.md): scheduled read-only screening, saved plans, conditional price levels, INR sizing and EOD observations. It does not add order placement or claim that all installed trading skills are executed in the app.
