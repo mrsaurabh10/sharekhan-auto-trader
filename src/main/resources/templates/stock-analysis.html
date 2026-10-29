@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
 <link rel="stylesheet" href="/portal/stock-analysis.css?v=20261029">
 <script src="/portal/stock-analysis-math.js?v=20261029" defer></script>
-<script src="/portal/stock-analysis.js?v=20261029" defer></script>
+<script src="/portal/stock-analysis.js?v=20261029-feed2" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -14,18 +14,18 @@
 <aside class="sidebar">
 <a class="brand" href="/dashboard"><span class="brand-mark">↗</span> AutoTrader</a>
 <nav aria-label="Main navigation"><a href="/dashboard">▦ My workspace</a><a href="/stock-analysis" aria-current="page">⌕ Stock Analysis</a></nav>
-<div class="sidebar-bottom"><span class="badge">NSE · BSE</span><p>Sharekhan market data.<br>Evidence before decisions.</p></div>
+<div class="sidebar-bottom"><span class="badge">NSE · BSE</span><p>Shoonya · Sharekhan data.<br>Evidence before decisions.</p></div>
 </aside>
 <div class="workspace">
 <header class="topbar"><div><span class="eyebrow">INDIAN MARKETS</span><div class="section-note">Your stock research workspace</div></div>
 <div class="identity"><a href="/dashboard" class="text-button">My workspace</a><form action="/logout" method="post"><input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"><button class="text-button" type="submit">Sign out</button></form></div></header>
 <main class="page" id="main" tabindex="-1">
-<div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with Sharekhan data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
+<div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with broker market data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
 <section class="card analysis-controls" aria-label="Choose a stock">
 <form id="analysisForm">
 <label>Exchange<select id="exchange"><option value="NC">NSE cash</option><option value="BC">BSE cash</option></select></label>
 <label class="symbol-field">Find a stock<input id="symbolSearch" type="search" placeholder="Type at least 2 letters, e.g. RELIANCE" autocomplete="off" maxlength="60" aria-describedby="searchHelp"></label>
-<label>Timeframe<select id="analysisMode"><option value="INTRADAY">Intraday · 5-minute</option><option value="SWING">Delivery / Swing · Daily</option></select></label>
+<label>Timeframe<select id="analysisMode"><option value="INTRADAY">Intraday · 5-minute</option><option value="SWING" selected>Delivery / Swing · Daily</option></select></label>
 <button class="primary" type="submit" id="analyzeButton" disabled>Analyze stock →</button>
 </form>
 <p class="muted" id="searchHelp">Choose an exact match below. NSE and BSE scrip identities are separate. No trading activation is required.</p>
@@ -33,7 +33,7 @@
 <div id="selection" class="selected-stock" hidden></div>
 </section>
 <div id="analysisStatus" class="notice section-gap" role="status" aria-live="polite" hidden></div>
-<section id="emptyAnalysis" class="card analysis-empty section-gap"><span class="analysis-empty-icon">⌁</span><h2>Start with a stock, not a signal</h2><p>Search an NSE or BSE instrument to inspect its price structure, momentum, opening range and available history.</p><div class="empty-points"><span>₹ INR sizing</span><span>IST timestamps</span><span>Sharekhan source</span></div></section>
+<section id="emptyAnalysis" class="card analysis-empty section-gap"><span class="analysis-empty-icon">⌁</span><h2>Start with a stock, not a signal</h2><p>Search an NSE or BSE instrument to inspect its price structure, momentum, opening range and available history.</p><div class="empty-points"><span>₹ INR sizing</span><span>IST timestamps</span><span>Source shown on every report</span></div></section>
 <div id="analysisReport" hidden>
 <section class="report-heading section-gap"><div><h2 id="reportTitle"></h2><p class="muted" id="reportMeta"></p></div><div class="actions"><span id="dataBadge" class="badge"></span><button id="downloadReport" class="secondary" type="button">Download report</button></div></section>
 <section class="grid analysis-metrics" id="metrics" aria-label="Price and technical indicators"></section>
