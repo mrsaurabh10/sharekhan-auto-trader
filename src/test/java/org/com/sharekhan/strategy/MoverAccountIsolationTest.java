@@ -81,7 +81,8 @@ class MoverAccountIsolationTest {
             when(snapshots.loadOrCapture(anyString(),any(),any())).thenReturn(Optional.of(List.of(new Fno925Candidate("WIPRO",spot,"CE"))));
             var candle=new StrategyCandle(now.toLocalDate(),LocalTime.of(10,30),189,190,188,189.5,1000L);
             var signal=new Fno925EntryQualificationService.Signal(189.5,188.64,0.46,189,188,candle,"MORNING_ORB");
-            when(qualification.qualifyWithDirectionalCandle(any(),any())).thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+            if (stock) when(qualification.qualifyWithDirectionalCandle(any(),any())).thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+            else when(qualification.qualifyMoverWithFreshRetest(any(),any())).thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
             when(support.roundPrice(anyDouble())).thenAnswer(c -> c.getArgument(0));
             when(support.preferredFnoExpiry(anyString(),anyString())).thenReturn("27/10/2026");
             when(support.resolveFnoEntryContract(any(),any(),any(),any(),anyDouble())).thenReturn(new StrategySupport.FnoOptionContract("27/10/2026",190));
