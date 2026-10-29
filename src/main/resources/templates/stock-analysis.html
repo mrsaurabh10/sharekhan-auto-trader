@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Indian Stock Analysis · AutoTrader</title>
+<link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
+<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261029">
+<script src="/portal/stock-analysis-math.js?v=20261029" defer></script>
+<script src="/portal/stock-analysis.js?v=20261029" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to analysis</a>
+<div class="shell">
+<aside class="sidebar">
+<a class="brand" href="/dashboard"><span class="brand-mark">↗</span> AutoTrader</a>
+<nav aria-label="Main navigation"><a href="/dashboard">▦ My workspace</a><a href="/stock-analysis" aria-current="page">⌕ Stock Analysis</a></nav>
+<div class="sidebar-bottom"><span class="badge">NSE · BSE</span><p>Sharekhan market data.<br>Evidence before decisions.</p></div>
+</aside>
+<div class="workspace">
+<header class="topbar"><div><span class="eyebrow">INDIAN MARKETS</span><div class="section-note">Your stock research workspace</div></div>
+<div class="identity"><a href="/dashboard" class="text-button">My workspace</a><form action="/logout" method="post"><input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"><button class="text-button" type="submit">Sign out</button></form></div></header>
+<main class="page" id="main" tabindex="-1">
+<div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with Sharekhan data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
+<section class="card analysis-controls" aria-label="Choose a stock">
+<form id="analysisForm">
+<label>Exchange<select id="exchange"><option value="NC">NSE cash</option><option value="BC">BSE cash</option></select></label>
+<label class="symbol-field">Find a stock<input id="symbolSearch" type="search" placeholder="Type at least 2 letters, e.g. RELIANCE" autocomplete="off" maxlength="60" aria-describedby="searchHelp"></label>
+<label>Timeframe<select id="analysisMode"><option value="INTRADAY">Intraday · 5-minute</option><option value="SWING">Delivery / Swing · Daily</option></select></label>
+<button class="primary" type="submit" id="analyzeButton" disabled>Analyze stock →</button>
+</form>
+<p class="muted" id="searchHelp">Choose an exact match below. NSE and BSE scrip identities are separate. No trading activation is required.</p>
+<div id="searchStatus" class="muted" role="status" aria-live="polite"></div><div id="searchResults" class="search-results" aria-label="Matching cash instruments"></div>
+<div id="selection" class="selected-stock" hidden></div>
+</section>
+<div id="analysisStatus" class="notice section-gap" role="status" aria-live="polite" hidden></div>
+<section id="emptyAnalysis" class="card analysis-empty section-gap"><span class="analysis-empty-icon">⌁</span><h2>Start with a stock, not a signal</h2><p>Search an NSE or BSE instrument to inspect its price structure, momentum, opening range and available history.</p><div class="empty-points"><span>₹ INR sizing</span><span>IST timestamps</span><span>Sharekhan source</span></div></section>
+<div id="analysisReport" hidden>
+<section class="report-heading section-gap"><div><h2 id="reportTitle"></h2><p class="muted" id="reportMeta"></p></div><div class="actions"><span id="dataBadge" class="badge"></span><button id="downloadReport" class="secondary" type="button">Download report</button></div></section>
+<section class="grid analysis-metrics" id="metrics" aria-label="Price and technical indicators"></section>
+<section class="card section-gap"><div class="row"><div><h2>Price &amp; volume</h2><p class="muted">Completed candles only. Blue line: SMA20 on the selected timeframe.</p></div><label>Visible bars<select id="visibleBars"><option value="60">Last 60</option><option value="120" selected>Last 120</option><option value="300">Last 300</option></select></label></div>
+<div class="chart-container"><canvas id="priceChart" role="img" aria-label="Candlestick and volume chart"></canvas></div><p id="chartReadout" class="muted chart-readout">Move over a candle to inspect OHLCV.</p>
+<details><summary>View accessible OHLCV table (last 120 bars)</summary><div id="candleTable" class="table-wrap" tabindex="0" role="region" aria-label="Completed candles"></div></details>
+</section>
+<div class="grid two-columns section-gap"><section class="card"><div class="eyebrow">EXPLAIN THE EVIDENCE</div><h2>Technical context</h2><p id="trendExplanation" class="muted"></p><div id="checks" class="research-checks"></div><p class="muted">These research checks do not establish eligibility under an automated strategy and do not submit orders.</p></section>
+<section class="card"><div class="eyebrow">PROVENANCE &amp; LIMITS</div><h2>Know your data</h2><dl id="coverage" class="coverage"></dl><ul id="warnings" class="data-warnings"></ul><p class="muted">A missing SMA200 or another indicator means insufficient usable history. It is never replaced with a fabricated value.</p></section></div>
+</div>
+<div class="grid two-columns section-gap">
+<section class="card"><div class="eyebrow">PLAN YOUR RISK · INR</div><h2>Cash-share position sizing</h2><p class="muted">Long cash shares, fully funded. Your inputs stay in this page and are not saved or sent to a broker.</p>
+<form id="sizingForm" class="form-grid"><label>Account capital (₹)<input name="capital" type="number" min="0.01" step="0.01" required placeholder="500000"></label><label>Risk budget (₹)<input name="risk" type="number" min="0.01" step="0.01" required placeholder="1000"></label><label>Entry price (₹)<input name="entry" type="number" min="0.01" step="0.01" required placeholder="250"></label><label>Stop price (₹)<input name="stop" type="number" min="0.01" step="0.01" required placeholder="245"></label><button class="secondary full" type="submit">Calculate quantity</button></form>
+<div id="sizingResult" class="sizing-result" role="status" aria-live="polite" hidden></div><small>Quantity is capped by both risk budget and available capital. Fees, taxes, slippage and stop gaps are excluded. This is not an options/futures lot calculator.</small></section>
+<section class="card"><div class="eyebrow">YOUR RESEARCH TRAIL</div><h2>Recent analyses</h2><p class="muted">Snapshots from this visit only. Download a report to keep it. No account balances or sizing inputs are included.</p><div id="recentAnalyses" class="recent-analyses"><p class="muted">Your analyzed stocks will appear here.</p></div><div class="product-note section-gap"><strong>Built for Indian cash markets</strong><p class="muted">F&amp;O contracts, company fundamentals, news, corporate actions and live strategy account checks require additional data. Price levels describe observed history.</p></div></section>
+</div>
+</main></div></div>
+</body></html>

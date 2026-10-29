@@ -29,3 +29,5 @@
 .trade-action-dialog{max-height:90vh;overflow:auto}.trade-edit-fields{grid-template-columns:repeat(2,minmax(0,1fr))}.trade-edit-fields>p,.trade-edit-fields>.trade-audit-event{grid-column:1/-1}
 .trade-action-dialog .actions{margin-top:18px}.trade-audit-event{border-left:3px solid var(--line);padding:12px;overflow-wrap:anywhere}.trade-audit-event pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}.trade-audit-event p{margin:6px 0}
 @media(max-width:600px){.trade-edit-fields{grid-template-columns:minmax(0,1fr)}.trade-action-dialog{padding:20px}}
+
+.sidebar nav a.stock-analysis-nav{display:flex;align-items:center;gap:12px;padding:12px 14px;color:#b7c6df;text-decoration:none;border-radius:10px;font-size:14px}.sidebar nav a.stock-analysis-nav:hover{background:#233453;color:white}@media(max-width:700px){.sidebar nav a.stock-analysis-nav{white-space:nowrap;font-size:12px;padding:10px}}

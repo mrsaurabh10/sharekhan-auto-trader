@@ -39,7 +39,7 @@ public class SecurityConfig {
         http
                 .authorizeHttpRequests(auth -> auth
                         .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll()
-                        .requestMatchers("/portal", "/portal/").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/portal", "/portal/", "/stock-analysis", "/api/stock-analysis/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/", "/login", "/account", "/portal/**", "/error", "/api/account/**", "/api/auth/csrf-token").permitAll()
                         .requestMatchers("/admin/login", "/css/**", "/js/**", "/images/**", "/strategy-runs.js", "/strategy-runs.css").permitAll()
                         .requestMatchers("/h2-console/**").denyAll()

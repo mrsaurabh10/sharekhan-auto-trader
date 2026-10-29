@@ -1,0 +1,10 @@
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const {sizeCash} = require('../../src/main/resources/static/portal/stock-analysis-math.js');
+const base = {capital:'500000',risk:'1000',entry:'250',stop:'245'};
+test('risk budget sizes whole Indian cash shares', () => assert.deepEqual(sizeCash(base),{quantity:200,riskPerShare:5,positionValue:50000,plannedRisk:1000,capitalLimited:false}));
+test('available capital caps quantity without assuming margin', () => assert.equal(sizeCash({...base,capital:'10000'}).quantity,40));
+test('one-paise stops use exact integer arithmetic', () => assert.equal(sizeCash({...base,capital:'1000000',risk:'10',entry:'100.01',stop:'100'}).quantity,1000));
+test('rounds quantity down and allows zero when one share is unaffordable', () => { assert.equal(sizeCash({...base,risk:'12'}).quantity,2); assert.equal(sizeCash({...base,capital:'100',risk:'10'}).quantity,0); });
+test('rejects inverted stops and budgets above capital', () => { assert.throws(() => sizeCash({...base,stop:'251'}),/below/); assert.throws(() => sizeCash({...base,risk:'500001'}),/capital/); });
+test('rejects missing, non-finite, negative, overprecise and excessive inputs', () => { for (const entry of ['', 'NaN','Infinity','-1','0','1.001','1e9','1000000000001']) assert.throws(() => sizeCash({...base,entry})); });
