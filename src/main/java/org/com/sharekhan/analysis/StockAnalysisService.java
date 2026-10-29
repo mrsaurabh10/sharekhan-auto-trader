@@ -17,6 +17,7 @@ public class StockAnalysisService {
     static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     private final ScriptMasterRepository scripts;
     private final SharekhanHistoricalService history;
+    private final StockAnalysisShoonyaFeed shoonya;
     private final Clock clock;
     private final Map<String, Cached> cache = new LinkedHashMap<>();
     private final java.util.concurrent.locks.ReentrantLock providerSlot = new java.util.concurrent.locks.ReentrantLock();
@@ -24,11 +25,15 @@ public class StockAnalysisService {
     record Cached(Instant until, Report report) {}
 
     @org.springframework.beans.factory.annotation.Autowired
-    public StockAnalysisService(ScriptMasterRepository scripts, SharekhanHistoricalService history) {
-        this(scripts, history, Clock.system(IST));
+    public StockAnalysisService(ScriptMasterRepository scripts, SharekhanHistoricalService history, StockAnalysisShoonyaFeed shoonya) {
+        this(scripts, history, shoonya, Clock.system(IST));
     }
+    StockAnalysisService(ScriptMasterRepository scripts, SharekhanHistoricalService history) { this(scripts, history, null, Clock.system(IST)); }
     StockAnalysisService(ScriptMasterRepository scripts, SharekhanHistoricalService history, Clock clock) {
-        this.scripts = scripts; this.history = history; this.clock = clock;
+        this(scripts, history, null, clock);
+    }
+    StockAnalysisService(ScriptMasterRepository scripts, SharekhanHistoricalService history, StockAnalysisShoonyaFeed shoonya, Clock clock) {
+        this.scripts = scripts; this.history = history; this.shoonya = shoonya; this.clock = clock;
     }
     public record Instrument(Integer scripCode, String symbol, String exchange) {}
     public record Bar(LocalDate date, LocalTime time, double open, double high, double low, double close, Long volume) {}
@@ -85,19 +90,28 @@ public class StockAnalysisService {
             throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Market data is busy. Retry in a moment.");
         lastFetchNanos = mono;
         String interval = mode.equals("INTRADAY") ? "5minute" : "daily";
-        List<HistoricalCandle> source = history.getRecentRawHistoricalCandles(scripCode, interval);
-        Report report = calculate(new Instrument(scripCode, script.getTradingSymbol(), ex), mode,
-                source == null ? List.of() : source, clock.instant());
+        var instrument = new Instrument(scripCode, script.getTradingSymbol(), ex);
+        List<HistoricalCandle> preferred = shoonya == null ? List.of() : shoonya.fetch(instrument, mode, now);
+        Report report = calculate(instrument, mode, preferred, clock.instant(), "Shoonya", List.of());
+        if (preferred.isEmpty() || report.dataStatus().equals("INCOMPLETE") || report.candles().isEmpty()) {
+            List<HistoricalCandle> source = history.getRecentRawHistoricalCandles(scripCode, interval);
+            Report fallback = calculate(instrument, mode, source == null ? List.of() : source, clock.instant(), "Sharekhan",
+                    List.of("Shoonya shared feed unavailable or incomplete; showing separately validated Sharekhan history. Sources are never combined."));
+            if (preferred.isEmpty() || report.candles().isEmpty() || (!fallback.candles().isEmpty() && !fallback.dataStatus().equals("INCOMPLETE"))) report = fallback;
+        }
         if (cache.size() >= 64) cache.remove(cache.keySet().iterator().next());
         cache.put(key, new Cached(report.fetchedAt().plusSeconds(report.candles().isEmpty() ? 10 : 30), report));
         return report;
     }
 
     static Report calculate(Instrument instrument, String mode, List<HistoricalCandle> source, Instant fetchedAt) {
+        return calculate(instrument, mode, source, fetchedAt, "Sharekhan", List.of());
+    }
+    static Report calculate(Instrument instrument, String mode, List<HistoricalCandle> source, Instant fetchedAt, String provider, List<String> notices) {
         boolean intraday = mode.equals("INTRADAY");
         LocalDateTime now = LocalDateTime.ofInstant(fetchedAt, IST);
         Map<LocalDateTime, Bar> unique = new TreeMap<>(); Set<LocalDateTime> conflicts = new HashSet<>();
-        int rejected = 0, duplicates = 0, incomplete = 0, outside = 0;
+        int rejected = 0, duplicates = 0, incomplete = 0, outside = 0, invalidVolume = 0;
         for (HistoricalCandle c : source) {
             if (c == null || c.date() == null || !valid(c)) { rejected++; continue; }
             LocalTime t = intraday ? c.time() : LocalTime.MIDNIGHT;
@@ -107,7 +121,9 @@ public class StockAnalysisService {
             if (intraday && (t.isBefore(LocalTime.of(9, 15)) || !t.isBefore(LocalTime.of(15, 30)))) { outside++; continue; }
             if (intraday && (t.getSecond() != 0 || t.getNano() != 0 || t.getMinute() % 5 != 0)) { rejected++; continue; }
             if (intraday ? stamp.plusMinutes(5).isAfter(now) : !c.date().isBefore(now.toLocalDate())) { incomplete++; continue; }
-            Bar b = new Bar(c.date(), t, c.open(), c.high(), c.low(), c.close(), c.volume());
+            Long volume = c.volume();
+            if (volume != null && volume < 0) { invalidVolume++; volume = null; }
+            Bar b = new Bar(c.date(), t, c.open(), c.high(), c.low(), c.close(), volume);
             Bar previous = unique.putIfAbsent(stamp, b);
             if (previous != null) { duplicates++; if (!previous.equals(b)) conflicts.add(stamp); }
         }
@@ -121,8 +137,8 @@ public class StockAnalysisService {
             Bar a = bars.get(i - 1), b = bars.get(i);
             if (a.date().equals(b.date())) gaps += Math.max(0, (int) Duration.between(a.time(), b.time()).toMinutes() / 5 - 1);
         }
-        List<String> warnings = new ArrayList<>();
-        warnings.add("Sharekhan recent history only; requested long-term coverage and corporate-action adjustment are not guaranteed.");
+        List<String> warnings = new ArrayList<>(notices);
+        warnings.add(provider + " returned history only; requested long-term coverage and corporate-action adjustment are not guaranteed.");
         warnings.add(intraday ? "Normal 09:15–15:30 IST cash session only. Special sessions are not modelled."
                 : "Daily analysis excludes the current IST date, even after market close. Exchange holiday completeness is not inferred.");
         if (rejected > 0) warnings.add(rejected + " invalid bars removed; technical conclusions are withheld.");
@@ -130,6 +146,7 @@ public class StockAnalysisService {
         if (gaps > 0) warnings.add(gaps + " missing five-minute intervals inside returned sessions; technical conclusions are withheld.");
         if (incomplete > 0) warnings.add(incomplete + " forming/future bars excluded.");
         if (outside > 0) warnings.add(outside + " bars outside the normal cash session excluded.");
+        if (invalidVolume > 0) warnings.add(invalidVolume + " bars have negative provider volume, shown as unavailable. Price indicators remain usable; VWAP and volume confirmation are withheld where affected.");
         boolean clean = rejected == 0 && conflicts.isEmpty() && gaps == 0;
         Bar last = bars.isEmpty() ? null : bars.getLast();
         List<Bar> session = last == null ? List.of() : bars.stream().filter(b -> b.date().equals(last.date())).toList();
@@ -159,7 +176,7 @@ public class StockAnalysisService {
                 : last.date().atTime(15,30);
         String status = last == null ? "UNAVAILABLE" : !clean ? "INCOMPLETE" : intraday
                 && Duration.between(asOf, now).toMinutes() <= 15 ? "RECENT" : "HISTORICAL";
-        if (last == null) warnings.add("No usable completed candles. Sharekhan access may be unavailable, expired, unsupported or return no history; no opportunity conclusion can be drawn.");
+        if (last == null) warnings.add("No usable completed candles. Market-data access may be unavailable, expired, unsupported or return no history; no opportunity conclusion can be drawn.");
         List<Check> checks = new ArrayList<>();
         checks.add(new Check("Data quality", clean && last != null ? "PASS" : "UNAVAILABLE", "Invalid prices, conflicting duplicates and intraday gaps block technical conclusions."));
         checks.add(new Check("Trend alignment", trend.equals("BULLISH") ? "PASS" : trend.equals("INSUFFICIENT_DATA") ? "UNAVAILABLE" : "WAIT",
@@ -181,7 +198,7 @@ public class StockAnalysisService {
             checks.add(new Check("Freshness", status.equals("RECENT") ? "PASS" : "HISTORICAL", "Latest completed bar must be within 15 minutes for recent-data status; this is not a live quote."));
         }
         checks.add(new Check("Automated strategy eligibility", "NOT_EVALUATED", "Research checks do not evaluate the full mover strategy, fresh-retest state, contract selection, account funds or execution guards."));
-        return new Report(instrument, mode, intraday ? "5minute" : "daily", "Sharekhan", "Asia/Kolkata", fetchedAt, asOf, status, trend,
+        return new Report(instrument, mode, intraday ? "5minute" : "daily", provider, "Asia/Kolkata", fetchedAt, asOf, status, trend,
                 source.size(), rejected, duplicates, gaps, List.copyOf(bars), new Indicators(sma20, sma50, sma200, rsi, atr, vwap, orHigh, orLow, prior, rangeLow, rangeHigh), List.copyOf(checks), List.copyOf(warnings));
     }
     static boolean valid(HistoricalCandle c) {

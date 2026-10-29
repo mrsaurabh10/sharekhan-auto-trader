@@ -1,10 +1,10 @@
 # Indian Stock Analysis
 
-`/stock-analysis` is a separate research page for every signed-in `USER` and `ADMIN`, linked from both workspaces. It needs no trading activation or personal broker connection. Its server reads the application's existing shared Sharekhan history integration; no credentials or account records are returned to the page. Anonymous requests must sign in; analysis API requests return401 without authentication. Existing admin-only historical API authorization is unchanged.
+`/stock-analysis` is a separate research page for every signed-in `USER` and `ADMIN`, linked from both workspaces. It needs no trading activation or personal broker connection. Its server prefers the saved global Shoonya session and falls back to the existing Sharekhan history integration; no credentials or account records are returned to the page. Anonymous requests must sign in; analysis API requests return401 without authentication. Existing admin-only historical API authorization is unchanged.
 
 ## Scope and user flow
 
-Select NSE cash (`NC`) or BSE cash (`BC`), type at least two symbol characters, and choose an exact scrip match. The server verifies exchange identity, no option type, no expiry and zero/absent strike before requesting history. Broker IDs are never reused across exchanges. Cash instruments in the current master can include ETFs; a matching metadata row is not proof of trading eligibility.
+The page loads NSE RELIANCE daily analysis initially. To change it, select NSE cash (`NC`) or BSE cash (`BC`), type at least two symbol characters, and choose an exact scrip match. The server verifies exchange identity, no option type, no expiry and zero/absent strike before requesting history. Broker IDs are never reused across exchanges. Cash instruments in the current master can include ETFs; a matching metadata row is not proof of trading eligibility.
 
 Choose Intraday (five-minute bars) or Delivery/Swing (daily bars). Research checks describe observed prices and do not submit orders or evaluate the full live mover strategy. No AI provider, model key, Python runtime or new database table is required. This implements the compatible price-analysis/sizing methods natively; it does not run all72 upstream skills inside the application.
 
@@ -15,9 +15,11 @@ Endpoints:
 
 The browser can download a JSON report and revisit up to six in-memory snapshots during this visit. Snapshots are not written to browser storage or the application database. Cash sizing inputs remain in the current page and are excluded from report downloads. No order controls appear on this page.
 
-## Sharekhan data and bounded work
+## Market data and bounded work
 
-History calls use `SharekhanHistoricalService.getRecentRawHistoricalCandles`, with `5minute` or `daily`. The upstream [Java SDK example](https://github.com/Sharekhan-API/shareconnectjava#historical) documents the `daily` interval. The application uses existing valid sessions and does not initiate login or broker/master refreshes for this page. An empty response cannot distinguish expiry, unsupported history and no returned data, so the UI reports those possibilities without claiming a specific cause.
+Shoonya is preferred for both modes. The page uses only the saved **global** current-day session through `ShoonyaSavedSession`, never a customer's Shoonya credentials. It verifies exchange, native cash token and exact trading symbol through `GetSecurityInfo` before fetching seven calendar days of five-minute `TPSeries` or 800 calendar days of `EODChartData`. Daily JSON-string array elements and decimal integer volumes match observed live payloads. Timestamp text and epoch must agree. The page performs no authentication, refresh, persistence or order call. If the primary source is empty/incomplete, a separately calculated Sharekhan report can be selected; candles from different providers are never combined. Every report and chart header names its actual provider. Quality gates remain unchanged.
+
+Sharekhan fallback calls use `SharekhanHistoricalService.getRecentRawHistoricalCandles`, with `5minute` or `daily`. The upstream [Java SDK example](https://github.com/Sharekhan-API/shareconnectjava#historical) documents the `daily` interval. The application uses existing valid sessions and does not initiate login or broker/master refreshes for this page. An empty response cannot distinguish expiry, unsupported history and no returned data, so the UI reports those possibilities without claiming a specific cause.
 
 Reports are shared, read-only market data, cached for30seconds (empty reports10seconds), with at most64 entries and one fail-fast provider slot. Busy requests receive429 rather than queueing behind a slow fetch on servlet threads. Uncached starts closer than500ms receive429. The chart and calculation window is bounded to1,500 intraday or500 daily bars. Browser search is debounced and result sets are limited to25. These limits apply to this feature; they are not a global rate limiter for unrelated history consumers. HTTP responses use `no-store`; broker credentials and risk inputs never enter the report cache.
 
@@ -50,3 +52,13 @@ Stop must be below entry, risk budget cannot exceed capital, and amounts must be
 Focused Java service/controller/security and existing portal/history suites verify both roles, anonymous denial, identity isolation, cache reuse, completed-bar boundaries, provider timestamp normalization, duplicates, gaps, Wilder calculations and missing data. Node tests exercise integer-paise sizing, funding limits and invalid inputs. Fixture-only Playwright checks desktop/mobile rendering, NSE/BSE selection, daily/intraday mode, chart/table, error/empty states, stale-response isolation, literal untrusted text, and no write requests. No real provider request, order, application startup with production configuration or deployment is part of these checks.
 
 Recorded validation on2026-10-29:59 tests in9 selected Java suites passed with0 failures/errors/skips;6 Node sizing tests passed; fixture-only Playwright desktop/mobile smoke passed with0 unexpected page errors or writes. Maven offline package succeeded using the existing ngas-m2-20261026 cache. This is not a full application-suite or live Sharekhan/provider validation.
+
+## 2026-10-29 live data investigation and source correction
+
+NSE RELIANCE Sharekhan returned 511 five-minute rows, with irregular end times such as09:24:58, and no29Oct intraday session. Its6669 daily rows contained an inconsistent23Apr2026 candle (high/low/open1346, close1343.4). These are rejected by the existing quality gates; no timestamp guessing or fabricated OHLC correction was introduced.
+
+Read-only comparison: Shoonya returned450 valid five-minute rows across six complete sessions through29Oct15:25, with zero within-session gaps, plus542 clean NSE daily rows through28Oct. BSE RELIANCE daily returned511 rows. NSE RELIANCE/TCS/HDFCBANK and BSE RELIANCE identities verified at the broker. mStock also returned75 current-day intraday and564 daily rows, but only its customer-scoped session was current; its global session was stale. Shoonya was chosen for this all-user page because it has a working shared session. No tokens, account settings, trade paths or database records were changed during the comparison.
+
+A clean retained data window is still required for all indicators. The daily current-date exclusion remains, so the last daily candle can differ from the latest intraday session. No corporate-action normalization or source interchangeability is claimed.
+
+The live NSE intraday feed also contains a negative15:20 volume correction on each returned session. Invalid volume is shown as unavailable and blocks affected volume calculations (including session VWAP), while valid OHLC still supports SMA/RSI/ATR. BSE RELIANCE's session VWAP was available. No absolute-value conversion or invented volume is used.

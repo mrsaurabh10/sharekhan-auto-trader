@@ -46,7 +46,7 @@
     reportAbort?.abort(); const abort = new AbortController(); reportAbort = abort;
     const requestVersion = version, mode = $('analysisMode').value, instrument = selected;
     const timer = setTimeout(() => abort.abort(), 45000);
-    $('analyzeButton').disabled = true; $('analysisReport').hidden = true; status('Loading completed Sharekhan candles and calculating technical context…');
+    $('analyzeButton').disabled = true; $('analysisReport').hidden = true; status('Loading completed market-data candles and calculating technical context…');
     try {
       const report = await api('/api/stock-analysis/report?' + new URLSearchParams({exchange:instrument.exchange, scripCode:instrument.scripCode, mode}), abort.signal);
       if (version !== requestVersion) return;
@@ -60,7 +60,7 @@
     current = report; status(''); $('emptyAnalysis').hidden = true; $('analysisReport').hidden = false;
     const last = report.candles.at(-1), ind = report.indicators, isIntraday = report.mode === 'INTRADAY';
     $('reportTitle').textContent = report.instrument.symbol + ' · ' + (report.instrument.exchange === 'NC' ? 'NSE' : 'BSE');
-    $('reportMeta').textContent = report.interval + ' · Sharekhan · Scrip ' + report.instrument.scripCode + ' · Last bar ' + stamp(last);
+    $('reportMeta').textContent = report.interval + ' · ' + report.provider + ' · Scrip ' + report.instrument.scripCode + ' · Last bar ' + stamp(last);
     $('dataBadge').textContent = report.dataStatus.replaceAll('_',' '); $('dataBadge').className = 'badge' + (report.dataStatus === 'RECENT' ? ' good' : '');
     $('metrics').replaceChildren();
     metric('Last completed close', money(last?.close), 'Historical candle close; not a live quote');
@@ -116,4 +116,17 @@
     catch (error) { box.className = 'sizing-result error'; box.textContent = error.message; }
   });
   $('downloadReport').addEventListener('click', () => { if (!current) return; const url = URL.createObjectURL(new Blob([JSON.stringify(current,null,2)],{type:'application/json'})), link = node('a'); link.href = url; link.download = current.instrument.symbol.replace(/[^a-z0-9_-]/gi,'_') + '_' + current.mode + '_analysis.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url),1000); });
+  // Show a useful first report, while respecting any interaction made during the initial lookup.
+  (async () => {
+    try {
+      status('Loading an initial RELIANCE daily analysis…');
+      const rows = await api('/api/stock-analysis/instruments?exchange=NC&q=RELIANCE');
+      if (version !== 0 || selected) return;
+      const match = rows.find(row => row.symbol.toUpperCase() === 'RELIANCE' && row.exchange === 'NC');
+      if (!match) { status('Choose a stock above to start an analysis.'); return; }
+      selected = match; $('symbolSearch').value = match.symbol; $('selection').hidden = false;
+      $('selection').textContent = 'Selected: ' + match.symbol + ' · NC · Scrip ' + match.scripCode;
+      $('analyzeButton').disabled = false; $('analysisForm').requestSubmit();
+    } catch (error) { if (version === 0) status(error.message, true); }
+  })();
 })();

@@ -83,6 +83,13 @@ class StockAnalysisServiceTest {
         assertThat(report.indicators().rangeLow20()).isEqualTo(278);
         assertThat(report.asOf()).isEqualTo(day.minusDays(1).atTime(15,30));
     }
+    @Test void negativeProviderVolumeCannotBecomeVwapButDoesNotDiscardValidPrices() {
+        var input=intraday(55);input.set(20,bar(day,LocalTime.of(10,55),120,-100L));
+        var report=StockAnalysisService.calculate(nse,"INTRADAY",input,at(15,30),"Shoonya",List.of());
+        assertThat(report.indicators().sma50()).isNotNull();assertThat(report.indicators().vwap()).isNull();
+        assertThat(report.candles().get(20).volume()).isNull();
+        assertThat(report.warnings()).anyMatch(w->w.contains("negative provider volume"));
+    }
     @Test void emptyOrShortHistoryReportsUnavailableRatherThanInventedIndicators() {
         var report = StockAnalysisService.calculate(nse,"INTRADAY",List.of(),at(10,0));
         assertThat(report.dataStatus()).isEqualTo("UNAVAILABLE"); assertThat(report.asOf()).isNull();
@@ -125,6 +132,23 @@ class StockAnalysisServiceTest {
             ScriptMasterEntity.builder().scripCode(3).exchange("BC").tradingSymbol("DEMO").optionType("CE").build()));
         assertThat(service.search("BC","de")).containsExactly(new StockAnalysisService.Instrument(1,"DEMO","BC"));
         verifyNoInteractions(provider);
+    }
+    @Test void prefersCleanShoonyaWithoutCallingSharekhanAndKeepsProvenance() {
+        var repo=mock(ScriptMasterRepository.class);var share=mock(SharekhanHistoricalService.class);var shoonya=mock(StockAnalysisShoonyaFeed.class);
+        var service=new StockAnalysisService(repo,share,shoonya,Clock.fixed(at(15,30),StockAnalysisService.IST));
+        when(repo.findByScripCode(10)).thenReturn(ScriptMasterEntity.builder().scripCode(10).exchange("NC").tradingSymbol("DEMO").build());
+        when(shoonya.fetch(nse,"INTRADAY",at(15,30))).thenReturn(intraday(55));
+        var report=service.analyze("NC",10,"INTRADAY");
+        assertThat(report.provider()).isEqualTo("Shoonya");assertThat(report.indicators().sma50()).isNotNull();verifyNoInteractions(share);
+    }
+    @Test void unavailableShoonyaFallsBackWithoutCombiningCandles() {
+        var repo=mock(ScriptMasterRepository.class);var share=mock(SharekhanHistoricalService.class);var shoonya=mock(StockAnalysisShoonyaFeed.class);
+        var service=new StockAnalysisService(repo,share,shoonya,Clock.fixed(at(15,30),StockAnalysisService.IST));
+        when(repo.findByScripCode(10)).thenReturn(ScriptMasterEntity.builder().scripCode(10).exchange("NC").tradingSymbol("DEMO").build());
+        when(shoonya.fetch(any(),eq("INTRADAY"),any())).thenReturn(List.of());when(share.getRecentRawHistoricalCandles(10,"5minute")).thenReturn(intraday(55));
+        var report=service.analyze("NC",10,"INTRADAY");
+        assertThat(report.provider()).isEqualTo("Sharekhan");assertThat(report.candles()).hasSize(55);
+        assertThat(report.warnings()).anyMatch(w->w.contains("Sources are never combined"));
     }
     @Test void slowProviderDoesNotQueueOtherRequestsOnServletThreads() throws Exception {
         var repo = mock(ScriptMasterRepository.class); var provider = mock(SharekhanHistoricalService.class);
