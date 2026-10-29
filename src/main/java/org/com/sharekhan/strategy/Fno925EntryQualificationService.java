@@ -28,10 +28,20 @@ public class Fno925EntryQualificationService {
     private SharedMarketDecisions sharedDecisions;
     private final StrategySupport support;
     private final ThreadLocal<EvaluationCycle> cycleContext = new ThreadLocal<>();
+    @Value("${app.strategy.fno-0925-mover.fresh-retest-enabled:true}")
+    private boolean freshRetestEnabled = true;
+    private final FnoFreshRetest freshRetest = new FnoFreshRetest();
     private Clock clock = Clock.system(StrategySupport.MARKET_ZONE);
 
     @Value("${app.strategy.mover-evaluation.max-cycle-age-ms:30000}")
     private long maxCycleAgeMillis = 30_000L;
+
+    @jakarta.annotation.PostConstruct
+    void logFreshRetestPolicy() {
+        org.slf4j.LoggerFactory.getLogger(Fno925EntryQualificationService.class).info(
+                "FNO_FRESH_RETEST_POLICY | enabled={} | maxBarsAfterRejection=3 | retestDistanceAtr=0.35 | hardRiskCapAtr=2.0",
+                freshRetestEnabled);
+    }
 
     /** Market-only results, shared by all accounts in one scheduler pass; never contains account orders. */
     public static final class EvaluationCycle {
@@ -133,6 +143,16 @@ public class Fno925EntryQualificationService {
         return isCycleExpired() ? Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle") : result;
     }
 
+    /** FNO mover only: Stock mover and manually curated templates retain their existing paths. */
+    public Qualification qualifyMoverWithFreshRetest(Fno925Candidate candidate, LocalDateTime now) {
+        Qualification baseline = qualifyWithDirectionalCandle(candidate, now);
+        if (!freshRetestEnabled || isCycleExpired() || baseline.retestFrame() == null) return baseline;
+        String key = candidate.spot().getExchange() + ":" + candidate.spot().getScripCode()
+                + ":" + candidate.symbol() + ":" + candidate.optionType();
+        Qualification result = freshRetest.evaluate(key, candidate.optionType(), baseline, LocalDateTime.now(clock));
+        return isCycleExpired() ? Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle") : result;
+    }
+
     private Qualification qualify(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {
         return sharedDecisions == null ? qualifyMarket(candidate, now, requireDirectionalCandle)
                 : sharedDecisions.share("FNO_BREAKOUT", candidate.symbol(), candidate.spot().getExchange() + ":"
@@ -145,6 +165,19 @@ public class Fno925EntryQualificationService {
         List<StrategyCandle> allCandles = load.candles().stream()
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
                 .toList();
+        Qualification baseline = qualifyLoaded(candidate, now, requireDirectionalCandle, allCandles);
+        if (!freshRetestEnabled || !requireDirectionalCandle) return baseline;
+        try {
+            var frame = retestFrame(candidate, now, allCandles, baseline);
+            return new Qualification(baseline.signal(), baseline.reason(), frame);
+        } catch (RuntimeException unavailable) {
+            // Missing retest inputs cannot invalidate the existing qualification paths.
+            return baseline;
+        }
+    }
+
+    private Qualification qualifyLoaded(Fno925Candidate candidate, LocalDateTime now,
+                                         boolean requireDirectionalCandle, List<StrategyCandle> allCandles) {
         LocalDate today = now.toLocalDate();
         List<StrategyCandle> todayCandles = allCandles.stream()
                 .filter(candle -> today.equals(candle.date()))
@@ -188,6 +221,39 @@ public class Fno925EntryQualificationService {
         }
         return Qualification.waiting("ORB: " + orb.reason() + "; VWAP reclaim: " + reclaim.reason());
     }
+
+    private RetestFrame retestFrame(Fno925Candidate candidate, LocalDateTime now,
+                                     List<StrategyCandle> source, Qualification baseline) {
+        // Retest inputs use completed, regular-session bars only, including the ATR seed.
+        var completed = source.stream().filter(c -> c.date().isBefore(now.toLocalDate())
+                || (c.date().equals(now.toLocalDate()) && !c.time().plusMinutes(5).isAfter(now.toLocalTime())))
+                .filter(c -> !c.time().isBefore(OR_START) && c.time().isBefore(LocalTime.of(15, 30)))
+                .toList();
+        var today = completed.stream().filter(c -> c.date().equals(now.toLocalDate())).toList();
+        if (today.size() < 3) return null;
+        var range = today.stream().filter(c -> c.time().isBefore(OR_END)).toList();
+        if (range.size() != 2 || !range.get(0).time().equals(OR_START)
+                || !range.get(1).time().equals(OR_START.plusMinutes(5))) return null;
+        StrategyCandle latest = today.get(today.size() - 1);
+        double high = range.stream().mapToDouble(StrategyCandle::high).max().orElseThrow();
+        double low = range.stream().mapToDouble(StrategyCandle::low).min().orElseThrow();
+        var orb = qualifyMorningOrb(candidate, today, completed, latest, high, low);
+        double stop = openingRangeStructuralStop(today, latest, candidate.optionType(), high, low);
+        boolean directional = "CE".equals(candidate.optionType()) ? latest.close() > latest.open() : latest.close() < latest.open();
+        boolean riskOnly = directional && !orb.qualified() && orb.reason().startsWith("structural risk ")
+                && baseline.reason() != null && baseline.reason().startsWith("ORB: structural risk ");
+        String filter = filterFailure(today, latest, candidate.optionType(),
+                recentPostOpenVolumeReference(today, latest), orbVolumeMultiplier).orElse(null);
+        return new RetestFrame(now, List.copyOf(today), atr(completed), high, low, stop, riskOnly,
+                filter, baseline.qualified(), baseline.reason(), maxRiskAtrMultiplier,
+                orbCutoff != null ? orbCutoff : DEFAULT_ORB_CUTOFF);
+    }
+
+    /** Market-only retest input; never contains account orders or broker credentials. */
+    public record RetestFrame(LocalDateTime evaluatedAt, List<StrategyCandle> candles, double atr,
+                              double rangeHigh, double rangeLow, double originalStop, boolean riskOnlyRejection,
+                              String filterFailure, boolean baselineQualified, String baselineReason,
+                              double maxRiskAtrMultiplier, LocalTime cutoff) { }
 
     private Qualification qualifyMorningOrb(Fno925Candidate candidate,
                                             List<StrategyCandle> todayCandles,
@@ -525,7 +591,8 @@ public class Fno925EntryQualificationService {
                          String setup) {
     }
 
-    public record Qualification(Signal signal, String reason) {
+    public record Qualification(Signal signal, String reason, RetestFrame retestFrame) {
+        public Qualification(Signal signal, String reason) { this(signal, reason, null); }
         static Qualification qualified(Signal signal) { return new Qualification(signal, null); }
         static Qualification waiting(String reason) { return new Qualification(null, reason); }
         public boolean qualified() { return signal != null; }

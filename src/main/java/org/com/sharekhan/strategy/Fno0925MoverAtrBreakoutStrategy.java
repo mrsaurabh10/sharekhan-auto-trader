@@ -37,7 +37,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID,
             "F&O 9:25 Mover Breakout",
-            "At 9:25 chooses top 5 F&O gainers when gainers outnumber losers, otherwise top 5 losers. It enters ATM CE/PE only on a qualified morning opening-range breakout or VWAP-reclaim base breakout. CE requires a bullish completed five-minute signal candle; PE requires a bearish one.",
+            "At 9:25 chooses top 5 F&O gainers when gainers outnumber losers, otherwise top 5 losers. It enters ATM CE/PE only on a qualified morning opening-range breakout, fresh retest after an ORB risk rejection, or VWAP-reclaim base breakout. CE requires a bullish completed five-minute signal candle; PE requires a bearish one.",
             "AUTO");
     private static final LocalTime SELECTION_TIME = LocalTime.of(9, 25);
     private static final int DEFAULT_LOTS = 3;
@@ -133,7 +133,7 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             try {
                 evaluated++;
                 support.warmUpPreferredFnoFeeds(request, metadataFor(selection.optionType()), selection.symbol(), selection.spot());
-                Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualifyWithDirectionalCandle(selection, now);
+                Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualifyMoverWithFreshRetest(selection, now);
                 if (!qualification.qualified()) {
                     support.auditStrategy(request, metadataFor(selection.optionType()), selection.symbol(),
                             "STRATEGY_EVALUATION", "REJECTED", qualification.reason(), null, null);

@@ -36,7 +36,7 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         when(snapshots.loadOrCapture(anyString(), eq(now), any())).thenReturn(java.util.Optional.of(List.of(first, second)));
         var candle = new StrategyCandle(now.toLocalDate(), now.toLocalTime().minusMinutes(5), 108,110,105,106,1000L);
         var signal = new Fno925EntryQualificationService.Signal(106,110,4,110,105,candle,"VWAP_RECLAIM_BASE_BREAKOUT");
-        when(qualification.qualifyWithDirectionalCandle(any(), eq(now)))
+        when(qualification.qualifyMoverWithFreshRetest(any(), eq(now)))
                 .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
         when(support.roundPrice(anyDouble())).thenAnswer(c -> c.getArgument(0));
         when(support.preferredFnoExpiry(anyString(), anyString())).thenReturn("27/10/2026");
@@ -68,7 +68,7 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         when(snapshots.loadOrCapture(anyString(), eq(now), any())).thenReturn(java.util.Optional.of(List.of(first, second)));
         var candle = new StrategyCandle(now.toLocalDate(), now.toLocalTime().minusMinutes(5), 108,110,105,106,1000L);
         var signal = new Fno925EntryQualificationService.Signal(106,110,4,110,105,candle,"VWAP_RECLAIM_BASE_BREAKOUT");
-        when(qualification.qualifyWithDirectionalCandle(any(), eq(now)))
+        when(qualification.qualifyMoverWithFreshRetest(any(), eq(now)))
                 .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
         when(support.roundPrice(anyDouble())).thenAnswer(c -> c.getArgument(0));
         when(support.preferredFnoExpiry(anyString(), anyString())).thenReturn("27/10/2026");
@@ -77,12 +77,12 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         when(support.executeTriggeredTrade(any())).thenReturn(TriggerTradeRequestEntity.builder().id(10L).build());
         var expired = new SharedMarketDecisions.ExpiredDecisionException();
         if (stage.equals("qualification")) {
-            when(qualification.qualifyWithDirectionalCandle(any(), eq(now))).thenThrow(expired)
+            when(qualification.qualifyMoverWithFreshRetest(any(), eq(now))).thenThrow(expired)
                     .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
         } else if (stage.equals("contract")) {
             when(support.preferredFnoExpiry(anyString(), anyString())).thenThrow(expired).thenReturn("27/10/2026");
         } else if (stage.equals("qualification-after-success")) {
-            when(qualification.qualifyWithDirectionalCandle(any(), eq(now)))
+            when(qualification.qualifyMoverWithFreshRetest(any(), eq(now)))
                     .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal)).thenThrow(expired)
                     .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
         } else if (stage.equals("cycle-after-success")) {
@@ -128,7 +128,7 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         var candle = new StrategyCandle(now.toLocalDate(), now.toLocalTime().minusMinutes(5),
                 103d, 108d, 102d, 107d, 250L);
         var signal = new Fno925EntryQualificationService.Signal(107d, 100d, 4d, 106d, 95d, candle, "MORNING_ORB");
-        when(qualification.qualifyWithDirectionalCandle(any(), eq(now)))
+        when(qualification.qualifyMoverWithFreshRetest(any(), eq(now)))
                 .thenReturn(Fno925EntryQualificationService.Qualification.waiting(reason))
                 .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
         StrategyApplyRequest request = new StrategyApplyRequest();
@@ -142,7 +142,7 @@ class Fno0925MoverAtrBreakoutStrategyTest {
                 eq("REJECTED"), eq(reason), isNull(), isNull());
 
         assertThat(strategy.apply(request).getStatus()).isEqualTo("triggered");
-        verify(qualification, times(2)).qualifyWithDirectionalCandle(any(), eq(now));
+        verify(qualification, times(2)).qualifyMoverWithFreshRetest(any(), eq(now));
         verify(qualification, never()).qualify(any(), any());
         verify(support, times(1)).executeTriggeredTrade(any());
     }
@@ -174,15 +174,47 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         var original = new Fno925Candidate("ORIGINAL",ScriptMasterEntity.builder()
                 .tradingSymbol("ORIGINAL").exchange("NC").scripCode(123).build(),"PE");
         when(snapshots.loadOrCapture(anyString(),eq(now),any())).thenReturn(java.util.Optional.of(List.of(original)));
-        when(qualification.qualifyWithDirectionalCandle(original,now))
+        when(qualification.qualifyMoverWithFreshRetest(original,now))
                 .thenReturn(Fno925EntryQualificationService.Qualification.waiting("Awaiting bearish confirmation"));
         when(support.waiting(any(),any(),anyString())).thenAnswer(c -> StrategyApplyResponse.builder()
                 .status("waiting").message(c.getArgument(2)).build());
         var strategy = new Fno0925MoverAtrBreakoutStrategy(support,mock(ScriptMasterRepository.class),
                 movers,qualification,snapshots,Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
         assertThat(strategy.apply(new StrategyApplyRequest()).getMessage()).contains("ORIGINAL");
-        verify(qualification).qualifyWithDirectionalCandle(original,now);
+        verify(qualification).qualifyMoverWithFreshRetest(original,now);
         verifyNoInteractions(movers);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints={1,3})
+    void freshRetestUsesNormalAccountOrderPathSizingAndAtrStopFloor(int lots) {
+        var support=mock(StrategySupport.class);
+        var q=mock(Fno925EntryQualificationService.class);
+        var snapshots=mock(MoverSelectionSnapshotStore.class);
+        var now=LocalDateTime.of(2026,10,29,10,15);
+        var candidate=new Fno925Candidate("ABC",ScriptMasterEntity.builder().exchange("NC").scripCode(123).build(),"CE");
+        var candle=new StrategyCandle(now.toLocalDate(),now.toLocalTime().minusMinutes(5),100.6,102,100.5,101.8,200L);
+        var signal=new Fno925EntryQualificationService.Signal(101.8,100.1,1.29,100,90,candle,"MORNING_ORB_FRESH_RETEST");
+        when(q.qualifyMoverWithFreshRetest(any(),eq(now))).thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+        when(snapshots.loadOrCapture(anyString(),eq(now),any())).thenReturn(java.util.Optional.of(List.of(candidate)));
+        when(support.roundPrice(anyDouble())).thenAnswer(i->Math.round((double)i.getArgument(0)*100)/100d);
+        when(support.preferredFnoExpiry(anyString(),anyString())).thenReturn("23/11/2026");
+        when(support.resolveFnoEntryContract(any(),any(),any(),any(),anyDouble()))
+                .thenReturn(new StrategySupport.FnoOptionContract("23/11/2026",100));
+        when(support.executeTriggeredTrade(any())).thenReturn(TriggerTradeRequestEntity.builder().id(1L).build());
+        var strategy=new Fno0925MoverAtrBreakoutStrategy(support,mock(ScriptMasterRepository.class),mock(MStockGainerLoserService.class),q,snapshots,
+                Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        var request=new StrategyApplyRequest();request.setUserId(3L);request.setBrokerCredentialsId(4L);request.setLots(lots);
+        assertThat(strategy.apply(request).getStatus()).isEqualTo("triggered");
+        var captor=org.mockito.ArgumentCaptor.forClass(TriggerRequest.class);
+        verify(support).executeTriggeredTrade(captor.capture());
+        var order=captor.getValue();
+        assertThat(order.getUserId()).isEqualTo(3L);assertThat(order.getBrokerCredentialsId()).isEqualTo(4L);
+        assertThat(order.getLots()).isEqualTo(lots);assertThat(order.getSource()).isEqualTo("strategy:FNO_0925_MOVER_ATR_BREAKOUT");
+        assertThat(order.getStopLoss()).isEqualTo(99.87); // Existing 1.5 ATR floor retained.
+        assertThat(order.getTarget1()).isEqualTo(104.38);
+        assertThat(order.getTslEnabled()).isTrue();
+        strategy.apply(request);verify(support,times(1)).executeTriggeredTrade(any());
     }
 
     @Test
