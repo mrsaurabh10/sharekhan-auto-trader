@@ -66,6 +66,81 @@ class TradeExecutionServiceIntradayExitChaseTest {
         quotes.recordQuote(123, 42.0, 42.2, 42.1);
     }
 
+    private OrderPlacementResult immediateExit(String status, Double fill, int updated) {
+        trade.setExitOrderId(null);
+        trade.setStatus(TriggeredTradeStatus.EXECUTED);
+        if (trade.getSource() == null) trade.setSource("strategy:MCX_NATURALGAS_TREND_AVERAGING");
+        when(broker.placeExitOrder(any(), any(), anyDouble())).thenReturn(OrderPlacementResult.builder()
+                .success(true).orderId("exit-123").status(status).executedPrice(fill).build());
+        when(trades.markExitedWithPNL(eq(trade.getId()), any(), anyDouble(), any(), any(), any(), any()))
+                .thenReturn(updated);
+        return ReflectionTestUtils.invokeMethod(service, "placeExitOrderAndPersist", trade, 42.0,
+                "MCX_AVERAGING_DAILY_LOSS", TriggeredTradeStatus.EXIT_ORDER_PLACED);
+    }
+
+    @Test
+    void immediateExitNotifiesOwnerWithActualFillAndCalculatedPnlExactlyOnce() {
+        assertThat(immediateExit("Fully Executed", 41.5, 1).isSuccess()).isTrue();
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(notifications).sendTradeMessageForUser(eq(1L), eq("Trade Exited ✅"), body.capture());
+        assertThat(body.getValue()).contains("TradeId: 10265", "OrderId: exit-123", "Status: EXITED_SUCCESS",
+                "Entry: 48.1", "Exit: 41.5", "PnL: -3300.0", "Reason: MCX_AVERAGING_DAILY_LOSS");
+        verifyNoMoreInteractions(notifications);
+        verify(trades).markExitedWithPNL(eq(trade.getId()), eq(TriggeredTradeStatus.EXITED_SUCCESS),
+                eq(41.5), any(), eq(-3300.0), any(), any());
+    }
+
+    @Test
+    void unconfirmedOrUnpersistedExitDoesNotAnnounceSuccess() {
+        immediateExit("Open", null, 0);
+        verifyNoInteractions(notifications);
+        immediateExit("Fully Executed", 41.5, 0);
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void exitAlertWaitsForCommitAndRollbackDoesNotSend() {
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            immediateExit("Fully Executed", 41.5, 1);
+            verifyNoInteractions(notifications);
+            var hooks = org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations();
+            hooks.forEach(hook -> hook.afterCompletion(
+                    org.springframework.transaction.support.TransactionSynchronization.STATUS_ROLLED_BACK));
+            verifyNoInteractions(notifications);
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+        org.springframework.transaction.support.TransactionSynchronizationManager.initSynchronization();
+        try {
+            immediateExit("Fully Executed", 41.5, 1);
+            verifyNoInteractions(notifications);
+            org.springframework.transaction.support.TransactionSynchronizationManager.getSynchronizations()
+                    .forEach(org.springframework.transaction.support.TransactionSynchronization::afterCommit);
+            verify(notifications).sendTradeMessageForUser(eq(1L), eq("Trade Exited ✅"), anyString());
+        } finally {
+            org.springframework.transaction.support.TransactionSynchronizationManager.clearSynchronization();
+        }
+    }
+
+    @Test
+    void immediateProfitableStockBazaariExitKeepsExistingOperatorAction() {
+        trade.setSource("StockBazaari");
+        immediateExit("Fully Executed", 50.0, 1);
+        verify(notifications).sendTradeMessageForUser(eq(1L), eq("StockBazaari Profit Hit ✅"),
+                contains("PnL: 950.0"), eq("disable-stockbazaari:1"));
+        verifyNoMoreInteractions(notifications);
+    }
+
+    @Test
+    void telegramFailureDoesNotUndoConfirmedExit() {
+        doThrow(new RuntimeException("unavailable")).when(notifications)
+                .sendTradeMessageForUser(anyLong(), anyString(), anyString());
+        assertThat(immediateExit("Fully Executed", 41.5, 1).isSuccess()).isTrue();
+        verify(trades).markExitedWithPNL(eq(trade.getId()), eq(TriggeredTradeStatus.EXITED_SUCCESS),
+                eq(41.5), any(), eq(-3300.0), any(), any());
+    }
+
     @Test
     void failedStopModifyKeepsSameOrderAndRetriesUntilFilled() {
         when(broker.modifyEntryOrder(any(), any(), anyString(), anyDouble()))
