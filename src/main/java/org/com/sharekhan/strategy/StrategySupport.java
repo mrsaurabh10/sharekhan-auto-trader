@@ -480,7 +480,7 @@ public class StrategySupport {
                 source, spot.getScripCode(), userId, day.atStartOfDay(), day.plusDays(1).atStartOfDay());
         return (rows != null && rows.stream().anyMatch(row ->
                 !(org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED.equals(row.getStatus())
-                    && org.com.sharekhan.exception.EntryNotReadyException.NO_ORDER_REASON.equals(row.getReason()))))
+                    && org.com.sharekhan.exception.EntryNotReadyException.isNoOrderReason(row.getReason()))))
                 || hasEntryForSymbolOn(source, day, userId, symbol);
     }
 

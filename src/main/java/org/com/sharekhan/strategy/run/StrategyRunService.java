@@ -49,7 +49,7 @@ public class StrategyRunService {
             values=new Pnl(values.realizedGross(),values.openGross(),values.totalGross(),costs,money(values.totalGross().subtract(costs)),true,values.openPositions());
         }
         if(!entriesResolved(run)) values=new Pnl(values.realizedGross(),null,null,null,null,false,values.openPositions());
-        return new View(run,values,members,requests.findByStrategyRunId(run.getId()).size(),averaging
+        return new View(run,values,members.stream().map(TradeCostCalculator::cashCostView).toList(),requests.findByStrategyRunId(run.getId()).size(),averaging
                 ?"PAPER_NET_INR; ₹100 roundtrip cost reserve per filled lot or higher recorded costs; not verified MCX brokerage"
                 :"GROSS_INR; net includes estimated app charges, not broker-reconciled fees");
     }
@@ -174,11 +174,14 @@ public class StrategyRunService {
             }
             var value=BigDecimal.valueOf(price).subtract(BigDecimal.valueOf(trade.getActualEntryPrice())).multiply(BigDecimal.valueOf(trade.getQuantity())).multiply(BigDecimal.valueOf(sellSide(trade)?-1:1));
             if(closed) realized=realized.add(trade.getPnl()!=null && Double.isFinite(trade.getPnl())?BigDecimal.valueOf(trade.getPnl()):value);else open=open.add(value);
-            if(sellSide(trade)) {costsKnown=false;continue;} // Existing fee model is long-only; don't fabricate short net returns.
+            if(sellSide(trade) && !TradeCostCalculator.isCashEquity(trade)) {costsKnown=false;continue;}
             if ("MX".equalsIgnoreCase(trade.getExchange())) {costsKnown=false;continue;} // Equity fee constants are not MCX charges.
-            var estimate=TriggeredTradeSetupEntity.builder().actualEntryPrice(trade.getActualEntryPrice()).exitPrice(price).quantity(trade.getQuantity()).lots(trade.getLots()).pnl(value.doubleValue()).build();
+            var estimate=TriggeredTradeSetupEntity.builder().actualEntryPrice(trade.getActualEntryPrice()).exitPrice(price)
+                    .quantity(trade.getQuantity()).lots(trade.getLots()).originalLots(trade.getOriginalLots())
+                    .targetOrderGroupId(trade.getTargetOrderGroupId()).exchange(trade.getExchange()).optionType(trade.getOptionType())
+                    .entryAction(trade.getEntryAction()).source(trade.getSource()).intraday(trade.getIntraday()).pnl(value.doubleValue()).build();
             var charges=TradeCostCalculator.calculateCharges(estimate);
-            if(charges==null) costsKnown=false;else costs=costs.add(BigDecimal.valueOf(closed && trade.getTradeCost()!=null && Double.isFinite(trade.getTradeCost())?trade.getTradeCost():charges.totalTradeCost()));
+            if(charges==null) costsKnown=false;else costs=costs.add(BigDecimal.valueOf(closed && !TradeCostCalculator.isCashEquity(trade) && trade.getTradeCost()!=null && Double.isFinite(trade.getTradeCost())?trade.getTradeCost():charges.totalTradeCost()));
         }
         if(quoteTimes.size()>1 && Duration.between(Collections.min(quoteTimes),Collections.max(quoteTimes)).compareTo(Duration.ofSeconds(2))>0) fresh=false;
         var total=fresh?realized.add(open):null;

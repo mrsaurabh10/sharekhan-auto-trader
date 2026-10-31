@@ -71,6 +71,17 @@ class StrategyRunServiceTest {
         var view=service.list(1L,false,0,10).getContent().getFirst();
         assertThat(view.pnl().realizedGross()).isEqualByComparingTo("650");assertThat(view.pnl().openGross()).isEqualByComparingTo("1300");assertThat(view.pnl().totalGross()).isEqualByComparingTo("1950");assertThat(view.positions()).hasSize(2);
     }
+    @Test void cashShortRunUsesCurrentEstimateInsteadOfHistoricalLotBasedCost() {
+        var closed=leg(1,TriggeredTradeStatus.EXITED_SUCCESS);closed.setExchange("NC");closed.setOptionType(null);
+        closed.setEntryAction("SELL");closed.setIntraday(true);closed.setActualEntryPrice(125.65);closed.setExitPrice(126.5);
+        closed.setQuantity(1327L);closed.setLots(1327);closed.setOriginalLots(3982);closed.setTargetOrderGroupId(10494L);
+        closed.setPnl(-1127.95);closed.setTradeCost(15969.08);closed.setEffectivePnl(-17097.03);
+        var pnl=service.pnl(List.of(closed),Instant.now());
+        assertThat(pnl.estimatedCosts()).isLessThan(new java.math.BigDecimal("100"));
+        assertThat(pnl.estimatedNet()).isGreaterThan(new java.math.BigDecimal("-1300"));
+        assertThat(closed.getTradeCost()).isEqualTo(15969.08);
+    }
+
     @Test void unknownQuoteDoesNotDisplayFalseZeroOrActivateRisk() {
         var value=service.pnl(List.of(leg(1,TriggeredTradeStatus.EXECUTED)),Instant.now());assertThat(value.totalGross()).isNull();assertThat(value.marksFresh()).isFalse();
     }

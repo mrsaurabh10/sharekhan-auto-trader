@@ -53,6 +53,7 @@ public class MonitoringSnapshotService {
     private MonitoringTradeSnapshot toSnapshot(TriggeredTradeSetupEntity trade) {
         Integer scripCode = trade.getScripCode();
         Integer spotScripCode = trade.getSpotScripCode();
+        var charges = TradeCostCalculator.calculateCharges(trade);
         return new MonitoringTradeSnapshot(
                 trade.getId(), trade.getAppUserId(), trade.getSymbol(), scripCode, spotScripCode,
                 trade.getExchange(), org.com.sharekhan.util.TradeSide.entry(trade), trade.getInstrumentType(), trade.getStrikePrice(), trade.getOptionType(),
@@ -62,7 +63,8 @@ public class MonitoringSnapshotService {
                 trade.getUseSpotForSl(), trade.getUseSpotForTarget(), trade.getOrderId(), trade.getExitOrderId(),
                 trade.getExitReason(), trade.getIntraday(), trade.getSource(), trade.getStatus(),
                 trade.getTriggeredAt(), trade.getEntryAt(), trade.getExitOrderPlacedAt(), trade.getExitedAt(),
-                trade.getExitPrice(), trade.getPnl(), trade.getTradeCost(), trade.getEffectivePnl(),
+                trade.getExitPrice(), trade.getPnl(), charges != null ? Double.valueOf(charges.totalTradeCost()) : trade.getTradeCost(),
+                charges != null ? Double.valueOf(charges.effectivePnl()) : trade.getEffectivePnl(),
                 scripCode != null ? ltpCacheService.getLtp(scripCode) : null,
                 scripCode != null ? ltpCacheService.getObservedAt(scripCode) : null,
                 spotScripCode != null ? ltpCacheService.getLtp(spotScripCode) : null,
