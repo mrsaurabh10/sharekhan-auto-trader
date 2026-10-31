@@ -237,6 +237,28 @@ class TradeExecutionServiceBrokerSideEntryTest {
         }
     }
 
+    @ParameterizedTest
+    @CsvSource({"CE, 16.95", "CE, 17.10", "PE, 16.95", "PE, 17.10"})
+    void scalpingFixedPremiumOffsetsFollowActualImmediateAndConfirmedFills(String side, double fill) {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        for (String method : List.of("applyImmediateEntryExecution", "applyConfirmedEntryPrice")) {
+            var trade = TriggeredTradeSetupEntity.builder()
+                    .source(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE)
+                    .optionType(side).entryPrice(17d).stopLoss(15.5).target1(18.5)
+                    .useSpotForEntry(false).useSpotForSl(false).useSpotForTarget(false).tslEnabled(false).build();
+            if ("applyImmediateEntryExecution".equals(method)) {
+                ReflectionTestUtils.invokeMethod(ctx.service, method, trade,
+                        OrderPlacementResult.builder().success(true).executedPrice(fill).build());
+            } else {
+                ReflectionTestUtils.invokeMethod(ctx.service, method, trade, fill);
+            }
+            assertThat(trade.getActualEntryPrice()).isEqualTo(fill);
+            assertThat(trade.getStopLoss()).isCloseTo(fill - 1.5, org.assertj.core.data.Offset.offset(1e-9));
+            assertThat(trade.getTarget1()).isCloseTo(fill + 1.5, org.assertj.core.data.Offset.offset(1e-9));
+            assertThat(trade.getTslEnabled()).isFalse();
+        }
+    }
+
     @Test
     void enablesTslForMultiLotAtrAndStockBazaariSignals() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());

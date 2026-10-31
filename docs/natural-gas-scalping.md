@@ -17,8 +17,12 @@ subscription action. This implementation does not enrol or activate it.
 - Reject a signal candle wider than twice ATR14. Do not chase a price farther than
   one ATR from the breakout trigger. Only a fresh completed three-minute signal
   (75 seconds) and the expected latest five-minute close qualify.
-- Buy the exact ATM CE or PE at a tick-rounded fresh ask, with a 10% premium stop
-  and 15% premium target. Both are tick-rounded. Sharekhan exact-contract LTP and
+- Buy the exact ATM CE or PE at a tick-rounded fresh ask, with a fixed ₹1.50 premium
+  stop and ₹1.50 premium target for new entries. For a ₹17 entry these are ₹15.50
+  and ₹18.50. Both are tick-rounded outward; decimal arithmetic avoids adding an
+  accidental tick to the distance. Premium must exceed ₹1.50 for a positive stop.
+  Existing persisted trades retain their saved levels. Trailing remains disabled.
+  Sharekhan exact-contract LTP and
   coherent book must be at most 15 seconds old, non-future, and spread at most 2%.
   Target gross amount must cover at least twice displayed spread cost plus the
   ₹100 paper roundtrip reserve. Top-of-book full-size fills remain a Simulator assumption.
@@ -31,6 +35,10 @@ subscription action. This implementation does not enrol or activate it.
   for the same user/broker/day. Each fill reserves at least ₹100 paper costs; higher
   recorded costs take precedence. Winning fills do not replenish the loss allowance.
   Admit only if proposed stop risk plus the reserve fits the remaining allowance.
+  At the verified standard lot of 1,250 units and ₹0.05 tick, ₹1.50 is ₹1,875 gross
+  stop risk/reward; admission requires ₹1,975 including the ₹100 reserve. One full
+  stop leaves too little daily allowance for another such entry; five attempts is
+  an upper bound, not a promise of five affordable stopped trades.
   A separate monitor requests run closure when loss-side realized/open P&L plus
   reserves reaches the allowance, using fresh exit bids for open positions.
 - Entries 09:00–before 23:00 IST, pending entries cancelled from 23:00 and square-off

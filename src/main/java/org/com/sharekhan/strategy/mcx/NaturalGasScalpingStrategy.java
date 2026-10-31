@@ -25,7 +25,7 @@ public class NaturalGasScalpingStrategy implements StrategyEvaluator {
     public static final String TEMPLATE="MCX_NATURALGAS_SCALPING";
     public static final String SOURCE="strategy:"+TEMPLATE;
     private static final StrategyMetadata META=new StrategyMetadata(TEMPLATE,"Scalping",
-            "Simulator: MCX ATM CE/PE, three-minute direct breakout with five-minute trend, 10% premium stop / 15% target. One lot, five attempts, six-minute cooldown; total daily loss allowance at most ₹2,500 including paper cost reserves. Entries before 23:00; square-off from 23:20 IST.","AUTO");
+            "Simulator: MCX ATM CE/PE, three-minute direct breakout with five-minute trend, ₹1.50 premium stop / ₹1.50 target. One lot, five attempts, six-minute cooldown; total daily loss allowance at most ₹2,500 including paper cost reserves. Entries before 23:00; square-off from 23:20 IST.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r) {
         if(r.getSymbol()!=null && !r.getSymbol().isBlank() && !"NATURALGAS".equalsIgnoreCase(r.getSymbol().trim())) throw new IllegalArgumentException("This strategy supports MCX NATURALGAS only");
@@ -105,20 +105,21 @@ public class NaturalGasScalpingStrategy implements StrategyEvaluator {
         var q=quotes.getSnapshot(option.getScripCode()).orElse(null);
         if(!usableBook(q,instant,option.getScripCode()))return waitFor("Waiting for fresh coherent ATM option bid/ask (maximum 2% spread)"+dataContext);
         double premium=round(q.getBestAsk(),option.getTickSize(),RoundingMode.CEILING);
-        double stop=round(premium*(1-NaturalGasScalpPolicy.STOP_FRACTION),option.getTickSize(),RoundingMode.FLOOR);
+        double stop=round(BigDecimal.valueOf(premium).subtract(NaturalGasScalpPolicy.PREMIUM_STOP_DISTANCE),option.getTickSize(),RoundingMode.FLOOR);
         if(stop<=0 || stop>=premium)return waitFor("Option premium too small for a valid tick-aligned stop"+dataContext);
-        double estimatedRisk=(premium-stop)*option.getLotSize()*r.getLots();
+        BigDecimal estimatedRisk=BigDecimal.valueOf(premium).subtract(BigDecimal.valueOf(stop))
+                .multiply(BigDecimal.valueOf((long)option.getLotSize()*r.getLots()));
         var budget=day.remaining();
-        if(BigDecimal.valueOf(estimatedRisk+NaturalGasScalpPolicy.COST_RESERVE).compareTo(budget)>0)
+        if(estimatedRisk.add(BigDecimal.valueOf(NaturalGasScalpPolicy.COST_RESERVE)).compareTo(budget)>0)
             return waitFor("Scalp stop risk plus paper cost reserve exceeds the remaining daily allowance"+dataContext);
-        double target=round(premium*(1+NaturalGasScalpPolicy.TARGET_FRACTION),option.getTickSize(),RoundingMode.CEILING);
+        double target=round(BigDecimal.valueOf(premium).add(NaturalGasScalpPolicy.PREMIUM_TARGET_DISTANCE),option.getTickSize(),RoundingMode.CEILING);
         if((target-premium)*option.getLotSize()*r.getLots()<2*((q.getBestAsk()-q.getBestBid())*option.getLotSize()*r.getLots()+NaturalGasScalpPolicy.COST_RESERVE))
             return waitFor("Scalp target too small relative to displayed spread and paper cost reserve"+dataContext);
         t.setEntryPrice(premium);t.setStopLoss(stop);t.setTarget1(target);
         t.setUseSpotPrice(false);t.setUseSpotForEntry(false);t.setUseSpotForSl(false);t.setUseSpotForTarget(false);t.setTslEnabled(false);
         var trade=support.executeTriggeredTrade(t);
         return StrategyApplyResponse.builder().templateId(META.id()).symbol("NATURALGAS").direction(signal.side()).status("triggered")
-                .message("MCX ATM "+signal.side()+" entry requested; "+"10% premium stop/15% target, tick-rounded; remaining daily allowance and paper costs apply. "+"Simulator assumes full top-of-book quantity; depth is unverified."+dataContext)
+                .message("MCX ATM "+signal.side()+" entry requested; "+"₹1.50 premium stop/₹1.50 target, tick-rounded; remaining daily allowance and paper costs apply. "+"Simulator assumes full top-of-book quantity; depth is unverified."+dataContext)
                 .triggerRequest(t).tradeRequest(trade).breakoutClose(signal.trigger()).build();
     }
     static boolean usableBook(QuoteCacheService.QuoteSnapshot q,Instant now,Integer code){
@@ -131,5 +132,6 @@ public class NaturalGasScalpingStrategy implements StrategyEvaluator {
         return reason!=null && (reason.contains("UNKNOWN") || reason.contains("UNCONFIRMED") || reason.contains("RECONCILIATION_REQUIRED"));
     }
     private StrategyApplyResponse waitFor(String message){return support.waiting(META,"NATURALGAS",message);}
-    private static double round(double value,double tick,RoundingMode mode){return BigDecimal.valueOf(value).divide(BigDecimal.valueOf(tick),0,mode).multiply(BigDecimal.valueOf(tick)).doubleValue();}
+    private static double round(double value,double tick,RoundingMode mode){return round(BigDecimal.valueOf(value),tick,mode);}
+    private static double round(BigDecimal value,double tick,RoundingMode mode){return value.divide(BigDecimal.valueOf(tick),0,mode).multiply(BigDecimal.valueOf(tick)).doubleValue();}
 }
