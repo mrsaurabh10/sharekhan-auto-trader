@@ -4634,6 +4634,7 @@ public class TradeExecutionService {
                         charges != null ? charges.effectivePnl() : null);
                 if (updated == 1) {
                     TradeEventLogger.logOrderExecuted("EXIT", persisted, exitPriceVal, result.getStatus());
+                    sendImmediateExitExecutedNotification(persisted);
                     brokerFundsMayBeReleased(persisted);
                     advanceStagedTargetStopsAfterTargetExit(persisted);
                     rearmGapFillRequestAfterImmediateExit(persisted);
@@ -4924,6 +4925,51 @@ public class TradeExecutionService {
         }
         if (stockAtrTradeService.refreshLevelsAtEntry(trade, spotLtp)) {
             triggeredTradeRepo.save(trade);
+        }
+    }
+
+    /** Immediate fills bypass the status poller, so they must publish their own exit alert. */
+    private void sendImmediateExitExecutedNotification(TriggeredTradeSetupEntity trade) {
+        StringBuilder body = new StringBuilder("Instrument: ").append(trade.getSymbol());
+        if (trade.getStrikePrice() != null) body.append(" ").append(trade.getStrikePrice());
+        if (trade.getOptionType() != null) body.append(" ").append(trade.getOptionType());
+        body.append("\nTradeId: ").append(trade.getId());
+        body.append("\nOrderId: ").append(trade.getExitOrderId());
+        body.append("\nStatus: ").append(TriggeredTradeStatus.EXITED_SUCCESS);
+        Double entryPrice = resolveEntryPriceForPnl(trade);
+        if (entryPrice != null) body.append("\nEntry: ").append(entryPrice);
+        body.append("\nExit: ").append(trade.getExitPrice());
+        if (trade.getPnl() != null) body.append("\nPnL: ").append(trade.getPnl());
+        if (trade.getExitReason() != null) body.append("\nReason: ").append(trade.getExitReason());
+        boolean profitableStockBazaariExit = "StockBazaari".equalsIgnoreCase(trade.getSource())
+                && trade.getPnl() != null && trade.getPnl() > 0;
+        String title = profitableStockBazaariExit ? "StockBazaari Profit Hit ✅" : "Trade Exited ✅";
+        if (profitableStockBazaariExit) {
+            body.append("\n\nDisable this source for the user before the next signal if you want to stop further StockBazaari trades.");
+        }
+        Long userId = trade.getAppUserId();
+        Long tradeId = trade.getId();
+        String message = body.toString();
+        Runnable send = () -> {
+            try {
+                if (profitableStockBazaariExit) {
+                    telegramNotificationService.sendTradeMessageForUser(userId, title, message,
+                            "disable-stockbazaari:" + userId);
+                } else {
+                    telegramNotificationService.sendTradeMessageForUser(userId, title, message);
+                }
+            } catch (Exception failure) {
+                log.warn("Failed sending Telegram notification for immediate exit on trade {}: {}",
+                        tradeId, failure.getClass().getSimpleName());
+            }
+        };
+        // Do not announce a completed exit if the surrounding transaction rolls back.
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override public void afterCommit() { send.run(); }
+            });
+        } else {
+            send.run();
         }
     }
 
