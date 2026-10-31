@@ -104,6 +104,9 @@ public class OrderViewController {
             row.put("sebiTransactionFees", charges.sebiTransactionFees());
             row.put("gst", charges.gst());
             row.put("totalTradeCost", charges.totalTradeCost());
+            row.put("tradeCost", charges.totalTradeCost());
+            row.put("costModel", TradeCostCalculator.costModel(trade));
+            row.put("costEstimated", true);
             row.put("effectivePnl", charges.effectivePnl());
             row.put("exercised", charges.exercised());
         }

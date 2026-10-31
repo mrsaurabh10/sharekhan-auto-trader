@@ -57,6 +57,72 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TradeExecutionServiceBrokerSideEntryTest {
+    private TriggerRequest shortCashInput(TestContext ctx) {
+        ctx.useSimulatorBroker(); configureFiveAttemptPolicy(ctx);
+        ctx.service=org.mockito.Mockito.spy(ctx.service);
+        org.mockito.Mockito.doReturn(true).when(ctx.service).isIntradayEntryWindowOpen();
+        when(ctx.scriptRepo.findByExchangeAndTradingSymbolAndStrikePriceIsNullAndExpiryIsNull("NC", "BANKINDIA"))
+                .thenReturn(Optional.of(ScriptMasterEntity.builder().scripCode(123456).exchange("NC").tradingSymbol("BANKINDIA").instrumentType("EQ").build()));
+        when(ctx.triggerRepo.claimIfStatusEquals(77L,"PLACED_PENDING_CONFIRMATION","TRIGGERED")).thenReturn(1);
+        when(ctx.triggerRepo.claimIfStatusEqualsWithOutcome(eq(77L),eq("TRIGGERED"),eq("REJECTED"),anyString(),anyString())).thenReturn(1);
+        var input = new TriggerRequest(); input.setInstrument("BANKINDIA"); input.setExchange("NC");
+        input.setAction("SELL"); input.setIntraday(true); input.setEntryPrice(125.55); input.setStopLoss(126.39);
+        input.setTarget1(124.43); input.setQuantity(3982); input.setTslEnabled(false);
+        input.setSource("strategy:STOCK_0925_MOVER_ATR_BREAKOUT"); input.setUserId(9L); input.setBrokerCredentialsId(55L);
+        return input;
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(doubles={125.50,125.55})
+    void immediateStockShortBelowSignalFillsAndSimulatorBuyBackClosesAtALoss(double ltp) {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        var input=shortCashInput(ctx);
+        var simulator=org.mockito.Mockito.spy(new org.com.sharekhan.service.broker.SimulatorBrokerService());
+        when(ctx.brokerServiceFactory.getService(anyString())).thenReturn(simulator);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(ltp);
+        configureTightFreshQuote(ctx,125.50,125.55,125.525);
+        assertThat(ctx.service.executeTriggeredTrade(input).getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        var position=ctx.savedTrade.get();
+        assertThat(position.getEntryAction()).isEqualTo("SELL");
+        assertThat(position.getQuantity()).isEqualTo(3982L);
+        verify(simulator,times(1)).placeOrder(any(),any(),anyDouble());
+        when(ctx.triggeredRepo.claimIfStatusEquals(eq(88L),eq("EXECUTED"),eq("EXIT_ORDER_PLACED"),anyString())).thenReturn(1);
+        when(ctx.triggeredRepo.markExitedWithPNL(eq(88L),eq(TriggeredTradeStatus.EXITED_SUCCESS),anyDouble(),any(),anyDouble(),anyDouble(),anyDouble()))
+            .thenAnswer(call->{ position.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);return 1; });
+        ctx.service.squareOff(position,126.50,"Manual Exit");
+        verify(simulator,times(1)).placeExitOrder(any(),any(),anyDouble());
+        assertThat(position.getStatus()).isEqualTo(TriggeredTradeStatus.EXITED_SUCCESS);
+        assertThat(position.getPnl()).isNegative();
+        assertThat(position.getExitOrderId()).startsWith("SIM-EXIT-");
+    }
+
+    @Test void immediateStockShortAboveSignalWaitsWithoutOrderOrPosition() {
+        TestContext ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        var input=shortCashInput(ctx); when(ctx.ltpCache.getLtp(123456)).thenReturn(125.65);
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->ctx.service.executeTriggeredTrade(input))
+                .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class).hasMessageContaining("sell trigger");
+        assertThat(ctx.savedRequest.get().getReason()).isEqualTo(org.com.sharekhan.exception.EntryNotReadyException.NO_ORDER_REASON);
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());verify(ctx.triggeredRepo,never()).save(any());
+    }
+
+    @Test void expiredStockDecisionIsRetryableNoOrderAndFreshDecisionCanEnter() {
+        TestContext ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        var input=shortCashInput(ctx); when(ctx.ltpCache.getLtp(123456)).thenReturn(125.50);
+        configureTightFreshQuote(ctx,125.50,125.55,125.525);
+        var shared=mock(org.com.sharekhan.strategy.SharedMarketDecisions.class);
+        when(shared.executionFresh()).thenReturn(false);ReflectionTestUtils.setField(ctx.service,"sharedDecisions",shared);
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->ctx.service.executeTriggeredTrade(input))
+                .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class).hasMessageContaining("fresh evaluation");
+        assertThat(ctx.savedRequest.get().getReason()).isEqualTo(org.com.sharekhan.exception.EntryNotReadyException.NO_ORDER_REASON);
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+        verify(ctx.triggeredRepo,never()).save(any());
+        when(shared.executionFresh()).thenReturn(true);
+        when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenReturn(OrderPlacementResult.builder().success(true)
+                .orderId("FRESH-ENTRY").status("Fully Executed").executedPrice(125.50).build());
+        assertThat(ctx.service.executeTriggeredTrade(input).getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        verify(ctx.broker,times(1)).placeOrder(any(),any(),anyDouble());
+    }
+
     @Test
     void immediateSimulatorCashWaitIsExplicitNoOrderRatherThanExecutionUnavailable() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
@@ -1528,7 +1594,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
         private final AtomicReference<TriggeredTradeSetupEntity> savedTrade = new AtomicReference<>();
         private final EntryChaseControlRepository controlRepo = mock(EntryChaseControlRepository.class);
         private final Map<Long, EntryChaseControl> controls = new java.util.concurrent.ConcurrentHashMap<>();
-        private final TradeExecutionService service;
+        private TradeExecutionService service;
 
         private TestContext(OrderPlacementResult brokerResult) {
             when(scriptRepo.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(

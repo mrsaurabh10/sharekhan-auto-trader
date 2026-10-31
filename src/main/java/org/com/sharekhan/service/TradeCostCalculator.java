@@ -54,14 +54,19 @@ public class TradeCostCalculator {
         BigDecimal sellPremium = BigDecimal.valueOf(TradeSide.isShort(trade) ? entryPrice : exitPrice).multiply(quantity);
         BigDecimal turnover = buyPremium.add(sellPremium);
 
-        int lots = resolveLots(trade);
-        BigDecimal brokerage = BROKERAGE_PER_LOT_PER_SIDE
-                .multiply(BigDecimal.valueOf(lots))
-                .multiply(BigDecimal.valueOf(2));
-        boolean exercised = isExercised(trade);
-        BigDecimal stt = sellPremium.multiply(exercised ? EXERCISED_STT_RATE : SELL_STT_RATE);
-        BigDecimal exchangeTransactionCharges = turnover.multiply(EXCHANGE_TRANSACTION_RATE);
-        BigDecimal stampCharges = buyPremium.multiply(STAMP_DUTY_RATE);
+        boolean cash = isCashEquity(trade);
+        BigDecimal brokerage = cash ? cashBrokerage(trade, entryPrice, exitPrice)
+                : BROKERAGE_PER_LOT_PER_SIDE.multiply(BigDecimal.valueOf(resolveLots(trade))).multiply(BigDecimal.valueOf(2));
+        boolean intradayCash = cash && isIntradayCash(trade);
+        boolean exercised = !cash && isExercised(trade);
+        BigDecimal stt = cash ? (intradayCash ? sellPremium.multiply(new BigDecimal("0.00025"))
+                : turnover.multiply(new BigDecimal("0.001")))
+                : sellPremium.multiply(exercised ? EXERCISED_STT_RATE : SELL_STT_RATE);
+        // Cash reference tariff, including its published IPFT contribution in this component.
+        BigDecimal exchangeRate = cash ? (isBse(trade) ? new BigDecimal("0.0000375")
+                : new BigDecimal("0.000030700")) : EXCHANGE_TRANSACTION_RATE;
+        BigDecimal exchangeTransactionCharges = turnover.multiply(exchangeRate);
+        BigDecimal stampCharges = buyPremium.multiply(cash && !intradayCash ? new BigDecimal("0.00015") : STAMP_DUTY_RATE);
         BigDecimal sebiTransactionFees = turnover.multiply(SEBI_TRANSACTION_RATE);
         BigDecimal gst = brokerage.add(exchangeTransactionCharges)
                 .add(sebiTransactionFees)
@@ -129,6 +134,43 @@ public class TradeCostCalculator {
             if (charges != null && charges.effectivePnl()>0) return candidate.doubleValue();
         }
         return null;
+    }
+
+    public static boolean isCashEquity(TriggeredTradeSetupEntity trade) {
+        if (trade == null || (trade.getOptionType() != null && !trade.getOptionType().isBlank())) return false;
+        return java.util.Set.of("NC", "BC", "NSE", "BSE").contains(trade.getExchange() == null ? "" : trade.getExchange().toUpperCase(Locale.ROOT));
+    }
+    /** Non-managed display copy: never rewrite historical fills, gross P&L or stored fee estimates on a read. */
+    public static TriggeredTradeSetupEntity cashCostView(TriggeredTradeSetupEntity trade) {
+        if (!isCashEquity(trade)) return trade;
+        var charges = calculateCharges(trade);
+        if (charges == null) return trade;
+        var copy = new TriggeredTradeSetupEntity();
+        org.springframework.beans.BeanUtils.copyProperties(trade, copy);
+        copy.setTradeCost(charges.totalTradeCost()); copy.setEffectivePnl(charges.effectivePnl());
+        return copy;
+    }
+    public static String costModel(TriggeredTradeSetupEntity trade) {
+        return isCashEquity(trade) ? "cash-order-reference-estimate-2026-10-26" : "legacy-option-lot-estimate";
+    }
+    private static boolean isIntradayCash(TriggeredTradeSetupEntity trade) {
+        return TradeSide.isShort(trade) || Boolean.TRUE.equals(trade.getIntraday());
+    }
+    private static boolean isBse(TriggeredTradeSetupEntity trade) {
+        return "BC".equalsIgnoreCase(trade.getExchange()) || "BSE".equalsIgnoreCase(trade.getExchange());
+    }
+    private static BigDecimal cashOrderBrokerage(BigDecimal amount) {
+        return amount.multiply(new BigDecimal("0.0003")).min(new BigDecimal("20"));
+    }
+    private static BigDecimal cashBrokerage(TriggeredTradeSetupEntity trade, double entry, double exit) {
+        if (!isIntradayCash(trade)) return BigDecimal.ZERO; // Delivery reference tariff; DP charges are not modeled.
+        long shares = trade.getQuantity();
+        // Staged legs share a single original entry order; each has its own exit.
+        long entryShares = trade.getTargetOrderGroupId() != null && trade.getOriginalLots() != null
+                ? Math.max(shares, trade.getOriginalLots()) : shares;
+        BigDecimal entryCharge = cashOrderBrokerage(BigDecimal.valueOf(entry).multiply(BigDecimal.valueOf(entryShares)))
+                .multiply(BigDecimal.valueOf(shares)).divide(BigDecimal.valueOf(entryShares), 12, RoundingMode.HALF_UP);
+        return entryCharge.add(cashOrderBrokerage(BigDecimal.valueOf(exit).multiply(BigDecimal.valueOf(shares))));
     }
 
     private static int resolveLots(TriggeredTradeSetupEntity trade) {

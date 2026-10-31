@@ -43,10 +43,16 @@ class StrategySupportTest {
                 .status(org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED).build();
         when(requests.findDailySourceInstrumentRequests(any(), any(), any(), any(), any())).thenReturn(List.of(wait));
         assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isFalse();
+        for (String reason : List.of("ENTRY_WINDOW_ELAPSED: no order submitted")) {
+            wait.setReason(reason);
+            assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isFalse();
+        }
         wait.setStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED);
         assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isTrue();
         wait.setStatus(org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED);
         wait.setReason("ENTRY_EXECUTION_UNAVAILABLE");
+        assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isTrue();
+        wait.setReason("ENTRY_WINDOW_ELAPSED: broker status unknown");
         assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isTrue();
         wait.setReason(null);
         assertThat(support.hasStockMoverRequestOn("strategy:STOCK_0925_MOVER_ATR_BREAKOUT", LocalDate.of(2026,10,19), 3L, "UNIONBANK")).isTrue();

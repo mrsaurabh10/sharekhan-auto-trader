@@ -239,7 +239,7 @@
       if (!await confirmAction('Cancel this order request?')) return;
       await api('/api/trades/cancel-request/'+row.id,'POST',{}); notify('Request cancelled.'); await loadOrders();
     })));
-    table($('#executions'),[['Instrument','symbol'],['Side',r=>r.entryAction || 'BUY'],['Source',r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Costs',r=>money(r.totalTradeCost),'numeric'],['Net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>window.StrategyRunView?.statusTag(r.status,r.reason) || badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
+    table($('#executions'),[['Instrument','symbol'],['Side',r=>r.entryAction || 'BUY'],['Source',r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Est. costs',r=>money(r.totalTradeCost),'numeric'],['Est. net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>window.StrategyRunView?.statusTag(r.status,r.reason) || badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
       window.PersonalTradeActions.mount(td, row, {api, refresh:loadOrders, notify, button});
     });
     $('#requestPage').textContent='Page '+(state.requestPage+1); $('#executionPage').textContent='Page '+(state.executionPage+1);
