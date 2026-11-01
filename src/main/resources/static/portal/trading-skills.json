@@ -334,8 +334,8 @@
     {
       "skill": "stockbee-exhaustion-hammer-screener",
       "category": "swing-opportunity",
-      "status": "NOT_YET_IN_APP",
-      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "After-close NSE price/volume variant only. Company/institutional quality, events and portfolio review remain manual; no live near-close feed or validated performance."
     },
     {
       "skill": "stockbee-momentum-burst-screener",

@@ -5,12 +5,13 @@
 <title>Indian Stock Analysis · AutoTrader</title>
 <meta name="swing-csrf-header" th:content="${_csrf.headerName}"><meta name="swing-csrf-token" th:content="${_csrf.token}">
 <link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
-<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261102-vcp1">
+<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261102-hammer1">
 <script src="/portal/stock-analysis-math.js?v=20261029-swing1" defer></script>
 <script src="/portal/stock-analysis.js?v=20261101-saved" defer></script>
 <script src="/portal/swing-ideas.js?v=20261101-saved" defer></script>
-<script src="/portal/momentum-research.js?v=20261102-vcp1" defer></script>
-<script src="/portal/vcp-research.js?v=20261102-vcp1" defer></script>
+<script src="/portal/momentum-research.js?v=20261102-hammer1" defer></script>
+<script src="/portal/vcp-research.js?v=20261102-hammer1" defer></script>
+<script src="/portal/hammer-research.js?v=20261102-hammer1" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -25,7 +26,7 @@
 <div class="identity"><a href="/dashboard" class="text-button">My workspace</a><form action="/logout" method="post"><input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"><button class="text-button" type="submit">Sign out</button></form></div></header>
 <main class="page" id="main" tabindex="-1">
 <div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with broker market data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
-<nav class="row section-gap" aria-label="Research sections"><a class="button secondary" href="#swingIdeas">Daily swing plans</a><a class="button secondary" href="#momentumResearch">Momentum burst</a><a class="button secondary" href="#vcpResearch">VCP contractions</a><a class="button secondary" href="#skillInventory">Skill integrations</a></nav>
+<nav class="row section-gap" aria-label="Research sections"><a class="button secondary" href="#swingIdeas">Daily swing plans</a><a class="button secondary" href="#momentumResearch">Momentum burst</a><a class="button secondary" href="#vcpResearch">VCP contractions</a><a class="button secondary" href="#hammerResearch">Exhaustion hammer</a><a class="button secondary" href="#skillInventory">Skill integrations</a></nav>
 <section class="card section-gap" aria-label="Daily Swing Ideas" id="swingIdeas">
 <div class="row"><div><div class="eyebrow">DAILY SWING IDEAS · SAVED NIFTY 200</div><h2>Plan the next session</h2><p class="muted">Conditional breakout and pullback research. Entries, stops and 2R/3R targets from completed daily candles.</p></div><button type="button" class="secondary" id="swingScan">Refresh daily scan</button></div>
 <p class="muted">Experimental technical research. Historical profitability has not been validated; review news, earnings and portfolio exposure before considering a plan.</p>
@@ -57,6 +58,14 @@
 <h3>Contraction evidence</h3><p class="muted">Structural matches can remain watch-only. Relative-strength percentiles describe this eligible Nifty 200 sample; they are not an all-market rating or a probability of success.</p>
 <label class="check"><input id="vcpAll" type="checkbox"> Show every stock and rejection reason</label><div id="vcpRows" class="table-wrap" tabindex="0" role="region" aria-label="VCP patterns and evidence"></div>
 <details class="section-gap"><summary>VCP methodology, benchmark and limits</summary><ul id="vcpRules"></ul></details>
+</section>
+<section class="card section-gap" aria-labelledby="hammerTitle" id="hammerResearch">
+<div class="row"><div><div class="eyebrow">STOCKBEE · NSE PRICE/VOLUME ADAPTATION</div><h2 id="hammerTitle">Selling-exhaustion hammer research</h2><p class="muted">After-close recovery candles in previously strong stocks after a pullback. Review hammer geometry, prior momentum and liquidity before next-session confirmation. Company and institutional quality are unverified.</p></div><button id="hammerRefresh" class="secondary" type="button">Refresh hammer research</button></div>
+<p id="hammerStatus" class="notice" role="status" aria-live="polite">Loading hammer research…</p>
+<h3>Conditional buy &amp; sell levels</h3><div id="hammerPlans" class="table-wrap" tabindex="0" role="region" aria-label="Hammer buy entries and projected sell exits"></div>
+<h3>Setup evidence &amp; scan coverage</h3><label class="check"><input id="hammerAll" type="checkbox"> Show every stock and rejection reason</label>
+<div id="hammerRows" class="table-wrap" tabindex="0" role="region" aria-label="Hammer evidence and filters"></div>
+<details class="section-gap"><summary>Hammer methodology, missing quality data and limits</summary><ul id="hammerRules"></ul></details>
 </section>
 <section class="card section-gap" aria-labelledby="skillsTitle" id="skillInventory"><h2 id="skillsTitle">Trading skills in this app</h2><p id="skillsStatus" class="muted">Loading integration inventory…</p><p class="muted">Skills are being integrated one at a time. An installed chat skill does not automatically run in the app.</p><details><summary>View all 72 skills and remaining integration work</summary><label>Filter skills<input id="skillFilter" type="search" placeholder="Find a skill or requirement" maxlength="100"></label><div id="skillRows" class="table-wrap" tabindex="0" role="region" aria-label="Trading skill integration inventory"></div></details></section>
 <section class="card analysis-controls" aria-label="Choose a stock">
