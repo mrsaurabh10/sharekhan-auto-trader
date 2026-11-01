@@ -1,0 +1,6 @@
+package org.com.sharekhan.analysis;
+import org.junit.jupiter.api.Test;import org.com.sharekhan.service.NseMarketCalendar;import org.springframework.test.util.ReflectionTestUtils;import java.time.*;import static org.assertj.core.api.Assertions.*;
+class IndexHistorySessionsTest {
+ @Test void respectsVerifiedHolidaysAndOfficialMuhuratWindowAndAfterHoursCutoff(){var c=new IndexHistorySessions(new SwingSessions(),new NseMarketCalendar(),"");assertThat(c.window(LocalDate.of(2026,11,10))).isNull();assertThat(c.window(LocalDate.of(2026,11,1))).isNull();var muhurat=c.window(LocalDate.of(2026,11,8));assertThat(muhurat.minutes()).isEqualTo(70);assertThat(muhurat.start()).isEqualTo(LocalTime.of(14,20));assertThat(c.through(LocalDateTime.of(2026,11,2,18,59))).isEqualTo(LocalDate.of(2026,11,1));assertThat(c.through(LocalDateTime.of(2026,11,2,19,0))).isEqualTo(LocalDate.of(2026,11,2));}
+ @Test void futureWeekdaysUseExistingHolidayConfigurationAndSpecialDatesAreConfigurable(){var nse=new NseMarketCalendar();ReflectionTestUtils.setField(nse,"configuredHolidays","2027-01-26");var c=new IndexHistorySessions(new SwingSessions(),nse,"2027-01-09=10:00-11:00");assertThat(c.window(LocalDate.of(2027,1,4)).minutes()).isEqualTo(375);assertThat(c.window(LocalDate.of(2027,1,26))).isNull();assertThat(c.window(LocalDate.of(2027,1,9)).minutes()).isEqualTo(60);}
+}

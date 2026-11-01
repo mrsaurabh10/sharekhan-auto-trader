@@ -16,7 +16,8 @@ class DailyIndexHistorySchedulerTest {
     private final SharekhanHistoricalService sharekhan = mock(SharekhanHistoricalService.class);
     private final MarketHistoryArchiveService archive = mock(MarketHistoryArchiveService.class);
     private final NseMarketCalendar calendar = mock(NseMarketCalendar.class);
-    private final DailyIndexHistoryScheduler scheduler = new DailyIndexHistoryScheduler(support, rolling, sharekhan, archive, calendar);
+    private final org.com.sharekhan.analysis.IndexHistoryDailyUpdater minuteHistory=mock(org.com.sharekhan.analysis.IndexHistoryDailyUpdater.class);
+    private final DailyIndexHistoryScheduler scheduler = new DailyIndexHistoryScheduler(support, rolling, sharekhan, archive, calendar, minuteHistory);
 
     @Test
     void capturesBothIndicesWithoutSubscriptionsAndOnlyWritesTheRunDate() {
@@ -45,6 +46,7 @@ class DailyIndexHistorySchedulerTest {
             verify(archive).read(symbol, date, date);
         }
         verifyNoMoreInteractions(archive);
+        verify(minuteHistory).request();
     }
 
     @Test

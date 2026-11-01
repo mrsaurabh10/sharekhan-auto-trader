@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service;
 public class DhanInstrumentResolver {
     public static class MasterUnavailable extends IllegalStateException {public MasterUnavailable(){super("Current Dhan instrument master unavailable; order not sent");}}
     public record Instrument(String segment, String securityId, int lotSize, BigDecimal tickSize, long freezeQuantity) {}
-    private record Snapshot(LocalDate day, Map<String,List<Instrument>> rows,Map<String,String> cashIsins) {}
+    private record Snapshot(LocalDate day, Map<String,List<Instrument>> rows,Map<String,String> cashIsins,Map<String,String> indexIds) {}
     public record CashIdentity(Instrument instrument,String isin) {}
     public CashIdentity cashIdentity(String exchange,String symbol) {
         String segment=segment(exchange);if(!segment.endsWith("_EQ"))throw new IllegalArgumentException("Cash identity required");
@@ -23,6 +23,13 @@ public class DhanInstrumentResolver {
         String isin=snapshot.cashIsins().getOrDefault(key,"");
         if(matches.size()!=1||!isin.matches("[A-Z]{2}[A-Z0-9]{10}"))throw new IllegalStateException("Verified cash identity unavailable");
         return new CashIdentity(matches.getFirst(),isin);
+    }
+    /** Spot-index research identity, deliberately separate from the order resolver. */
+    public String indexIdentity(String symbol) {
+        if(!Set.of("NIFTY","BANKNIFTY").contains(symbol))throw new IllegalArgumentException("Unsupported index");
+        String id=current().indexIds().get(symbol);
+        if(id==null||!id.matches("[0-9]+"))throw new IllegalStateException("Index identity missing or ambiguous");
+        return id;
     }
     private volatile Snapshot snapshot;
     private static LocalDate today() { return LocalDate.now(ZoneId.of("Asia/Kolkata")); }
@@ -66,12 +73,18 @@ public class DhanInstrumentResolver {
             if (!columns.contains(required)) throw new IOException("Unsupported Dhan master columns");
         Map<String,List<Instrument>> index = new HashMap<>();
         Map<String,String> cashIsins=new HashMap<>();
+        Map<String,String> indexIds=new HashMap<>();
         String line;
         while ((line = reader.readLine()) != null) {
             List<String> row = csv(line);
             try {
                 String exchange = field(columns,row,"EXCH_ID"), type = field(columns,row,"INSTRUMENT"), rawSegment = field(columns,row,"SEGMENT");
                 if (!Set.of("NSE","BSE").contains(exchange)) continue;
+                if("NSE".equals(exchange)&&"I".equals(rawSegment)&&"INDEX".equals(type)) {
+                    String symbol=field(columns,row,"SYMBOL_NAME"),id=field(columns,row,"SECURITY_ID");
+                    if(Set.of("NIFTY","BANKNIFTY").contains(symbol)&&symbol.equals(field(columns,row,"UNDERLYING_SYMBOL"))&&id.matches("[0-9]+"))indexIds.merge(symbol,id,(a,b)->a.equals(b)?a:"");
+                    continue;
+                }
                 boolean cash = "E".equals(rawSegment) && "EQUITY".equals(type) && ("BSE".equals(exchange) || "EQ".equals(field(columns,row,"SERIES")));
                 boolean option = "D".equals(rawSegment) && Set.of("OPTIDX","OPTSTK").contains(type);
                 if (!cash && !option) continue;
@@ -95,10 +108,10 @@ public class DhanInstrumentResolver {
                 if (!candidates.contains(instrument)) candidates.add(instrument);
             } catch (RuntimeException ignored) { /* Bad rows are never guessed or selected. */ }
         }
-        if (index.isEmpty()) throw new IOException("Dhan master has no supported instruments");
+        if (index.isEmpty() && indexIds.isEmpty()) throw new IOException("Dhan master has no supported instruments");
         Map<String,List<Instrument>> immutable = new HashMap<>();
         index.forEach((key,value)->immutable.put(key,List.copyOf(value)));
-        var next = new Snapshot(day,Map.copyOf(immutable),Map.copyOf(cashIsins)); snapshot = next; return next;
+        var next = new Snapshot(day,Map.copyOf(immutable),Map.copyOf(cashIsins),Map.copyOf(indexIds)); snapshot = next; return next;
     }
     public static String segment(String exchange) {
         return switch (exchange == null ? "" : exchange.trim().toUpperCase(Locale.ROOT)) {

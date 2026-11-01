@@ -23,4 +23,13 @@ class DhanDailyHistoryClientTest {
         assertThat(client.fetch(member,saved,day,day).candles()).hasSize(1);verify(tokens).findLatestByBrokerAndBrokerCredentialsId("Dhan",77L);verify(credentials).findById(77L);
         assertThatThrownBy(()->client.fetch(new StockDailyHistoryStore.Member("TCS","INE000000001",day),saved,day,day)).hasMessageContaining("identity changed");
     }
+    @Test void indexReadsUseConfiguredDecryptedAccountNativeIntervalAndExactSpotIdentity()throws Exception {
+        when(credentials.findById(77L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().brokerName("Dhan").active(true).build()));
+        when(tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",77L)).thenReturn(Optional.of(AccessTokenEntity.builder().token("test-decrypted-token").expiry(Instant.now().plusSeconds(3600)).build()));
+        when(master.indexIdentity("NIFTY")).thenReturn("13");
+        var client=new DhanDailyHistoryClient(tokens,credentials,master,77){@Override String requestIntraday(String token,String body){assertThat(token).isEqualTo("test-decrypted-token");var req=new JSONObject(body);assertThat(req.getString("securityId")).isEqualTo("13");assertThat(req.getString("instrument")).isEqualTo("INDEX");assertThat(req.getString("exchangeSegment")).isEqualTo("IDX_I");assertThat(req.getString("interval")).isEqualTo("1");assertThat(req.getString("fromDate")).isEqualTo("2026-10-30 00:00:00");assertThat(req.getString("toDate")).isEqualTo("2026-10-31 00:00:00");return "{\"timestamp\":[],\"open\":[],\"high\":[],\"low\":[],\"close\":[]}";}};
+        assertThat(new JSONObject(client.fetchIndex("NIFTY",day,1)).getJSONArray("timestamp")).isEmpty();
+        when(master.indexIdentity("NIFTY")).thenReturn("999");assertThatThrownBy(()->client.fetchIndex("NIFTY",day,1)).hasMessageContaining("identity changed");
+        assertThatThrownBy(()->client.fetchIndex("NIFTY",day,30)).isInstanceOf(IllegalArgumentException.class);
+    }
 }
