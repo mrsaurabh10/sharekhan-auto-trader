@@ -16,34 +16,28 @@ import static org.com.sharekhan.analysis.SwingModels.*;
 
 @Service
 public class DailySwingService {
-    private final ScriptMasterRepository scripts;
-    private final StockAnalysisShoonyaFeed feed;
+    private final SavedDailyAnalysis daily;
     private final SwingPlanner planner;
     private final SwingSessions calendar;
     private final SwingReportStore store;
     private final Clock clock;
-    private final List<String> universe;
+    private List<String> universe(){return daily.members().stream().map(StockDailyHistoryStore.Member::symbol).toList();}
     private final ExecutorService worker=Executors.newSingleThreadExecutor(r->{var t=new Thread(r,"swing-research");t.setDaemon(true);return t;});
     private volatile boolean running;
     private volatile Instant lastAttempt;
     private volatile String problem;
     @org.springframework.beans.factory.annotation.Autowired
-    public DailySwingService(ScriptMasterRepository scripts,StockAnalysisShoonyaFeed feed,SwingPlanner planner,SwingSessions calendar,SwingReportStore store,
-            @Value("${app.swing.symbols:RELIANCE,TCS,HDFCBANK,ICICIBANK,INFY,ITC,LT,SBIN,BHARTIARTL,AXISBANK,KOTAKBANK,BAJFINANCE,MARUTI,M&M,TITAN,ASIANPAINT,HINDUNILVR,SUNPHARMA,NTPC,POWERGRID,ULTRACEMCO,TATASTEEL,JSWSTEEL,ONGC,COALINDIA,BAJAJFINSV,HCLTECH,TECHM,ADANIPORTS,JIOFIN}") String symbols) {
-        this(scripts,feed,planner,calendar,store,symbols,Clock.system(StockAnalysisService.IST));
-    }
-    DailySwingService(ScriptMasterRepository scripts,StockAnalysisShoonyaFeed feed,SwingPlanner planner,SwingSessions calendar,SwingReportStore store,String symbols,Clock clock) {
-        this.scripts=scripts;this.feed=feed;this.planner=planner;this.calendar=calendar;this.store=store;this.clock=clock;
-        this.universe=Arrays.stream(symbols.split(",")).map(String::trim).map(s->s.toUpperCase(Locale.ROOT)).filter(s->!s.isBlank()).distinct().limit(60).toList();
-    }
+    public DailySwingService(SavedDailyAnalysis daily,SwingPlanner planner,SwingSessions calendar,SwingReportStore store){this(daily,planner,calendar,store,Clock.system(StockAnalysisService.IST));}
+    DailySwingService(SavedDailyAnalysis daily,SwingPlanner planner,SwingSessions calendar,SwingReportStore store,Clock clock){this.daily=daily;this.planner=planner;this.calendar=calendar;this.store=store;this.clock=clock;}
+    @EventListener(StockDailyHistoryUpdater.Updated.class) public void historyUpdated(){requestScan();}
     public record State(boolean running,Instant lastAttempt,String problem,LocalDate expectedDate,Report report,String entryWindow,
-                        List<Observation> observations,List<String> universe) { }
+                        List<Observation> observations,List<String> universe,SavedDailyAnalysis.Status historyUpdate) { }
     public State state() {
         var now=LocalDateTime.now(clock);var day=calendar.expected(now);
         var report=day==null?Optional.<Report>empty():store.read(day);
         if(report.isEmpty())report=store.history().stream().findFirst();
         String window=report.isEmpty()||report.get().validSession()==null?"UNAVAILABLE":window(report.get().validSession(),now);
-        return new State(running,lastAttempt,problem,day,report.orElse(null),window,store.observations(),universe);
+        return new State(running,lastAttempt,problem,day,report.orElse(null),window,store.observations(),universe(),daily.status(clock.instant()));
     }
     static String window(LocalDate valid,LocalDateTime now) {
         if(now.toLocalDate().isAfter(valid)||now.toLocalDate().equals(valid)&&!now.toLocalTime().isBefore(LocalTime.of(15,15)))return "EXPIRED";
@@ -75,21 +69,18 @@ public class DailySwingService {
         LocalDate valid=calendar.next(day);var results=new ArrayList<StockResult>();
         var data=new HashMap<Integer,List<HistoricalCandle>>();
         long deadline=System.nanoTime()+TimeUnit.MINUTES.toNanos(8);
-        for(String symbol:universe) {
+        for(String symbol:universe()) {
             if(Thread.currentThread().isInterrupted())throw new InterruptedException();
             if(System.nanoTime()>deadline){results.add(new StockResult(symbol,0,"UNAVAILABLE","Scan time budget reached.",null,false,false,null));continue;}
-            var rows=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("NC",symbol).stream().filter(StockAnalysisService::cash).toList();
-            if(rows.size()!=1){results.add(new StockResult(symbol,0,"UNAVAILABLE","No unique NSE cash identity in master.",null,false,false,null));continue;}
-            var identity=rows.getFirst();
-            var input=feed.dailyInput(new StockAnalysisService.Instrument(identity.getScripCode(),symbol,"NC"),clock.instant());
-            // Do not mutate the shared master or a managed entity: the verified provider tick is research input only.
-            var stock=ScriptMasterEntity.builder().scripCode(identity.getScripCode()).tradingSymbol(symbol).exchange("NC").tickSize(input.tickSize()).build();
+            var input=daily.read(symbol,day);
+            if(input.securityId()==null||!input.securityId().matches("[0-9]{1,9}")||input.tick()==null){results.add(new StockResult(symbol,0,"UNAVAILABLE","No saved verified daily identity/history.",null,false,false,null));continue;}
+            // This research code is explicitly a Dhan security ID; it is never routed to Sharekhan or order services.
+            var stock=ScriptMasterEntity.builder().scripCode(Integer.parseInt(input.securityId())).tradingSymbol(symbol).exchange("NC").tickSize(input.tick().doubleValue()).build();
             var candles=input.candles();
             data.put(stock.getScripCode(),candles);
-            var result=planner.evaluate(stock,candles,day,valid);
+            var result=planner.evaluate(stock,candles,day,valid,SavedDailyAnalysis.PROVIDER);
             if(!result.status().equals("UNAVAILABLE")&&!recentSessionsPresent(candles,day))result=new StockResult(symbol,stock.getScripCode(),"UNAVAILABLE","Missing a required recent regular session.",result.lastDate(),false,false,null);
             results.add(result);
-            Thread.sleep(900); // dedicated worker only; never occupy the strategy scheduler/servlet pool
         }
         store.save(assemble(day,valid,results,clock.instant()));
         // Only observed EOD levels, never fabricated executions. Recompute from immutable plans.
@@ -115,12 +106,13 @@ public class DailySwingService {
         if(status.equals("READY")&&plans.isEmpty())status="NO_SETUPS";
         var publishedRows=status.equals("READY")?List.copyOf(rows):rows.stream().map(r->r.plan()==null?r:
                 new StockResult(r.symbol(),r.scripCode(),"GATE_BLOCKED","Candidate withheld by the report coverage/market gate.",r.lastDate(),r.above50(),r.above200(),null)).toList();
-        return new Report("INDIA_SWING_TECHNICAL_V1",day,valid,now,status,rows.size(),covered.size(),breadth,plans,publishedRows,List.of(
-                "NSE cash research universe; not an index constituent list or an all-market scan. At least 80% coverage and 50% above SMA50 required.",
+        return new Report("INDIA_SWING_SAVED_DHAN_V2",day,valid,now,status,rows.size(),covered.size(),breadth,plans,publishedRows,List.of(
+                "Saved Nifty 200 snapshot; daily candles read from PostgreSQL. At least 80% coverage and 50% above SMA50 required.",
                 "Unvalidated technical presets, not backtested recommendations or confidence probabilities. Review events and corporate actions independently.",
                 "Targets are 2R/3R projections, sized from maximum entry. Entry validity is one regular session, then expires.",
                 "EOD observations do not prove fills or intraday ordering. No portfolio holdings, charges, taxes or slippage are evaluated.",
                 "Adapted skill methods: breakout-trade-planner (worst-entry risk/chase/R targets), position-sizer (whole-share/risk caps), backtest-expert (as-of and ambiguity controls). Full VCP screening is not implemented.",
+                "Research scripCode identifiers in these Dhan plans are Dhan security IDs, not Sharekhan order identities.",
                 "Regular-session calendar verified for 2026 only. Special-session entry is unsupported. No orders or external messages are sent."));
     }
     @PreDestroy public void close(){worker.shutdownNow();}

@@ -12,6 +12,9 @@ import static org.com.sharekhan.analysis.SwingModels.*;
 @Component
 public class SwingPlanner {
     public StockResult evaluate(ScriptMasterEntity stock, List<HistoricalCandle> source, LocalDate day, LocalDate valid) {
+        return evaluate(stock,source,day,valid,"Shoonya");
+    }
+    public StockResult evaluate(ScriptMasterEntity stock,List<HistoricalCandle> source,LocalDate day,LocalDate valid,String provider) {
         String symbol = stock.getTradingSymbol(); int code = stock.getScripCode();
         if (valid == null) return result(symbol,code,"UNAVAILABLE","Next entry session crosses an unsupported calendar year or special session.",null,false,false,null);
         var ordered = new TreeMap<LocalDate,HistoricalCandle>();
@@ -64,7 +67,7 @@ public class SwingPlanner {
         double t2=round(BigDecimal.valueOf(max).add(BigDecimal.valueOf(risk).multiply(BigDecimal.valueOf(3))).doubleValue(),tickValue,true);
         if(setup.equals("TREND_PULLBACK")&&pivot>max&&pivot<t1)
             return result(symbol,code,"FILTERED","Observed 20-day resistance leaves less than 2R of room.",lastDate,above50,above200,null);
-        var plan=new Plan(symbol,code,"NC",setup,"Shoonya",day,valid,entry,max,stop,t1,t2,risk,100*risk/max,atr,rsi,turnover,
+        var plan=new Plan(symbol,code,"NC",setup,provider,day,valid,entry,max,stop,t1,t2,risk,100*risk/max,atr,rsi,turnover,
                 "Rising daily trend with "+(setup.equals("TREND_PULLBACK")?"a bullish pullback near SMA20.":"price within 3% below its prior 20-day high.")+" Targets are 2R/3R projections from maximum entry, not forecasts.",
                 List.of("Valid for entry only on "+valid+"; expires at 15:15 IST.","Skip if the session opens above maximum entry or the stop is breached before entry.","Review earnings, corporate actions and news before considering entry; these are not screened.","No order is placed. Review holding after 10 completed sessions; gaps can exceed planned risk."));
         return result(symbol,code,"CANDIDATE","Conditional entry; requires portfolio and event-risk review.",lastDate,above50,above200,plan);

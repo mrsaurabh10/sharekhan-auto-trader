@@ -19,12 +19,16 @@ public class StockAnalysisService {
     private final SharekhanHistoricalService history;
     private final StockAnalysisShoonyaFeed shoonya;
     private final Clock clock;
+    private SavedDailyAnalysis savedDaily;
     private final Map<String, Cached> cache = new LinkedHashMap<>();
     private final java.util.concurrent.locks.ReentrantLock providerSlot = new java.util.concurrent.locks.ReentrantLock();
     private long lastFetchNanos;
     record Cached(Instant until, Report report) {}
 
     @org.springframework.beans.factory.annotation.Autowired
+    public StockAnalysisService(ScriptMasterRepository scripts, SharekhanHistoricalService history, StockAnalysisShoonyaFeed shoonya,SavedDailyAnalysis savedDaily) {
+        this(scripts,history,shoonya,Clock.system(IST));this.savedDaily=savedDaily;
+    }
     public StockAnalysisService(ScriptMasterRepository scripts, SharekhanHistoricalService history, StockAnalysisShoonyaFeed shoonya) {
         this(scripts, history, shoonya, Clock.system(IST));
     }
@@ -57,6 +61,8 @@ public class StockAnalysisService {
                 && (s.getStrikePrice() == null || s.getStrikePrice() == 0)
                 && (s.getOptionType() == null || s.getOptionType().isBlank());
     }
+    public List<Instrument> searchSaved(String exchange,String query){return savedDaily.search(exchange,query);}
+    public Report analyzeSaved(String exchange,String symbol){return savedDaily.analyze(exchange,symbol,clock.instant());}
     public List<Instrument> search(String exchange, String query) {
         String ex = exchange(exchange), q = query == null ? "" : query.trim().toUpperCase(Locale.ROOT);
         if (q.length() < 2) return List.of();
@@ -81,6 +87,7 @@ public class StockAnalysisService {
         ScriptMasterEntity script = scripts.findByScripCode(scripCode);
         if (!cash(script) || !ex.equalsIgnoreCase(script.getExchange().trim()))
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Cash instrument not found on the selected exchange.");
+        if(mode.equals("SWING")&&savedDaily!=null)return savedDaily.analyze(ex,script.getTradingSymbol(),clock.instant());
         Instant now = clock.instant(); String key = ex + ":" + scripCode + ":" + mode;
         cache.entrySet().removeIf(e -> !now.isBefore(e.getValue().until()));
         Cached old = cache.get(key);
@@ -108,6 +115,9 @@ public class StockAnalysisService {
         return calculate(instrument, mode, source, fetchedAt, "Sharekhan", List.of());
     }
     static Report calculate(Instrument instrument, String mode, List<HistoricalCandle> source, Instant fetchedAt, String provider, List<String> notices) {
+        return calculate(instrument,mode,source,fetchedAt,provider,notices,LocalDateTime.ofInstant(fetchedAt,IST).toLocalDate().minusDays(1));
+    }
+    static Report calculate(Instrument instrument,String mode,List<HistoricalCandle> source,Instant fetchedAt,String provider,List<String> notices,LocalDate completedThrough) {
         boolean intraday = mode.equals("INTRADAY");
         LocalDateTime now = LocalDateTime.ofInstant(fetchedAt, IST);
         Map<LocalDateTime, Bar> unique = new TreeMap<>(); Set<LocalDateTime> conflicts = new HashSet<>();
@@ -120,7 +130,7 @@ public class StockAnalysisService {
             LocalDateTime stamp = c.date().atTime(t);
             if (intraday && (t.isBefore(LocalTime.of(9, 15)) || !t.isBefore(LocalTime.of(15, 30)))) { outside++; continue; }
             if (intraday && (t.getSecond() != 0 || t.getNano() != 0 || t.getMinute() % 5 != 0)) { rejected++; continue; }
-            if (intraday ? stamp.plusMinutes(5).isAfter(now) : !c.date().isBefore(now.toLocalDate())) { incomplete++; continue; }
+            if (intraday ? stamp.plusMinutes(5).isAfter(now) : c.date().isAfter(completedThrough)) { incomplete++; continue; }
             Long volume = c.volume();
             if (volume != null && volume < 0) { invalidVolume++; volume = null; }
             Bar b = new Bar(c.date(), t, c.open(), c.high(), c.low(), c.close(), volume);
@@ -140,7 +150,7 @@ public class StockAnalysisService {
         List<String> warnings = new ArrayList<>(notices);
         warnings.add(provider + " returned history only; requested long-term coverage and corporate-action adjustment are not guaranteed.");
         warnings.add(intraday ? "Normal 09:15–15:30 IST cash session only. Special sessions are not modelled."
-                : "Daily analysis excludes the current IST date, even after market close. Exchange holiday completeness is not inferred.");
+                : "Completed daily history through "+completedThrough+". Future/forming sessions are excluded.");
         if (rejected > 0) warnings.add(rejected + " invalid bars removed; technical conclusions are withheld.");
         if (duplicates > 0) warnings.add(duplicates + " duplicate timestamps found; " + conflicts.size() + " conflicting timestamps removed.");
         if (gaps > 0) warnings.add(gaps + " missing five-minute intervals inside returned sessions; technical conclusions are withheld.");
