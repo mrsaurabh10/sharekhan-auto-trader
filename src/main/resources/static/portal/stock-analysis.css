@@ -5,3 +5,5 @@
 #momentumRows td:nth-child(2),#skillRows td:last-child{white-space:normal;min-width:220px;max-width:460px;line-height:1.5}
 
 #vcpRows td:nth-child(2){white-space:normal;min-width:240px;max-width:430px;line-height:1.5}#vcpRows details{white-space:normal;min-width:260px;max-width:430px}#vcpRows details ul{padding-left:18px;line-height:1.5}
+
+#hammerRows td{vertical-align:top}#hammerRows td:nth-child(2){white-space:normal;min-width:200px;max-width:300px;line-height:1.5}#hammerRows details{white-space:normal;min-width:250px;max-width:340px;line-height:1.5}#hammerRows details p{margin:8px 0}
