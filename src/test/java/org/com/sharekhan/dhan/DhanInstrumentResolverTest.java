@@ -45,4 +45,9 @@ class DhanInstrumentResolverTest {
         resolver.load(new StringReader(h+c),day);
         assertThat(resolver.cashIdentity("NC","TCS").isin()).isEqualTo("INE467B01029");assertThat(resolver.cashIdentity("NC","TCS").instrument().securityId()).isEqualTo("11536");
     }
+    @Test void indexResearchUsesIndexRowsWithoutChangingOrderIdentityOrGuessingAmbiguousIds()throws Exception {
+        var resolver=new DhanInstrumentResolver();String indices="NSE,I,13,INDEX,NIFTY,NIFTY,NA,1.0,,-1,XX,0.05,0\nNSE,I,25,INDEX,BANKNIFTY,BANKNIFTY,NA,1.0,,-1,XX,0.05,0\n";
+        resolver.load(new StringReader(header+cash+indices),day);assertThat(resolver.indexIdentity("NIFTY")).isEqualTo("13");assertThat(resolver.indexIdentity("BANKNIFTY")).isEqualTo("25");assertThat(resolver.resolve(trade("TCS","NC")).securityId()).isEqualTo("11536");assertThatThrownBy(()->resolver.resolve(trade("NIFTY","NC"))).isInstanceOf(IllegalArgumentException.class);
+        resolver.load(new StringReader(header+cash+indices+indices.replace(",13,",",999,")),day);assertThatThrownBy(()->resolver.indexIdentity("NIFTY")).hasMessageContaining("ambiguous");
+    }
 }

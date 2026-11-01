@@ -21,6 +21,7 @@ public class DailyIndexHistoryScheduler {
     private final SharekhanHistoricalService sharekhan;
     private final MarketHistoryArchiveService archive;
     private final NseMarketCalendar calendar;
+    private final org.com.sharekhan.analysis.IndexHistoryDailyUpdater minuteHistory;
     private final AtomicBoolean running = new AtomicBoolean();
     @Value("${app.market-data.daily-history-enabled:true}") private boolean enabled;
 
@@ -42,7 +43,9 @@ public class DailyIndexHistoryScheduler {
                 }
             }
         } finally {
+            // After-market pass reconciles both native intervals; before7pm it can only catch up prior days.
             running.set(false);
+            try { minuteHistory.request(); } catch (RuntimeException e) { log.warn("Index minute-history worker could not start ({}); scheduled retries remain available.",e.getClass().getSimpleName()); }
         }
     }
 
