@@ -41,8 +41,8 @@ public class MarketHistoryArchiveService {
         if (from == null || to == null || from.isAfter(to)) {
             throw new IllegalArgumentException("Provide from and to dates with from <= to");
         }
-        return repository.findBySymbolAndCandleTimeGreaterThanEqualAndCandleTimeLessThanOrderByCandleTime(
-                symbol, from.atStartOfDay(), to.plusDays(1).atStartOfDay());
+        return repository.findBySymbolAndIntervalMinutesAndCandleTimeGreaterThanEqualAndCandleTimeLessThanOrderByCandleTime(
+                symbol, 5, from.atStartOfDay(), to.plusDays(1).atStartOfDay());
     }
 
     private void validateSymbol(String symbol) {
