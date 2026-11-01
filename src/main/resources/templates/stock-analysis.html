@@ -5,11 +5,12 @@
 <title>Indian Stock Analysis · AutoTrader</title>
 <meta name="swing-csrf-header" th:content="${_csrf.headerName}"><meta name="swing-csrf-token" th:content="${_csrf.token}">
 <link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
-<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261101-momentum1">
+<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261102-vcp1">
 <script src="/portal/stock-analysis-math.js?v=20261029-swing1" defer></script>
 <script src="/portal/stock-analysis.js?v=20261101-saved" defer></script>
 <script src="/portal/swing-ideas.js?v=20261101-saved" defer></script>
-<script src="/portal/momentum-research.js?v=20261101-momentum1" defer></script>
+<script src="/portal/momentum-research.js?v=20261102-vcp1" defer></script>
+<script src="/portal/vcp-research.js?v=20261102-vcp1" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -24,6 +25,7 @@
 <div class="identity"><a href="/dashboard" class="text-button">My workspace</a><form action="/logout" method="post"><input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"><button class="text-button" type="submit">Sign out</button></form></div></header>
 <main class="page" id="main" tabindex="-1">
 <div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with broker market data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
+<nav class="row section-gap" aria-label="Research sections"><a class="button secondary" href="#swingIdeas">Daily swing plans</a><a class="button secondary" href="#momentumResearch">Momentum burst</a><a class="button secondary" href="#vcpResearch">VCP contractions</a><a class="button secondary" href="#skillInventory">Skill integrations</a></nav>
 <section class="card section-gap" aria-label="Daily Swing Ideas" id="swingIdeas">
 <div class="row"><div><div class="eyebrow">DAILY SWING IDEAS · SAVED NIFTY 200</div><h2>Plan the next session</h2><p class="muted">Conditional breakout and pullback research. Entries, stops and 2R/3R targets from completed daily candles.</p></div><button type="button" class="secondary" id="swingScan">Refresh daily scan</button></div>
 <p class="muted">Experimental technical research. Historical profitability has not been validated; review news, earnings and portfolio exposure before considering a plan.</p>
@@ -39,7 +41,7 @@
 <details class="section-gap"><summary>Export raw data · optional</summary><p class="muted">Entry, stop-loss and target prices are displayed above. JSON is available for data analysis tools.</p><button type="button" class="secondary" id="swingDownload" disabled>Download JSON</button></details>
 <p class="muted">Saved history updates at 19:00 IST, with retries at 20:00–23:00 and 08:45 on regular trading days. Swing research reads the database after updates and at 19:15–23:15 / 08:55 IST. An absent daily candle produces a data-pending result. In-app alerts show saved reports and observed levels; no orders or external messages are sent.</p>
 </section>
-<section class="card section-gap" aria-labelledby="momentumTitle">
+<section class="card section-gap" aria-labelledby="momentumTitle" id="momentumResearch">
 <div class="row"><div><div class="eyebrow">TRADING SKILLS · NSE ADAPTATION</div><h2 id="momentumTitle">Stockbee momentum research</h2><p class="muted">Percentage breakout and range-expansion setups from saved Nifty 200 daily candles. Conditional buys and projected sell exits appear only when entry gates pass.</p></div><button id="momentumRefresh" class="secondary" type="button">Refresh research</button></div>
 <p id="momentumStatus" class="notice" role="status" aria-live="polite">Loading momentum research…</p>
 <p class="muted">Research only. A detected setup can remain on watch while market conditions block entry. T1/T2 and stops are sell exits for a qualifying buy; swing short entries and holdings-linked sell advice are not implemented.</p>
@@ -48,7 +50,15 @@
 <div id="momentumRows" class="table-wrap" tabindex="0" role="region" aria-label="Momentum research results"></div>
 <details class="section-gap"><summary>Momentum rules, data and limitations</summary><ul id="momentumRules"></ul></details>
 </section>
-<section class="card section-gap" aria-labelledby="skillsTitle"><h2 id="skillsTitle">Trading skills in this app</h2><p id="skillsStatus" class="muted">Loading integration inventory…</p><p class="muted">Skills are being integrated one at a time. An installed chat skill does not automatically run in the app.</p><details><summary>View all 72 skills and remaining integration work</summary><label>Filter skills<input id="skillFilter" type="search" placeholder="Find a skill or requirement" maxlength="100"></label><div id="skillRows" class="table-wrap" tabindex="0" role="region" aria-label="Trading skill integration inventory"></div></details></section>
+<section class="card section-gap" aria-labelledby="vcpTitle" id="vcpResearch">
+<div class="row"><div><div class="eyebrow">VCP SCREENER · NSE ADAPTATION</div><h2 id="vcpTitle">Volatility contraction research</h2><p class="muted">Inspect tightening price swings, volume dry-up and relative strength before a possible breakout.</p></div><button id="vcpRefresh" class="secondary" type="button">Refresh VCP research</button></div>
+<p id="vcpStatus" class="notice" role="status" aria-live="polite">Loading VCP research…</p><p id="vcpBenchmark" class="muted"></p>
+<h3>Conditional buy &amp; sell levels</h3><div id="vcpPlans" class="table-wrap" tabindex="0" role="region" aria-label="VCP buy entries and projected sell exits"></div>
+<h3>Contraction evidence</h3><p class="muted">Structural matches can remain watch-only. Relative-strength percentiles describe this eligible Nifty 200 sample; they are not an all-market rating or a probability of success.</p>
+<label class="check"><input id="vcpAll" type="checkbox"> Show every stock and rejection reason</label><div id="vcpRows" class="table-wrap" tabindex="0" role="region" aria-label="VCP patterns and evidence"></div>
+<details class="section-gap"><summary>VCP methodology, benchmark and limits</summary><ul id="vcpRules"></ul></details>
+</section>
+<section class="card section-gap" aria-labelledby="skillsTitle" id="skillInventory"><h2 id="skillsTitle">Trading skills in this app</h2><p id="skillsStatus" class="muted">Loading integration inventory…</p><p class="muted">Skills are being integrated one at a time. An installed chat skill does not automatically run in the app.</p><details><summary>View all 72 skills and remaining integration work</summary><label>Filter skills<input id="skillFilter" type="search" placeholder="Find a skill or requirement" maxlength="100"></label><div id="skillRows" class="table-wrap" tabindex="0" role="region" aria-label="Trading skill integration inventory"></div></details></section>
 <section class="card analysis-controls" aria-label="Choose a stock">
 <form id="analysisForm">
 <label>Exchange<select id="exchange"><option value="NC">NSE cash</option><option value="BC">BSE cash</option></select></label>

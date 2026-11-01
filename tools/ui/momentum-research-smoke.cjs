@@ -15,7 +15,7 @@ const root=path.resolve(__dirname,'../..');
  if(p==='/api/stock-analysis/swing/history'||p==='/api/stock-analysis/instruments')return json([]);
  return json({},404);});
  await page.goto('http://ui.test/stock-analysis');await page.waitForFunction(()=>document.getElementById('momentumStatus').textContent.includes('MARKET CAUTION'));
- assert.match(await page.locator('#momentumStatus').textContent(),/coverage 197\/200/);assert.match(await page.locator('#skillsStatus').textContent(),/4 of 72/);
+ assert.match(await page.locator('#momentumStatus').textContent(),/coverage 197\/200/);assert.match(await page.locator('#skillsStatus').textContent(),/5 of 72/);
  await page.locator('#momentumAll').check();assert.equal(await page.locator('#momentumRows tbody tr').count(),report.stocks.length);
  if(real&&process.env.MOMENTUM_OUTPUT){await page.locator('#momentumAll').uncheck();await page.locator('#momentumTitle').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(process.env.MOMENTUM_OUTPUT,'momentum-real-panel.png')});}
  report={...report,status:'READY',stocks:[{...row,status:'CONDITIONAL_BUY',reason:'DEMO ONLY',plan:{entry:100,maxEntry:101,stop:95,target1:113,target2:119}}]};await page.locator('#momentumRefresh').click();await page.waitForFunction(()=>document.getElementById('momentumStatus').textContent.startsWith('READY'));
@@ -23,7 +23,7 @@ const root=path.resolve(__dirname,'../..');
  report={...report,validSession:'2026-01-02'};await page.locator('#momentumRefresh').click();await page.waitForFunction(()=>document.getElementById('momentumPlans').textContent.includes('EXPIRED'));
  report={...report,stocks:[{...row,symbol:'<img src=x onerror=alert(1)>'}]};await page.locator('#momentumRefresh').click();await page.waitForFunction(()=>document.getElementById('momentumRows').textContent.includes('onerror'));assert.equal(await page.locator('#momentumRows img').count(),0);
  fail=true;await page.locator('#momentumRefresh').click();await page.waitForFunction(()=>document.getElementById('momentumStatus').textContent.includes('not refreshed'));
- await page.locator('summary').filter({hasText:'View all 72 skills'}).click();await page.locator('#skillFilter').fill('vcp');assert.equal(await page.locator('#skillRows tbody tr').count(),1);assert.match(await page.locator('#skillRows').textContent(),/NOT YET IN APP/);
+ await page.locator('summary').filter({hasText:'View all 72 skills'}).click();await page.locator('#skillFilter').fill('vcp');assert.equal(await page.locator('#skillRows tbody tr').count(),1);assert.match(await page.locator('#skillRows').textContent(),/SELECTED METHODS IN APP/);
  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
  if(process.env.MOMENTUM_OUTPUT)await page.screenshot({path:path.join(process.env.MOMENTUM_OUTPUT,'momentum-mobile.png'),fullPage:true});
  assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);console.log('PASS real/fixture gates, all-stock audit, INR exits, expiry, error, catalog filtering, mobile, XSS text, zero writes');

@@ -1,0 +1,24 @@
+'use strict';
+(function(){
+ const $=id=>document.getElementById(id),node=(tag,text)=>{const n=document.createElement(tag);if(text!=null)n.textContent=text;return n;};
+ const label=s=>String(s||'').replaceAll('_',' '),money=x=>Number.isFinite(x)?new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR'}).format(x):'—',number=(x,suffix='')=>Number.isFinite(x)?x.toFixed(2)+suffix:'Unavailable';
+ let report,busy=false;
+ function table(headers,rows){const t=node('table'),head=node('thead'),hr=node('tr'),body=node('tbody');headers.forEach(s=>{const th=node('th',s);th.scope='col';hr.append(th);});head.append(hr);rows.forEach(values=>{const tr=node('tr');values.forEach(v=>{const td=node('td');if(v instanceof Node)td.append(v);else td.textContent=v;tr.append(td);});body.append(tr);});t.append(head,body);return t;}
+ function evidence(r){const d=node('details'),ul=node('ul');d.append(node('summary','Inspect swings & trend checks'));r.contractions.forEach((c,i)=>ul.append(node('li','Contraction '+(i+1)+': '+c.highDate+' → '+c.lowDate+' · '+number(c.depthPercent,'%')+' · '+c.duration+' sessions · '+money(c.high)+' → '+money(c.low))));r.trendChecks.forEach(c=>ul.append(node('li',(c.passed?'PASS: ':'FAIL: ')+c.name)));d.append(ul);return d;}
+ function render(){
+  $('vcpRows').replaceChildren();$('vcpPlans').replaceChildren();if(!report)return;
+  const plans=report.stocks.filter(r=>r.plan),window=report.validSession?(Date.now()>=Date.parse(report.validSession+'T15:15:00+05:30')?'EXPIRED':Date.now()<Date.parse(report.validSession+'T09:15:00+05:30')?'UPCOMING':'ENTRY SESSION'):'UNAVAILABLE';
+  if(plans.length)$('vcpPlans').append(table(['Stock','Buy trigger','Maximum entry','Sell stop','Sell T1 · 2R','Sell T2 · 3R','Entry session'],plans.map(r=>{const p=r.plan;return[r.symbol,money(p.entry),money(p.maxEntry),money(p.stop),money(p.target1),money(p.target2),report.validSession+' · '+window];})));
+  else $('vcpPlans').append(node('p',report.status==='READY'?'No stock passed all VCP entry gates.':'No entry levels published: '+label(report.status)+'. Pattern evidence remains available below.'));
+  const rows=report.stocks.filter(r=>$('vcpAll').checked||['WATCH_ONLY','CONDITIONAL_BUY'].includes(r.status));
+  if(!rows.length){$('vcpRows').append(node('p','No VCP or developing-trend watchlist setup passed the current rules. Show every stock to inspect contraction and trend failures.'));return;}
+  $('vcpRows').append(table(['Stock','State / reason','Trend checks','Sample RS / excess vs NIFTY','Contractions / evidence','Pivot · reference / distance','Prior volume dry-up'],rows.map(r=>{const detail=node('div');detail.append(node('p',r.contractions.map(c=>number(c.depthPercent,'%')).join(' → ')||'No confirmed contractions'),evidence(r));return[r.symbol,label(r.status)+' · '+label(r.phase)+': '+label(r.reason),r.trendPassed+'/7',number(r.rsPercentile)+' / 100 · '+number(r.weightedRelativeStrength,' pp'),detail,money(r.pivot)+' · '+number(r.pivotDistancePercent,'%'),number(r.volumeDryUp,'×')];})));
+ }
+ async function refresh(){if(busy)return;busy=true;$('vcpRefresh').disabled=true;
+  try{const response=await fetch('/api/stock-analysis/vcp',{credentials:'same-origin'});if(!response.ok)throw new Error(response.status===401?'Sign in again to view VCP research.':'VCP research is unavailable; retry shortly.');report=await response.json();const patterns=report.stocks.filter(r=>r.validPattern).length,watch=report.stocks.filter(r=>['WATCH_ONLY','CONDITIONAL_BUY'].includes(r.status)).length,plans=report.stocks.filter(r=>r.plan).length;
+   $('vcpStatus').textContent=label(report.status)+' · data '+(report.dataDate||'unavailable')+' · coverage '+report.coveredCount+'/'+report.universeCount+' · '+number(100*report.breadthAbove50,'%')+' above SMA50 · '+patterns+' structural matches · '+watch+' watchlist setups · '+plans+' conditional buy plans · '+report.entryCandidatesBeforeMarketGate+' passed stock-level entry rules before market gate.';
+   $('vcpBenchmark').textContent='Derived benchmark reference: '+report.benchmarkName+' · '+report.benchmarkProvider+' · '+report.benchmarkSessions+' complete native-minute sessions from '+(report.benchmarkFirst||'unavailable')+' through '+(report.benchmarkLast||'unavailable')+' · '+report.rsPopulation+' stocks with all four aligned return horizons. Pivot prices below are historical references, not entry instructions.';
+   $('vcpRules').replaceChildren(...report.rules.map(s=>node('li',s)));render();
+  }catch(e){$('vcpStatus').textContent=e.message+' Previously displayed results, if any, are not refreshed.';}finally{busy=false;$('vcpRefresh').disabled=false;}}
+ $('vcpAll').addEventListener('change',render);$('vcpRefresh').addEventListener('click',refresh);setInterval(()=>{if(!document.hidden)refresh();},60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});refresh();
+})();

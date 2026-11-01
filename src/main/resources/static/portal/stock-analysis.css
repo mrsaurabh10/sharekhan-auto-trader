@@ -3,3 +3,5 @@
 .swing-target-table{width:100%;font-variant-numeric:tabular-nums}.swing-target-table caption{text-align:left;padding:12px 0;font-size:13px;color:var(--muted)}.swing-target-table td{white-space:nowrap;font-weight:600}.swing-target-table th{text-align:left}.swing-target-table small{display:block;font-weight:400;color:var(--muted);margin-top:5px}.swing-target-table .swing-stop{color:#a12a2a}.swing-target-table .swing-target{color:#176a48}#swingTargets:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
 
 #momentumRows td:nth-child(2),#skillRows td:last-child{white-space:normal;min-width:220px;max-width:460px;line-height:1.5}
+
+#vcpRows td:nth-child(2){white-space:normal;min-width:240px;max-width:430px;line-height:1.5}#vcpRows details{white-space:normal;min-width:260px;max-width:430px}#vcpRows details ul{padding-left:18px;line-height:1.5}

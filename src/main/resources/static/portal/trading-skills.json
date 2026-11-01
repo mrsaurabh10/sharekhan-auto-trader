@@ -1,5 +1,5 @@
 {
-  "asOf": "2026-11-01",
+  "asOf": "2026-11-02",
   "skills": [
     {
       "skill": "backtest-expert",
@@ -418,8 +418,8 @@
     {
       "skill": "vcp-screener",
       "category": "swing-opportunity",
-      "status": "NOT_YET_IN_APP",
-      "remaining": "Source uses FMP client, S&P500 enumeration and SPY relative strength. Need local NSE input path, benchmark, liquidity/market-cap policy and methodology parity checks."
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "NSE confirmed-swing VCP variant with aligned saved NIFTY 50 benchmark; see VCP rules. Not an exact upstream replica or validated trading edge."
     },
     {
       "skill": "weekly-performance-digest",
