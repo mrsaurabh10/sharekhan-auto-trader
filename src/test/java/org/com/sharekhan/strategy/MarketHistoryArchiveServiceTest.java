@@ -53,6 +53,24 @@ class MarketHistoryArchiveServiceTest {
         assertThat(repository.count()).isEqualTo(1);
     }
 
+    @Test
+    void sameTimestampInOtherIntervalsNeverLeaksIntoFiveMinuteReadsOrGetsOverwritten() {
+        LocalDate day = LocalDate.of(2026, 10, 30);
+        for (int interval : List.of(1, 30)) {
+            repository.save(org.com.sharekhan.entity.MarketHistoryCandleEntity.builder()
+                    .id("NIFTY@" + day + "@" + interval).symbol("NIFTY")
+                    .candleTime(day.atTime(9, 15)).intervalMinutes(interval)
+                    .openPrice(200).highPrice(202).lowPrice(198).closePrice(201).build());
+        }
+        archive.save("NIFTY", List.of(candle(day, LocalTime.of(9, 15), 100)), "MSTOCK", day.atTime(19, 0));
+        repository.flush();
+        assertThat(repository.count()).isEqualTo(3);
+        assertThat(archive.read("NIFTY", day, day)).singleElement().satisfies(row -> {
+            assertThat(row.getIntervalMinutes()).isEqualTo(5);
+            assertThat(row.getClosePrice()).isEqualTo(100);
+        });
+    }
+
     private StrategyCandle candle(LocalDate date, LocalTime time, double price) {
         return new StrategyCandle(date, time, price, price + 2, price - 2, price, null);
     }

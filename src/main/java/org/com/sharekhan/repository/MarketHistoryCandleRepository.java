@@ -6,6 +6,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 public interface MarketHistoryCandleRepository extends JpaRepository<MarketHistoryCandleEntity, String> {
-    List<MarketHistoryCandleEntity> findBySymbolAndCandleTimeGreaterThanEqualAndCandleTimeLessThanOrderByCandleTime(
-            String symbol, LocalDateTime from, LocalDateTime to);
+    List<MarketHistoryCandleEntity> findBySymbolAndIntervalMinutesAndCandleTimeGreaterThanEqualAndCandleTimeLessThanOrderByCandleTime(
+            String symbol, int intervalMinutes, LocalDateTime from, LocalDateTime to);
 }
