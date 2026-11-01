@@ -65,7 +65,7 @@ public class StockDailyHistoryUpdater {
                 catch(Exception e){failed++;problem="A historical update failed; validated saved data was retained.";}
             }
             store.finish(day,claim,clock.instant(),failed==0?"COMPLETE":"PARTIAL",updated,skipped,failed,problem);
-            events.publishEvent(new Updated(day));
+            try{events.publishEvent(new Updated(day));}catch(RuntimeException ignored){/* The regular DB-only research schedule can retry report generation; history is already committed. */}
         }catch(InterruptedException e){Thread.currentThread().interrupt();if(claimed)store.finish(day,claim,clock.instant(),"PARTIAL",updated,skipped,Math.max(1,failed),"Historical update interrupted; saved history retained.");}
         catch(Exception e){if(claimed)store.finish(day,claim,clock.instant(),"FAILED",updated,skipped,Math.max(1,failed),"Historical storage/update unavailable; saved history retained.");}
     }

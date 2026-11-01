@@ -34,4 +34,11 @@ class StockDailyHistoryUpdaterTest {
         var disabled=new StockDailyHistoryUpdater(store,client,new SwingSessions(),events,false,Clock.fixed(now,StockAnalysisService.IST));try{assertThat(disabled.request()).isFalse();verifyNoInteractions(client,store);}finally{disabled.close();}
         var future=new StockDailyHistoryUpdater(store,client,new SwingSessions(),events,true,Clock.fixed(Instant.parse("2027-01-05T15:00:00Z"),StockAnalysisService.IST));try{future.update();verifyNoInteractions(client,store);}finally{future.close();}
     }
+    @Test void reportListenerFailureCannotTurnCommittedHistoryIntoFailedUpdate()throws Exception {
+        when(store.members()).thenReturn(members());when(store.currentSymbols(eq(day),any())).thenReturn(Set.of());when(store.claim(day,now)).thenReturn(true);
+        when(store.read(any(),eq(day))).thenReturn(new StockDailyHistoryStore.Saved("S0","10",BigDecimal.valueOf(.05),now,List.of()));
+        when(client.fetch(any(),any(),any(),any())).thenThrow(new DhanDailyHistoryClient.Unavailable("Delayed data",true));
+        doThrow(new IllegalStateException("Report storage busy")).when(events).publishEvent(any(StockDailyHistoryUpdater.Updated.class));
+        var updater=updater();try{updater.update();verify(store).finish(day,now,now,"PARTIAL",0,0,200,"Delayed data");verify(store,never()).finish(eq(day),eq(now),eq(now),eq("FAILED"),anyInt(),anyInt(),anyInt(),any());}finally{updater.close();}
+    }
 }
