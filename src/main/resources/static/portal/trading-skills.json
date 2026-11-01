@@ -1,0 +1,437 @@
+{
+  "asOf": "2026-11-01",
+  "skills": [
+    {
+      "skill": "backtest-expert",
+      "category": "strategy-research",
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "Selected methods only; see page rules and validation limits."
+    },
+    {
+      "skill": "breadth-chart-analyst",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "NSE constituent/sector/index series, declared benchmark and breadth denominators; review volume semantics and methodology. US CSVs/charts are not NSE evidence."
+    },
+    {
+      "skill": "breakout-trade-planner",
+      "category": "swing-opportunity",
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "Selected methods only; see page rules and validation limits."
+    },
+    {
+      "skill": "canslim-screener",
+      "category": "swing-opportunity",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "contrarian-setup-gate",
+      "category": "trade-planning",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local computation possible with valid CFTC crowding/news/weekly inputs. NSE participant totals do not establish equivalence to CFTC large-speculator positioning."
+    },
+    {
+      "skill": "cot-contrarian-detector",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "CFTC futures positioning via FMP Premium+ in catalog; not a direct NSE equity signal. Access not verified."
+    },
+    {
+      "skill": "crypto-regime-analyzer",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Separate crypto public data endpoints/offline snapshot; no NSE adapter needed for crypto, but endpoint availability not tested in this audit."
+    },
+    {
+      "skill": "data-quality-checker",
+      "category": "meta",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "dividend-growth-pullback-screener",
+      "category": "core-portfolio",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "downtrend-duration-analyzer",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "drawdown-circuit-breaker",
+      "category": "trade-planning",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "dual-axis-skill-reviewer",
+      "category": "meta",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "earnings-calendar",
+      "category": "meta",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "earnings-trade-analyzer",
+      "category": "advanced-satellite",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "economic-calendar-fetcher",
+      "category": "meta",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "fxmacrodata-calendar",
+      "category": "meta",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "edge-candidate-agent",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+    },
+    {
+      "skill": "edge-concept-synthesizer",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "edge-hint-extractor",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "edge-pipeline-orchestrator",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "edge-signal-aggregator",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "edge-strategy-designer",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "edge-strategy-reviewer",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "exposure-coach",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "finviz-screener",
+      "category": "swing-opportunity",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "URL builder can be used for its supported US screener; it does not become an NSE screener by mapping broker IDs."
+    },
+    {
+      "skill": "ftd-detector",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "NSE constituent/sector/index series, declared benchmark and breadth denominators; review volume semantics and methodology. US CSVs/charts are not NSE evidence."
+    },
+    {
+      "skill": "futures-position-sizer",
+      "category": "trade-planning",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Built-in 23-market contract table is not verified NSE/MCX support. Need dated broker/exchange lot, multiplier, tick, expiry, margin assumptions and risk tests."
+    },
+    {
+      "skill": "ibd-distribution-day-monitor",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "NSE constituent/sector/index series, declared benchmark and breadth denominators; review volume semantics and methodology. US CSVs/charts are not NSE evidence."
+    },
+    {
+      "skill": "institutional-flow-tracker",
+      "category": "advanced-satellite",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "kanchi-dividend-review-monitor",
+      "category": "core-portfolio",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "kanchi-dividend-sop",
+      "category": "core-portfolio",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "kanchi-dividend-us-tax-accounting",
+      "category": "core-portfolio",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "US tax/account-location and1099-DIV workflow. Not Indian tax advice; would require a separate Indian methodology, not only data conversion."
+    },
+    {
+      "skill": "macro-regime-detector",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "manifoldbt-backtester",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Requires installed manifoldbt engine and validated CSV/Parquet bars, declared costs/calendars and executable strategy schema; presence of skill is not a completed backtest."
+    },
+    {
+      "skill": "market-breadth-analyzer",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "NSE constituent/sector/index series, declared benchmark and breadth denominators; review volume semantics and methodology. US CSVs/charts are not NSE evidence."
+    },
+    {
+      "skill": "market-environment-analysis",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "market-news-analyst",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "market-top-detector",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "NSE constituent/sector/index series, declared benchmark and breadth denominators; review volume semantics and methodology. US CSVs/charts are not NSE evidence."
+    },
+    {
+      "skill": "mt5-robot-tester",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Requires Windows MT5, EA binaries/set files and broker tick data. Sharekhan Java strategies are not MT5 EAs."
+    },
+    {
+      "skill": "news-reaction-failure-analyzer",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Requires COT crowding report, curated events and matching historical prices. Retain CFTC-market scope unless a new positioning methodology is separately validated."
+    },
+    {
+      "skill": "options-strategy-advisor",
+      "category": "advanced-satellite",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Need actual contract identity/expiry, lot size, quote timestamps, bid/ask, OI and volatility assumptions. Rolling ATM historical bars have unknown expiry identity and cannot establish fixed-contract P&L."
+    },
+    {
+      "skill": "pair-trade-screener",
+      "category": "advanced-satellite",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Need aligned adjusted NSE price series and sector universe plus borrow/instrument/cost assumptions; existing FMP path is not local NSE integration."
+    },
+    {
+      "skill": "parabolic-short-trade-planner",
+      "category": "advanced-satellite",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "US/FMP/Alpaca workflow requires separate NSE instrument eligibility, exposure/margin/contract, costs and multi-day short methodology review; no app swing-short engine exists."
+    },
+    {
+      "skill": "pead-screener",
+      "category": "advanced-satellite",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "portfolio-manager",
+      "category": "core-portfolio",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Full workflow requires Alpaca. Limited local CSV path exists but explicitly supports USD equities only; INR holdings, cash, exposures and reconciliation need a separate adapter."
+    },
+    {
+      "skill": "position-sizer",
+      "category": "trade-planning",
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "Selected methods only; see page rules and validation limits."
+    },
+    {
+      "skill": "pre-trade-discipline-gate",
+      "category": "trade-planning",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "residual-edge-analyzer",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "scenario-analyzer",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "sector-analyst",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "NSE constituent/sector/index series, declared benchmark and breadth denominators; review volume semantics and methodology. US CSVs/charts are not NSE evidence."
+    },
+    {
+      "skill": "signal-postmortem",
+      "category": "trade-memory",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "skill-integration-tester",
+      "category": "meta",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "stanley-druckenmiller-investment",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "stockbee-20pct-study",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+    },
+    {
+      "skill": "stockbee-episodic-pivot-analyzer",
+      "category": "advanced-satellite",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated source-backed news, result calendars or macro/cross-asset series; verify local coverage. Existing web research can support manual use; an app feed is not established."
+    },
+    {
+      "skill": "stockbee-exhaustion-hammer-screener",
+      "category": "swing-opportunity",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+    },
+    {
+      "skill": "stockbee-momentum-burst-screener",
+      "category": "swing-opportunity",
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "Selected methods only; see page rules and validation limits."
+    },
+    {
+      "skill": "stockbee-setup-fluency-trainer",
+      "category": "trade-memory",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+    },
+    {
+      "skill": "strategy-pivot-designer",
+      "category": "strategy-research",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "technical-analyst",
+      "category": "trade-planning",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+    },
+    {
+      "skill": "theme-detector",
+      "category": "swing-opportunity",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "trade-hypothesis-ideator",
+      "category": "trade-memory",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "trade-performance-coach",
+      "category": "trade-memory",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "trader-memory-core",
+      "category": "trade-memory",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "trading-skills-navigator",
+      "category": "meta",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "uptrend-analyzer",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "NSE constituent/sector/index series, declared benchmark and breadth denominators; review volume semantics and methodology. US CSVs/charts are not NSE evidence."
+    },
+    {
+      "skill": "us-market-bubble-detector",
+      "category": "market-regime",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "US market bubble inputs/assumptions; useful as global context, not an NSE bubble score without methodology review."
+    },
+    {
+      "skill": "us-stock-analysis",
+      "category": "trade-planning",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "value-dividend-screener",
+      "category": "core-portfolio",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    },
+    {
+      "skill": "vcp-screener",
+      "category": "swing-opportunity",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Source uses FMP client, S&P500 enumeration and SPY relative strength. Need local NSE input path, benchmark, liquidity/market-cap policy and methodology parity checks."
+    },
+    {
+      "skill": "weekly-performance-digest",
+      "category": "trade-memory",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+    },
+    {
+      "skill": "us-undervalued-growth-screener",
+      "category": "core-portfolio",
+      "status": "NOT_YET_IN_APP",
+      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+    }
+  ]
+}

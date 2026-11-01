@@ -5,10 +5,11 @@
 <title>Indian Stock Analysis · AutoTrader</title>
 <meta name="swing-csrf-header" th:content="${_csrf.headerName}"><meta name="swing-csrf-token" th:content="${_csrf.token}">
 <link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
-<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261101-targets">
+<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261101-momentum1">
 <script src="/portal/stock-analysis-math.js?v=20261029-swing1" defer></script>
 <script src="/portal/stock-analysis.js?v=20261101-saved" defer></script>
 <script src="/portal/swing-ideas.js?v=20261101-saved" defer></script>
+<script src="/portal/momentum-research.js?v=20261101-momentum1" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -38,6 +39,16 @@
 <details class="section-gap"><summary>Export raw data · optional</summary><p class="muted">Entry, stop-loss and target prices are displayed above. JSON is available for data analysis tools.</p><button type="button" class="secondary" id="swingDownload" disabled>Download JSON</button></details>
 <p class="muted">Saved history updates at 19:00 IST, with retries at 20:00–23:00 and 08:45 on regular trading days. Swing research reads the database after updates and at 19:15–23:15 / 08:55 IST. An absent daily candle produces a data-pending result. In-app alerts show saved reports and observed levels; no orders or external messages are sent.</p>
 </section>
+<section class="card section-gap" aria-labelledby="momentumTitle">
+<div class="row"><div><div class="eyebrow">TRADING SKILLS · NSE ADAPTATION</div><h2 id="momentumTitle">Stockbee momentum research</h2><p class="muted">Percentage breakout and range-expansion setups from saved Nifty 200 daily candles. Conditional buys and projected sell exits appear only when entry gates pass.</p></div><button id="momentumRefresh" class="secondary" type="button">Refresh research</button></div>
+<p id="momentumStatus" class="notice" role="status" aria-live="polite">Loading momentum research…</p>
+<p class="muted">Research only. A detected setup can remain on watch while market conditions block entry. T1/T2 and stops are sell exits for a qualifying buy; swing short entries and holdings-linked sell advice are not implemented.</p>
+<h3>Conditional buy &amp; sell levels</h3><div id="momentumPlans" class="table-wrap" tabindex="0" role="region" aria-label="Momentum buy entries and sell exits"></div>
+<h3>Detected setups &amp; scan coverage</h3><label class="check"><input id="momentumAll" type="checkbox"> Show every stock and rejection reason</label>
+<div id="momentumRows" class="table-wrap" tabindex="0" role="region" aria-label="Momentum research results"></div>
+<details class="section-gap"><summary>Momentum rules, data and limitations</summary><ul id="momentumRules"></ul></details>
+</section>
+<section class="card section-gap" aria-labelledby="skillsTitle"><h2 id="skillsTitle">Trading skills in this app</h2><p id="skillsStatus" class="muted">Loading integration inventory…</p><p class="muted">Skills are being integrated one at a time. An installed chat skill does not automatically run in the app.</p><details><summary>View all 72 skills and remaining integration work</summary><label>Filter skills<input id="skillFilter" type="search" placeholder="Find a skill or requirement" maxlength="100"></label><div id="skillRows" class="table-wrap" tabindex="0" role="region" aria-label="Trading skill integration inventory"></div></details></section>
 <section class="card analysis-controls" aria-label="Choose a stock">
 <form id="analysisForm">
 <label>Exchange<select id="exchange"><option value="NC">NSE cash</option><option value="BC">BSE cash</option></select></label>
