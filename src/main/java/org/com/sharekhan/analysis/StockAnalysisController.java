@@ -18,13 +18,15 @@ public class StockAnalysisController {
     @GetMapping("/api/stock-analysis/instruments")
     @ResponseBody
     public ResponseEntity<?> instruments(@RequestParam(defaultValue = "NC") String exchange,
-                                         @RequestParam(defaultValue = "") String q) {
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.search(exchange, q));
+                                         @RequestParam(defaultValue = "") String q,@RequestParam(defaultValue="INTRADAY") String mode) {
+        return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(mode.equals("SWING")?service.searchSaved(exchange,q):service.search(exchange,q));
     }
     @GetMapping("/api/stock-analysis/report")
     @ResponseBody
-    public ResponseEntity<?> report(@RequestParam String exchange, @RequestParam int scripCode,
+    public ResponseEntity<?> report(@RequestParam String exchange, @RequestParam(required=false) Integer scripCode,@RequestParam(required=false) String symbol,
                                     @RequestParam(defaultValue = "INTRADAY") String mode) {
+        if(mode.equals("SWING")&&symbol!=null)return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.analyzeSaved(exchange,symbol));
+        if(scripCode==null)throw new ResponseStatusException(org.springframework.http.HttpStatus.BAD_REQUEST,"Choose a stock first.");
         return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(service.analyze(exchange, scripCode, mode));
     }
     @ExceptionHandler(ResponseStatusException.class)

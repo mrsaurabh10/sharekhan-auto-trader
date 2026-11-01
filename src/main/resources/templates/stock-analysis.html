@@ -7,8 +7,8 @@
 <link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
 <link rel="stylesheet" href="/portal/stock-analysis.css?v=20261101-targets">
 <script src="/portal/stock-analysis-math.js?v=20261029-swing1" defer></script>
-<script src="/portal/stock-analysis.js?v=20261029-feed2" defer></script>
-<script src="/portal/swing-ideas.js?v=20261101-targets" defer></script>
+<script src="/portal/stock-analysis.js?v=20261101-saved" defer></script>
+<script src="/portal/swing-ideas.js?v=20261101-saved" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -16,7 +16,7 @@
 <aside class="sidebar">
 <a class="brand" href="/dashboard"><span class="brand-mark">↗</span> AutoTrader</a>
 <nav aria-label="Main navigation"><a href="/dashboard">▦ My workspace</a><a href="/stock-analysis" aria-current="page">⌕ Stock Analysis</a></nav>
-<div class="sidebar-bottom"><span class="badge">NSE · BSE</span><p>Shoonya · Sharekhan data.<br>Evidence before decisions.</p></div>
+<div class="sidebar-bottom"><span class="badge">NSE · BSE</span><p>Saved Dhan daily data.<br>Shoonya / Sharekhan intraday.</p></div>
 </aside>
 <div class="workspace">
 <header class="topbar"><div><span class="eyebrow">INDIAN MARKETS</span><div class="section-note">Your stock research workspace</div></div>
@@ -24,8 +24,9 @@
 <main class="page" id="main" tabindex="-1">
 <div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with broker market data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
 <section class="card section-gap" aria-label="Daily Swing Ideas" id="swingIdeas">
-<div class="row"><div><div class="eyebrow">DAILY SWING IDEAS · NSE CASH</div><h2>Plan the next session</h2><p class="muted">Conditional breakout and pullback research. Entries, stops and 2R/3R targets from completed daily candles.</p></div><button type="button" class="secondary" id="swingScan">Refresh daily scan</button></div>
+<div class="row"><div><div class="eyebrow">DAILY SWING IDEAS · SAVED NIFTY 200</div><h2>Plan the next session</h2><p class="muted">Conditional breakout and pullback research. Entries, stops and 2R/3R targets from completed daily candles.</p></div><button type="button" class="secondary" id="swingScan">Refresh daily scan</button></div>
 <p class="muted">Experimental technical research. Historical profitability has not been validated; review news, earnings and portfolio exposure before considering a plan.</p>
+<p id="dailyHistoryStatus" class="notice" role="status">Loading saved-history coverage…</p>
 <p id="swingStatus" class="notice" role="status" aria-live="polite">Loading saved daily research…</p>
 <div class="row"><label>Saved report<select id="swingHistory"><option value="">Latest report</option></select></label><span id="swingMeta" class="muted"></span></div>
 <section class="section-gap" aria-labelledby="swingTargetsTitle"><h3 id="swingTargetsTitle">Entry, stop-loss &amp; targets</h3><p class="muted">All prices in ₹ per share. Conditional research levels for the selected report’s entry session; archived levels are not current buy instructions.</p><div id="swingTargets" class="table-wrap" tabindex="0" role="region" aria-label="Swing entry, stop-loss and target prices"><p>Loading target prices…</p></div></section>
@@ -35,7 +36,7 @@
 <details class="section-gap"><summary>Scan coverage, filters and method limits</summary><p id="swingUniverse" class="muted"></p><ul id="swingNotes" class="data-warnings"></ul><div id="swingAudit" class="table-wrap"></div>
 <p class="muted">Skill methods adapted: breakout-trade-planner (maximum-entry risk, chase limit, R targets), position-sizer (whole shares, position and portfolio-risk caps), backtest-expert (explicit rules, no look-ahead, ambiguous outcomes). This is a native technical preset, not full VCP/CANSLIM screening or a validated trading edge. Fundamental, earnings/news and sector-exposure checks are not included.</p></details>
 <details class="section-gap"><summary>Export raw data · optional</summary><p class="muted">Entry, stop-loss and target prices are displayed above. JSON is available for data analysis tools.</p><button type="button" class="secondary" id="swingDownload" disabled>Download JSON</button></details>
-<p class="muted">Scans retry after EOD at 19:15–23:15 IST and at 08:55 on weekdays. An absent daily candle produces a data-pending result. In-app alerts show saved reports and observed levels; no orders or external messages are sent.</p>
+<p class="muted">Saved history updates at 19:00 IST, with retries at 20:00–23:00 and 08:45 on regular trading days. Swing research reads the database after updates and at 19:15–23:15 / 08:55 IST. An absent daily candle produces a data-pending result. In-app alerts show saved reports and observed levels; no orders or external messages are sent.</p>
 </section>
 <section class="card analysis-controls" aria-label="Choose a stock">
 <form id="analysisForm">
@@ -44,7 +45,7 @@
 <label>Timeframe<select id="analysisMode"><option value="INTRADAY">Intraday · 5-minute</option><option value="SWING" selected>Delivery / Swing · Daily</option></select></label>
 <button class="primary" type="submit" id="analyzeButton" disabled>Analyze stock →</button>
 </form>
-<p class="muted" id="searchHelp">Choose an exact match below. NSE and BSE scrip identities are separate. No trading activation is required.</p>
+<p class="muted" id="searchHelp">Daily mode reads saved NSE Nifty 200 candles without broker requests. Intraday mode uses existing broker feeds and separate NSE/BSE scrip identities. No trading activation is required.</p>
 <div id="searchStatus" class="muted" role="status" aria-live="polite"></div><div id="searchResults" class="search-results" aria-label="Matching cash instruments"></div>
 <div id="selection" class="selected-stock" hidden></div>
 </section>

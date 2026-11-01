@@ -13,8 +13,17 @@ import org.springframework.stereotype.Service;
 /** Exact Dhan master mapping. Never reuses another broker's numeric scrip code. */
 @Service
 public class DhanInstrumentResolver {
+    public static class MasterUnavailable extends IllegalStateException {public MasterUnavailable(){super("Current Dhan instrument master unavailable; order not sent");}}
     public record Instrument(String segment, String securityId, int lotSize, BigDecimal tickSize, long freezeQuantity) {}
-    private record Snapshot(LocalDate day, Map<String,List<Instrument>> rows) {}
+    private record Snapshot(LocalDate day, Map<String,List<Instrument>> rows,Map<String,String> cashIsins) {}
+    public record CashIdentity(Instrument instrument,String isin) {}
+    public CashIdentity cashIdentity(String exchange,String symbol) {
+        String segment=segment(exchange);if(!segment.endsWith("_EQ"))throw new IllegalArgumentException("Cash identity required");
+        String key=key(segment,symbol,"",null,"");var snapshot=current();var matches=snapshot.rows().getOrDefault(key,List.of());
+        String isin=snapshot.cashIsins().getOrDefault(key,"");
+        if(matches.size()!=1||!isin.matches("[A-Z]{2}[A-Z0-9]{10}"))throw new IllegalStateException("Verified cash identity unavailable");
+        return new CashIdentity(matches.getFirst(),isin);
+    }
     private volatile Snapshot snapshot;
     private static LocalDate today() { return LocalDate.now(ZoneId.of("Asia/Kolkata")); }
 
@@ -44,7 +53,7 @@ public class DhanInstrumentResolver {
                         return load(reader, today());
                     }
                 } finally { connection.disconnect(); }
-            } catch (Exception ignored) { throw new IllegalStateException("Current Dhan instrument master unavailable; order not sent"); }
+            } catch (Exception ignored) { throw new MasterUnavailable(); }
         }
     }
     // Package-visible for fixture tests; builds a complete snapshot before swapping it in.
@@ -56,6 +65,7 @@ public class DhanInstrumentResolver {
         for (String required : List.of("EXCH_ID","SEGMENT","SECURITY_ID","INSTRUMENT","UNDERLYING_SYMBOL","SYMBOL_NAME","LOT_SIZE","SM_EXPIRY_DATE","STRIKE_PRICE","OPTION_TYPE","TICK_SIZE","SERIES","SM_FREEZE_QTY"))
             if (!columns.contains(required)) throw new IOException("Unsupported Dhan master columns");
         Map<String,List<Instrument>> index = new HashMap<>();
+        Map<String,String> cashIsins=new HashMap<>();
         String line;
         while ((line = reader.readLine()) != null) {
             List<String> row = csv(line);
@@ -80,6 +90,7 @@ public class DhanInstrumentResolver {
                 if (!security.matches("[0-9]+") || lot <= 0 || (cash && lot != 1) || tick.signum() <= 0 || freeze <= 0) continue;
                 var instrument = new Instrument(segment,security,lot,tick,freeze);
                 String key = key(segment,symbol,exp,strike,optionType);
+                if(cash) {String isin=columns.contains("ISIN")?field(columns,row,"ISIN"):"";cashIsins.merge(key,isin,(a,b)->a.equals(b)?a:"");}
                 List<Instrument> candidates = index.computeIfAbsent(key,k->new ArrayList<>());
                 if (!candidates.contains(instrument)) candidates.add(instrument);
             } catch (RuntimeException ignored) { /* Bad rows are never guessed or selected. */ }
@@ -87,7 +98,7 @@ public class DhanInstrumentResolver {
         if (index.isEmpty()) throw new IOException("Dhan master has no supported instruments");
         Map<String,List<Instrument>> immutable = new HashMap<>();
         index.forEach((key,value)->immutable.put(key,List.copyOf(value)));
-        var next = new Snapshot(day,Map.copyOf(immutable)); snapshot = next; return next;
+        var next = new Snapshot(day,Map.copyOf(immutable),Map.copyOf(cashIsins)); snapshot = next; return next;
     }
     public static String segment(String exchange) {
         return switch (exchange == null ? "" : exchange.trim().toUpperCase(Locale.ROOT)) {

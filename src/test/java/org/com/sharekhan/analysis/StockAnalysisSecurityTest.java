@@ -49,4 +49,13 @@ class StockAnalysisSecurityTest {
         mvc.perform(get("/api/stock-analysis/report").param("exchange","NC").with(user("viewer").roles("USER")))
             .andExpect(status().isBadRequest()); verifyNoInteractions(service);
     }
+    @Test void savedDailySearchAndSymbolReportAreAvailableToBothRoles()throws Exception {
+        when(service.searchSaved("NC","DEMO")).thenReturn(List.of(new StockAnalysisService.Instrument(null,"DEMO","NC")));
+        when(service.analyzeSaved("NC","DEMO")).thenReturn(StockAnalysisService.calculate(new StockAnalysisService.Instrument(null,"DEMO","NC"),"SWING",List.of(),java.time.Instant.parse("2026-10-30T15:00:00Z"),SavedDailyAnalysis.PROVIDER,List.of()));
+        for(String role:new String[]{"USER","ADMIN"}) {
+            mvc.perform(get("/api/stock-analysis/instruments").param("exchange","NC").param("q","DEMO").param("mode","SWING").with(user("viewer").roles(role))).andExpect(status().isOk()).andExpect(jsonPath("$[0].symbol").value("DEMO"));
+            mvc.perform(get("/api/stock-analysis/report").param("exchange","NC").param("symbol","DEMO").param("mode","SWING").with(user("viewer").roles(role))).andExpect(status().isOk()).andExpect(jsonPath("$.provider").value(SavedDailyAnalysis.PROVIDER));
+        }
+        verify(service,never()).analyze(anyString(),anyInt(),anyString());
+    }
 }

@@ -61,6 +61,8 @@
       const previous=latest?.generatedAt;const state=await api('');latest=state.report;observations=state.observations||[];
       $('swingStatus').textContent=state.problem||(state.running?'Daily research scan is running. Saved reports remain visible.':latest?'Saved daily research · '+label(latest.status):'No report yet. The automatic scan may be waiting for its first run.');
       $('swingScan').disabled=state.running;
+      const h=state.historyUpdate;if(h){const u=h.lastUpdate;$('dailyHistoryStatus').textContent='Saved Dhan daily candles · '+h.current+'/'+h.instruments+' stocks through expected session '+(h.expectedSession||'calendar unavailable')+' · Nifty 200 snapshot '+h.universeDate+(u?' · last update '+label(u.status)+(u.problem?' · '+u.problem:''):' · no missing-session update needed yet');}
+
       $('swingUniverse').textContent='Configured research universe ('+state.universe.length+'): '+state.universe.join(', ')+'. Expected EOD session: '+(state.expectedDate||'calendar unavailable')+'.';
       if(!$('swingHistory').value)render(latest);else if(displayed)render(displayed);if(latest?.generatedAt!==previous)loadHistory();
       clearTimeout(timer);timer=setTimeout(refresh,state.running?5000:60000);

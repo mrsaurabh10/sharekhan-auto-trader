@@ -24,23 +24,23 @@
   $('symbolSearch').addEventListener('input', () => {
     resetSelection(); const q = $('symbolSearch').value.trim(), exchange = $('exchange').value, requestVersion = version;
     if (q.length < 2) return;
-    $('searchStatus').textContent = 'Searching Sharekhan instrument metadata…';
+    $('searchStatus').textContent = 'Searching saved daily data or broker instrument metadata…';
     searchTimer = setTimeout(async () => {
       searchAbort = new AbortController();
       try {
-        const rows = await api('/api/stock-analysis/instruments?' + new URLSearchParams({exchange, q}), searchAbort.signal);
+        const rows = await api('/api/stock-analysis/instruments?' + new URLSearchParams({exchange, q,mode:$('analysisMode').value}), searchAbort.signal);
         if (version !== requestVersion) return;
-        $('searchStatus').textContent = rows.length ? 'Select an exact exchange / scrip match:' : 'No matching cash instrument in the current master. Try a different symbol or exchange.';
+        $('searchStatus').textContent = rows.length ? 'Select an exact exchange / symbol match:' : ($('analysisMode').value==='SWING'?'No saved daily dataset. The imported archive covers the NSE Nifty 200 snapshot.':'No matching cash instrument in the current master.');
         $('searchResults').replaceChildren();
         rows.forEach(row => {
-          const button = node('button', row.symbol + ' · ' + (row.exchange === 'NC' ? 'NSE' : 'BSE') + ' · ' + row.scripCode, 'secondary'); button.type = 'button';
-          button.addEventListener('click', () => { selected = row; $('selection').hidden = false; $('selection').textContent = 'Selected: ' + row.symbol + ' · ' + row.exchange + ' · Scrip ' + row.scripCode; $('analyzeButton').disabled = false; $('searchResults').replaceChildren(); $('searchStatus').textContent = ''; });
+          const button = node('button', row.symbol + ' · ' + (row.exchange === 'NC' ? 'NSE' : 'BSE') + ' · ' + (row.scripCode ?? 'saved daily data'), 'secondary'); button.type = 'button';
+          button.addEventListener('click', () => { selected = row; $('selection').hidden = false; $('selection').textContent = 'Selected: ' + row.symbol + ' · ' + row.exchange + (row.scripCode == null ? ' · saved daily candles' : ' · Scrip ' + row.scripCode); $('analyzeButton').disabled = false; $('searchResults').replaceChildren(); $('searchStatus').textContent = ''; });
           $('searchResults').append(button);
         });
       } catch (error) { if (error.name !== 'AbortError' && version === requestVersion) $('searchStatus').textContent = error.message; }
     }, 350);
   });
-  $('analysisMode').addEventListener('change', () => { version++; reportAbort?.abort(); current = null; $('analysisReport').hidden = true; $('emptyAnalysis').hidden = false; $('analyzeButton').disabled = !selected; status(''); });
+  $('analysisMode').addEventListener('change', () => { resetSelection(); $('symbolSearch').value=''; });
   $('analysisForm').addEventListener('submit', async event => {
     event.preventDefault(); if (!selected) return;
     reportAbort?.abort(); const abort = new AbortController(); reportAbort = abort;
@@ -48,7 +48,8 @@
     const timer = setTimeout(() => abort.abort(), 45000);
     $('analyzeButton').disabled = true; $('analysisReport').hidden = true; status('Loading completed market-data candles and calculating technical context…');
     try {
-      const report = await api('/api/stock-analysis/report?' + new URLSearchParams({exchange:instrument.exchange, scripCode:instrument.scripCode, mode}), abort.signal);
+      const parameters={exchange:instrument.exchange,mode};if(mode==='SWING')parameters.symbol=instrument.symbol;else if(instrument.scripCode!=null)parameters.scripCode=instrument.scripCode;else throw new Error('Search for this stock again in Intraday mode to select its broker identity.');
+      const report = await api('/api/stock-analysis/report?' + new URLSearchParams(parameters), abort.signal);
       if (version !== requestVersion) return;
       render(report); recent.unshift(report); if (recent.length > 6) recent.pop(); renderRecent();
     } catch (error) {
@@ -60,7 +61,7 @@
     current = report; status(''); $('emptyAnalysis').hidden = true; $('analysisReport').hidden = false;
     const last = report.candles.at(-1), ind = report.indicators, isIntraday = report.mode === 'INTRADAY';
     $('reportTitle').textContent = report.instrument.symbol + ' · ' + (report.instrument.exchange === 'NC' ? 'NSE' : 'BSE');
-    $('reportMeta').textContent = report.interval + ' · ' + report.provider + ' · Scrip ' + report.instrument.scripCode + ' · Last bar ' + stamp(last);
+    $('reportMeta').textContent = report.interval + ' · ' + report.provider + (report.instrument.scripCode == null ? ' · Saved daily data' : ' · Scrip ' + report.instrument.scripCode) + ' · Last bar ' + stamp(last);
     $('dataBadge').textContent = report.dataStatus.replaceAll('_',' '); $('dataBadge').className = 'badge' + (report.dataStatus === 'RECENT' ? ' good' : '');
     $('metrics').replaceChildren();
     metric('Last completed close', money(last?.close), 'Historical candle close; not a live quote');
@@ -84,7 +85,7 @@
     const body = node('tbody'); bars.forEach(bar => { const row = node('tr'); [stamp(bar),numeric(bar.open),numeric(bar.high),numeric(bar.low),numeric(bar.close),numeric(bar.volume)].forEach(value => row.append(node('td',value))); body.append(row); }); table.append(body); $('candleTable').replaceChildren(table);
   }
   function renderRecent() {
-    $('recentAnalyses').replaceChildren(); recent.forEach(report => { const button = node('button',null,'secondary'); button.type = 'button'; button.append(node('strong',report.instrument.symbol + ' · ' + report.instrument.exchange),node('small',report.mode + ' · ' + new Date(report.fetchedAt).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata'}))); button.addEventListener('click', () => { version++; reportAbort?.abort(); selected = report.instrument; $('exchange').value = selected.exchange; $('analysisMode').value = report.mode; $('symbolSearch').value = selected.symbol; $('selection').hidden = false; $('selection').textContent = 'Selected: ' + selected.symbol + ' · ' + selected.exchange + ' · Scrip ' + selected.scripCode; $('analyzeButton').disabled = false; render(report); $('reportTitle').scrollIntoView({block:'nearest'}); }); $('recentAnalyses').append(button); });
+    $('recentAnalyses').replaceChildren(); recent.forEach(report => { const button = node('button',null,'secondary'); button.type = 'button'; button.append(node('strong',report.instrument.symbol + ' · ' + report.instrument.exchange),node('small',report.mode + ' · ' + new Date(report.fetchedAt).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata'}))); button.addEventListener('click', () => { version++; reportAbort?.abort(); selected = report.instrument; $('exchange').value = selected.exchange; $('analysisMode').value = report.mode; $('symbolSearch').value = selected.symbol; $('selection').hidden = false; $('selection').textContent = 'Selected: ' + selected.symbol + ' · ' + selected.exchange + (selected.scripCode == null ? ' · saved daily candles' : ' · Scrip ' + selected.scripCode); $('analyzeButton').disabled = false; render(report); $('reportTitle').scrollIntoView({block:'nearest'}); }); $('recentAnalyses').append(button); });
   }
   function drawChart() {
     if (!current || $('analysisReport').hidden) return;
@@ -120,12 +121,12 @@
   (async () => {
     try {
       status('Loading an initial RELIANCE daily analysis…');
-      const rows = await api('/api/stock-analysis/instruments?exchange=NC&q=RELIANCE');
+      const rows = await api('/api/stock-analysis/instruments?exchange=NC&q=RELIANCE&mode=SWING');
       if (version !== 0 || selected) return;
       const match = rows.find(row => row.symbol.toUpperCase() === 'RELIANCE' && row.exchange === 'NC');
       if (!match) { status('Choose a stock above to start an analysis.'); return; }
       selected = match; $('symbolSearch').value = match.symbol; $('selection').hidden = false;
-      $('selection').textContent = 'Selected: ' + match.symbol + ' · NC · Scrip ' + match.scripCode;
+      $('selection').textContent = 'Selected: ' + match.symbol + ' · NC · saved daily candles';
       $('analyzeButton').disabled = false; $('analysisForm').requestSubmit();
     } catch (error) { if (version === 0) status(error.message, true); }
   })();

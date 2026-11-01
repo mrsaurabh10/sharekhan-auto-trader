@@ -38,4 +38,11 @@ class DhanInstrumentResolverTest {
         assertThatThrownBy(()->resolver.load(new StringReader("invalid\ndata"),day)).isInstanceOf(IOException.class);
         assertThat(resolver.resolve(trade("TCS","NC")).securityId()).isEqualTo("11536");
     }
+    @Test void researchIdentityRequiresIsinAndCannotGuessIt()throws Exception {
+        var resolver=new DhanInstrumentResolver();resolver.load(new StringReader(header+cash),day);
+        assertThatThrownBy(()->resolver.cashIdentity("NC","TCS")).isInstanceOf(IllegalStateException.class);
+        String h=header.trim()+",ISIN\n";String c=cash.trim()+",INE467B01029\n";
+        resolver.load(new StringReader(h+c),day);
+        assertThat(resolver.cashIdentity("NC","TCS").isin()).isEqualTo("INE467B01029");assertThat(resolver.cashIdentity("NC","TCS").instrument().securityId()).isEqualTo("11536");
+    }
 }
