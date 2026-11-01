@@ -32,16 +32,29 @@ public interface TriggerTradeRequestRepository extends JpaRepository<TriggerTrad
 
     List<TriggerTradeRequestEntity> findByStatus(TriggeredTradeStatus status);
 
+    /** Remove completed-day entry requests only when no broker/run reconciliation needs them. */
     @Modifying
     @Transactional
     @Query("""
             delete from TriggerTradeRequestEntity r
-            where (r.source is null or lower(r.source) <> 'strategy:mcx_naturalgas_atm_breakout')
-              and (r.intraday = true or r.status <> :preservedStatus)
-              and (r.createdAt is null or r.createdAt < :cutoff)
+            where (r.createdAt is null or r.createdAt < :cutoff)
+              and (r.status is null or r.status not in :unresolvedStatuses)
+              and (r.reason is null or (r.reason not like '%UNKNOWN%'
+                   and r.reason not like '%UNCONFIRMED%' and r.reason not like '%RECONCILIATION_REQUIRED%'))
+              and not exists (select s.id from StrategyRun s
+                              where s.id = r.strategyRunId and s.status <> 'CLOSED')
+              and not exists (select t.id from TriggeredTradeSetupEntity t
+                              where t.triggerRequestId = r.id
+                                and (t.status is null or t.status not in :flatStatuses
+                                     or t.reason like '%UNKNOWN%' or t.reason like '%UNCONFIRMED%'
+                                     or t.reason like '%RECONCILIATION_REQUIRED%'))
+              and (r.status is null or r.status <> :executedStatus or exists
+                   (select t.id from TriggeredTradeSetupEntity t where t.triggerRequestId = r.id))
             """)
-    int deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(@Param("cutoff") LocalDateTime cutoff,
-                                                     @Param("preservedStatus") TriggeredTradeStatus preservedStatus);
+    int deleteCompletedDayRequests(@Param("cutoff") LocalDateTime cutoff,
+                                  @Param("unresolvedStatuses") List<TriggeredTradeStatus> unresolvedStatuses,
+                                  @Param("flatStatuses") List<TriggeredTradeStatus> flatStatuses,
+                                  @Param("executedStatus") TriggeredTradeStatus executedStatus);
 
     List<TriggerTradeRequestEntity> findByScripCodeAndStatus(Integer scripCode, TriggeredTradeStatus status);
 
