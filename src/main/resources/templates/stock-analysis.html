@@ -5,10 +5,10 @@
 <title>Indian Stock Analysis · AutoTrader</title>
 <meta name="swing-csrf-header" th:content="${_csrf.headerName}"><meta name="swing-csrf-token" th:content="${_csrf.token}">
 <link rel="stylesheet" href="/portal/portal.css?v=20261029-analysis">
-<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261029">
+<link rel="stylesheet" href="/portal/stock-analysis.css?v=20261101-targets">
 <script src="/portal/stock-analysis-math.js?v=20261029-swing1" defer></script>
 <script src="/portal/stock-analysis.js?v=20261029-feed2" defer></script>
-<script src="/portal/swing-ideas.js?v=20261029-1" defer></script>
+<script src="/portal/swing-ideas.js?v=20261101-targets" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to analysis</a>
@@ -27,12 +27,14 @@
 <div class="row"><div><div class="eyebrow">DAILY SWING IDEAS · NSE CASH</div><h2>Plan the next session</h2><p class="muted">Conditional breakout and pullback research. Entries, stops and 2R/3R targets from completed daily candles.</p></div><button type="button" class="secondary" id="swingScan">Refresh daily scan</button></div>
 <p class="muted">Experimental technical research. Historical profitability has not been validated; review news, earnings and portfolio exposure before considering a plan.</p>
 <p id="swingStatus" class="notice" role="status" aria-live="polite">Loading saved daily research…</p>
-<div class="row"><label>Saved report<select id="swingHistory"><option value="">Latest report</option></select></label><span id="swingMeta" class="muted"></span><button type="button" class="secondary" id="swingDownload" disabled>Download swing report</button></div>
+<div class="row"><label>Saved report<select id="swingHistory"><option value="">Latest report</option></select></label><span id="swingMeta" class="muted"></span></div>
+<section class="section-gap" aria-labelledby="swingTargetsTitle"><h3 id="swingTargetsTitle">Entry, stop-loss &amp; targets</h3><p class="muted">All prices in ₹ per share. Conditional research levels for the selected report’s entry session; archived levels are not current buy instructions.</p><div id="swingTargets" class="table-wrap" tabindex="0" role="region" aria-label="Swing entry, stop-loss and target prices"><p>Loading target prices…</p></div></section>
 <details class="section-gap"><summary>Set your planning budget · INR</summary><p class="muted">Hypothetical inputs for one idea at a time. Existing risk is your estimate; holdings are not read. Combining multiple ideas needs a fresh portfolio-risk calculation. Inputs stay in this page.</p>
 <form id="swingBudget" class="form-grid"><label>Planning capital (₹)<input name="capital" type="number" min="0.01" step="0.01" placeholder="500000" required></label><label>Risk budget per idea (₹)<input name="risk" type="number" min="0.01" step="0.01" placeholder="2500" required></label><label>Maximum position (%)<input name="maxPositionPct" type="number" min="0.01" max="100" step="0.01" value="10" required></label><label>Maximum portfolio stop risk (%)<input name="maxHeatPct" type="number" min="0.01" max="100" step="0.01" value="6" required></label><label>Existing planned stop risk (₹)<input name="openRisk" type="number" min="0" step="0.01" placeholder="0" required></label><button type="submit" class="secondary">Update hypothetical quantities</button></form><p id="swingSizingStatus" role="status" class="muted"></p></details>
-<div id="swingPlans" class="section-gap"></div>
+<details class="section-gap"><summary>Plan details, sizing &amp; cancellation rules</summary><div id="swingPlans"></div></details>
 <details class="section-gap"><summary>Scan coverage, filters and method limits</summary><p id="swingUniverse" class="muted"></p><ul id="swingNotes" class="data-warnings"></ul><div id="swingAudit" class="table-wrap"></div>
 <p class="muted">Skill methods adapted: breakout-trade-planner (maximum-entry risk, chase limit, R targets), position-sizer (whole shares, position and portfolio-risk caps), backtest-expert (explicit rules, no look-ahead, ambiguous outcomes). This is a native technical preset, not full VCP/CANSLIM screening or a validated trading edge. Fundamental, earnings/news and sector-exposure checks are not included.</p></details>
+<details class="section-gap"><summary>Export raw data · optional</summary><p class="muted">Entry, stop-loss and target prices are displayed above. JSON is available for data analysis tools.</p><button type="button" class="secondary" id="swingDownload" disabled>Download JSON</button></details>
 <p class="muted">Scans retry after EOD at 19:15–23:15 IST and at 08:55 on weekdays. An absent daily candle produces a data-pending result. In-app alerts show saved reports and observed levels; no orders or external messages are sent.</p>
 </section>
 <section class="card analysis-controls" aria-label="Choose a stock">

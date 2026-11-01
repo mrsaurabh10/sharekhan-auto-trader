@@ -16,13 +16,26 @@
     return now<Date.parse(report.validSession+'T09:15:00+05:30')?'UPCOMING':'ENTRY SESSION';
   }
   function render(report) {
-    displayed=report;$('swingPlans').replaceChildren();$('swingNotes').replaceChildren();$('swingAudit').replaceChildren();
+    displayed=report;$('swingTargets').replaceChildren();$('swingPlans').replaceChildren();$('swingNotes').replaceChildren();$('swingAudit').replaceChildren();
     $('swingDownload').disabled=!report;
-    if(!report){$('swingMeta').textContent='No report saved yet.';$('swingPlans').append(make('p','The first scan will save a report here. No ideas have been inferred.'));return;}
+    if(!report){$('swingMeta').textContent='No report saved yet.';$('swingTargets').append(make('p','No saved target prices yet. The first completed scan will display its result here.'));return;}
     const entryWindow=windowFor(report);
     $('swingMeta').textContent='Data '+report.dataDate+' · entry '+report.validSession+' · '+entryWindow+' · coverage '+report.coveredCount+'/'+report.universeCount;
-    const heading=make('p',label(report.status)+(entryWindow==='EXPIRED'?' · archived entry window has expired':''));heading.className='notice';$('swingPlans').append(heading);
-    if(!report.plans.length)$('swingPlans').append(make('p',report.status==='DATA_INCOMPLETE'?'Required EOD candles or verified metadata are missing. This is a data-pending report, not evidence that no opportunities exist.':report.status==='MARKET_CAUTION'?'Fewer than half of the covered stocks are above SMA50. The research market-condition gate withheld new ideas.':'No stock passed all of the defined technical filters. No trade is a valid result.'));
+    const heading=make('p',label(report.status)+(entryWindow==='EXPIRED'?' · archived entry window has expired':''));heading.className='notice';$('swingTargets').append(heading);
+    if(!report.plans.length) {
+      const reason=report.status==='DATA_INCOMPLETE'?'Required EOD candles or verified metadata are missing. Targets are unavailable until a scan passes the data checks.':report.status==='MARKET_CAUTION'?'The market-condition filter blocked new plans because fewer than half of the covered stocks were above SMA50. No entry, stop-loss or targets were published.':'No stock passed all of the defined technical filters. No entry, stop-loss or targets were published.';
+      $('swingTargets').append(make('p',reason),make('p','Try another saved report or review scan coverage below. Downloading JSON will not reveal additional published targets.'));
+      $('swingPlans').append(make('p','No published plans in this report.'));
+    } else {
+      const table=make('table'),caption=make('caption','Swing plans · entry session '+report.validSession+' · '+entryWindow),head=make('thead'),row=make('tr');
+      table.className='swing-target-table';
+      ['Stock / setup','Buy trigger','Maximum entry','Stop-loss','T1 · 2R','T2 · 3R','Entry window'].forEach(title=>{const cell=make('th',title);cell.scope='col';row.append(cell);});head.append(row);
+      const body=make('tbody');report.plans.forEach(plan=>{
+        const row=make('tr'),stock=make('th');stock.scope='row';stock.append(make('strong',plan.symbol),make('small',label(plan.setup)));row.append(stock);
+        [plan.entry,plan.maxEntry,plan.stop,plan.target1,plan.target2].forEach((value,i)=>{const cell=make('td',money(value));cell.className=i===2?'swing-stop':i>2?'swing-target':'';row.append(cell);});
+        row.append(make('td',entryWindow));body.append(row);
+      });table.append(caption,head,body);$('swingTargets').append(table);
+    }
     const observed=new Map(observations.map(o=>[o.planDate+':'+o.symbol,o]));
     report.plans.forEach(plan=>{
       const card=make('article');card.className='card section-gap';

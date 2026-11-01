@@ -48,3 +48,7 @@ Observations use only completed EOD data through the required session. They desc
 The page polls saved status while visible (5seconds during a scan,60seconds otherwise), announces updates in an accessible status area, and preserves downloadable daily reports. Alerts are **in-app only**, not Telegram/email/push. Budget inputs remain in page memory and never enter report downloads or the server.
 
 Endpoints under `/api/stock-analysis/swing`: GET root/status, GET `/history`, GET `/reports/{ISO-date}`, POST `/scan`. No order endpoints are exposed by the feature.
+
+## Reading prices on the page
+
+The Entry, stop-loss & targets table shows each published plan’s symbol/setup, buy trigger, maximum entry, stop-loss, T1 (2R), T2 (3R) and entry-window status in INR. Selecting a saved report updates the table. Archived entry windows are labelled expired. Plan details, sizing and cancellation rules expand below the table; raw JSON export is optional. Reports without plans explain the market/data/filter gate and never infer missing targets.
