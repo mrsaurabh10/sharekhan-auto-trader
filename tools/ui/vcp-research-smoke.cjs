@@ -15,7 +15,7 @@ const root=path.resolve(__dirname,'../..');
   if(p==='/api/stock-analysis/swing/history'||p==='/api/stock-analysis/instruments')return json([]);return json({},404);
  });
  await page.goto('http://ui.test/stock-analysis');await page.waitForFunction(()=>document.getElementById('vcpStatus').textContent.includes('MARKET CAUTION'));
- assert.match(await page.locator('#vcpStatus').textContent(),/coverage 193\/200/);assert.match(await page.locator('#skillsStatus').textContent(),/6 of 72/);assert.match(await page.locator('#vcpBenchmark').textContent(),/NIFTY 50/);assert.equal(await page.locator('#vcpRows tbody tr').count(),34);
+ assert.match(await page.locator('#vcpStatus').textContent(),/coverage 193\/200/);assert.match(await page.locator('#skillsStatus').textContent(),/7 of 72/);assert.match(await page.locator('#vcpBenchmark').textContent(),/NIFTY 50/);assert.equal(await page.locator('#vcpRows tbody tr').count(),34);
  await page.locator('#vcpRows details').first().locator('summary').click();assert.match(await page.locator('#vcpRows details').first().textContent(),/Contraction 1:/);assert.match(await page.locator('#vcpRows details').first().textContent(),/PASS:/);
  await page.locator('#vcpTitle').evaluate(n=>n.scrollIntoView({block:'start'}));await page.locator('#vcpRows').evaluate(n=>n.scrollLeft=0);if(process.env.VCP_OUTPUT)await page.screenshot({path:path.join(process.env.VCP_OUTPUT,'vcp-real-desktop.png')});
  await page.locator('#vcpAll').check();assert.equal(await page.locator('#vcpRows tbody tr').count(),200);await page.locator('#vcpAll').uncheck();
