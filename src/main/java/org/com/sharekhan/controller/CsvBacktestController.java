@@ -40,5 +40,19 @@ public class CsvBacktestController {
         try { return ResponseEntity.ok(service.runExpiryStraddle(id,request.from(),request.to(),request.lots(),request.expiryDates())); }
         catch(IllegalArgumentException e) { return ResponseEntity.badRequest().body(Map.of("error",e.getMessage())); }
     }
+    public record OpeningRangeRequest(LocalDate from, LocalDate to, Integer supertrendPeriod,
+            Double supertrendMultiplier, Double targetR, Integer maxTradesPerDay, Double slippagePoints,
+            Double costPoints, LocalTime squareOff) { }
+    @PostMapping("/datasets/{id}/ema-supertrend-opening-range")
+    public ResponseEntity<?> openingRange(@RequestHeader(value="X-Admin-Token",required=false) String token,
+            @PathVariable String id, @RequestBody OpeningRangeRequest request) {
+        if (!authorized(token)) return ResponseEntity.status(403).build();
+        try { return ResponseEntity.ok(service.runOpeningRange(id,request.from(),request.to(),
+                request.supertrendPeriod()==null?10:request.supertrendPeriod(),
+                request.supertrendMultiplier()==null?3:request.supertrendMultiplier(),request.targetR()==null?2:request.targetR(),
+                request.maxTradesPerDay()==null?2:request.maxTradesPerDay(),request.slippagePoints()==null?0:request.slippagePoints(),
+                request.costPoints()==null?0:request.costPoints(),request.squareOff()==null?LocalTime.of(15,20):request.squareOff())); }
+        catch (IllegalArgumentException e) { return ResponseEntity.badRequest().body(Map.of("error",e.getMessage())); }
+    }
     private boolean authorized(String token) {return adminToken!=null&&!adminToken.isBlank()&&adminToken.equals(token);}
 }

@@ -70,6 +70,20 @@ public class CsvBacktestService {
                 explicit?expiryDates:org.com.sharekhan.backtest.straddle.NiftyExpiryCalendar.nominal(start,end),
                 explicit?"Caller supplied expiry dates":"Nominal NIFTY schedule only; holiday-shifted expiries omitted, missing timestamps skipped; not a fully verified historical contract calendar");
     }
+    @Transactional(readOnly=true)
+    public org.com.sharekhan.backtest.openingrange.OpeningRangeBacktest.Report runOpeningRange(
+            String id, LocalDate from, LocalDate to, int stPeriod, double stMultiplier, double targetR,
+            int maxTrades, double slippage, double costs, LocalTime squareOff) {
+        var dataset=datasets.findById(id).orElseThrow(()->new IllegalArgumentException("Unknown dataset"));
+        var config=new org.com.sharekhan.backtest.openingrange.OpeningRangeBacktest.Config(
+                dataset.getSymbol(),from,to,stPeriod,stMultiplier,targetR,maxTrades,slippage,costs,squareOff);
+        var bars=jdbc.query("select candle_time,open_price,high_price,low_price,close_price,volume from csv_backtest_candles where dataset_id=? and candle_time<? order by candle_time",
+                (row,index)->new StrategyCandle(row.getTimestamp(1).toLocalDateTime().toLocalDate(),row.getTimestamp(1).toLocalDateTime().toLocalTime(),
+                        row.getDouble(2),row.getDouble(3),row.getDouble(4),row.getDouble(5),row.getLong(6)),
+                id,Timestamp.valueOf((to==null?dataset.getLastDate():to).plusDays(1).atStartOfDay()));
+        return new org.com.sharekhan.backtest.openingrange.OpeningRangeBacktest().run(
+                new CsvCandleReader.Dataset(bars,dataset.getInputRows(),dataset.getOutsideSession(),dataset.getIncompleteGroups(),dataset.getMissingSlots()),config);
+    }
     public record Result(String datasetId,String pnlUnit,SupertrendStrategyProperties rules,SupertrendCsvBacktest.Report report) { }
     @Transactional(readOnly=true)
     public Result run(String id,LocalDate from,LocalDate to,double targetR,double slippagePoints,double costPoints,LocalTime squareOff) {
