@@ -382,8 +382,8 @@
     {
       "skill": "trader-memory-core",
       "category": "trade-memory",
-      "status": "NOT_YET_IN_APP",
-      "remaining": "Local reports, account assumptions or journal records; schema validation and real input run still required."
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "Private per-account research theses, source provenance, forward-only research states, due reviews and immutable revision/postmortem history. No actual positions, fills, quantities, trade P&L, broker sync or full upstream thesis/YAML integration."
     },
     {
       "skill": "trading-skills-navigator",
