@@ -1,0 +1,11 @@
+package org.com.sharekhan.analysis;
+import org.com.sharekhan.config.SecurityConfig;import org.com.sharekhan.service.AdminUserDetailsService;
+import org.junit.jupiter.api.Test;import org.springframework.beans.factory.annotation.Autowired;import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;import org.springframework.boot.test.mock.mockito.MockBean;import org.springframework.context.annotation.Import;import org.springframework.test.web.servlet.MockMvc;
+import static org.mockito.Mockito.*;import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.*;import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+@WebMvcTest(FluencyController.class) @Import(SecurityConfig.class)
+class FluencySecurityTest {
+ @Autowired MockMvc mvc;@MockBean FluencyService service;@MockBean AdminUserDetailsService users;
+ @Test void usersAndAdminsReadNoStore()throws Exception{for(String r:new String[]{"USER","ADMIN"})mvc.perform(get("/api/stock-analysis/fluency").with(user("reader").roles(r))).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"));verify(service,times(2)).report();}
+ @Test void captureRequiresAdminAndCsrf()throws Exception{mvc.perform(post("/api/stock-analysis/fluency/capture").with(user("admin").roles("ADMIN"))).andExpect(status().isForbidden());mvc.perform(post("/api/stock-analysis/fluency/capture").with(user("reader").roles("USER")).with(csrf())).andExpect(status().isForbidden());verifyNoInteractions(service);mvc.perform(post("/api/stock-analysis/fluency/capture").with(user("admin").roles("ADMIN")).with(csrf())).andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"));verify(service).capture();}
+ @Test void anonymousOtherRolesAndGetCaptureCannotWrite()throws Exception{mvc.perform(get("/api/stock-analysis/fluency")).andExpect(status().isUnauthorized());mvc.perform(get("/api/stock-analysis/fluency").with(user("other").roles("OTHER"))).andExpect(status().isForbidden());mvc.perform(get("/api/stock-analysis/fluency/capture").with(user("admin").roles("ADMIN"))).andExpect(status().isMethodNotAllowed());verifyNoInteractions(service);}
+}

@@ -346,8 +346,8 @@
     {
       "skill": "stockbee-setup-fluency-trainer",
       "category": "trade-memory",
-      "status": "NOT_YET_IN_APP",
-      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "Saved-archive NSE Momentum study model book: immutable manual snapshots, exact 3/5-session reference moves and cohorts. Not executed trades, point-in-time original signals or profitability certification; manual annotations/automatic rule changes not integrated."
     },
     {
       "skill": "strategy-pivot-designer",
