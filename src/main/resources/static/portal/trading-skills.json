@@ -358,8 +358,8 @@
     {
       "skill": "technical-analyst",
       "category": "trade-planning",
-      "status": "NOT_YET_IN_APP",
-      "remaining": "Verified identity/universe, IST OHLCV, weekly aggregation, INR thresholds, local input schema and output labels; preserve provenance. US defaults require explicit review."
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "Selected deterministic weekly chart methods with user-requested 200-day SMA replacing 200-week reference. Manual chart interpretation remains; no calibrated scenario probabilities or full skill replication."
     },
     {
       "skill": "theme-detector",
