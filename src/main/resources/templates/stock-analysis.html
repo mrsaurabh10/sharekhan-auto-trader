@@ -14,6 +14,7 @@
 <script src="/portal/hammer-research.js?v=20261102-memory1" defer></script>
 <script src="/portal/weekly-technical.js?v=20261102-memory1" defer></script>
 <script src="/portal/setup-fluency.js?v=20261102-memory1" defer></script>
+<script src="/portal/company-analysis.js?v=20261102-company1" defer></script>
 <script src="/portal/trader-memory.js?v=20261102-memory1" defer></script>
 </head>
 <body>
@@ -29,7 +30,7 @@
 <div class="identity"><a href="/dashboard" class="text-button">My workspace</a><form action="/logout" method="post"><input type="hidden" th:name="${_csrf.parameterName}" th:value="${_csrf.token}"><button class="text-button" type="submit">Sign out</button></form></div></header>
 <main class="page" id="main" tabindex="-1">
 <div class="page-heading"><div><div class="eyebrow">RESEARCH · CASH MARKET</div><h1>Indian Stock Analysis</h1><p>Explore NSE and BSE cash instruments with broker market data, technical context and rupee risk sizing.</p></div><span class="badge">Read-only research</span></div>
-<nav class="row section-gap" aria-label="Research sections"><a class="button secondary" href="#swingIdeas">Daily swing plans</a><a class="button secondary" href="#momentumResearch">Momentum burst</a><a class="button secondary" href="#vcpResearch">VCP contractions</a><a class="button secondary" href="#hammerResearch">Exhaustion hammer</a><a class="button secondary" href="#weeklyResearch">Weekly technical</a><a class="button secondary" href="#setupFluency">Setup model book</a><a class="button secondary" href="#traderJournal">Private thesis journal</a><a class="button secondary" href="#skillInventory">Skill integrations</a></nav>
+<nav class="row section-gap" aria-label="Research sections"><a class="button secondary" href="#companyAnalysis">Company assessment</a><a class="button secondary" href="#swingIdeas">Daily swing plans</a><a class="button secondary" href="#momentumResearch">Momentum burst</a><a class="button secondary" href="#vcpResearch">VCP contractions</a><a class="button secondary" href="#hammerResearch">Exhaustion hammer</a><a class="button secondary" href="#weeklyResearch">Weekly technical</a><a class="button secondary" href="#setupFluency">Setup model book</a><a class="button secondary" href="#traderJournal">Private thesis journal</a><a class="button secondary" href="#skillInventory">Skill integrations</a></nav>
 <section class="card section-gap" aria-label="Daily Swing Ideas" id="swingIdeas">
 <div class="row"><div><div class="eyebrow">DAILY SWING IDEAS · SAVED NIFTY 200</div><h2>Plan the next session</h2><p class="muted">Conditional breakout and pullback research. Entries, stops and 2R/3R targets from completed daily candles.</p></div><button type="button" class="secondary" id="swingScan">Refresh daily scan</button></div>
 <p class="muted">Experimental technical research. Historical profitability has not been validated; review news, earnings and portfolio exposure before considering a plan.</p>
@@ -70,6 +71,25 @@
 <div id="hammerRows" class="table-wrap" tabindex="0" role="region" aria-label="Hammer evidence and filters"></div>
 <details class="section-gap"><summary>Hammer methodology, missing quality data and limits</summary><ul id="hammerRules"></ul></details>
 </section>
+<section class="card section-gap" id="companyAnalysis" aria-labelledby="companyTitle">
+<div class="eyebrow">STOCK ANALYSIS · SELECTED NSE METHODS</div><h2 id="companyTitle">Company assessment</h2>
+<p class="muted">Combine saved daily and weekly price evidence with optional annual company financials. Available for saved NSE Nifty 200 stocks; BSE is unavailable. Financial sources need human verification.</p>
+<form id="companySelectForm" class="row"><label>Saved NSE stock<select id="companySymbol" aria-label="Company NSE stock"></select></label><button id="companyRefresh" type="submit" class="secondary">Load assessment</button></form>
+<p id="companyStatus" class="notice" role="status" aria-live="polite">Loading company list…</p>
+<div id="companyContent" hidden><h3 id="companyVerdict"></h3><p id="companyConclusion"></p><p id="companyIdentity" class="muted"></p>
+<h3>Price and trend evidence</h3><div id="companyTechnical" class="table-wrap"></div><p id="companyCutoffs" class="muted"></p>
+<h3>Financial evidence</h3><p id="companyFinancialStatus" class="notice"></p><div id="companyProvenance"></div><div id="companyMetrics" class="table-wrap"></div>
+<div class="weekly-zones"><div><h3>Supporting observations</h3><ul id="companyPositives"></ul></div><div><h3>Risks to review</h3><ul id="companyRisks"></ul></div></div><h3>Missing evidence</h3><ul id="companyMissing"></ul>
+<button type="button" id="companyDownload" class="secondary">Download assessment JSON</button><details><summary>Assessment method and data limits</summary><ul id="companyRules"></ul></details></div>
+<details id="companyEvidenceDetails"><summary>Add annual company financial evidence</summary>
+<p class="muted">Use a company investor-relations or exchange filing. Figures remain in this page session and are sent only when you click Assess. They are not saved. Use the same company and reporting basis, consecutive full fiscal years for revenue growth, INR crore for totals and ₹/share for EPS/book value. Publication must be on or before the displayed daily price date. Banks and insurers need sector-specific review.</p>
+<form id="companyEvidenceForm"><div class="company-fields">
+<label>Company/exchange filing URL<input id="companySource" type="url" required maxlength="1000" placeholder="https://…"></label>
+<label>Publication date<input id="companyPublished" type="date" required></label><label>Annual period end<input id="companyPeriod" type="date" required></label>
+<label>Reporting basis<select id="companyBasis"><option value="CONSOLIDATED_ANNUAL">Consolidated annual</option><option value="STANDALONE_ANNUAL">Standalone annual</option></select></label>
+<label>Annual diluted EPS · ₹/share<input data-company-field="eps" type="number" step="any" max="1000000000000" min="-1000000000000"></label><label>Year-end book value · ₹/share<input data-company-field="bookValuePerShare" type="number" step="any" max="1000000000000" min="-1000000000000"></label><label>Annual revenue · ₹ crore<input data-company-field="revenue" type="number" step="any" max="1000000000000" min="0"></label><label>Previous full-year revenue · ₹ crore<input data-company-field="priorRevenue" type="number" step="any" max="1000000000000" min="0"></label><label>Annual net income · ₹ crore<input data-company-field="netIncome" type="number" step="any" max="1000000000000" min="-1000000000000"></label><label>Operating cash flow · ₹ crore<input data-company-field="operatingCashFlow" type="number" step="any" max="1000000000000" min="-1000000000000"></label><label>Capital expenditure outflow · ₹ crore<input data-company-field="capex" type="number" step="any" max="1000000000000" min="0"></label><label>Year-end total debt · ₹ crore<input data-company-field="debt" type="number" step="any" max="1000000000000" min="0"></label><label>Year-end equity · ₹ crore<input data-company-field="equity" type="number" step="any" max="1000000000000" min="-1000000000000"></label>
+</div><label class="row"><input id="companyConfirm" type="checkbox" required> I checked the company, annual periods, units, reporting basis and per-share corporate-action basis against the source.</label><button id="companyAssess" type="submit">Assess supplied figures</button><button type="button" id="companyClear" class="secondary">Clear evidence</button><p id="companyEvidenceStatus" role="status" aria-live="polite"></p></form></details></section>
+
 <section class="card section-gap" id="weeklyResearch" aria-labelledby="weeklyTitle">
 <div class="eyebrow">TECHNICAL ANALYST · MODIFIED NSE CHART METHODS</div><h2 id="weeklyTitle">Weekly technical context</h2><p class="muted">Closed weekly candles with 20-week and 50-week averages, plus your selected <strong>200-day SMA</strong>. The daily reference covers a shorter period than the original 200-week average.</p>
 <form id="weeklyForm" class="row"><label for="weeklySymbol">Saved NSE stock<select id="weeklySymbol" aria-label="Weekly NSE stock"></select></label><button type="submit" class="secondary" id="weeklyRefresh">Refresh weekly chart</button></form>

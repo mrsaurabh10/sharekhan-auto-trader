@@ -15,7 +15,7 @@ const root=path.resolve(__dirname,'../..');
  if(p==='/api/stock-analysis/swing/history'||p==='/api/stock-analysis/instruments')return json([]);
  return json({},404);});
  await page.goto('http://ui.test/stock-analysis');await page.waitForFunction(()=>document.getElementById('momentumStatus').textContent.includes('MARKET CAUTION'));
- assert.match(await page.locator('#momentumStatus').textContent(),/coverage 197\/200/);assert.match(await page.locator('#skillsStatus').textContent(),/9 of 72/);
+ assert.match(await page.locator('#momentumStatus').textContent(),/coverage 197\/200/);assert.match(await page.locator('#skillsStatus').textContent(),/10 of 72/);
  await page.locator('#momentumAll').check();assert.equal(await page.locator('#momentumRows tbody tr').count(),report.stocks.length);
  if(real&&process.env.MOMENTUM_OUTPUT){await page.locator('#momentumAll').uncheck();await page.locator('#momentumTitle').scrollIntoViewIfNeeded();await page.screenshot({path:path.join(process.env.MOMENTUM_OUTPUT,'momentum-real-panel.png')});}
  report={...report,status:'READY',stocks:[{...row,status:'CONDITIONAL_BUY',reason:'DEMO ONLY',plan:{entry:100,maxEntry:101,stop:95,target1:113,target2:119}}]};await page.locator('#momentumRefresh').click();await page.waitForFunction(()=>document.getElementById('momentumStatus').textContent.startsWith('READY'));
