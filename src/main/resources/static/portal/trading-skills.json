@@ -406,8 +406,8 @@
     {
       "skill": "us-stock-analysis",
       "category": "trade-planning",
-      "status": "NOT_YET_IN_APP",
-      "remaining": "Dated Indian statements, estimates where needed, shareholding/dividend/corporate-action records and units. Replace US/FMP/SEC/13F dependencies; manual sourced review possible but automated feed unverified."
+      "status": "SELECTED_METHODS_IN_APP",
+      "remaining": "NSE company assessment: saved daily/weekly evidence and optional unverified human-supplied annual financials. No automated statements/news/peer feed, fair value or investment rating; BSE unavailable. See assessment data limits."
     },
     {
       "skill": "value-dividend-screener",
