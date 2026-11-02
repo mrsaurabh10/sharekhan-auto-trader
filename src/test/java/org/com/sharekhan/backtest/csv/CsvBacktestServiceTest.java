@@ -38,4 +38,15 @@ class CsvBacktestServiceTest {
         assertThat(service.runExpiryStraddle(dataset.getId(),null,null,1,null).observations()).hasSize(2);
         assertThatThrownBy(()->service.runExpiryStraddle(dataset.getId(),LocalDate.of(2026,10,14),LocalDate.of(2026,10,13),1,null)).isInstanceOf(IllegalArgumentException.class);
     }
+    @Test void openingRangeReadsDatasetWithoutChangingStoredBars() throws Exception {
+        var text=new StringBuilder("date,open,high,low,close,volume\n");
+        for(int i=0;i<75;i++) text.append("2026-10-01 "+LocalTime.of(9,15).plusMinutes(i*5L)+":00,100,101,99,100,0\n");
+        var dataset=service.importCsv(new ByteArrayInputStream(text.toString().getBytes(StandardCharsets.UTF_8)),"nifty.csv","NIFTY",5);
+        var jdbc=new JdbcTemplate(dataSource);
+        int count=jdbc.queryForObject("select count(*) from csv_backtest_candles",Integer.class);
+        var r=service.runOpeningRange(dataset.getId(),null,null,10,3,2,2,0,0,LocalTime.of(15,20));
+        assertThat(r.acceptedSessions()).isEqualTo(1); assertThat(r.pnlUnit()).contains("SPOT_PROXY");
+        assertThat(r.trades()).isEmpty();
+        assertThat(jdbc.queryForObject("select count(*) from csv_backtest_candles",Integer.class)).isEqualTo(count);
+    }
 }

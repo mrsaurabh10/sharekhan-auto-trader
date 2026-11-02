@@ -38,7 +38,9 @@ public class IndicatorService {
         return Math.max(EMA_PERIOD, ADX_PERIOD * 2 + 1);
     }
 
-    private double[] computeSupertrend(List<StrategyCandle> candles, int period, double multiplier) {
+    public double[] computeSupertrend(List<StrategyCandle> candles, int period, double multiplier) {
+        if (period < 1 || !Double.isFinite(multiplier) || multiplier <= 0)
+            throw new IllegalArgumentException("Invalid SuperTrend parameters");
         int n = candles.size();
         double[] atr = computeAtr(candles, period);
         double[] supertrend = filledNaN(n);
@@ -137,7 +139,8 @@ public class IndicatorService {
         return 100.0d - (100.0d / (1.0d + rs));
     }
 
-    private double[] computeEma(List<StrategyCandle> candles, int period) {
+    public double[] computeEma(List<StrategyCandle> candles, int period) {
+        if (period < 1) throw new IllegalArgumentException("EMA period must be positive");
         int n = candles.size();
         double[] ema = filledNaN(n);
         if (n < period) {

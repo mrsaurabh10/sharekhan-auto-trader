@@ -37,4 +37,19 @@ class CsvBacktestControllerTest {
                 .andExpect(status().isOk());
         verify(service).runExpiryStraddle("id",null,null,2,java.util.List.of(java.time.LocalDate.of(2026,10,13)));
     }
+    @Test void openingRangeRequiresTokenAndEnforcesIntradayDefaults() throws Exception {
+        var service=mock(CsvBacktestService.class);var controller=new CsvBacktestController(service);
+        ReflectionTestUtils.setField(controller,"adminToken","test-secret");
+        var mvc=MockMvcBuilders.standaloneSetup(controller).build();
+        String url="/api/backtests/csv/datasets/id/ema-supertrend-opening-range";
+        mvc.perform(post(url).contentType(MediaType.APPLICATION_JSON).content("{}")).andExpect(status().isForbidden());
+        verifyNoInteractions(service);
+        mvc.perform(post(url).header("X-Admin-Token","test-secret").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk());
+        verify(service).runOpeningRange("id",null,null,10,3,2,2,0,0,LocalTime.of(15,20));
+        when(service.runOpeningRange("id",null,null,10,3,2,3,0,0,LocalTime.of(15,20)))
+                .thenThrow(new IllegalArgumentException("Invalid strategy parameters"));
+        mvc.perform(post(url).header("X-Admin-Token","test-secret").contentType(MediaType.APPLICATION_JSON).content("{\"maxTradesPerDay\":3}"))
+                .andExpect(status().isBadRequest());
+    }
 }
