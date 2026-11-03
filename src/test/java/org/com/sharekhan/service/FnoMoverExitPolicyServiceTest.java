@@ -48,9 +48,33 @@ class FnoMoverExitPolicyServiceTest {
         when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(at,bid,"SHOONYA",100d)));
         return tx.execute(status->service.evaluate(trade,at));
     }
-    @Test void neverProgressingTradeExitsAt45MinutesFromFillNotBefore() {
-        for(int seconds=0;seconds<2700;seconds+=10) assertThat(observe(start.plusSeconds(seconds),100,10).exit()).isFalse();
-        assertThat(observe(start.plusSeconds(2700),100,9.9).reason()).isEqualTo(FnoMoverExitPolicyService.NO_PROGRESS);
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"CE","PE"})
+    void neverProgressingTradeDoesNotExitAt45Or60Or120Minutes(String side) {
+        trade.setOptionType(side);trade.setStopLoss("CE".equals(side)?98d:102d);
+        for(int seconds=0;seconds<=7200;seconds+=10)
+            assertThat(observe(start.plusSeconds(seconds),100,9.9).exit()).as("elapsed seconds %s",seconds).isFalse();
+        assertThat(jdbc.queryForObject("SELECT reached_half_risk FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+        assertThat(jdbc.queryForObject("SELECT progress_coverage_valid FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT last_message FROM fno_mover_exit_state WHERE trade_id=1",String.class)).isEqualTo("OBSERVING_PROFIT_LOCK");
+    }
+    @Test void profitLockStillArmsAndExitsAfter45MinutesWithoutStockProgress() {
+        for(int seconds=0;seconds<=2700;seconds+=10) assertThat(observe(start.plusSeconds(seconds),100,10).exit()).isFalse();
+        assertThat(observe(start.plusSeconds(2705),100,12).exit()).isFalse();
+        assertThat(observe(start.plusSeconds(2710),100,10.9).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
+    }
+    @Test void legacyStateKeepsArmedPeakAcrossRestartAndStockObservationGap() {
+        observe(start,100,10);observe(start.plusSeconds(5),100,12);
+        jdbc.update("UPDATE fno_mover_exit_state SET policy_version='FNO_EXIT_45M_V1', last_message='NO_PROGRESS_DISABLED_OBSERVATION_GAP' WHERE trade_id=1");
+        service=instance();
+        assertThat(observe(start.plusSeconds(3600),100,10.9).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
+        assertThat(jdbc.queryForObject("SELECT peak_bid FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(12);
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(11);
+    }
+    @Test void legacyExitReasonRemainsRecognizedForAlreadyClaimedExitRecovery() {
+        assertThat(FnoMoverExitPolicyService.isExitReason("FNO_NO_PROGRESS_45M")).isTrue();
+        assertThat(FnoMoverExitPolicyService.isExitReason("FNO_EARLY_PROFIT_PROTECTION")).isTrue();
+        assertThat(FnoMoverExitPolicyService.isExitReason("TARGET_1")).isFalse();
     }
     @Test void reachedHalfRiskPersistsAcrossRestartAndNeverBecomesNoProgressOnReversal() {
         observe(start,100,10);observe(start.plusSeconds(10),99,10);

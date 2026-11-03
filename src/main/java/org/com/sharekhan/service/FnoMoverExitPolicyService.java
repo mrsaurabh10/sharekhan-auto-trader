@@ -21,7 +21,9 @@ import java.util.List;
 @Slf4j
 public class FnoMoverExitPolicyService {
     public static final String SOURCE = "strategy:FNO_0925_MOVER_ATR_BREAKOUT";
+    // Keep the persisted schema/version so existing premium peaks and floors survive rollout.
     public static final String VERSION = "FNO_EXIT_45M_V1";
+    /** Legacy reason retained only for already-claimed exit reconciliation and historical records. */
     public static final String NO_PROGRESS = "FNO_NO_PROGRESS_45M";
     public static final String PROFIT_PROTECTION = "FNO_EARLY_PROFIT_PROTECTION";
     private static final ZoneId ZONE = ZoneId.of("Asia/Kolkata");
@@ -38,7 +40,7 @@ public class FnoMoverExitPolicyService {
         this.jdbc=jdbc;this.quotes=quotes;this.prices=prices;this.requests=requests;
     }
     @PostConstruct void configured() {
-        log.info("FNO_MOVER_EXIT_POLICY | enabled={} | version={} | noProgressMinutes=45 | minimumProgressR=0.5 | armGain=10% | retainPeakGain=50%",
+        log.info("FNO_MOVER_EXIT_POLICY | enabled={} | version={} | mode=PROFIT_LOCK_ONLY | noProgressEnabled=false | armGain=10% | retainPeakGain=50%",
                 enabled, VERSION);
     }
     public boolean enabled() { return enabled; }
@@ -76,6 +78,7 @@ public class FnoMoverExitPolicyService {
         if(state==null || !VERSION.equals(state.version) || !state.entryAt.equals(t.getEntryAt())
                 || Double.compare(state.premium,t.getActualEntryPrice())!=0) return Decision.waitForData();
 
+        // Preserve progress diagnostics for existing state; they no longer trigger any exit.
         // The latest receipt time is used once, not repeatedly refreshed by the timer.
         Double spot=prices.getLtp(t.getSpotScripCode());
         LocalDateTime spotAt=prices.getObservedAt(t.getSpotScripCode());
@@ -102,11 +105,9 @@ public class FnoMoverExitPolicyService {
             double ratchet=state.premium+.5*(state.peak-state.premium);
             if(state.armed && netFloor!=null) state.floor=Math.max(state.floor,Math.max(netFloor,ratchet));
             if(state.armed && state.floor>0 && bid<=state.floor+1e-9) decision=new Decision(PROFIT_PROTECTION,bid);
-            else if(freshSpot && state.coverage && !state.reached && !now.isBefore(state.entryAt.plusMinutes(45)))
-                decision=new Decision(NO_PROGRESS,bid);
         }
-        String message=decision.exit()?decision.reason():!state.coverage?"NO_PROGRESS_DISABLED_OBSERVATION_GAP"
-                :!executable?"WAITING_FRESH_EXACT_OPTION_BOOK":state.reached?"PROGRESS_REACHED":state.armed?"PROFIT_PROTECTION_ARMED":"OBSERVING";
+        String message=decision.exit()?decision.reason():!executable?"WAITING_FRESH_EXACT_OPTION_BOOK"
+                :state.armed?"PROFIT_PROTECTION_ARMED":"OBSERVING_PROFIT_LOCK";
         jdbc.update("UPDATE fno_mover_exit_state SET peak_bid=?,reached_half_risk=?,progress_coverage_valid=?,last_spot_at=?,last_evaluated_at=?,protection_armed=?,protection_floor=?,last_message=? WHERE trade_id=?",
                 state.peak,state.reached,state.coverage,state.lastSpotAt==null?null:Timestamp.valueOf(state.lastSpotAt),
                 Timestamp.valueOf(now),state.armed,state.floor,message,t.getId());

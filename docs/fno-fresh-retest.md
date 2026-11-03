@@ -46,7 +46,8 @@ A retest signal uses `MORNING_ORB_FRESH_RETEST` and the normal FNO source. It pr
 through the existing contract resolution, quote identity/freshness/spread/slippage,
 entry deadline, funds, sizing and duplicate safeguards. No special broker route,
 authentication, order replay or risk-budget increase is added. Existing early profit
-protection and 45-minute no-progress exit policy apply through the same FNO source.
+protection applies through the same FNO source. The 45-minute no-progress exit was
+removed on 3 November 2026; normal stops, targets and square-off remain.
 No change to subscriptions, lots, paused strategies or 07:00 IST master refresh.
 
 `app.strategy.fno-0925-mover.fresh-retest-enabled` defaults true. Set false and restart
@@ -65,8 +66,8 @@ historical executable bid/ask/depth; do not call their peaks attainable profits.
 
 Collect distinct setups across sessions, including losers and no-entry sessions.
 Compare against unchanged baseline rules on time-ordered held-out sessions; include
-actual costs, ask/bid and depth, slippage stress, both 45-minute/profit-protection
+actual costs, ask/bid and depth, slippage stress, the profit-protection policy and normal
 exits, and coverage gaps. Repeated account evaluations are not independent samples.
 Existing shadow quote-policy comparisons do **not** independently replay the current
-profit-protection/no-progress policy and are insufficient to establish this edge.
+profit-protection policy and are insufficient to establish this edge.
 No automatic parameter optimization or profitability claim is made.
