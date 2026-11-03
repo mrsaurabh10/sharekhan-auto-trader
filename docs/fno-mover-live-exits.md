@@ -10,24 +10,19 @@ sets `APP_STRATEGY_FNO_MOVER_EXITS_ENABLED=true` after applying the additive
 `db/postgresql/fno-mover-exit-state.sql` migration. The runtime observer and Natural
 Gas settings must be preserved. No historical fills or P&L are rewritten.
 
-## No progress after 45 minutes
+## Profit lock only (3 November 2026)
 
-Time starts at the actual option fill `entryAt`. Original risk is the absolute
-distance between the initial stock trigger and stock stop. If the maximum
-**observed** favourable stock movement has never reached 0.5 of that distance,
-close the entire remaining position at/after 45 minutes. PE progress is downward;
-CE progress is upward. Equality at 0.5R counts as progress and disables this timer
-exit permanently. A trade that first progresses and then reverses is not a
-no-progress trade.
+The user removed the 45-minute no-progress exit for both live and Simulator FNO
+mover trades. Elapsed time and failure to reach half of the original stock risk
+no longer produce an exit. Original stop-loss, targets, trailing and scheduled
+square-off remain in their existing paths.
 
-The original entry/stop are frozen from the owned entry request when available,
-otherwise from the untouched initial stock-stop trade. Observations must start
-within 15 seconds of the fill. A gap longer than 15 seconds between stock receipts
-permanently disables the no-progress exit for that position because an unseen
-favourable excursion cannot safely be ruled out. It remains disabled after a
-long restart gap or late adoption of a pre-existing position. This conservative
-rule does not delay or disable the original stop or premium protection. State is
-visible in `fno_mover_exit_state.last_message`.
+Progress fields and the persisted `FNO_EXIT_45M_V1` state version remain for schema
+compatibility and diagnostics. This rollout neither resets nor erases existing
+premium peaks, armed state or profit floors. The historical `FNO_NO_PROGRESS_45M`
+reason remains recognized only so an already-claimed protective exit can still be
+reconciled safely; no new evaluation emits that reason. Startup explicitly logs
+`mode=PROFIT_LOCK_ONLY | noProgressEnabled=false`.
 
 ## Early premium profit protection
 
@@ -41,16 +36,15 @@ Thereafter the floor is the higher of:
 The floor never decreases. A later verified bid at/below the floor closes the
 entire remaining position with `FNO_EARLY_PROFIT_PROTECTION`. This is not a promise
 of break-even or a guaranteed fill: a gap, slippage or actual broker charges can
-produce a loss. The no-progress reason is `FNO_NO_PROGRESS_45M`.
+produce a loss.
 
 ## Data and order handling
 
 New exits require a coherent, noncrossed, positive Shoonya book, matching exchange
 and exact option token, a book timestamp within five seconds, and displayed bid
 quantity sufficient for the entire remaining position. Unknown/stale/insufficient
-books do not trigger these exits. Stock progress uses its independent fresh
-receipt timestamp even if the option book is unavailable; it is not inferred from
-option premium changes. Stock receipts may still be sampled/conflated.
+books do not trigger these exits. Stock progress is retained only as diagnostic state; a spot observation gap does
+not disable the premium profit lock.
 
 Trade ticks and a five-second cache-based timer evaluate the policy only during
 the same day's 09:15–15:30 regular session. The timer makes no independent quote
@@ -77,10 +71,11 @@ cancel an already-claimed protective exit.
 Run policy persistence/data-quality tests and the price-trigger/exit-chase,
 execution, broker, mover, ORM/journal, shadow and MCX regressions. The historical
 research was not conclusive: only one recorded option session existed and its
-paths had gaps. The 45-minute threshold is an explicitly user-selected live rule,
-not a statistically proven optimum. Do not promise lower losses or profitability.
+paths had gaps. Removing the time exit is an explicit user decision, not evidence
+of improved returns. Do not promise lower losses or profitability.
 
-Take and fully decode the usual database backup before the additive migration;
+The initial feature used an additive migration; this update requires no schema change.
+Take and fully decode the usual database backup before rollout;
 retain the old image and state table for rollback. Rebuild/restart only the app,
 preserving PostgreSQL, `.env`, data/log/dump mounts, paused subscriptions, and
 other runtime overrides. Verify startup configuration, schema, packaged classes,

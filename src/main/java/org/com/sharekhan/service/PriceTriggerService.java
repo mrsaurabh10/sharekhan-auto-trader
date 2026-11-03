@@ -100,7 +100,7 @@ public class PriceTriggerService {
     @Autowired(required = false)
     private FnoMoverExitPolicyService fnoMoverExitPolicy;
 
-    /** Cache-only timer makes the 45-minute rule independent of a new option tick. */
+    /** Cache-only polling evaluates the premium profit lock without waiting for a new option tick. */
     @Scheduled(fixedDelayString = "${app.strategy.fno-mover-exits.poll-ms:5000}")
     public void pollFnoMoverExits() {
         LocalDateTime now=nowIst();
