@@ -45,7 +45,7 @@ class FnoMoverExitPolicyServiceTest {
     }
     FnoMoverExitPolicyService.Decision observe(Instant at,double spot,double bid) {
         when(prices.getLtp(456)).thenReturn(spot);when(prices.getObservedAt(456)).thenReturn(LocalDateTime.ofInstant(at,zone));
-        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(at,bid,"SHOONYA",100d)));
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(at,bid,"SHOONYA",trade.getQuantity().doubleValue())));
         return tx.execute(status->service.evaluate(trade,at));
     }
     @org.junit.jupiter.params.ParameterizedTest
@@ -89,6 +89,27 @@ class FnoMoverExitPolicyServiceTest {
         tx.execute(s->service.evaluate(trade,at));
         assertThat(jdbc.queryForObject("SELECT reached_half_risk FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"CE","PE"})
+    void armsAtExactlyFivePercentAndRetainsHalfPeakGain(String side) {
+        trade.setOptionType(side);trade.setStopLoss("CE".equals(side)?98d:102d);
+        trade.setQuantity(1000L);
+        observe(start,100,10);
+        observe(start.plusSeconds(5),100,10.49);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+        assertThat(observe(start.plusSeconds(10),100,10.5).exit()).isFalse();
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(10.25);
+        assertThat(observe(start.plusSeconds(15),100,10.25).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
+    }
+    @Test void lowerThresholdAppliesToExistingUnarmedSavedPeakWithoutReset() {
+        observe(start,100,10);
+        jdbc.update("UPDATE fno_mover_exit_state SET peak_bid=10.6, protection_armed=false, protection_floor=0 WHERE trade_id=1");
+        service=instance();
+        assertThat(observe(start.plusSeconds(5),100,10.2).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
+        assertThat(jdbc.queryForObject("SELECT peak_bid FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(10.6);
+    }
+
     @Test void premiumPeakAndFloorSurviveRestartAndCloseAllRemainingLots() {
         observe(start,100,10);observe(start.plusSeconds(5),99,11);observe(start.plusSeconds(10),99,12);
         service=instance();
