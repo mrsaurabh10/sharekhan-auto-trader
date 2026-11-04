@@ -26,7 +26,13 @@ reconciled safely; no new evaluation emits that reason. Startup explicitly logs
 
 ## Early premium profit protection
 
-Arm when a verified option **bid** is at least 10% above the actual entry premium
+On 4 November 2026 the user lowered arming from 10% to 5%. The 50% retention
+rate and cost/quote checks remain unchanged. Existing positions retain their saved
+peaks and floors; their next valid quote is evaluated under the lower threshold.
+An already-retraced open position can therefore request an immediate exit; this
+does not recreate a fill at an earlier protected price.
+
+Arm when a verified option **bid** is at least 5% above the actual entry premium
 and exceeds the application-estimated round-trip cost floor.
 Thereafter the floor is the higher of:
 
