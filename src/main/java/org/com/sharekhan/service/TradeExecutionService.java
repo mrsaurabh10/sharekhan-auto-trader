@@ -642,7 +642,8 @@ public class TradeExecutionService {
 
     private void adjustTargetsForEntryPrice(TriggeredTradeSetupEntity trade, double diff) {
         // These sources publish absolute targets that remain valid regardless of the fill price.
-        if ("awr".equalsIgnoreCase(trade.getSource())
+        if (org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(trade.getSource())
+                || "awr".equalsIgnoreCase(trade.getSource())
                 || "StockBazaari".equalsIgnoreCase(trade.getSource())) {
             return;
         }
@@ -678,6 +679,8 @@ public class TradeExecutionService {
                                                    boolean attemptBrokerSideEntryOrder) {
 
         if(runCoordinator!=null) runCoordinator.attach(request);
+        if(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(request.getSource()) && request.getStrategyRunId()==null)
+            throw new InvalidTradeRequestException("NG Pine entries require a server-owned monitored strategy run");
         if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(request.getSource()) && request.getStrategyRunId()==null)
             throw new InvalidTradeRequestException("NG averaging entries require a server-owned strategy basket");
         if (onboardingAccess != null) onboardingAccess.requireOnboardedReady(request.getUserId(), request.getBrokerCredentialsId());
@@ -1302,7 +1305,11 @@ public class TradeExecutionService {
         return time.isBefore(INTRADAY_ENTRY_CUTOFF);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private org.com.sharekhan.strategy.mcx.NaturalGasPinePolicy ngPinePolicy;
+
     boolean isIntradayEntryWindowOpen(String source) {
+        if(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(source))return ngPinePolicy!=null && ngPinePolicy.entryAllowed(LocalDateTime.now(entryClock));
         return org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source)
                 ? org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(entryClock))
                 : isIntradayEntryWindowOpen();
@@ -1452,7 +1459,7 @@ public class TradeExecutionService {
                 if (Math.abs(diff) > 0.0001) {
                     log.info("Applying entry fill adjustments for broker-side entry trade due to immediate execution price difference: {}. OriginalEntry={}, Executed={}",
                             diff, originalEntryPrice, executedPrice);
-                    if (trade.getStopLoss() != null) {
+                    if (trade.getStopLoss() != null && !org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(trade.getSource())) {
                         trade.setStopLoss(trade.getStopLoss() + diff);
                     }
                     adjustTargetsForEntryPrice(trade, diff);
@@ -1481,7 +1488,7 @@ public class TradeExecutionService {
         }
 
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(request.getSource())) {
-            var exact = scriptMasterRepository.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MX", "NATURALGAS").stream()
+            var exact = scriptMasterRepository.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MX", org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(request.getSource())?request.getInstrument():"NATURALGAS").stream()
                     .filter(r -> Objects.equals(r.getExpiry(), request.getExpiry()) && Objects.equals(r.getOptionType(), request.getOptionType())
                             && Objects.equals(r.getStrikePrice(), request.getStrikePrice())).toList();
             if (exact.size() != 1) throw new InvalidTradeRequestException("Exact MCX Natural Gas contract is missing or ambiguous");
@@ -1774,6 +1781,15 @@ public class TradeExecutionService {
     public void squareOffStrategyRunTrade(Long id,String runId,String reason) {
         var trade=triggeredTradeRepo.findById(id).orElseThrow();
         if(!Objects.equals(runId,trade.getStrategyRunId())) throw new IllegalArgumentException("Trade does not belong to run");
+        if(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(trade.getSource())) {
+            var now=Instant.now();
+            var q=quoteCacheService.getSnapshot(trade.getScripCode()).filter(book->book.hasBook() && book.isCoherentBook()
+                    && Double.isFinite(book.getBestBid()) && Double.isFinite(book.getBestAsk()) && book.getBestBid()>0 && book.getBestBid()<=book.getBestAsk()
+                    && book.getLastBookAt()!=null && !book.getLastBookAt().isAfter(now) && !book.getLastBookAt().isBefore(now.minusSeconds(15))
+                    && "SHAREKHAN_WS".equals(book.getBookSource()) && ("scrip:"+trade.getScripCode()).equals(book.getBookProviderIdentity()))
+                    .orElseThrow(()->new IllegalStateException("NG Pine exit waiting for fresh exact option bid; futures exit remains latched"));
+            squareOff(trade,q.getBestBid(),reason);return;
+        }
         Double price=strategyProfitExitQuote(trade,Instant.now()).map(q -> TradeSide.isShort(trade) ? q.getBestAsk() : q.getBestBid())
                 .orElseGet(()->resolveEntryReferencePrice(trade.getScripCode(),"strategyRunExit"));
         if(price==null) throw new IllegalStateException("Fresh traded exit price unavailable");
@@ -2591,7 +2607,7 @@ public class TradeExecutionService {
                             if (Math.abs(diff) > 0.0001) {
                                 log.info("Applying entry fill adjustments for trade {} due to immediate execution price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}",
                                     triggeredTradeSetupEntity.getId(), diff, isSpotEntry, originalEntryPrice, executedPrice);
-                                if (triggeredTradeSetupEntity.getStopLoss() != null) {
+                                if (triggeredTradeSetupEntity.getStopLoss() != null && !org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(triggeredTradeSetupEntity.getSource())) {
                                     triggeredTradeSetupEntity.setStopLoss(triggeredTradeSetupEntity.getStopLoss() + diff);
                                 }
                                 adjustTargetsForEntryPrice(triggeredTradeSetupEntity, diff);
@@ -5904,7 +5920,7 @@ public class TradeExecutionService {
                 if (Math.abs(diff) > 0.0001) {
                     log.info("Applying entry fill adjustments for trade {} due to entry price difference: {}. UseSpotForEntry={}, OriginalEntry={}, Executed={}",
                             tradeSetupEntity.getId(), diff, false, originalTriggerPrice, price);
-                    if (tradeSetupEntity.getStopLoss() != null) {
+                    if (tradeSetupEntity.getStopLoss() != null && !org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(tradeSetupEntity.getSource())) {
                         tradeSetupEntity.setStopLoss(tradeSetupEntity.getStopLoss() + diff);
                     }
                     adjustTargetsForEntryPrice(tradeSetupEntity, diff);
@@ -6511,6 +6527,7 @@ public class TradeExecutionService {
     }
 
     private boolean entryQuoteWindowOpen(String source) {
+        if(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(source))return isIntradayEntryWindowOpen(source);
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source))
             return org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(entryClock));
         return !org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(source)

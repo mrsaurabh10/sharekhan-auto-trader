@@ -136,9 +136,9 @@ public class StrategySubscriptionService {
     }
 
     /** MCX is evaluated independently of the NSE calendar and afternoon entry cutoff. */
-    @Scheduled(cron = "5 0/1 9-22 * * MON-FRI", zone = "Asia/Kolkata")
+    @Scheduled(cron = "5 0/1 9-23 * * MON-FRI", zone = "Asia/Kolkata")
     public void evaluateNaturalGasStrategies() {
-        if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(MARKET_ZONE))) return;
+        if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.marketOpen(LocalDateTime.now(MARKET_ZONE))) return;
         for (var subscription : repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED))) {
             if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(subscription.getTemplateId())) evaluate(subscription);
         }
@@ -261,6 +261,7 @@ public class StrategySubscriptionService {
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
             if (org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.validate(request);
             else if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
+            else if(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.isTemplate(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.validate(request);
             else org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
             strategyTemplateService.validateConfiguration(request);
             request.setSource("strategy:"+request.getTemplateId().trim().toUpperCase(java.util.Locale.ROOT));
@@ -288,6 +289,7 @@ public class StrategySubscriptionService {
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
             if (org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.validate(request);
             else if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
+            else if(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.isTemplate(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.validate(request);
             else org.com.sharekhan.strategy.mcx.NaturalGasAtmStrategy.validate(request);
             strategyTemplateService.validateConfiguration(request);
             request.setSource("strategy:"+request.getTemplateId().trim().toUpperCase(java.util.Locale.ROOT));

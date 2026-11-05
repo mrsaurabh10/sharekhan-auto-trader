@@ -23,6 +23,8 @@ public class StrategyRunService {
     private final TradeExecutionService execution;
     private final StrategySubscriptionService subscriptions;
     private final StrategyRunRiskEngine risk=new StrategyRunRiskEngine();
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private org.com.sharekhan.strategy.mcx.NaturalGasPinePolicy ngPinePolicy=new org.com.sharekhan.strategy.mcx.NaturalGasPinePolicy();
     private static final Set<TriggeredTradeStatus> FLAT=EnumSet.of(TriggeredTradeStatus.REJECTED,TriggeredTradeStatus.CANCELLED,TriggeredTradeStatus.FAILED,TriggeredTradeStatus.COMPLETED,TriggeredTradeStatus.EXITED_SUCCESS);
     private static final Set<TriggeredTradeStatus> EXITABLE=EnumSet.of(TriggeredTradeStatus.EXECUTED,TriggeredTradeStatus.TARGET_ORDER_PLACED,TriggeredTradeStatus.EXIT_ORDER_PLACED,TriggeredTradeStatus.EXIT_TRIGGERED,TriggeredTradeStatus.EXIT_FAILED);
     public StrategyRunService(StrategyRunRepository runs,TriggeredTradeSetupRepository trades,TriggerTradeRequestRepository requests,
@@ -87,9 +89,12 @@ public class StrategyRunService {
                 boolean naturalGas=org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(run.getTemplateId());
                 if (naturalGas) {
                     if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.marketOpen(time)) continue;
-                    if (run.getTradingDay().isBefore(time.toLocalDate()) || !time.toLocalTime().isBefore(org.com.sharekhan.strategy.mcx.NaturalGasSession.SQUARE_OFF))
+                    boolean pine=org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.isTemplate(run.getTemplateId());
+                    var squareOff=pine?ngPinePolicy.getSquareOff():org.com.sharekhan.strategy.mcx.NaturalGasSession.SQUARE_OFF;
+                    var cutoff=pine?ngPinePolicy.getEntryCutoff():org.com.sharekhan.strategy.mcx.NaturalGasSession.ENTRY_CUTOFF;
+                    if (run.getTradingDay().isBefore(time.toLocalDate()) || !time.toLocalTime().isBefore(squareOff))
                         runs.requestClose(run.getId(),"MCX_SESSION_CLOSE",time);
-                    else if (!time.toLocalTime().isBefore(org.com.sharekhan.strategy.mcx.NaturalGasSession.ENTRY_CUTOFF)) cancelPendingEntries(run);
+                    else if (!time.toLocalTime().isBefore(cutoff)) cancelPendingEntries(run);
                 } else if(time.toLocalTime().isBefore(LocalTime.of(9,15)) || time.toLocalTime().isAfter(LocalTime.of(15,40))) continue;
                 if("OPEN".equals(run.getStatus())) {
                     var members=members(run);var values=pnl(members,Instant.now());

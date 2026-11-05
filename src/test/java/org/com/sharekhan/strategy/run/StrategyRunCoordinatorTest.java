@@ -86,4 +86,16 @@ class StrategyRunCoordinatorTest {
         first.setStatus("CLOSED");c.evaluate(r,()->{c.ensureCurrentRun();return null;});
         assertThat(saved).hasSize(2);assertThat(saved.values()).extracting(StrategyRun::getInstance).containsExactlyInAnyOrder("BASKET1","BASKET2");
     }
+    @Test void pinePositionCanReenterOnlyAfterDurableRunClosure() {
+        var c=coordinator("18:30:05");var r=request();
+        r.setTemplateId(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.TEMPLATE);r.setSymbol("NATURALGAS");r.setLots(1);
+        subs.findById(10L).orElseThrow().setTemplateId(r.getTemplateId());
+        when(runs.findByAppUserIdAndBrokerCredentialsIdAndTemplateIdAndTradingDayOrderByCreatedAtAsc(any(),any(),any(),any()))
+            .thenAnswer(x->saved.values().stream().sorted(Comparator.comparing(StrategyRun::getInstance)).toList());
+        c.evaluate(r,()->{c.ensureCurrentRun();return null;});var first=saved.values().iterator().next();
+        first.setStatus("CLOSING");
+        assertThat(c.evaluate(r,()->{throw new AssertionError("closing must block entry");}).getStatus()).isEqualTo("waiting");
+        first.setStatus("CLOSED");c.evaluate(r,()->{c.ensureCurrentRun();return null;});assertThat(saved).hasSize(2);
+    }
+
 }

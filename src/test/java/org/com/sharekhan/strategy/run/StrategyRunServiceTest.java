@@ -130,4 +130,13 @@ class StrategyRunServiceTest {
     @Test void equityRunDoesNotAcquireEveningExitSchedule() {
         when(runs.findByStatusIn(anyList())).thenReturn(List.of(am));service.monitor(LocalDate.of(2026,10,26).atTime(23,20));verifyNoInteractions(execution);verify(trades,never()).findByStrategyRunId(anyString());
     }
+    @Test void pineKeepsFilledPositionAtLegacyCutoffButClosesAtItsOwnTime() {
+        am.setTemplateId(org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.TEMPLATE);
+        when(runs.findByStatusIn(anyList())).thenReturn(List.of(am));
+        service.monitor(am.getTradingDay().atTime(23,20));
+        verify(runs,never()).requestClose(eq("am"),eq("MCX_SESSION_CLOSE"),any());
+        service.monitor(am.getTradingDay().atTime(23,25));
+        verify(runs).requestClose("am","MCX_SESSION_CLOSE",am.getTradingDay().atTime(23,25));
+    }
+
 }
