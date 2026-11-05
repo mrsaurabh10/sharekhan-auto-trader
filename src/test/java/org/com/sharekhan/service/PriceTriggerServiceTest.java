@@ -51,6 +51,83 @@ class PriceTriggerServiceTest {
         verify(tradeExecutionService,never()).maybePreArmBigTradePlusEntry(any(),anyDouble());
     }
 
+    private TriggeredTradeSetupEntity ngasTrade() {
+        return TriggeredTradeSetupEntity.builder().id(8900L).appUserId(3L).brokerCredentialsId(4L)
+                .symbol("NATURALGAS").exchange("MX").source(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE)
+                .optionType("CE").entryAction("BUY").scripCode(583842).intraday(true)
+                .actualEntryPrice(16.4).entryPrice(16.4).stopLoss(14.9).target1(17.9).useSpotForSl(false).useSpotForTarget(false)
+                .lots(1).quantity(1250L).tslEnabled(false).status(TriggeredTradeStatus.EXECUTED)
+                .exitClaimedAt(LocalDateTime.of(2026,7,3,9,59)).build();
+    }
+    private NaturalGasScalpProfitLockService ngasPolicy(TriggeredTradeSetupEntity trade) {
+        var policy=mock(NaturalGasScalpProfitLockService.class);
+        ReflectionTestUtils.setField(service,"ngasScalpProfitLock",policy);
+        when(policy.enabled()).thenReturn(true);
+        when(triggeredRepo.findById(trade.getId())).thenReturn(Optional.of(trade));
+        when(policy.evaluate(eq(trade),any())).thenReturn(new NaturalGasScalpProfitLockService.Decision(16.9));
+        when(policy.currentExitBid(eq(trade),any())).thenReturn(16.9);
+        when(tradeExecutionService.hasUsableTradedExitPrice(eq(trade),anyDouble())).thenReturn(true);
+        return policy;
+    }
+    @Test void ngasCacheTimerRunsInEveningButRejectsStaleLtp() {
+        var trade=ngasTrade();ngasPolicy(trade);
+        var timed=spy(service);var evening=LocalDateTime.of(2026,11,5,21,0);
+        doReturn(evening).when(timed).nowIst();
+        when(triggeredRepo.findBySourceAndStatusIn(eq(trade.getSource()),anyList())).thenReturn(List.of(trade));
+        when(ltpCacheService.getLtp(583842)).thenReturn(17d);
+        when(ltpCacheService.getObservedAt(583842)).thenReturn(evening.minusSeconds(6));
+        timed.pollNaturalGasScalpProfitLock();
+        verify(triggeredRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString(),anyString());
+        when(ltpCacheService.getObservedAt(583842)).thenReturn(evening);
+        when(triggeredRepo.claimIfStatusEquals(8900L,"EXECUTED","EXIT_TRIGGERED",NaturalGasScalpProfitLockService.REASON))
+                .thenAnswer(c->{trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason(NaturalGasScalpProfitLockService.REASON);return 1;});
+        timed.pollNaturalGasScalpProfitLock();
+        verify(tradeExecutionService).squareOff(trade,16.9,NaturalGasScalpProfitLockService.REASON);
+    }
+
+    @Test void ngasProfitLockClaimsOnceAndKeepsHardExitLevels() {
+        var trade=ngasTrade();ngasPolicy(trade);
+        when(triggeredRepo.claimIfStatusEquals(8900L,"EXECUTED","EXIT_TRIGGERED",NaturalGasScalpProfitLockService.REASON))
+                .thenAnswer(c->{trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason(NaturalGasScalpProfitLockService.REASON);trade.setExitClaimedAt(service.nowIst());return 1;});
+        service.handleTradeWithLock(8900L,17d,null);service.handleTradeWithLock(8900L,17d,null);
+        verify(tradeExecutionService).squareOff(trade,16.9,NaturalGasScalpProfitLockService.REASON);
+        org.junit.jupiter.api.Assertions.assertEquals(14.9,trade.getStopLoss());
+        org.junit.jupiter.api.Assertions.assertEquals(17.9,trade.getTarget1());
+    }
+    @Test void ngasProfitLockLosingClaimCannotSell() {
+        var trade=ngasTrade();ngasPolicy(trade);
+        service.handleTradeWithLock(8900L,17d,null);
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
+    }
+    @Test void ngasHardStopWinsOverProfitLock() {
+        var trade=ngasTrade();ngasPolicy(trade);
+        when(triggeredRepo.claimIfStatusEquals(8900L,"EXECUTED","EXIT_TRIGGERED","STOP_LOSS_HIT"))
+                .thenAnswer(c->{trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason("STOP_LOSS_HIT");return 1;});
+        service.handleTradeWithLock(8900L,14.8,null);
+        verify(triggeredRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString(),eq(NaturalGasScalpProfitLockService.REASON));
+        verify(tradeExecutionService).squareOff(trade,14.8,"STOP_LOSS_HIT");
+    }
+    @Test void ngasPendingProtectiveExitWaitsForFreshBidAndRecoversSameOrder() {
+        var trade=ngasTrade();var policy=ngasPolicy(trade);
+        trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason(NaturalGasScalpProfitLockService.REASON);
+        trade.setExitOrderId("existing-sell");
+        when(policy.currentExitBid(eq(trade),any())).thenReturn(null);
+        service.handleTradeWithLock(8900L,17d,null);
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
+        verify(tradeExecutionService,never()).modifyExitOrderForProtectiveExit(any(),anyDouble(),anyString());
+        when(policy.currentExitBid(eq(trade),any())).thenReturn(16.7);
+        service.handleTradeWithLock(8900L,17d,null);
+        verify(tradeExecutionService).modifyExitOrderForProtectiveExit(trade,16.7,NaturalGasScalpProfitLockService.REASON);
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
+    }
+    @Test void ngasRecoveryWithoutOrderUsesBidRatherThanLtpOrOldFloor() {
+        var trade=ngasTrade();var policy=ngasPolicy(trade);
+        trade.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);trade.setExitReason(NaturalGasScalpProfitLockService.REASON);
+        when(policy.currentExitBid(eq(trade),any())).thenReturn(16.5);
+        service.handleTradeWithLock(8900L,17d,null);
+        verify(tradeExecutionService).squareOff(trade,16.5,NaturalGasScalpProfitLockService.REASON);
+    }
+
     @Test void fnoProtectiveExitClosesWholePositionOnceInsteadOfPartialTargetBooking() {
         for(String reason:List.of(FnoMoverExitPolicyService.NO_PROGRESS,FnoMoverExitPolicyService.PROFIT_PROTECTION)) {
             org.mockito.Mockito.reset(triggeredRepo,tradeExecutionService);

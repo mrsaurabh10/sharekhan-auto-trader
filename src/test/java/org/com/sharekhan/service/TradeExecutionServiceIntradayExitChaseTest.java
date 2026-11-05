@@ -161,14 +161,15 @@ class TradeExecutionServiceIntradayExitChaseTest {
         verify(broker, never()).placeExitOrder(any(), any(), anyDouble());
     }
 
-    @Test
-    void noProgressExitReusesSameOrderAndRetriesFailedModifyWithoutLosingIntent() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"FNO_NO_PROGRESS_45M","NGAS_SCALP_PROFIT_LOCK"})
+    void protectiveExitReusesSameOrderAndRetriesFailedModifyWithoutLosingIntent(String reason) {
         when(broker.modifyEntryOrder(any(),any(),anyString(),anyDouble()))
                 .thenReturn(OrderPlacementResult.builder().success(false).build())
                 .thenReturn(OrderPlacementResult.builder().success(true).orderId("211652102").build());
-        assertThat(service.modifyExitOrderForProtectiveExit(trade,38.9,FnoMoverExitPolicyService.NO_PROGRESS)).isFalse();
+        assertThat(service.modifyExitOrderForProtectiveExit(trade,38.9,reason)).isFalse();
         tick.run();
-        assertThat(trade.getExitReason()).isEqualTo(FnoMoverExitPolicyService.NO_PROGRESS);
+        assertThat(trade.getExitReason()).isEqualTo(reason);
         assertThat(trade.getExitOrderId()).isEqualTo("211652102");
         verify(broker,never()).placeExitOrder(any(),any(),anyDouble());
         verify(future,never()).cancel(anyBoolean());

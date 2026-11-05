@@ -5615,7 +5615,7 @@ public class TradeExecutionService {
     }
 
     public boolean modifyExitOrderForProtectiveExit(TriggeredTradeSetupEntity trade,double newPrice,String reason) {
-        if(!FnoMoverExitPolicyService.isExitReason(reason)) throw new IllegalArgumentException("Unsupported protective exit reason");
+        if(!ProtectiveExitReasons.contains(reason)) throw new IllegalArgumentException("Unsupported protective exit reason");
         return repriceExistingExitAndChase(trade,newPrice,reason);
     }
 
@@ -5648,7 +5648,7 @@ public class TradeExecutionService {
     }
 
     private boolean isStopExit(TriggeredTradeSetupEntity trade) {
-        return "STOP_LOSS_HIT".equals(trade.getExitReason()) || FnoMoverExitPolicyService.isExitReason(trade.getExitReason());
+        return "STOP_LOSS_HIT".equals(trade.getExitReason()) || ProtectiveExitReasons.contains(trade.getExitReason());
     }
 
     public boolean modifyExitOrderForTarget(TriggeredTradeSetupEntity trade, double newPrice) {

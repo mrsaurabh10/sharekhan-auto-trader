@@ -39,8 +39,10 @@ class ExitSafetyPersistenceTest {
         assertThat(controls.begin(trade,start.plusSeconds(500)).isActive()).isFalse();
         assertThat(controlRows.findById(trade.getId()).orElseThrow().getStartedAt()).isEqualTo(start);
     }
-    @Test void protectiveIntentTransitionStartsOneNewBudgetAndThenPreservesIt() {
-        controls.begin(trade,start);trade.setExitReason("STOP_LOSS_HIT");
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"STOP_LOSS_HIT","FNO_EARLY_PROFIT_PROTECTION","NGAS_SCALP_PROFIT_LOCK"})
+    void protectiveIntentTransitionStartsOneNewBudgetAndThenPreservesIt(String reason) {
+        controls.begin(trade,start);trade.setExitReason(reason);
         assertThat(controls.begin(trade,start.plusSeconds(1000)).getStartedAt()).isEqualTo(start.plusSeconds(1000));
         assertThat(controls.begin(trade,start.plusSeconds(1200)).getStartedAt()).isEqualTo(start.plusSeconds(1000));
     }
