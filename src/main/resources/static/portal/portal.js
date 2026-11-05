@@ -159,7 +159,7 @@
         window.StrategyRunView?.resetRisk($('#subscriptionRunRisk'));
         const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
-        const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(template.id);
+        const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING','MCX_NATURALGAS_PINE_TREND'].includes(template.id);
         f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE' || naturalGas;
         if (f.elements.intraday.disabled) f.elements.intraday.checked = true;
         const straddle = template.id === 'EXPIRY_LONG_STRADDLE';
@@ -168,7 +168,8 @@
         $('#subscriptionRunRisk').querySelector('[data-risk-field=amountMode]').value=straddle ? 'PER_LOT' : 'TOTAL';
         const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
         f.elements.symbol.value = naturalGas ? 'NATURALGAS' : automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
-        f.elements.symbol.readOnly = automatic || naturalGas;
+        f.elements.symbol.readOnly = automatic || (naturalGas && template.id !== 'MCX_NATURALGAS_PINE_TREND');
+        f.elements.symbol.placeholder = template.id === 'MCX_NATURALGAS_PINE_TREND' ? 'NATURALGAS or NATGASMINI' : '';
         if (template.id === 'MCX_NATURALGAS_SCALPING') {
           f.elements.lots.value='1';
           $('#subscriptionRunRisk').querySelector('[data-risk-field=maxLoss]').value='2500';
@@ -176,6 +177,7 @@
         const averaging = template.id === 'MCX_NATURALGAS_TREND_AVERAGING';
         f.elements.lots.readOnly = averaging;
         window.StrategyRunView.averagingHelp($('#subscriptionRunRisk'),averaging);
+        window.StrategyRunView.pineHelp($('#subscriptionRunRisk'),template.id === 'MCX_NATURALGAS_PINE_TREND');
         $('#subscriptionRunRisk').querySelectorAll('[data-risk-field]').forEach(field=>{field.readOnly=averaging;if(field.tagName==='SELECT')field.disabled=averaging;});
         if (averaging) {
           f.elements.lots.value='4';
@@ -221,8 +223,8 @@
       body.investmentPerStock = Number(amount); body.lots = null;
     } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
     body.riskSettings=window.StrategyRunView?.readRisk($('#subscriptionRunRisk')) || null;
-    if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(body.templateId)) {
-      body.symbol='NATURALGAS'; body.intraday=true;
+    if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING','MCX_NATURALGAS_PINE_TREND'].includes(body.templateId)) {
+      if(body.templateId !== 'MCX_NATURALGAS_PINE_TREND') body.symbol='NATURALGAS'; body.intraday=true;
       if (!body.riskSettings?.maxLoss) throw new Error('Set a maximum rupee loss for the Natural Gas strategy run.');
       const broker=state.brokers.find(b=>b.id===body.brokerCredentialsId);
       if (body.templateId === 'MCX_NATURALGAS_SCALPING' && (String(broker?.brokerName || '').toUpperCase() !== 'SIMULATOR' || body.lots !== 1 || body.riskSettings.maxLoss > 2500)) throw new Error('Scalping requires Simulator, one lot and a total daily loss limit up to ₹2,500.');

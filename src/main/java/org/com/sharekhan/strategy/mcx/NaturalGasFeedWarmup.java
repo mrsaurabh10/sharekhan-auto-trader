@@ -26,10 +26,10 @@ public class NaturalGasFeedWarmup {
         if(now.getDayOfWeek()==DayOfWeek.SATURDAY||now.getDayOfWeek()==DayOfWeek.SUNDAY
                 ||now.toLocalTime().isBefore(LocalTime.of(8,55))||!now.toLocalTime().isBefore(NaturalGasSession.CLOSE))return;
         var active=subscriptions.findByStatusInOrderByIdDesc(List.of("ACTIVE","TRIGGERED")).stream()
-                .filter(s->NaturalGasSession.TEMPLATE.equals(s.getTemplateId())).toList();
+                .filter(s->NaturalGasSession.TEMPLATE.equals(s.getTemplateId()) || NaturalGasPineStrategy.isTemplate(s.getTemplateId())).toList();
         if(active.isEmpty())return;
-        try {
-            var pair=NaturalGasContracts.resolve(scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MX","NATURALGAS"),now.toLocalDate());
+        for(String symbol:active.stream().map(s->Objects.requireNonNullElse(s.getSymbol(),"NATURALGAS")).distinct().toList())try {
+            var pair=NaturalGasContracts.resolve(scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("MX",symbol),now.toLocalDate(),symbol);
             live.watch(pair.future().getScripCode());
             execution.warmUpSpotLtp(pair.future(),"MCX Natural Gas candle capture");
             // Minute-boundary prefetch normally completes before entry evaluation at :05.

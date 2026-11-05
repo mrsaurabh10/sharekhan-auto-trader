@@ -55,7 +55,8 @@
           for(const source of new Set(view.positions.length ? view.positions.map(leg=>sourceName(leg.source)) : ['Unspecified'])) sources.append(sourceTag(source));
           summary.append(sources);
           details.append(node('p','Run '+run.id.slice(0,10)+' · '+run.symbol+' · broker #'+run.brokerCredentialsId+' · '+pnl.openPositions+' open · '+view.requests+' requests','muted'));
-          const averaging=run.templateId==='MCX_NATURALGAS_TREND_AVERAGING';
+          const averaging=run.templateId==='MCX_NATURALGAS_TREND_AVERAGING',pine=run.templateId==='MCX_NATURALGAS_PINE_TREND';
+          if(run.templateId==='MCX_NATURALGAS_PINE_TREND')details.append(node('p','SL and target use futures prices. The traded leg and P&L use the ATM option premium.','notice'));
           const values=node('div',null,'run-pnl');
           for(const [label,value] of [['Realized gross',pnl.realizedGross],['Open gross',pnl.openGross],['Combined gross',pnl.totalGross],[averaging?'Paper cost reserve':'Estimated charges',pnl.estimatedCosts],[averaging?'Paper net':'Estimated net',pnl.estimatedNet],['Peak gross',run.peakPnl],['Active stop floor',run.stopFloor]]) values.append(node('span',label+': '+money(value)));
           details.append(values);
@@ -76,9 +77,9 @@
           }
           details.append(actions);
           const wrap=node('div',null,'table-wrap'),table=node('table'),head=node('tr');
-          for(const label of ['Trade','Symbol','Leg','Quantity','Actual entry','Exit','Status','Gross P&L','Source'])head.append(node('th',label));
+          for(const label of ['Trade','Symbol','Leg','Quantity','Actual entry','Exit','Status','Gross P&L',...(pine?['Futures SL','Futures target']:[]),'Source'])head.append(node('th',label));
           table.append(head);
-          for(const leg of view.positions) {const row=node('tr');for(const value of [leg.id,leg.symbol,[leg.strikePrice,leg.optionType,leg.expiry].filter(Boolean).join(' '),leg.quantity,money(leg.actualEntryPrice),money(leg.exitPrice),leg.status,money(leg.pnl)])row.append(node('td',value));const sourceCell=node('td');sourceCell.append(sourceTag(leg.source));row.append(sourceCell);table.append(row);}
+          for(const leg of view.positions) {const row=node('tr');for(const value of [leg.id,leg.symbol,[leg.strikePrice,leg.optionType,leg.expiry].filter(Boolean).join(' '),leg.quantity,money(leg.actualEntryPrice),money(leg.exitPrice),leg.status,money(leg.pnl),...(pine?[leg.stopLoss,leg.target1]:[])])row.append(node('td',value));const sourceCell=node('td');sourceCell.append(sourceTag(leg.source));row.append(sourceCell);table.append(row);}
           wrap.append(table);details.append(wrap);container.append(details);
         }
         if(!result.content.length)container.append(node('p','No tracked strategy instances yet. New strategy entries will appear here.','muted'));
@@ -106,6 +107,18 @@
       element.textContent=enabled?(element.tagName==='LEGEND'?'NG averaging: basket and daily controls':'₹60,000 capital including cost reserves; up to four lots, added one at a time. ₹1,250 paper-net basket target after a provisional ₹100 round-trip reserve per filled lot or higher recorded costs. ₹3,000 total daily loss allowance; profits do not replenish it. These Simulator settings are fixed for the trial.'):element.dataset.originalText;
     }
   }
+  function pineHelp(container,enabled) {
+    if(!container)return;
+    for(const field of container.querySelectorAll('[data-risk-field]')) {
+      if(['amountMode','maxLoss'].includes(field.dataset.riskField))continue;
+      field.closest('label').hidden=enabled;
+      if(enabled)field.value='';
+    }
+    if(enabled) {
+      container.querySelector('legend').textContent='Futures SL / target; option rupee loss override';
+      container.querySelector('small').textContent='Stop and target use the selected futures contract. Maximum loss is an additional gross option-P&L limit per position, not a guaranteed fill or a conversion of futures ATR into option loss. Configure NATURALGAS or NATGASMINI only when its exact contracts and feeds are available.';
+    }
+  }
   function readRisk(container) {
     if(!container)return null;const risk={};let enabled=false;
     for(const input of container.querySelectorAll('[data-risk-field]')) {
@@ -116,5 +129,5 @@
     return enabled?risk:null;
   }
   function resetRisk(container) {if(container)for(const input of container.querySelectorAll('[data-risk-field]'))if(input.tagName==='SELECT')input.value='TOTAL';else input.value='';}
-  window.StrategyRunView={mount,riskForm,averagingHelp,readRisk,resetRisk,sourceTag,statusTag,timestamp};
+  window.StrategyRunView={mount,riskForm,averagingHelp,pineHelp,readRisk,resetRisk,sourceTag,statusTag,timestamp};
 })();

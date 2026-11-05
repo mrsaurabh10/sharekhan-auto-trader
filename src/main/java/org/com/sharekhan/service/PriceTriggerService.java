@@ -895,6 +895,8 @@ public class PriceTriggerService {
     }
 
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
+        var ownedTrade=triggeredRepo.findById(tradeId).orElse(null);
+        if(ownedTrade!=null && org.com.sharekhan.strategy.mcx.NaturalGasPineStrategy.owns(ownedTrade.getSource()))return;
         try {
             OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(tradeId, tradedLtp);
             if (confirmedStopPrice.isEmpty()) {
