@@ -100,6 +100,28 @@ public class PriceTriggerService {
     @Autowired(required = false)
     private FnoMoverExitPolicyService fnoMoverExitPolicy;
 
+    @Autowired(required = false)
+    private NaturalGasScalpProfitLockService ngasScalpProfitLock;
+
+    /** Cache-only MCX timer; no broker authentication or REST fallback. */
+    @Scheduled(fixedDelayString = "${app.strategy.ngas-scalp-profit-lock.poll-ms:2000}")
+    public void pollNaturalGasScalpProfitLock() {
+        LocalDateTime now = nowIst();
+        if (ngasScalpProfitLock == null || !ngasScalpProfitLock.enabled()
+                || !org.com.sharekhan.strategy.mcx.NaturalGasSession.marketOpen(now)) return;
+        for (var trade : triggeredRepo.findBySourceAndStatusIn(
+                org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE, MONITORABLE_TRADE_STATUSES)) {
+            if (!NaturalGasScalpProfitLockService.owns(trade)) continue;
+            Double bid = ngasScalpProfitLock.currentExitBid(trade,now.atZone(IST_ZONE).toInstant());
+            Double ltp = ltpCacheService.getLtp(trade.getScripCode());
+            LocalDateTime observed = ltpCacheService.getObservedAt(trade.getScripCode());
+            if (observed == null || observed.isAfter(now) || observed.isBefore(now.minusSeconds(5))) continue;
+            // Preserve the original LTP-based hard stop and target checks in the common workflow.
+            if (bid != null && ltp != null && Double.isFinite(ltp) && ltp > 0)
+                handleTradeWithLock(trade.getId(),ltp,null);
+        }
+    }
+
     /** Cache-only polling evaluates the premium profit lock without waiting for a new option tick. */
     @Scheduled(fixedDelayString = "${app.strategy.fno-mover-exits.poll-ms:5000}")
     public void pollFnoMoverExits() {
@@ -894,6 +916,21 @@ public class PriceTriggerService {
         }
     }
 
+    private NaturalGasScalpProfitLockService.Decision planNaturalGasScalpExit(Long tradeId) {
+        if (ngasScalpProfitLock == null || !ngasScalpProfitLock.enabled())
+            return NaturalGasScalpProfitLockService.Decision.waitForData();
+        try {
+            var trade = triggeredRepo.findById(tradeId).orElse(null);
+            if (trade == null || isBigTradePlus(trade) || (trade.getStatus() != TriggeredTradeStatus.EXECUTED
+                    && trade.getStatus() != TriggeredTradeStatus.TARGET_ORDER_PLACED))
+                return NaturalGasScalpProfitLockService.Decision.waitForData();
+            return ngasScalpProfitLock.evaluate(trade,nowIst().atZone(IST_ZONE).toInstant());
+        } catch (Exception e) {
+            log.warn("NGAS Scalping profit lock unavailable for trade {}: {}",tradeId,e.getClass().getSimpleName());
+            return NaturalGasScalpProfitLockService.Decision.waitForData();
+        }
+    }
+
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
         try {
             OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(tradeId, tradedLtp);
@@ -904,6 +941,7 @@ public class PriceTriggerService {
             // Persist observation state before opening the trade-claim transaction:
             // nested REQUIRES_NEW connections must not exhaust the trade-worker pool.
             final var moverDecision=planFnoMoverExit(tradeId);
+            final var scalpDecision=planNaturalGasScalpExit(tradeId);
             final TransactionTemplate txTemplate = new TransactionTemplate(transactionManager);
 
             // Execute quick transaction: read the current trade and attempt atomic claim if condition met
@@ -922,7 +960,7 @@ public class PriceTriggerService {
                 // Only act if still in EXECUTED or TARGET_ORDER_PLACED
                 TriggeredTradeStatus currentStatus = persisted.getStatus();
                 if (currentStatus == TriggeredTradeStatus.EXIT_TRIGGERED) {
-                    return hasNoExitOrderId(persisted) && isExitRecoveryDue(persisted)
+                    return (hasNoExitOrderId(persisted) || NaturalGasScalpProfitLockService.REASON.equals(persisted.getExitReason())) && isExitRecoveryDue(persisted)
                             ? CLAIM_RECOVER_UNPLACED_EXIT
                             : CLAIM_NONE;
                 }
@@ -1010,6 +1048,13 @@ public class PriceTriggerService {
                         && hasSafeTradedExitPrice(persisted,moverDecision.bid(),spotLtp,moverDecision.bid(),moverDecision.reason())) {
                     int updated=triggeredRepo.claimIfStatusEquals(tradeId,TriggeredTradeStatus.EXECUTED.name(),TriggeredTradeStatus.EXIT_TRIGGERED.name(),moverDecision.reason());
                     if(updated==0) updated=triggeredRepo.claimIfStatusEquals(tradeId,TriggeredTradeStatus.TARGET_ORDER_PLACED.name(),TriggeredTradeStatus.EXIT_TRIGGERED.name(),moverDecision.reason());
+                    return updated;
+                }
+
+                if (scalpDecision.exit() && NaturalGasScalpProfitLockService.owns(persisted)
+                        && hasSafeTradedExitPrice(persisted,scalpDecision.bid(),spotLtp,scalpDecision.bid(),NaturalGasScalpProfitLockService.REASON)) {
+                    int updated = triggeredRepo.claimIfStatusEquals(tradeId,TriggeredTradeStatus.EXECUTED.name(),TriggeredTradeStatus.EXIT_TRIGGERED.name(),NaturalGasScalpProfitLockService.REASON);
+                    if (updated == 0) updated = triggeredRepo.claimIfStatusEquals(tradeId,TriggeredTradeStatus.TARGET_ORDER_PLACED.name(),TriggeredTradeStatus.EXIT_TRIGGERED.name(),NaturalGasScalpProfitLockService.REASON);
                     return updated;
                 }
 
@@ -1101,7 +1146,13 @@ public class PriceTriggerService {
                 String exitReason = reloaded.getExitReason();
                 TradeEventLogger.logExitTriggered(reloaded, exitReason, slRefPrice, targetRefPrice, confirmedTradedLtp, spotLtp);
                 boolean exitOrderAlreadyPresent = reloaded.getExitOrderId() != null && !reloaded.getExitOrderId().isBlank();
-                if(FnoMoverExitPolicyService.isExitReason(exitReason)) {
+                if (NaturalGasScalpProfitLockService.REASON.equals(exitReason)) {
+                    Double bid = ngasScalpProfitLock == null ? null : ngasScalpProfitLock.currentExitBid(reloaded,nowIst().atZone(IST_ZONE).toInstant());
+                    if (bid != null) {
+                        if (exitOrderAlreadyPresent) tradeExecutionService.modifyExitOrderForProtectiveExit(reloaded,bid,exitReason);
+                        else dispatchSquareOff(reloaded,bid,exitReason);
+                    }
+                } else if(FnoMoverExitPolicyService.isExitReason(exitReason)) {
                     var decisionPrice=fnoMoverExitPolicy==null?null:fnoMoverExitPolicy.currentExitBid(reloaded,nowIst().atZone(IST_ZONE).toInstant());
                     if(decisionPrice==null) decisionPrice=confirmedTradedLtp;
                     if(exitOrderAlreadyPresent) tradeExecutionService.modifyExitOrderForProtectiveExit(reloaded,decisionPrice,exitReason);
@@ -1316,7 +1367,8 @@ public class PriceTriggerService {
     }
 
     private void recoverUnplacedExitOrder(TriggeredTradeSetupEntity trade, double tradedLtp, Double spotLtp) {
-        if (trade == null || trade.getStatus() != TriggeredTradeStatus.EXIT_TRIGGERED || !hasNoExitOrderId(trade)) {
+        if (trade == null || trade.getStatus() != TriggeredTradeStatus.EXIT_TRIGGERED
+                || (!hasNoExitOrderId(trade) && !NaturalGasScalpProfitLockService.REASON.equals(trade.getExitReason()))) {
             return;
         }
 
@@ -1325,8 +1377,17 @@ public class PriceTriggerService {
             exitReason = "TARGET_HIT";
         }
 
-        log.warn("Recovering trade {} stuck in EXIT_TRIGGERED without exitOrderId. reason={} tradedLtp={} spotLtp={}",
+        log.warn("Recovering trade {} stuck in EXIT_TRIGGERED. reason={} tradedLtp={} spotLtp={}",
                 trade.getId(), exitReason, tradedLtp, spotLtp);
+
+        if (NaturalGasScalpProfitLockService.REASON.equals(exitReason)) {
+            Double bid = ngasScalpProfitLock == null ? null : ngasScalpProfitLock.currentExitBid(trade,nowIst().atZone(IST_ZONE).toInstant());
+            if (bid != null) {
+                if (hasNoExitOrderId(trade)) dispatchSquareOff(trade,bid,exitReason);
+                else tradeExecutionService.modifyExitOrderForProtectiveExit(trade,bid,exitReason);
+            }
+            return;
+        }
 
         if (FnoMoverExitPolicyService.isExitReason(exitReason)
                 || "STOP_LOSS_HIT".equals(exitReason)

@@ -1,0 +1,17 @@
+# Natural Gas Scalping premium profit lock
+
+An optional overlay for `strategy:MCX_NATURALGAS_SCALPING`, owned active Simulator accounts, BUY CE/PE, one standard MCX lot (1,250 units). Existing entry rules, ₹1.50 premium hard stop, ₹1.50 premium target, daily loss allowance and 23:20 square-off remain intact. This does not enable a subscription or change the separate Pine strategy.
+
+The lock arms when an accepted option **bid** reaches 105% of the actual entry premium. Thereafter its floor is `entry + 50% × (highest accepted bid − entry)`, rounded **down** to a ₹0.05 tick. The floor never falls. A fresh bid at or below the floor requests a whole-position exit at the available bid; gaps and execution can produce a lower result. The floor is not a guaranteed fill or broker stop order.
+
+For entry ₹16.40, the first qualifying tick is ₹17.25 and the initial floor is ₹16.80. At peak ₹17.50, the floor becomes ₹16.95. A later ₹16.50 bid requests exit at ₹16.50.
+
+Only coherent, positive, uncrossed, exact-scrip Sharekhan WebSocket books received within five seconds and after entry are accepted. An explicit foreign exchange is rejected. Like the existing Scalping Simulator entry model, displayed depth is **unverified** and full-quantity execution is assumed. LTP-only updates do not refresh book freshness. There is no REST fallback or broker authentication in this overlay. Tick callbacks observe it, with an additional two-second cache timer during the MCX session; the timer also requires fresh LTP for the unchanged hard-stop/target workflow. Unobserved peaks, outages and delayed feeds are not reconstructed.
+
+The original hard stop takes priority. Policy decisions use the existing atomic exit claim, dispatcher, sell-order reuse and exit chase. Claimed exits wait for a fresh bid, including recovery after restart; an existing sell order is repriced rather than duplicated. Unavailable policy state leaves the original stop/target processing running.
+
+Durable state records entry identity, accepted peak, armed status, monotone floor and last evaluation. A separate ledger records arming, floor increases and exit requests; trade exit reasons use `NGAS_SCALP_PROFIT_LOCK`. Peaks observed after rollout start are persisted; historical peaks are not seeded into active positions.
+
+Deployment: apply `src/main/resources/db/postgresql/ngas-scalp-profit-lock.sql` to the primary app database, then set `APP_STRATEGY_NGAS_SCALP_PROFIT_LOCK_ENABLED=true`. Default is false. The additive tables must be retained for rollback/restart. Disabling stops new observations; existing claimed exit intent remains recoverable on ticks. Do not change global TSL flags.
+
+Historical diagnostic through 5 November 2026: eight recorded entries gross ₹500; chronological 5%/50% overlay estimates ₹1,125 gross, a ₹625 improvement. Both one-minute OHLC path orders and a previous-completed-bar peak replay agree. This uses historical LTP, ideal floor fills with open-gap penalties and the original exit when no earlier lock exit occurs. Partial entry/exit minutes are excluded. Historical executable bid/depth, fees and altered re-entries are unavailable, so this is not a realized or guaranteed improvement. The 5 November trade did not reach the activation level and remains a full ₹1.50 loss. Applying a ₹100 paper reserve per trade leaves estimated ₹325 versus recorded −₹300; that reserve is not actual broker costs.
