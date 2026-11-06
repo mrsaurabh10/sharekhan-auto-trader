@@ -2863,6 +2863,39 @@ public class TradeExecutionService {
     }
 
 
+    @jakarta.annotation.PostConstruct
+    void logFnoEntryRiskPolicy() {
+        log.info("FNO_ENTRY_RR_POLICY | minRewardRisk=1.10 | maxSpotAgeMs=5000 | levels=ORIGINAL | accounts=LIVE_AND_SIMULATOR");
+    }
+
+    private FnoMoverEntryRiskPolicy.Check checkFnoEntryRisk(TriggeredTradeSetupEntity trade) {
+        if (!FnoMoverEntryRiskPolicy.owns(trade))
+            return FnoMoverEntryRiskPolicy.evaluate(trade, null, null, null);
+        Integer code = trade.getSpotScripCode();
+        var observation = code == null ? null : ltpCacheService.getPriceObservation(code);
+        var check = FnoMoverEntryRiskPolicy.evaluate(trade,
+                observation == null ? null : observation.price(),
+                observation == null ? null : observation.observedAt(), Instant.now());
+        log.info("FNO_ENTRY_RR_CHECK | trigger={} | symbol={} | side={} | spot={} | stop={} | target1={} | ratio={} | minRewardRisk=1.10 | allowed={} | reason={}",
+                triggerLogId(trade), trade.getSymbol(), trade.getOptionType(), check.spot(),
+                trade.getStopLoss(), trade.getTarget1(), check.ratio(), check.allowed(), check.reason());
+        return check;
+    }
+
+    /** Persist the cancellation intent first; polling retains any fills, even on a timeout. */
+    private void cancelFnoEntryForRisk(TriggeredTradeSetupEntity trade, EntryChaseControl control,
+                                     ModifiableEntryBrokerService broker, BrokerContext ctx, String reason) {
+        stopEntryOrderChase(trade.getId());
+        control.setState(EntryChaseControl.State.CANCEL_PENDING);
+        control.setReason(reason + ": cancelling unfilled remainder; broker confirmation required");
+        entryChaseControlRepository.save(control);
+        trade.setReason(reason);
+        triggeredTradeRepo.save(trade);
+        clearEntryButtons(control);
+        broker.cancelEntryOrder(trade, ctx, trade.getOrderId());
+        auditEntryOutcome(trade, "ENTRY_CANCEL_REQUESTED", reason, trade.getOrderId(), null);
+    }
+
     private OrderPlacementResult attemptEntryPlacement(TriggeredTradeSetupEntity trigger,
                                                        double ltp,
                                                        BrokerContext ctx,
@@ -2990,6 +3023,12 @@ public class TradeExecutionService {
             if (!chaseEntryUntilExecuted && isEntrySlippageLimitReached(trigger, price, ltp)) {
                 return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
                         requestedQuantity, "ENTRY_MAX_SLIPPAGE_EXCEEDED", lastResult);
+            }
+            // Recheck after quote/price preparation, immediately before each placement or modification.
+            var riskCheck = checkFnoEntryRisk(trigger);
+            if (!riskCheck.allowed()) {
+                return cancelEntryAndReconcile(trigger, ctx, brokerService, orderId, latestSnapshot,
+                        requestedQuantity, riskCheck.reason(), lastResult);
             }
             log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, triggerLogId(trigger), formatPrice(price));
             TradeEventLogger.logOrderAttempt("ENTRY", trigger, attempt + 1, attempt == 0 ? "PLACE" : "MODIFY", price, orderId);
@@ -3586,6 +3625,12 @@ public class TradeExecutionService {
                     }
                     if (TradeStatus.NO_RECORDS.equals(status)) return;
 
+                    var riskCheck = checkFnoEntryRisk(latest);
+                    if (!riskCheck.allowed()) {
+                        cancelFnoEntryForRisk(latest, currentControl, modifiableEntryBroker, ctx, riskCheck.reason());
+                        return;
+                    }
+
                     EntryChaseState chaseState = entryChaseStates.computeIfAbsent(tradeId, id -> new EntryChaseState());
                     if (waitForBrokerTrigger && !chaseState.triggerActivated) {
                         if (!isBrokerTriggerActivated(orderHistory)) {
@@ -3613,6 +3658,11 @@ public class TradeExecutionService {
                         return;
                     }
 
+                    var finalRiskCheck = checkFnoEntryRisk(latest);
+                    if (!finalRiskCheck.allowed()) {
+                        cancelFnoEntryForRisk(latest, currentControl, modifiableEntryBroker, ctx, finalRiskCheck.reason());
+                        return;
+                    }
                     TradeEventLogger.logOrderAttempt("ENTRY_CHASE", latest, chaseState.modifyAttempts + 1, "MODIFY", candidatePrice, latestOrderId);
                     currentControl.setAttempts(currentControl.getAttempts() + 1);
                     entryChaseControlRepository.save(currentControl); // consume budget before broker I/O
@@ -3767,6 +3817,13 @@ public class TradeExecutionService {
                     return "No fresh best ask available. No modification sent; try again.";
                 }
                 price = normalisePriceToTick(executable);
+            }
+            if (!"cancel".equals(action)) {
+                var riskCheck = checkFnoEntryRisk(trade);
+                if (!riskCheck.allowed()) {
+                    cancelFnoEntryForRisk(trade, control, broker, ctx, riskCheck.reason());
+                    return "FNO entry no longer meets admission validation; cancellation requested for the unfilled remainder. Any fills remain under monitoring.";
+                }
             }
             // Invalidate this generation before broker I/O, including ambiguous timeouts/restarts.
             control.setState(EntryChaseControl.State.ACTION_PENDING);

@@ -47,6 +47,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -1597,6 +1598,91 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(ctx.service.isFundsManagedOptionRequest(ctx.savedRequest.get())).isFalse();
         ctx.savedRequest.get().setUseSpotForSl(false);ctx.useSimulatorBroker();
         assertThat(ctx.service.isFundsManagedOptionRequest(ctx.savedRequest.get())).isFalse();
+    }
+
+    private TriggeredTradeSetupEntity fnoRiskTrade() {
+        return TriggeredTradeSetupEntity.builder().source(FnoMoverEntryRiskPolicy.SOURCE)
+                .symbol("TEST").exchange("NF").scripCode(123456).spotScripCode(20000)
+                .optionType("CE").entryPrice(100d).stopLoss(90d).target1(111d)
+                .useSpotForEntry(true).useSpotForSl(true).useSpotForTarget(true)
+                .quantity(50L).lots(1).brokerCredentialsId(55L).appUserId(9L).build();
+    }
+
+    private void freshRiskSpot(TestContext ctx,double spot) {
+        when(ctx.ltpCache.getLtp(20000)).thenReturn(spot);
+        when(ctx.ltpCache.getObservedAt(20000)).thenAnswer(i -> LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
+        when(ctx.ltpCache.getPriceObservation(20000)).thenAnswer(i -> new LtpCacheService.CachedPriceObservation(spot, LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"))));
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void fnoAdmissionRejectsBelowMinimumForLiveAndSimulator(boolean simulator) {
+        var ctx=new TestContext(pending("unused"));if(simulator)ctx.useSimulatorBroker();
+        configureFiveAttemptPolicy(ctx);configureTightFreshQuote(ctx,10.50,10.60,10.55);freshRiskSpot(ctx,100.5);
+        var trade=fnoRiskTrade();
+        BrokerContext broker=ReflectionTestUtils.invokeMethod(ctx.service,"resolveBrokerContext",55L,9L);
+        OrderPlacementResult result=ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",trade,10.55,broker,ctx.broker,false);
+        assertThat(result.isSuccess()).isFalse();assertThat(result.getRejectionReason()).isEqualTo("FNO_ENTRY_RR_BELOW_MINIMUM");
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        assertThat(trade.getStopLoss()).isEqualTo(90);assertThat(trade.getTarget1()).isEqualTo(111);
+    }
+
+    @Test void fnoAdmissionAtBoundaryPlacesWithoutMovingSpotLevels() {
+        var ctx=new TestContext(pending("unused"));configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx,10.50,10.60,10.55);freshRiskSpot(ctx,100);
+        var trade=fnoRiskTrade();BrokerContext broker=ReflectionTestUtils.invokeMethod(ctx.service,"resolveBrokerContext",55L,9L);
+        when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenReturn(OrderPlacementResult.builder()
+                .success(true).orderId("RR-FILLED").status("Fully Executed").executedPrice(10.6).executedQuantity(50L).build());
+        OrderPlacementResult result=ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",trade,10.55,broker,ctx.broker,false);
+        assertThat(result.isSuccess()).isTrue();verify(ctx.broker).placeOrder(any(),any(),anyDouble());
+        assertThat(trade.getStopLoss()).isEqualTo(90);assertThat(trade.getTarget1()).isEqualTo(111);
+    }
+
+    @Test void fnoRetryCancelsUnfilledRemainderAndPreservesPartialFill() {
+        var ctx=new TestContext(pending("unused"));configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx,10.50,10.60,10.55);freshRiskSpot(ctx,100);
+        var trade=fnoRiskTrade();trade.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        BrokerContext broker=ReflectionTestUtils.invokeMethod(ctx.service,"resolveBrokerContext",55L,9L);
+        when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenAnswer(i->{freshRiskSpot(ctx,100.5);return pending("RR-PARTIAL");});
+        AtomicBoolean cancelled=new AtomicBoolean(false);
+        doAnswer(i->{cancelled.set(true);return null;}).when(ctx.broker).cancelEntryOrder(any(),any(),eq("RR-PARTIAL"));
+        when(ctx.broker.fetchOrderStatus(any(),any(),eq("RR-PARTIAL")))
+                .thenAnswer(i->partialOrderHistory(cancelled.get()?"Cancelled":"Partially Executed"));
+        OrderPlacementResult result=ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",trade,10.55,broker,ctx.broker,false);
+        assertThat(result.isSuccess()).isTrue();assertThat(result.getExecutedQuantity()).isEqualTo(20);
+        verify(ctx.broker).cancelEntryOrder(any(),any(),eq("RR-PARTIAL"));
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+    }
+
+    @Test void fnoManualRepriceCannotOverrideAdmissionPolicy() {
+        var ctx=pausedEntry();var trade=ctx.savedTrade.get();
+        trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);trade.setOptionType("CE");
+        trade.setUseSpotForSl(true);trade.setUseSpotForTarget(true);trade.setStopLoss(90d);trade.setTarget1(111d);
+        freshRiskSpot(ctx,100.5);
+        var token=ctx.controls.get(88L).getDecisionToken();
+        assertThat(ctx.service.handleEntryAction(88L,token,"market")).contains("admission validation");
+        verify(ctx.broker).cancelEntryOrder(any(),any(),eq("ACTION-1"));
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CANCEL_PENDING);
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+    }
+
+    @Test void fnoScheduledChaseCancelsOnDeteriorationWithoutReplacingTheOrder() {
+        var ctx=pausedEntry();var trade=ctx.savedTrade.get();
+        trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);trade.setOptionType("CE");
+        trade.setUseSpotForSl(true);trade.setUseSpotForTarget(true);trade.setStopLoss(90d);trade.setTarget1(111d);
+        freshRiskSpot(ctx,100.5);
+        var scheduler=mock(java.util.concurrent.ScheduledExecutorService.class);
+        when(scheduler.scheduleWithFixedDelay(any(Runnable.class),anyLong(),anyLong(),any())).thenReturn(mock(java.util.concurrent.ScheduledFuture.class));
+        ReflectionTestUtils.setField(ctx.service,"entryChaseScheduler",scheduler);
+        ctx.controls.get(88L).setState(EntryChaseControl.State.RUNNING);
+        ReflectionTestUtils.invokeMethod(ctx.service,"scheduleEntryOrderChase",trade,false);
+        var task=ArgumentCaptor.forClass(Runnable.class);
+        verify(scheduler).scheduleWithFixedDelay(task.capture(),anyLong(),anyLong(),any());
+        task.getValue().run();
+        verify(ctx.broker).cancelEntryOrder(any(),any(),eq("ACTION-1"));
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CANCEL_PENDING);
     }
 
     private static class TestContext {
