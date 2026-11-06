@@ -33,22 +33,17 @@ class IntradayTradeCloserTest {
     }
 
     @Test
-    void purgeUsesMarketCloseCutoffAndPreservesOnlyNonIntradayPendingConfirmations() {
-        TriggerTradeRequestRepository requestRepository = mock(TriggerTradeRequestRepository.class);
-        when(requestRepository.deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(
-                org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
-                .thenReturn(3);
-        IntradayTradeCloser scheduler = new IntradayTradeCloser(
-                mock(TriggeredTradeSetupRepository.class),
-                requestRepository,
-                mock(TradeExecutionService.class),
-                mock(LtpCacheService.class));
-
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
-        scheduler.purgeTodayIntradayTradeRequests();
-
-        verify(requestRepository).deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(
-                eq(today.atTime(15, 30)), eq(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION));
+    void purgeWaitsUntil2330AndCatchesUpOnWeekend() {
+        TriggerTradeRequestRepository repo = mock(TriggerTradeRequestRepository.class);
+        var scheduler = new IntradayTradeCloser(mock(TriggeredTradeSetupRepository.class),repo,
+                mock(TradeExecutionService.class),mock(LtpCacheService.class));
+        var friday=java.time.LocalDate.of(2026,10,30);
+        scheduler.purgeCompletedDayRequests(friday.atTime(23,29));
+        verify(repo).deleteCompletedDayRequests(eq(friday.atStartOfDay()),org.mockito.ArgumentMatchers.anyList(),org.mockito.ArgumentMatchers.anyList(),eq(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED));
+        scheduler.purgeCompletedDayRequests(friday.atTime(23,30));
+        verify(repo).deleteCompletedDayRequests(eq(friday.atTime(23,30)),org.mockito.ArgumentMatchers.anyList(),org.mockito.ArgumentMatchers.anyList(),eq(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED));
+        scheduler.purgeCompletedDayRequests(friday.plusDays(1).atTime(9,0));
+        verify(repo).deleteCompletedDayRequests(eq(friday.plusDays(1).atStartOfDay()),org.mockito.ArgumentMatchers.anyList(),org.mockito.ArgumentMatchers.anyList(),eq(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED));
     }
     @Test
     void cashCloserHandlesCashOnlyAndPreservesDeliveryOptionsAndBtp() {

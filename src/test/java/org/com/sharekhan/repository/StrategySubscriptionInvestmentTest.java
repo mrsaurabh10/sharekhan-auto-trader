@@ -77,7 +77,10 @@ class StrategySubscriptionInvestmentTest {
                 .status(org.com.sharekhan.enums.TriggeredTradeStatus.ENTRY_SUBMITTING).build());
         assertThat(requests.findNaturalGasDailyRequests(source,10L,20L,start,start.plusDays(1))).extracting(org.com.sharekhan.entity.TriggerTradeRequestEntity::getId).containsExactly(row.getId());
         assertThat(requests.findNaturalGasDailyRequests(source,10L,21L,start,start.plusDays(1))).isEmpty();
-        requests.deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(start.plusHours(15),org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        requests.deleteCompletedDayRequests(start.plusDays(1),
+            java.util.List.of(org.com.sharekhan.enums.TriggeredTradeStatus.ENTRY_SUBMITTING),
+            java.util.List.of(org.com.sharekhan.enums.TriggeredTradeStatus.EXITED_SUCCESS),
+            org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED);
         entityManager.clear();assertThat(requests.findById(row.getId())).isPresent();
         trades.saveAndFlush(org.com.sharekhan.entity.TriggeredTradeSetupEntity.builder().source(source).appUserId(10L).brokerCredentialsId(20L)
                 .entryAt(start.plusHours(10)).orderId("SIM-TEST").status(org.com.sharekhan.enums.TriggeredTradeStatus.EXITED_SUCCESS).build());

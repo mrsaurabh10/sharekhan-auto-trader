@@ -23,7 +23,7 @@ import java.time.ZoneId;
 public class IntradayTradeCloser {
 
     private static final ZoneId MARKET_ZONE = ZoneId.of("Asia/Kolkata");
-    private static final LocalTime MARKET_CLOSE = LocalTime.of(15, 30);
+    private static final LocalTime REQUEST_CLEANUP_TIME = LocalTime.of(23, 30);
 
     private final TriggeredTradeSetupRepository setupRepository;
     private final TriggerTradeRequestRepository triggerTradeRequestRepository;
@@ -96,17 +96,26 @@ public class IntradayTradeCloser {
         }
     }
 
-    /**
-     * Removes stale same-day requests, including non-intraday requests and rows with no creation timestamp.
-     * Only non-intraday PLACED_PENDING_CONFIRMATION requests and requests created at or after today's 15:30 IST close are preserved.
-     * Executed trade setup rows are deliberately retained as the permanent audit trail.
-     */
-    @Scheduled(cron = "0 30 23 * * MON-FRI", zone = "Asia/Kolkata")
+    /** End-of-day cleanup also catches up after downtime, without deleting live reconciliation state. */
+    @Scheduled(cron = "0 */5 * * * *", zone = "Asia/Kolkata")
     public void purgeTodayIntradayTradeRequests() {
-        LocalDate today = LocalDate.now(MARKET_ZONE);
-        LocalDateTime cutoff = today.atTime(MARKET_CLOSE);
-        int deleted = triggerTradeRequestRepository.deleteStaleRequestsCreatedBeforePreservingNonIntradayStatus(
-                cutoff, TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
-        log.info("🧹 Removed {} stale trade requests created before {} IST, preserving non-intraday PLACED_PENDING_CONFIRMATION", deleted, cutoff);
+        purgeCompletedDayRequests(LocalDateTime.now(MARKET_ZONE));
+    }
+
+    void purgeCompletedDayRequests(LocalDateTime now) {
+        LocalDate completedDay = now.toLocalTime().isBefore(REQUEST_CLEANUP_TIME)
+                ? now.toLocalDate().minusDays(1) : now.toLocalDate();
+        // Include the whole completed calendar day, but never remove requests created after cleanup began.
+        LocalDateTime cutoff = now.toLocalDate().equals(completedDay)
+                ? now : completedDay.plusDays(1).atStartOfDay();
+        int deleted = triggerTradeRequestRepository.deleteCompletedDayRequests(cutoff,
+                List.of(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION, TriggeredTradeStatus.ENTRY_SUBMITTING,
+                        TriggeredTradeStatus.TRIGGERED, TriggeredTradeStatus.TARGET_ORDER_PLACED,
+                        TriggeredTradeStatus.EXIT_TRIGGERED, TriggeredTradeStatus.EXIT_ORDER_PLACED,
+                        TriggeredTradeStatus.EXIT_FAILED),
+                List.of(TriggeredTradeStatus.REJECTED, TriggeredTradeStatus.CANCELLED,
+                        TriggeredTradeStatus.FAILED, TriggeredTradeStatus.COMPLETED,
+                        TriggeredTradeStatus.EXITED_SUCCESS), TriggeredTradeStatus.EXECUTED);
+        if (deleted > 0) log.info("Removed {} completed-day trading requests before {} IST; trade history and unresolved orders retained", deleted, cutoff);
     }
 }
