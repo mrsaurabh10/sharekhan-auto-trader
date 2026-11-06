@@ -26,6 +26,9 @@ public class LtpCacheService {
     private final Map<Integer, Double> ltpCache = new ConcurrentHashMap<>();
     // Timestamp of the latest tick, used by read-only monitoring consumers to reject stale prices.
     private final Map<Integer, LocalDateTime> ltpObservedAtCache = new ConcurrentHashMap<>();
+    // Consumers making admission decisions must read price and time from the same tick.
+    public record CachedPriceObservation(double price, LocalDateTime observedAt) { }
+    private final Map<Integer, CachedPriceObservation> priceObservations = new ConcurrentHashMap<>();
     // Kept separately from the general cache because the latter may be refreshed by backup quote APIs.
     // Stop-loss fallbacks must never treat an API-polled value as a Sharekhan WebSocket tick.
     private final Map<Integer, Double> sharekhanWebSocketLtpCache = new ConcurrentHashMap<>();
@@ -62,6 +65,7 @@ public class LtpCacheService {
     }
 
     void updateLtpAt(int scripCode, double ltp, LocalDateTime observedAt) {
+        priceObservations.put(scripCode, new CachedPriceObservation(ltp, observedAt));
         ltpCache.put(scripCode, ltp);
         if (observedAt != null) {
             ltpObservedAtCache.put(scripCode, observedAt);
@@ -100,6 +104,10 @@ public class LtpCacheService {
 
     public LocalDateTime getObservedAt(int scripCode) {
         return ltpObservedAtCache.get(scripCode);
+    }
+
+    public CachedPriceObservation getPriceObservation(int scripCode) {
+        return priceObservations.get(scripCode);
     }
 
     /** Returns a recent Sharekhan WebSocket tick only; polling-provider values are excluded. */
@@ -144,6 +152,7 @@ public class LtpCacheService {
      * Clear LTP for a given scripCode (optional, e.g. after trade complete)
      */
     public void removeLtp(int scripCode) {
+        priceObservations.remove(scripCode);
         ltpCache.remove(scripCode);
         ltpObservedAtCache.remove(scripCode);
         sharekhanWebSocketLtpCache.remove(scripCode);
@@ -154,6 +163,7 @@ public class LtpCacheService {
      * Clear all cached LTPs
      */
     public void clearAll() {
+        priceObservations.clear();
         ltpCache.clear();
         ltpObservedAtCache.clear();
         sharekhanWebSocketLtpCache.clear();
