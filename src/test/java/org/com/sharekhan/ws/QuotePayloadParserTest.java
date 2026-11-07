@@ -7,6 +7,22 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 
 class QuotePayloadParserTest {
+    @Test void quantitiesAreMatchedToTheirSideAndExactPrice() throws Exception {
+        var data=MAPPER.readTree("{\"depth\":{\"buy\":[{\"price\":100,\"quantity\":65}],\"sell\":[{\"price\":101,\"qty\":130}]}}");
+        var q=QuotePayloadParser.extractQuantities(data,QuotePayloadParser.extractBestBidAsk(data));
+        assertEquals(65,q.bid());assertEquals(130,q.ask());
+        q=QuotePayloadParser.extractQuantities(data,new BidAsk(99d,102d));assertNull(q.bid());assertNull(q.ask());
+    }
+    @Test void directQuantitiesDoNotUseTotalBuySellVolumeOrAmbiguousArrays() throws Exception {
+        var data=MAPPER.readTree("{\"bestBidPrice\":100,\"bestAskPrice\":101,\"bestBidQty\":\"65\",\"bestAskQty\":0}");
+        var q=QuotePayloadParser.extractQuantities(data,QuotePayloadParser.extractBestBidAsk(data));assertEquals(65,q.bid());assertEquals(0,q.ask());
+        data=MAPPER.readTree("{\"bestBidPrice\":100,\"bestAskPrice\":101,\"totalBuyQuantity\":9999,\"totalSellQuantity\":9999,\"depth\":[{\"price\":100,\"quantity\":9999}]}");
+        q=QuotePayloadParser.extractQuantities(data,QuotePayloadParser.extractBestBidAsk(data));assertNull(q.bid());assertNull(q.ask());
+    }
+    @Test void invalidOrFractionalQuantitiesStayUnknown() throws Exception {
+        var data=MAPPER.readTree("{\"bestBidPrice\":100,\"bestAskPrice\":101,\"bestBidQty\":-1,\"bestAskQty\":0.5}");
+        var q=QuotePayloadParser.extractQuantities(data,QuotePayloadParser.extractBestBidAsk(data));assertNull(q.bid());assertNull(q.ask());
+    }
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
