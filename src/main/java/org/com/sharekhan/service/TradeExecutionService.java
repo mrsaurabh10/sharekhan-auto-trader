@@ -77,6 +77,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @RequiredArgsConstructor
 @Slf4j
 public class TradeExecutionService {
+    @Autowired
+    private org.com.sharekhan.strategy.nifty.NiftyThreeCandlePaperBroker niftyThreeCandlePaper;
 
     private static final Duration ORDER_LOCK_TIMEOUT = Duration.ofSeconds(8);
     private static final List<TriggeredTradeStatus> OPTION_FEED_ACTIVE_TRADE_STATUSES = List.of(
@@ -1600,6 +1602,8 @@ public class TradeExecutionService {
      * direct API calls cannot be sent down the F&O lookup path.
      */
     private static String normalizedEntryAction(TriggerRequest request) {
+        if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(request.getSource()))
+            throw new InvalidTradeRequestException("Nifty three-candle entries are owned by the Simulator paper strategy");
         String action = request.getAction() == null ? (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(request.getSource()) ? "SELL" : "BUY") : request.getAction().trim().toUpperCase(Locale.ROOT);
         if (!Set.of("BUY", "SELL").contains(action)) throw new InvalidTradeRequestException("Entry action must be BUY or SELL");
         if ("SELL".equals(action) && (!isCashEquityExchange(request.getExchange()) || (request.getOptionType() != null && !request.getOptionType().isBlank()) || !Boolean.TRUE.equals(request.getIntraday())))
@@ -2726,6 +2730,10 @@ public class TradeExecutionService {
                           double exitPrice,
                           String exitReason,
                           TriggeredTradeStatus placedStatus) {
+        if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(trade.getSource())) {
+            niftyThreeCandlePaper.close(trade.getId(),exitReason);
+            return;
+        }
         if (placedStatus != TriggeredTradeStatus.EXIT_ORDER_PLACED
                 && placedStatus != TriggeredTradeStatus.TARGET_ORDER_PLACED) {
             throw new IllegalArgumentException("placedStatus must be EXIT_ORDER_PLACED or TARGET_ORDER_PLACED");

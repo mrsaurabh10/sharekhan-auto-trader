@@ -2398,6 +2398,7 @@
       if (!symbolInput) return;
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
       const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(String((templateSelect && templateSelect.value) || ''));
+      const niftyThree = String((templateSelect && templateSelect.value) || '') === 'NIFTY_THREE_CANDLE_ATM';
       const profitRow = document.getElementById('strategyProfitTargetRow');
       const profitInput = document.getElementById('strategyProfitTargetPerLot');
       if (profitRow) profitRow.style.display = 'none';
@@ -2405,26 +2406,27 @@
       window.StrategyRunView?.resetRisk(document.getElementById('adminRunRisk'));
       const mode=document.querySelector('#adminRunRisk [data-risk-field=amountMode]');if(mode)mode.value=timedStraddle?'PER_LOT':'TOTAL';
       const sameDayInput = document.getElementById('strategyIntraday');
-      if (sameDayInput) { sameDayInput.disabled = timedStraddle || naturalGas; if (timedStraddle || naturalGas) sameDayInput.checked = true; }
+      if (sameDayInput) { sameDayInput.disabled = timedStraddle || naturalGas || niftyThree; if (timedStraddle || naturalGas || niftyThree) sameDayInput.checked = true; }
       const automatic = automaticUniverseTemplate();
       const btp = isSpotBigTradePlus();
       symbolInput.disabled = automatic;
-      symbolInput.readOnly = naturalGas;
+      symbolInput.readOnly = naturalGas || niftyThree;
       symbolInput.style.display = btp ? 'none' : '';
       if (quantitiesRow) quantitiesRow.style.display = btp ? '' : 'none';
       const lotsInput = document.getElementById('strategyLots');
       const averaging = String((templateSelect && templateSelect.value) || '') === 'MCX_NATURALGAS_TREND_AVERAGING';
       if (lotsInput) {
-        lotsInput.readOnly=averaging;
+        lotsInput.readOnly=averaging || niftyThree;
         if(averaging){lotsInput.value='4';lotsInput.dataset.averagingDefault='true';}
         else if(lotsInput.dataset.averagingDefault){lotsInput.value='1';delete lotsInput.dataset.averagingDefault;}
       }
       window.StrategyRunView.averagingHelp(document.getElementById('adminRunRisk'),averaging);
-      document.querySelectorAll('#adminRunRisk [data-risk-field]').forEach(field=>{field.readOnly=averaging;if(field.tagName==='SELECT')field.disabled=averaging;});
+      document.querySelectorAll('#adminRunRisk [data-risk-field]').forEach(field=>{field.readOnly=averaging || niftyThree;if(field.tagName==='SELECT')field.disabled=averaging || niftyThree;});
       if(averaging){
         document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='3000';
         document.querySelector('#adminRunRisk [data-risk-field=profitTarget]').value='1250';
       }
+      if(niftyThree){symbolInput.value='NIFTY';if(lotsInput)lotsInput.value='1';document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='5000';}
       const investmentRow = document.getElementById('strategyInvestmentRow');
       if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';
       if (lotsInput && (btp || isStockMover())) lotsInput.closest('.form-row').style.display = 'none';

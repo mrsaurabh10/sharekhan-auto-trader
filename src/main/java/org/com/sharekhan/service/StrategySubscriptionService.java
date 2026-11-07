@@ -132,7 +132,8 @@ public class StrategySubscriptionService {
             return;
         }
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
-        evaluateBatch(active.stream().filter(s -> !org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId())).toList());
+        evaluateBatch(active.stream().filter(s -> !org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId()))
+                .filter(s -> !org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
     }
 
     /** MCX is evaluated independently of the NSE calendar and afternoon entry cutoff. */
@@ -180,7 +181,7 @@ public class StrategySubscriptionService {
         moverDispatcher.dispatchAll(active, this::evaluate);
     }
 
-    void evaluate(StrategySubscriptionEntity subscription) {
+    public void evaluate(StrategySubscriptionEntity subscription) {
         if (!List.of(ACTIVE, TRIGGERED).contains(subscription.getStatus())) return;
         try {
             boolean continuousFnoTemplate = isContinuousFnoTemplate(subscription.getTemplateId());
@@ -258,6 +259,8 @@ public class StrategySubscriptionService {
         if (!strategyTemplateService.supports(request.getTemplateId())) {
             throw new IllegalArgumentException("Unknown strategy template");
         }
+        if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))
+            strategyTemplateService.validateConfiguration(request);
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
             if (org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.validate(request);
             else if (org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.validate(request);
@@ -342,6 +345,7 @@ public class StrategySubscriptionService {
 
     private boolean isContinuousFnoTemplate(String templateId) {
         return isAutomaticUniverseTemplate(templateId)
+                || org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(templateId)
                 || org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(templateId)
                 || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(templateId)
                 || isManualFnoTemplate(templateId);

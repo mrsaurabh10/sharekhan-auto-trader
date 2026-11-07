@@ -12,6 +12,44 @@ final class QuotePayloadParser {
     }
 
     record BidAsk(Double bid, Double ask) {}
+    record Quantities(Double bid, Double ask) {}
+
+    /** Quantities belong to the exact side/price in this message, never total-market volume. */
+    static Quantities extractQuantities(JsonNode data,BidAsk best) {
+        if(data==null || best==null)return new Quantities(null,null);
+        Double bid=quantityAtDirectPrice(data,DIRECT_BID_KEYS,Set.of("bestBidQty","bestBidQuantity","bidQty","bidQuantity"),best.bid());
+        Double ask=quantityAtDirectPrice(data,DIRECT_ASK_KEYS,Set.of("bestAskQty","bestAskQuantity","bestOfferQty","askQty","askQuantity","offerQty"),best.ask());
+        var depth=data.get("depth");
+        if(depth!=null && depth.isObject()){
+            if(bid==null)bid=quantityAtDepthPrice(depth,DEPTH_BID_KEYS,best.bid());
+            if(ask==null)ask=quantityAtDepthPrice(depth,DEPTH_ASK_KEYS,best.ask());
+        }
+        return new Quantities(bid,ask);
+    }
+    private static Double quantityAtDirectPrice(JsonNode data,Set<String> priceKeys,Set<String> quantityKeys,Double expected){
+        var price=findDirectPrice(data,priceKeys);
+        return samePrice(price,expected)?findQuantity(data,quantityKeys):null;
+    }
+    private static Double quantityAtDepthPrice(JsonNode depth,Set<String> sideKeys,Double expected){
+        var fields=depth.fieldNames();
+        while(fields.hasNext()){
+            var key=fields.next();
+            if(!sideKeys.contains(key.toLowerCase(Locale.ROOT)))continue;
+            var levels=depth.get(key);
+            if(levels==null || !levels.isArray() || levels.isEmpty())continue;
+            var top=levels.get(0);
+            if(top.isObject() && samePrice(extractPriceFromDepthEntry(top),expected))return findQuantity(top,Set.of("quantity","qty","q"));
+        }
+        return null;
+    }
+    private static boolean samePrice(Double a,Double b){return a!=null && b!=null && Double.isFinite(a) && Double.isFinite(b) && Math.abs(a-b)<1e-8;}
+    private static Double findQuantity(JsonNode node,Set<String> keys){
+        for(var k:keys){
+            var v=node.get(k);if(v==null || !(v.isNumber() || v.isTextual()))continue;
+            try{double q=Double.parseDouble(v.asText());if(Double.isFinite(q) && q>=0 && q==Math.rint(q))return q;}catch(NumberFormatException ignored){ }
+        }
+        return null;
+    }
 
     /** Only a provider-echoed exchange or prefixed token establishes the feed segment. */
     static String exchange(JsonNode data) {

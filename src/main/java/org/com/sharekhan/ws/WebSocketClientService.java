@@ -177,7 +177,8 @@ public class WebSocketClientService  {
                         } catch (Exception collectorError) {
                             log.warn("MCX live candle observation failed for scrip {} ({})",scripCode,collectorError.getClass().getSimpleName());
                         }
-                        processLtpUpdate(scripCode, ltp, bestBid, bestAsk, QuotePayloadParser.exchange(data));
+                        var quantities=QuotePayloadParser.extractQuantities(data,bidAsk);
+                        processLtpUpdate(scripCode, ltp, bestBid, bestAsk, QuotePayloadParser.exchange(data),quantities.bid(),quantities.ask());
                     }
                 }
             } else if (json.has("message")  && "ack".equalsIgnoreCase(json.get("message").asText()) ) {
@@ -318,6 +319,9 @@ public class WebSocketClientService  {
     }
 
     private void processLtpUpdate(Integer scripCode, Double ltp, Double bestBid, Double bestAsk, String feedExchange) {
+        processLtpUpdate(scripCode,ltp,bestBid,bestAsk,feedExchange,null,null);
+    }
+    private void processLtpUpdate(Integer scripCode, Double ltp, Double bestBid, Double bestAsk, String feedExchange,Double bidQuantity,Double askQuantity) {
         final int sc = scripCode;
         final Double lv = ltp;
 
@@ -331,7 +335,7 @@ public class WebSocketClientService  {
         }
 
         try {
-            quoteCacheService.recordQuote(sc, bestBid, bestAsk, lv,"SHAREKHAN_WS",feedExchange,"scrip:"+sc,null,null);
+            quoteCacheService.recordQuote(sc, bestBid, bestAsk, lv,"SHAREKHAN_WS",feedExchange,"scrip:"+sc,bidQuantity,askQuantity);
         } catch (Exception e) {
             log.warn("Failed to record quote snapshot for {}: {}", sc, e.getMessage());
         }

@@ -40,6 +40,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PriceTriggerServiceTest {
+    @Test void niftyPaperPositionsBypassGenericCandleStopsAndPartialTargets() {
+        var t=TriggeredTradeSetupEntity.builder().id(601L).source(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.SOURCE)
+                .status(TriggeredTradeStatus.EXECUTED).optionType("CE").scripCode(123).entryPrice(23000d).actualEntryPrice(100d)
+                .useSpotForSl(true).useSpotForTarget(true).stopLoss(22980d).target1(23020d).tslEnabled(false).build();
+        when(triggeredRepo.findById(601L)).thenReturn(Optional.of(t));
+        service.handleTradeWithLock(601L,100d,22970d);
+        verify(triggeredRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString(),anyString());
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
+    }
     @Test void fundsManagedPremiumRequestCannotBypassQueueOnPriceTick() {
         var request=TriggerTradeRequestEntity.builder().id(700L).scripCode(20000).optionType("CE")
                 .entryPrice(100d).useSpotForEntry(false).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build();

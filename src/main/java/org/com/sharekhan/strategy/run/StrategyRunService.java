@@ -107,6 +107,8 @@ public class StrategyRunService {
         }
     }
     private boolean riskReady(StrategyRun run,List<TriggeredTradeSetupEntity> members) {
+        // This paper strategy owns the combined CE/PE daily net ledger, including modeled costs and bid marks.
+        if(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(run.getTemplateId()))return false;
         // Averaging owns paper-net basket targets, daily loss accounting and its monotone premium floor.
         if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(run.getTemplateId()))return false;
         if(members.isEmpty()) return false;
