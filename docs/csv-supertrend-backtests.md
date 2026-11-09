@@ -84,3 +84,11 @@ Live Supertrend CE/PE trades enable TSL when the resolved entry has more than on
 - Results are **spot-index points**, not option premiums, rupee profit or a broker-execution replay. Historical option chains and prices are required for option P&L.
 
 CSV uploads persist archive candles in the deployed database. Offline CLI runs do not upload or persist anything on the server.
+
+## Simulator-only risk policy
+
+The live Simulator templates additionally apply the expiry-day rollover,
+1.5 × five-minute ATR(14) entry veto, and ₹3,000-per-original-lot gross run loss
+control described in `supertrend-simulator-risk.md`. The spot-only CSV engine
+above does not model those account-specific option contract or run-P&L rules;
+its results must not be presented as a replay of the complete Simulator policy.

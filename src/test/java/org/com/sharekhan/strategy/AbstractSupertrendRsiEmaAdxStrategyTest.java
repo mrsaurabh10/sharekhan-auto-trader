@@ -31,7 +31,7 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
     private final IndicatorService indicatorService = mock(IndicatorService.class);
     private final SupertrendRsiEmaAdxCeStrategy strategy = new SupertrendRsiEmaAdxCeStrategy(support, indicatorService,
             new SupertrendSignalRules(new org.com.sharekhan.config.SupertrendStrategyProperties()),
-            mock(SupertrendDecisionDiagnostics.class));
+            mock(SupertrendDecisionDiagnostics.class), mock(SupertrendSimulatorPolicy.class));
 
     @ParameterizedTest
     @CsvSource({"CE,1,false", "CE,2,true", "CE,3,true", "PE,1,false", "PE,2,true", "PE,3,true"})
@@ -53,7 +53,7 @@ class AbstractSupertrendRsiEmaAdxStrategyTest {
         AbstractSupertrendRsiEmaAdxStrategy template = pe
                 ? new SupertrendRsiEmaAdxPeStrategy(support, indicatorService,
                     new SupertrendSignalRules(new org.com.sharekhan.config.SupertrendStrategyProperties()),
-                    mock(SupertrendDecisionDiagnostics.class)) : strategy;
+                    mock(SupertrendDecisionDiagnostics.class), mock(SupertrendSimulatorPolicy.class)) : strategy;
         StrategyApplyRequest request = request("NIFTY");
         request.setLots(lots);
 
