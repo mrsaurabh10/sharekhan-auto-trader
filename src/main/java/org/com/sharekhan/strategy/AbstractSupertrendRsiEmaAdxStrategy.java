@@ -22,17 +22,20 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
     private final StrategyMetadata metadata;
     private final SupertrendSignalRules rules;
     private final SupertrendDecisionDiagnostics diagnostics;
+    private final SupertrendSimulatorPolicy simulatorPolicy;
 
     protected AbstractSupertrendRsiEmaAdxStrategy(StrategySupport support,
                                                   IndicatorService indicatorService,
                                                   StrategyMetadata metadata,
                                                   SupertrendSignalRules rules,
-                                                  SupertrendDecisionDiagnostics diagnostics) {
+                                                  SupertrendDecisionDiagnostics diagnostics,
+                                                  SupertrendSimulatorPolicy simulatorPolicy) {
         this.support = support;
         this.indicatorService = indicatorService;
         this.metadata = metadata;
         this.rules = rules;
         this.diagnostics = diagnostics;
+        this.simulatorPolicy = simulatorPolicy;
     }
 
     @Override
@@ -89,6 +92,15 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
                 ? rules.evaluate(support.normalizeSymbolKey(symbol), metadata.optionType(), indicator)
                 : sharedDecisions.share(metadata.id(), symbol, "SUPER_RULES_V1", now,
                         () -> rules.evaluate(support.normalizeSymbolKey(symbol), metadata.optionType(), indicator));
+        boolean guardedSimulator = simulatorPolicy.applies(request);
+        if (guardedSimulator) {
+            var failure = simulatorPolicy.stopFailure(completedCandles, metadata.optionType());
+            if (failure != null) {
+                var failures = new java.util.ArrayList<>(signalResult.failures());
+                failures.add(failure);
+                signalResult = new SupertrendSignalRules.Result(List.copyOf(failures));
+            }
+        }
         diagnostics.record(request, metadata, symbol, indicator, signalResult);
         if (!signalResult.passed()) {
             return StrategyApplyResponse.builder()
@@ -104,7 +116,7 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
                     .build();
         }
 
-        TriggerRequest trigger = buildTriggerRequest(request, symbol, spotScript, signal);
+        TriggerRequest trigger = buildTriggerRequest(request, symbol, spotScript, signal, guardedSimulator, today);
         TriggerTradeRequestEntity existing = support.findExisting(trigger);
         if (existing != null) {
             return response("duplicate", "A pending request already exists for this strategy contract.", symbol, signal, trigger, existing);
@@ -140,7 +152,7 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
     private TriggerRequest buildTriggerRequest(StrategyApplyRequest request,
                                                String symbol,
                                                ScriptMasterEntity spotScript,
-                                               StrategyCandle signal) {
+                                               StrategyCandle signal, boolean guardedSimulator, LocalDate today) {
         boolean pe = "PE".equalsIgnoreCase(metadata.optionType());
         double entry = support.roundPrice(signal.close());
         double stopLoss = pe ? support.roundPrice(signal.high()) : support.roundPrice(signal.low());
@@ -149,7 +161,8 @@ abstract class AbstractSupertrendRsiEmaAdxStrategy implements StrategyEvaluator 
             throw new IllegalArgumentException(metadata.name() + " risk is not valid. Entry=" + entry + ", SL=" + stopLoss);
         }
 
-        String expiry = support.nearestExpiry(symbol, metadata.optionType());
+        String expiry = guardedSimulator ? simulatorPolicy.expiry(symbol, metadata.optionType(), today)
+                : support.nearestExpiry(symbol, metadata.optionType());
         double strike = support.nearestStrike(symbol, metadata.optionType(), expiry, entry);
 
         TriggerRequest trigger = new TriggerRequest();

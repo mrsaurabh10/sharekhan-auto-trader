@@ -25,6 +25,8 @@ public class StrategyRunCoordinator {
     private final TransactionTemplate insert;
     private final ThreadLocal<StrategyRun> context=new ThreadLocal<>();
     @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.strategy.SupertrendSimulatorPolicy supertrendPolicy;
+    @org.springframework.beans.factory.annotation.Autowired
     public StrategyRunCoordinator(StrategyRunRepository runs,StrategySubscriptionRepository subscriptions,EntityManager em,PlatformTransactionManager manager) {
         this(runs,subscriptions,em,manager,Clock.system(StrategySupport.MARKET_ZONE));
     }
@@ -60,7 +62,8 @@ public class StrategyRunCoordinator {
         var existing=runs.findById(id);
         if(existing.isPresent() && !"OPEN".equals(existing.get().getStatus())) return StrategyApplyResponse.builder().status("waiting")
                 .templateId(request.getTemplateId()).symbol(request.getSymbol()).message("This strategy instance is closing/closed; future instances remain scheduled").build();
-        var rules=StrategyRiskSettings.validate(request.getRiskSettings(),request.getLots());
+        var rules=supertrendPolicy == null ? StrategyRiskSettings.validate(request.getRiskSettings(),request.getLots())
+                : supertrendPolicy.riskSettings(request);
         if(rules==null && ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId()) && request.getProfitTargetPerLot()!=null) {
             rules=new StrategyRiskSettings();rules.setAmountMode(StrategyRiskSettings.AmountMode.PER_LOT);rules.setProfitTarget(request.getProfitTargetPerLot());
             rules=StrategyRiskSettings.validate(rules,request.getLots());

@@ -53,6 +53,25 @@ class StrategyRunCoordinatorTest {
         var pm=coordinator("13:30:05");pm.evaluate(r,()->{pm.ensureCurrentRun();return null;});
         assertThat(saved.values()).extracting(StrategyRun::getInstance).containsExactlyInAnyOrder("AM","PM");
     }
+    @Test void simulatorSupertrendRunCapturesPerOriginalLotCapAndRetainsItAfterPartialBooking() {
+        var c=coordinator("09:30:15");var r=request();r.setTemplateId("ST_RSI_EMA_ADX_PE");r.setLots(3);
+        subs.findById(10L).orElseThrow().setTemplateId(r.getTemplateId());
+        var brokers=mock(BrokerCredentialsRepository.class);
+        when(brokers.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(2L).appUserId(1L).brokerName("Simulator").build()));
+        var policy=new org.com.sharekhan.strategy.SupertrendSimulatorPolicy(brokers,mock(ScriptMasterRepository.class),true);
+        org.springframework.test.util.ReflectionTestUtils.setField(c,"supertrendPolicy",policy);
+        c.evaluate(r,()->{c.ensureCurrentRun();return null;});
+        var run=saved.values().iterator().next();
+        assertThat(run.getLots()).isEqualTo(3);
+        assertThat(run.getRiskSettings().getMaxLoss()).isEqualByComparingTo("3000");
+        var risk=new StrategyRunRiskEngine();
+        assertThat(risk.evaluate(run.getRiskSettings(),run.getLots(),new BigDecimal("-8999.99"),null,null).closeReason()).isNull();
+        assertThat(risk.evaluate(run.getRiskSettings(),run.getLots(),new BigDecimal("-9000"),null,null).closeReason()).isEqualTo("STRATEGY_MAX_LOSS");
+        r.setLots(1);c.evaluate(r,()->{c.ensureCurrentRun();return null;});
+        assertThat(saved).hasSize(1);assertThat(run.getLots()).isEqualTo(3);
+        assertThat(run.getRiskSettings().scale(run.getRiskSettings().getMaxLoss(),run.getLots())).isEqualByComparingTo("9000");
+    }
+
     @Test void scopeCannotLeakAfterFailureOrBeInjectedByCaller() {
         var am=coordinator("09:30:00");var r=request();
         assertThatThrownBy(()->am.evaluate(r,()->{throw new IllegalStateException("failed evaluator");})).hasMessage("failed evaluator");
