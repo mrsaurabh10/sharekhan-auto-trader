@@ -86,6 +86,10 @@ public class StrategyTemplateService {
     }
 
     public void validateConfiguration(StrategyApplyRequest request) {
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
+            var evaluator=evaluators.get(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE);
+            if(evaluator instanceof org.com.sharekhan.strategy.adxdmi.AdxDmiStrategy adx) adx.validateConfiguration(request);
+        }
         if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
             var evaluator=evaluators.get(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE);
             if(evaluator instanceof org.com.sharekhan.strategy.nifty.NiftyThreeCandleStrategy nifty) nifty.validateConfiguration(request);
@@ -122,6 +126,7 @@ public class StrategyTemplateService {
             request.setProfitTargetPerLot(org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.profitTarget(request.getProfitTargetPerLot()));
             request.setIntraday(true);
         }
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) validateConfiguration(request);
         if (!isAutomaticUniverseTemplate(request.getTemplateId()) && !StringUtils.hasText(request.getSymbol())) {
             throw new IllegalArgumentException("symbol is required");
         }

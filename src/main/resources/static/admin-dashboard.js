@@ -2398,6 +2398,7 @@
       if (!symbolInput) return;
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
       const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(String((templateSelect && templateSelect.value) || ''));
+      const adxDmi = String((templateSelect && templateSelect.value) || '') === 'ADX_DMI_FIXED_PARTIALS';
       const niftyThree = String((templateSelect && templateSelect.value) || '') === 'NIFTY_THREE_CANDLE_ATM';
       const profitRow = document.getElementById('strategyProfitTargetRow');
       const profitInput = document.getElementById('strategyProfitTargetPerLot');
@@ -2406,7 +2407,7 @@
       window.StrategyRunView?.resetRisk(document.getElementById('adminRunRisk'));
       const mode=document.querySelector('#adminRunRisk [data-risk-field=amountMode]');if(mode)mode.value=timedStraddle?'PER_LOT':'TOTAL';
       const sameDayInput = document.getElementById('strategyIntraday');
-      if (sameDayInput) { sameDayInput.disabled = timedStraddle || naturalGas || niftyThree; if (timedStraddle || naturalGas || niftyThree) sameDayInput.checked = true; }
+      if (sameDayInput) { sameDayInput.disabled = timedStraddle || naturalGas || niftyThree || adxDmi; if (timedStraddle || naturalGas || niftyThree || adxDmi) sameDayInput.checked = true; }
       const automatic = automaticUniverseTemplate();
       const btp = isSpotBigTradePlus();
       symbolInput.disabled = automatic;
@@ -2416,16 +2417,17 @@
       const lotsInput = document.getElementById('strategyLots');
       const averaging = String((templateSelect && templateSelect.value) || '') === 'MCX_NATURALGAS_TREND_AVERAGING';
       if (lotsInput) {
-        lotsInput.readOnly=averaging || niftyThree;
+        lotsInput.readOnly=averaging || niftyThree || adxDmi;
         if(averaging){lotsInput.value='4';lotsInput.dataset.averagingDefault='true';}
         else if(lotsInput.dataset.averagingDefault){lotsInput.value='1';delete lotsInput.dataset.averagingDefault;}
       }
       window.StrategyRunView.averagingHelp(document.getElementById('adminRunRisk'),averaging);
-      document.querySelectorAll('#adminRunRisk [data-risk-field]').forEach(field=>{field.readOnly=averaging || niftyThree;if(field.tagName==='SELECT')field.disabled=averaging || niftyThree;});
+      document.querySelectorAll('#adminRunRisk [data-risk-field]').forEach(field=>{field.readOnly=averaging || niftyThree || adxDmi;if(field.tagName==='SELECT')field.disabled=averaging || niftyThree || adxDmi;});
       if(averaging){
         document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='3000';
         document.querySelector('#adminRunRisk [data-risk-field=profitTarget]').value='1250';
       }
+      if(adxDmi && lotsInput)lotsInput.value='3';
       if(niftyThree){symbolInput.value='NIFTY';if(lotsInput)lotsInput.value='1';document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='5000';}
       const investmentRow = document.getElementById('strategyInvestmentRow');
       if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';

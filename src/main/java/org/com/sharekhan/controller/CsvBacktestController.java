@@ -41,4 +41,13 @@ public class CsvBacktestController {
         catch(IllegalArgumentException e) { return ResponseEntity.badRequest().body(Map.of("error",e.getMessage())); }
     }
     private boolean authorized(String token) {return adminToken!=null&&!adminToken.isBlank()&&adminToken.equals(token);}
+    public record AdxDmiRunRequest(LocalDate from,LocalDate to,Boolean morningOnly,Double tickSize) { }
+    @PostMapping("/datasets/{id}/adx-dmi-fixed-partials")
+    public ResponseEntity<?> adxDmi(@RequestHeader(value="X-Admin-Token",required=false) String token,
+                                    @PathVariable String id,@RequestBody AdxDmiRunRequest request) {
+        if(!authorized(token))return ResponseEntity.status(403).build();
+        try{return ResponseEntity.ok().cacheControl(org.springframework.http.CacheControl.noStore())
+                .body(service.runAdxDmi(id,request.from(),request.to(),!Boolean.FALSE.equals(request.morningOnly()),request.tickSize()==null?0.05:request.tickSize()));}
+        catch(IllegalArgumentException failure){return ResponseEntity.badRequest().body(Map.of("error",failure.getMessage()));}
+    }
 }
