@@ -133,7 +133,8 @@ public class StrategySubscriptionService {
         }
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
         evaluateBatch(active.stream().filter(s -> !org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId()))
-                .filter(s -> !org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
+                .filter(s -> !org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId()))
+                .filter(s -> !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
     }
 
     /** MCX is evaluated independently of the NSE calendar and afternoon entry cutoff. */
@@ -259,6 +260,8 @@ public class StrategySubscriptionService {
         if (!strategyTemplateService.supports(request.getTemplateId())) {
             throw new IllegalArgumentException("Unknown strategy template");
         }
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))
+            strategyTemplateService.validateConfiguration(request);
         if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))
             strategyTemplateService.validateConfiguration(request);
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim())) {
@@ -345,6 +348,7 @@ public class StrategySubscriptionService {
 
     private boolean isContinuousFnoTemplate(String templateId) {
         return isAutomaticUniverseTemplate(templateId)
+                || org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(templateId)
                 || org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(templateId)
                 || org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(templateId)
                 || org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(templateId)

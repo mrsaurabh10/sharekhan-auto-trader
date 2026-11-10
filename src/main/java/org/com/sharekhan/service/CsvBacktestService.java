@@ -28,7 +28,7 @@ public class CsvBacktestService {
     }
     @Transactional
     public synchronized CsvBacktestDatasetEntity importCsv(InputStream input,String filename,String symbol,int inputMinutes) throws IOException {
-        if (!Set.of("NIFTY","BANKNIFTY").contains(symbol)) throw new IllegalArgumentException("symbol must be NIFTY or BANKNIFTY");
+        if (!Set.of("NIFTY","BANKNIFTY","SENSEX").contains(symbol)) throw new IllegalArgumentException("symbol must be NIFTY, BANKNIFTY or SENSEX");
         MessageDigest digest;
         try {digest=MessageDigest.getInstance("SHA-256");}catch(NoSuchAlgorithmException e){throw new IllegalStateException(e);}
         digest.update((symbol+"|"+inputMinutes+"|").getBytes(StandardCharsets.UTF_8));
@@ -71,6 +71,17 @@ public class CsvBacktestService {
                 explicit?"Caller supplied expiry dates":"Nominal NIFTY schedule only; holiday-shifted expiries omitted, missing timestamps skipped; not a fully verified historical contract calendar");
     }
     public record Result(String datasetId,String pnlUnit,SupertrendStrategyProperties rules,SupertrendCsvBacktest.Report report) { }
+    @Transactional(readOnly=true)
+    public org.com.sharekhan.strategy.adxdmi.AdxDmiReplay.Report runAdxDmi(String id,LocalDate from,LocalDate to,boolean morningOnly) {
+        var dataset=datasets.findById(id).orElseThrow(()->new IllegalArgumentException("Unknown dataset"));
+        org.com.sharekhan.strategy.adxdmi.AdxDmiRules.symbol(dataset.getSymbol());
+        var config=new org.com.sharekhan.strategy.adxdmi.AdxDmiReplay.Config(dataset.getSymbol(),from==null?dataset.getFirstDate():from,to==null?dataset.getLastDate():to,morningOnly);
+        var bars=jdbc.query("select candle_time,open_price,high_price,low_price,close_price,volume from csv_backtest_candles where dataset_id=? and candle_time<? order by candle_time",
+                (row,index)->new StrategyCandle(row.getTimestamp(1).toLocalDateTime().toLocalDate(),row.getTimestamp(1).toLocalDateTime().toLocalTime(),row.getDouble(2),row.getDouble(3),row.getDouble(4),row.getDouble(5),row.getLong(6)),
+                id,Timestamp.valueOf(config.to().plusDays(1).atStartOfDay()));
+        if(bars.isEmpty())throw new IllegalArgumentException("No candles before requested end");
+        return new org.com.sharekhan.strategy.adxdmi.AdxDmiReplay().run(bars,config);
+    }
     @Transactional(readOnly=true)
     public Result run(String id,LocalDate from,LocalDate to,double targetR,double slippagePoints,double costPoints,LocalTime squareOff) {
         var dataset=datasets.findById(id).orElseThrow(()->new IllegalArgumentException("Unknown dataset"));

@@ -950,7 +950,8 @@ public class PriceTriggerService {
                 if (opt.isEmpty()) return 0;
                 TriggeredTradeSetupEntity persisted = opt.get();
                 // This paper strategy owns instantaneous spot exits and bid fills, not candle-close SLs or partial targets.
-                if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(persisted.getSource())) return CLAIM_NONE;
+                if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(persisted.getSource())
+                        || org.com.sharekhan.strategy.adxdmi.AdxDmiRules.owns(persisted.getSource())) return CLAIM_NONE;
 
                 // Sharekhan owns the target and stop-loss child legs of a BTP
                 // bracket.  Local exit processing must not submit a second sell

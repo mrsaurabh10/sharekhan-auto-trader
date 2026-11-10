@@ -79,6 +79,8 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 public class TradeExecutionService {
     @Autowired
     private org.com.sharekhan.strategy.nifty.NiftyThreeCandlePaperBroker niftyThreeCandlePaper;
+    @Autowired
+    private org.com.sharekhan.strategy.adxdmi.AdxDmiPaperBroker adxDmiPaper;
 
     private static final Duration ORDER_LOCK_TIMEOUT = Duration.ofSeconds(8);
     private static final List<TriggeredTradeStatus> OPTION_FEED_ACTIVE_TRADE_STATUSES = List.of(
@@ -1602,6 +1604,8 @@ public class TradeExecutionService {
      * direct API calls cannot be sent down the F&O lookup path.
      */
     private static String normalizedEntryAction(TriggerRequest request) {
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.owns(request.getSource()))
+            throw new InvalidTradeRequestException("ADX DMI entries are owned by the Simulator paper strategy");
         if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(request.getSource()))
             throw new InvalidTradeRequestException("Nifty three-candle entries are owned by the Simulator paper strategy");
         String action = request.getAction() == null ? (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(request.getSource()) ? "SELL" : "BUY") : request.getAction().trim().toUpperCase(Locale.ROOT);
@@ -2730,6 +2734,10 @@ public class TradeExecutionService {
                           double exitPrice,
                           String exitReason,
                           TriggeredTradeStatus placedStatus) {
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.owns(trade.getSource())) {
+            adxDmiPaper.close(trade.getId(),exitReason);
+            return;
+        }
         if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(trade.getSource())) {
             niftyThreeCandlePaper.close(trade.getId(),exitReason);
             return;

@@ -37,4 +37,15 @@ class CsvBacktestControllerTest {
                 .andExpect(status().isOk());
         verify(service).runExpiryStraddle("id",null,null,2,java.util.List.of(java.time.LocalDate.of(2026,10,13)));
     }
+    @Test void adxDmiRequiresAuthorizationAndPreservesMorningDefault() throws Exception {
+        var service=mock(CsvBacktestService.class);var controller=new CsvBacktestController(service);
+        ReflectionTestUtils.setField(controller,"adminToken","test-secret");
+        var mvc=MockMvcBuilders.standaloneSetup(controller).build();
+        mvc.perform(post("/api/backtests/csv/datasets/id/adx-dmi-fixed-partials").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isForbidden());verifyNoInteractions(service);
+        mvc.perform(post("/api/backtests/csv/datasets/id/adx-dmi-fixed-partials").header("X-Admin-Token","test-secret")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"));
+        verify(service).runAdxDmi("id",null,null,true);
+    }
 }
