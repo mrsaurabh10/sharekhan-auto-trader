@@ -5,6 +5,12 @@ There is no NIFTY/SENSEX symbol whitelist or forced symbol value. Resolve the
 actual underlying from the instrument master; NC spot maps to NF options and
 BC spot to BF options. A listed matching option contract is required. The
 underlying tick size and option lot size come from their respective metadata.
+When spot tick metadata is absent, use the explicit strategy price increment
+`app.strategy.adx-dmi.fallback-spot-tick` (default 0.05, matching the frozen
+backtest). Positive valid spot metadata takes precedence; invalid numeric
+metadata fails closed. Never substitute an option contract tick for spot.
+Production preflight on 10 November found missing spot ticks on both requested
+index records; their option lot/tick metadata is present.
 Select an active owned Simulator account. Configure two separate subscriptions
 for the requested NIFTY and SENSEX instances, three lots each, intraday. These
 are subscription inputs, not special strategy cases. Symbols have independent
@@ -124,3 +130,8 @@ verify current main/server and exact NIFTY/SENSEX masters, snapshot settings
 and backup, publish/review the branch, deploy only the app, verify health, then
 create only the two intended owned Simulator subscriptions through normal UI.
 SENSEX historical profitability and forward paper execution remain unverified.
+
+10 November: user explicitly authorized publishing/merging, production SSH,
+app-only rollout and normal admin UI activation of the two Simulator instances,
+plus private notes backup. Previous authorization blocker is resolved; release
+verification will record the final deployed revision and subscription IDs.

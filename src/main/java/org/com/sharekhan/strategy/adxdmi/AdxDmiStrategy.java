@@ -21,6 +21,8 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     private final TradeExecutionService feeds;
     private final AdxDmiPaperBroker paper;
     private final NseMarketCalendar calendar;
+    @org.springframework.beans.factory.annotation.Value("${app.strategy.adx-dmi.fallback-spot-tick:0.05}")
+    private double fallbackSpotTick=0.05;
     private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials — Simulator",
             "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout by one underlying tick, 3 lots at 1R/2R/3R, original spot SL throughout. Entries before noon IST; square-off 15:20. Option ask/bid paper fills; 0.5 delta estimates only.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
@@ -46,8 +48,8 @@ public class AdxDmiStrategy implements StrategyEvaluator {
         var spot=support.resolveSpotScript(symbol);String cash=Objects.toString(spot.getExchange(),"").trim().toUpperCase(Locale.ROOT);
         if(!Set.of("NC","BC").contains(cash) || spot.getScripCode()==null)throw new IllegalStateException("Exact underlying spot identity unavailable");
         feeds.warmUpSpotLtp(spot,"ADX DMI "+symbol+" spot");
-        if(spot.getTickSize()==null || !Double.isFinite(spot.getTickSize()) || spot.getTickSize()<=0)return waitFor(symbol,"Waiting for underlying tick-size metadata");
-        var signal=AdxDmiRules.latestSignal(candles(spot,now),now,spot.getTickSize()).orElse(null);
+        double spotTick=AdxDmiRules.spotTick(spot.getTickSize(),fallbackSpotTick);
+        var signal=AdxDmiRules.latestSignal(candles(spot,now),now,spotTick).orElse(null);
         if(signal==null)return waitFor(symbol,"Waiting for a completed qualifying 5m signal (200+ warmup bars)");
         var q=quotes.getSnapshot(spot.getScripCode()).orElse(null);
         if(!AdxDmiRules.freshSpot(cash,q,now.atZone(AdxDmiRules.IST).toInstant(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote");

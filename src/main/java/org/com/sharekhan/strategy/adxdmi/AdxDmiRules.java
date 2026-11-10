@@ -13,6 +13,12 @@ public final class AdxDmiRules {
     public static final LocalTime CUTOFF=LocalTime.NOON, HARD_CUTOFF=LocalTime.of(14,50), SQUARE_OFF=LocalTime.of(15,20);
     public static final double TICK=.05, DELTA=.5;
     public static boolean owns(String source){return SOURCE.equalsIgnoreCase(source);}
+    /** Index spot masters can omit tick metadata. Use an explicit strategy increment, never an option tick. */
+    public static double spotTick(Double metadata,double fallback){
+        double value=metadata==null?fallback:metadata;
+        if(!Double.isFinite(value) || value<=0)throw new IllegalArgumentException("A positive spot price increment is required");
+        return value;
+    }
     public static String optionExchange(String cashExchange){
         return switch(Objects.toString(cashExchange,"").toUpperCase(Locale.ROOT)){case "NC","NSE"->"NF";case "BC","BSE"->"BF";default->throw new IllegalArgumentException("Underlying requires a listed cash exchange");};
     }

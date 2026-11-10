@@ -51,4 +51,24 @@ class AdxDmiStrategyTest {
         assertEquals("NF",AdxDmiRules.optionExchange("NC"));assertEquals("BF",AdxDmiRules.optionExchange("BC"));
         assertThrows(IllegalArgumentException.class,()->AdxDmiRules.optionExchange("MCX"));
     }
+    @Test void absentSpotTickUsesExplicitStrategyIncrementAndValidMetadataWins(){
+        assertEquals(.05,AdxDmiRules.spotTick(null,.05));
+        assertEquals(.01,AdxDmiRules.spotTick(.01,.05));
+        assertThrows(IllegalArgumentException.class,()->AdxDmiRules.spotTick(Double.NaN,.05));
+        assertThrows(IllegalArgumentException.class,()->AdxDmiRules.spotTick(null,0));
+    }
+    @Test void missingIndexTickDoesNotPreventLoadingCompletedSignalCandles(){
+        var brokers=mock(BrokerCredentialsRepository.class);var support=mock(StrategySupport.class);var calendar=mock(NseMarketCalendar.class);
+        var strategy=new AdxDmiStrategy(brokers,mock(ScriptMasterRepository.class),support,mock(QuoteCacheService.class),mock(TradeExecutionService.class),mock(AdxDmiPaperBroker.class),calendar);
+        var r=new StrategyApplyRequest();r.setSymbol("NIFTY");r.setUserId(3L);r.setBrokerCredentialsId(4L);
+        var now=LocalDateTime.of(2026,11,10,10,0);
+        when(brokers.findById(4L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().appUserId(3L).active(true).brokerName("Simulator").build()));
+        when(calendar.isTradingDay(now.toLocalDate())).thenReturn(true);
+        var spot=ScriptMasterEntity.builder().scripCode(20000).tradingSymbol("NIFTY").exchange("NC").build();
+        when(support.resolveSpotScript("NIFTY")).thenReturn(spot);
+        when(support.loadCompletedIndicatorCandles(spot,200,now)).thenReturn(new CandleLoad(List.of(),false,"No candles"));
+        when(support.waiting(any(),eq("NIFTY"),anyString())).thenAnswer(call->StrategyApplyResponse.builder().message(call.getArgument(2)).build());
+        assertTrue(strategy.apply(r,now).getMessage().contains("completed qualifying"));
+        verify(support).loadCompletedIndicatorCandles(spot,200,now);
+    }
 }
