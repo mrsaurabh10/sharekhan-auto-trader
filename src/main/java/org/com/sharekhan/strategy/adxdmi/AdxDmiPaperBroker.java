@@ -71,7 +71,8 @@ public class AdxDmiPaperBroker {
         var book=quotes.getSnapshot(option.getScripCode()).orElse(null);
         if(!AdxDmiRules.freshSpot(AdxDmiRules.cashExchange(option.getExchange()),spot,instant,spotCode) || !AdxDmiRules.freshBook(option.getExchange(),book,instant,option.getScripCode()))
             throw new IllegalStateException("Waiting for fresh exact index spot and option bid/ask");
-        if(option.getLotSize()==null || option.getLotSize()<=0 || option.getTickSize()==null || !Double.isFinite(option.getTickSize()) || option.getTickSize()<=0
+        // Paper fills use the fresh quoted ask/bid directly; no option order-price rounding is performed.
+        if(option.getLotSize()==null || option.getLotSize()<=0 || option.getTickSize()!=null && (!Double.isFinite(option.getTickSize()) || option.getTickSize()<=0)
                 || !signal.side().equals(option.getOptionType()) || !r.getSymbol().equalsIgnoreCase(option.getTradingSymbol())
                 || !Set.of("NF","BF").contains(Objects.toString(option.getExchange(),"")))throw new IllegalArgumentException("Invalid index option contract metadata");
         double entry=spot.getLastTradedPrice();

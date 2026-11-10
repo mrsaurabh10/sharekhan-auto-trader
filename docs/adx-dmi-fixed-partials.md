@@ -10,7 +10,9 @@ When spot tick metadata is absent, use the explicit strategy price increment
 backtest). Positive valid spot metadata takes precedence; invalid numeric
 metadata fails closed. Never substitute an option contract tick for spot.
 Production preflight on 10 November found missing spot ticks on both requested
-index records; their option lot/tick metadata is present.
+index records; option lot metadata is present. SENSEX option tick metadata is also absent.
+Paper option fills use exact fresh quoted ask/bid without price rounding, so
+missing option tick is accepted; invalid numeric tick metadata still rejects.
 Select an active owned Simulator account. Configure two separate subscriptions
 for the requested NIFTY and SENSEX instances, three lots each, intraday. These
 are subscription inputs, not special strategy cases. Symbols have independent
