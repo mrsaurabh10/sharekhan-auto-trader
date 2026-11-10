@@ -155,7 +155,7 @@ class AdxDmiPaperBrokerTest {
         paper.evaluate(23L);assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,two.getStatus());assertEquals(22980,two.getStopLoss());
     }
     @Test void sensexUsesBseIdentityAndItsActualLotSize(){
-        r.setSymbol("SENSEX");option.setTradingSymbol("SENSEX");option.setExchange("BF");option.setLotSize(20);
+        r.setSymbol("SENSEX");option.setTradingSymbol("SENSEX");option.setExchange("BF");option.setLotSize(20);option.setTickSize(null);
         var spot=QuoteCacheService.QuoteSnapshot.builder().scripCode(20000).lastTradedPrice(23002d).lastLtpAt(instant)
                 .ltpSource("SHAREKHAN_WS").ltpExchange("BC").ltpProviderIdentity("scrip:20000").build();
         var book=QuoteCacheService.QuoteSnapshot.builder().scripCode(123).bestBid(100d).bestAsk(101d).bidQuantity(60d).askQuantity(60d)
