@@ -18,7 +18,7 @@ public final class AdxDmiBacktestMain {
         int minutes=Integer.parseInt(options.getOrDefault("input-minutes","1"));
         CsvCandleReader.Dataset dataset;
         try(var reader=Files.newBufferedReader(input)){dataset=new CsvCandleReader().read(reader,minutes);}
-        var config=new AdxDmiReplay.Config(options.getOrDefault("symbol","NIFTY"),LocalDate.parse(required(options,"from")),LocalDate.parse(required(options,"to")),Boolean.parseBoolean(options.getOrDefault("morning-only","true")),!"continuous".equals(options.getOrDefault("indicator-history","rolling250")));
+        var config=new AdxDmiReplay.Config(required(options,"symbol"),LocalDate.parse(required(options,"from")),LocalDate.parse(required(options,"to")),Boolean.parseBoolean(options.getOrDefault("morning-only","true")),!"continuous".equals(options.getOrDefault("indicator-history","rolling250")),Double.parseDouble(options.getOrDefault("tick-size","0.05")));
         String execution=options.getOrDefault("execution","tv5");
         if(!Set.of("tv5","minute").contains(execution))throw new IllegalArgumentException("execution must be tv5 or minute");
         Map<LocalDateTime,List<StrategyCandle>> sub=new HashMap<>();

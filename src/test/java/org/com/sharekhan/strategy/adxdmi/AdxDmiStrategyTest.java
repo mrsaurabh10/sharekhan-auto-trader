@@ -24,7 +24,9 @@ class AdxDmiStrategyTest {
         when(brokers.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().appUserId(9L).brokerName("Simulator").active(true).build()));
         assertThrows(IllegalArgumentException.class,()->strategy.validateConfiguration(r));
         r.setLots(2);assertThrows(IllegalArgumentException.class,()->AdxDmiStrategy.validate(r));
-        r.setLots(3);r.setSymbol("RELIANCE");assertThrows(IllegalArgumentException.class,()->AdxDmiStrategy.validate(r));verifyNoInteractions(feeds);
+        r.setLots(3);r.setSymbol("RELIANCE");assertDoesNotThrow(()->AdxDmiStrategy.validate(r));
+        r.setSymbol("BANKNIFTY");assertDoesNotThrow(()->AdxDmiStrategy.validate(r));
+        r.setSymbol(" ");assertThrows(IllegalArgumentException.class,()->AdxDmiStrategy.validate(r));verifyNoInteractions(feeds);
     }
     static ScriptMasterEntity option(int code,String side,String expiry,double strike){return ScriptMasterEntity.builder().scripCode(code).tradingSymbol("NIFTY")
             .exchange("NF").optionType(side).expiry(expiry).strikePrice(strike).lotSize(65).tickSize(.05).instrumentType("OI").build();}
@@ -33,11 +35,20 @@ class AdxDmiStrategyTest {
         var a=option(1,"PE","10/11/2026",23000);var b=option(2,"CE","03/11/2026",23000);
         var c=option(3,"CE","10/11/2026",23000);var d=option(4,"CE","10/11/2026",23050);
         var rows=List.of(a,b,c,d,option(5,"CE","17/11/2026",23025));
-        assertEquals(3,AdxDmiStrategy.contract(rows,"NIFTY","CE",23025,day).getScripCode());
-        assertEquals(1,AdxDmiStrategy.contract(rows,"NIFTY","PE",23025,day).getScripCode());
+        assertEquals(3,AdxDmiStrategy.contract(rows,"NIFTY","NF","CE",23025,day).getScripCode());
+        assertEquals(1,AdxDmiStrategy.contract(rows,"NIFTY","NF","PE",23025,day).getScripCode());
         var sensex=option(9,"CE","12/11/2026",80000);sensex.setTradingSymbol("SENSEX");sensex.setExchange("BF");sensex.setLotSize(20);
-        assertEquals(9,AdxDmiStrategy.contract(List.of(c,sensex),"SENSEX","CE",80010,day).getScripCode());
-        assertThrows(IllegalStateException.class,()->AdxDmiStrategy.contract(List.of(c),"SENSEX","CE",80010,day));
-        assertThrows(IllegalStateException.class,()->AdxDmiStrategy.contract(List.of(b),"NIFTY","CE",23000,day));
+        assertEquals(9,AdxDmiStrategy.contract(List.of(c,sensex),"SENSEX","BF","CE",80010,day).getScripCode());
+        assertThrows(IllegalStateException.class,()->AdxDmiStrategy.contract(List.of(c),"SENSEX","BF","CE",80010,day));
+        assertThrows(IllegalStateException.class,()->AdxDmiStrategy.contract(List.of(b),"NIFTY","NF","CE",23000,day));
+    }
+    @Test void genericSymbolsResolveTheirListedExchangeContractsAndLotSize(){
+        var stock=option(123,"CE","10/11/2026",1400);stock.setTradingSymbol("RELIANCE");stock.setLotSize(500);
+        var bank=option(456,"PE","10/11/2026",56000);bank.setTradingSymbol("BANKNIFTY");bank.setLotSize(30);
+        var day=LocalDate.of(2026,11,9);
+        assertEquals(500,AdxDmiStrategy.contract(List.of(stock,bank),"RELIANCE","NF","CE",1401,day).getLotSize());
+        assertEquals(456,AdxDmiStrategy.contract(List.of(stock,bank),"BANKNIFTY","NF","PE",56010,day).getScripCode());
+        assertEquals("NF",AdxDmiRules.optionExchange("NC"));assertEquals("BF",AdxDmiRules.optionExchange("BC"));
+        assertThrows(IllegalArgumentException.class,()->AdxDmiRules.optionExchange("MCX"));
     }
 }

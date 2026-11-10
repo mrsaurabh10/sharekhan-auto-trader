@@ -46,6 +46,6 @@ class CsvBacktestControllerTest {
         mvc.perform(post("/api/backtests/csv/datasets/id/adx-dmi-fixed-partials").header("X-Admin-Token","test-secret")
                 .contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().isOk()).andExpect(header().string("Cache-Control","no-store"));
-        verify(service).runAdxDmi("id",null,null,true);
+        verify(service).runAdxDmi("id",null,null,true,0.05);
     }
 }

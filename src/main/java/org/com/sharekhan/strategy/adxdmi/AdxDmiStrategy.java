@@ -22,7 +22,7 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     private final AdxDmiPaperBroker paper;
     private final NseMarketCalendar calendar;
     private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials — Simulator",
-            "NIFTY or SENSEX, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout, 3 lots at 1R/2R/3R, original spot SL throughout. Entries before noon IST; square-off 15:20. Option ask/bid paper fills; 0.5 delta estimates only.","AUTO");
+            "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout by one underlying tick, 3 lots at 1R/2R/3R, original spot SL throughout. Entries before noon IST; square-off 15:20. Option ask/bid paper fills; 0.5 delta estimates only.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r){
         r.setTemplateId(AdxDmiRules.TEMPLATE);r.setSymbol(AdxDmiRules.symbol(r.getSymbol()));r.setIntraday(true);
@@ -43,16 +43,17 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     public StrategyApplyResponse apply(StrategyApplyRequest r,LocalDateTime now){
         validateConfiguration(r);String symbol=r.getSymbol();
         if(!calendar.isTradingDay(now.toLocalDate()) || now.toLocalTime().isBefore(LocalTime.of(9,20)) || !now.toLocalTime().isBefore(AdxDmiRules.CUTOFF))return waitFor(symbol,"Waiting for the 09:20–12:00 IST entry window");
-        var spot=support.resolveSpotScript(symbol);String cash="NIFTY".equals(symbol)?"NC":"BC";
-        if(!cash.equalsIgnoreCase(spot.getExchange()) || spot.getScripCode()==null)throw new IllegalStateException("Exact index spot identity unavailable");
+        var spot=support.resolveSpotScript(symbol);String cash=Objects.toString(spot.getExchange(),"").trim().toUpperCase(Locale.ROOT);
+        if(!Set.of("NC","BC").contains(cash) || spot.getScripCode()==null)throw new IllegalStateException("Exact underlying spot identity unavailable");
         feeds.warmUpSpotLtp(spot,"ADX DMI "+symbol+" spot");
-        var signal=AdxDmiRules.latestSignal(candles(spot,now),now).orElse(null);
+        if(spot.getTickSize()==null || !Double.isFinite(spot.getTickSize()) || spot.getTickSize()<=0)return waitFor(symbol,"Waiting for underlying tick-size metadata");
+        var signal=AdxDmiRules.latestSignal(candles(spot,now),now,spot.getTickSize()).orElse(null);
         if(signal==null)return waitFor(symbol,"Waiting for a completed qualifying 5m signal (200+ warmup bars)");
         var q=quotes.getSnapshot(spot.getScripCode()).orElse(null);
-        if(!AdxDmiRules.freshSpot(symbol,q,now.atZone(AdxDmiRules.IST).toInstant(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote");
-        String exchange="NIFTY".equals(symbol)?"NF":"BF";
+        if(!AdxDmiRules.freshSpot(cash,q,now.atZone(AdxDmiRules.IST).toInstant(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote");
+        String exchange=AdxDmiRules.optionExchange(cash);
         var contracts=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange,symbol);
-        var option=contract(contracts,symbol,signal.side(),q.getLastTradedPrice(),now.toLocalDate());
+        var option=contract(contracts,symbol,exchange,signal.side(),q.getLastTradedPrice(),now.toLocalDate());
         var warm=new TriggerRequest();warm.setInstrument(symbol);warm.setExchange(option.getExchange());warm.setOptionType(signal.side());warm.setExpiry(option.getExpiry());warm.setStrikePrice(option.getStrikePrice());
         feeds.warmUpOptionLtp(warm,"ADX DMI exact ATM option");
         if(!signal.crossed(q.getLastTradedPrice()))return waitFor(symbol,"Waiting for "+signal.side()+" breakout; signal="+signal.key());
@@ -62,8 +63,8 @@ public class AdxDmiStrategy implements StrategyEvaluator {
                     .message("Three paper option lots opened at ask. Fixed original spot stop; one lot each at 1R/2R/3R.").tradeRequest(req).breakoutClose(q.getLastTradedPrice()).build();
         }catch(IllegalStateException waiting){return waitFor(symbol,waiting.getMessage());}
     }
-    static ScriptMasterEntity contract(List<ScriptMasterEntity> rows,String symbol,String side,double spot,LocalDate day){
-        String exchange="NIFTY".equals(AdxDmiRules.symbol(symbol))?"NF":"BF";
+    static ScriptMasterEntity contract(List<ScriptMasterEntity> rows,String symbol,String exchange,String side,double spot,LocalDate day){
+        AdxDmiRules.symbol(symbol);AdxDmiRules.cashExchange(exchange);
         var available=rows.stream().filter(s->symbol.equalsIgnoreCase(s.getTradingSymbol()) && side.equalsIgnoreCase(s.getOptionType())
                 && exchange.equalsIgnoreCase(s.getExchange()) && s.getScripCode()!=null && s.getStrikePrice()!=null && Double.isFinite(s.getStrikePrice()) && s.getStrikePrice()>0
                 && expiry(s.getExpiry())!=null && !expiry(s.getExpiry()).isBefore(day)).toList();

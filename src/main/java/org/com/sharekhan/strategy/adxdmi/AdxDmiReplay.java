@@ -6,10 +6,10 @@ import java.util.*;
 
 /** Offline underlying proxy. Three equal units, original SL, independently reserved 1R/2R/3R brackets. */
 public final class AdxDmiReplay {
-    public record Config(String symbol,LocalDate from,LocalDate to,boolean morningOnly,boolean rollingHistory) {
-        public Config(LocalDate from,LocalDate to,boolean morningOnly){this("NIFTY",from,to,morningOnly,true);}
+    public record Config(String symbol,LocalDate from,LocalDate to,boolean morningOnly,boolean rollingHistory,double tickSize) {
+        public Config(String symbol,LocalDate from,LocalDate to,boolean morningOnly,boolean rollingHistory){this(symbol,from,to,morningOnly,rollingHistory,AdxDmiRules.TICK);}
         public Config(String symbol,LocalDate from,LocalDate to,boolean morningOnly){this(symbol,from,to,morningOnly,true);}
-        public Config {symbol=AdxDmiRules.symbol(symbol);if(from==null || to==null || from.isAfter(to))throw new IllegalArgumentException("Valid from/to required");}
+        public Config {symbol=AdxDmiRules.symbol(symbol);if(!Double.isFinite(tickSize) || tickSize<=0)throw new IllegalArgumentException("Valid underlying tick size required");if(from==null || to==null || from.isAfter(to))throw new IllegalArgumentException("Valid from/to required");}
     }
     public record Exit(int cycle,String side,LocalDateTime signalAt,LocalDateTime entryBar,LocalDateTime exitBar,
                        int leg,double entry,double stop,double target,double exit,String reason,double points,double r) { }
@@ -42,7 +42,7 @@ public final class AdxDmiReplay {
             }else if(!AdxDmiRules.entryWindow(close,config.morningOnly()))state.pending=null;
             else if(state.position==null && !state.fillThisBar){
                 // One-bar validity: the old order was executable throughout this candle, then expires.
-                state.pending=config.rollingHistory() && index<199?null:AdxDmiRules.signal(bar,reading,config.morningOnly()).orElse(null);
+                state.pending=config.rollingHistory() && index<199?null:AdxDmiRules.signal(bar,reading,config.morningOnly(),config.tickSize()).orElse(null);
             }
             var pending=state.pending;
             decisions.add(new Decision(at,reading,state.position!=null?"OPEN":pending!=null?"PENDING":"FLAT",

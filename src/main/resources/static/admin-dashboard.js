@@ -2398,7 +2398,7 @@
       if (!symbolInput) return;
       const timedStraddle = String((templateSelect && templateSelect.value) || '') === 'EXPIRY_LONG_STRADDLE';
       const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(String((templateSelect && templateSelect.value) || ''));
-      const adxDmi = String((templateSelect && templateSelect.value) || '') === 'INDEX_ADX_DMI_FIXED_PARTIALS';
+      const adxDmi = String((templateSelect && templateSelect.value) || '') === 'ADX_DMI_FIXED_PARTIALS';
       const niftyThree = String((templateSelect && templateSelect.value) || '') === 'NIFTY_THREE_CANDLE_ATM';
       const profitRow = document.getElementById('strategyProfitTargetRow');
       const profitInput = document.getElementById('strategyProfitTargetPerLot');
@@ -2427,7 +2427,7 @@
         document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='3000';
         document.querySelector('#adminRunRisk [data-risk-field=profitTarget]').value='1250';
       }
-      if(adxDmi){if(!['NIFTY','SENSEX'].includes(symbolInput.value.trim().toUpperCase()))symbolInput.value='NIFTY';if(lotsInput)lotsInput.value='3';}
+      if(adxDmi && lotsInput)lotsInput.value='3';
       if(niftyThree){symbolInput.value='NIFTY';if(lotsInput)lotsInput.value='1';document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='5000';}
       const investmentRow = document.getElementById('strategyInvestmentRow');
       if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';

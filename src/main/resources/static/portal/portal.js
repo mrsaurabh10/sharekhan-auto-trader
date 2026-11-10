@@ -160,7 +160,7 @@
         const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
         const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(template.id);
-        const adxDmi = template.id === 'INDEX_ADX_DMI_FIXED_PARTIALS';
+        const adxDmi = template.id === 'ADX_DMI_FIXED_PARTIALS';
         const niftyThree = template.id === 'NIFTY_THREE_CANDLE_ATM';
         f.elements.intraday.disabled = template.id === 'EXPIRY_LONG_STRADDLE' || naturalGas || niftyThree || adxDmi;
         if (f.elements.intraday.disabled) f.elements.intraday.checked = true;
@@ -169,7 +169,7 @@
         f.elements.profitTargetPerLot.disabled = true;
         $('#subscriptionRunRisk').querySelector('[data-risk-field=amountMode]').value=straddle ? 'PER_LOT' : 'TOTAL';
         const automatic = /FNO_0925|STOCK_0925|MARKETAUX/.test(template.id);
-        f.elements.symbol.value = niftyThree || adxDmi ? 'NIFTY' : naturalGas ? 'NATURALGAS' : automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
+        f.elements.symbol.value = niftyThree ? 'NIFTY' : naturalGas ? 'NATURALGAS' : automatic ? 'FNO_UNIVERSE' : template.id === 'EXPIRY_LONG_STRADDLE' ? 'NIFTY' : '';
         f.elements.symbol.readOnly = automatic || naturalGas || niftyThree;
         if (template.id === 'MCX_NATURALGAS_SCALPING') {
           f.elements.lots.value='1';
@@ -228,11 +228,11 @@
       body.investmentPerStock = Number(amount); body.lots = null;
     } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
     body.riskSettings=window.StrategyRunView?.readRisk($('#subscriptionRunRisk')) || null;
-    if (body.templateId === 'INDEX_ADX_DMI_FIXED_PARTIALS') {
+    if (body.templateId === 'ADX_DMI_FIXED_PARTIALS') {
       const broker=state.brokers.find(b=>b.id===body.brokerCredentialsId);
       if (String(broker?.brokerName || '').toUpperCase() !== 'SIMULATOR') throw new Error('Choose a Simulator account for ADX / DMI.');
       body.symbol=String(body.symbol || '').trim().toUpperCase();
-      if (!['NIFTY','SENSEX'].includes(body.symbol)) throw new Error('Choose NIFTY or SENSEX.');
+      if (!body.symbol) throw new Error('Enter the underlying symbol.');
       body.intraday=true;body.lots=3;body.riskSettings=null;
     }
     if (body.templateId === 'NIFTY_THREE_CANDLE_ATM') {

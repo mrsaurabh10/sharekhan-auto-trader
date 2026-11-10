@@ -1,20 +1,24 @@
 # ADX / DMI fixed partials — Simulator
 
-Template `INDEX_ADX_DMI_FIXED_PARTIALS` accepts a required `symbol` input:
-`NIFTY` (NC spot / NF options) or `SENSEX` (BC spot / BF options).
+Template `ADX_DMI_FIXED_PARTIALS` accepts the existing required `symbol` input.
+There is no NIFTY/SENSEX symbol whitelist or forced symbol value. Resolve the
+actual underlying from the instrument master; NC spot maps to NF options and
+BC spot to BF options. A listed matching option contract is required. The
+underlying tick size and option lot size come from their respective metadata.
 Select an active owned Simulator account. Configure two separate subscriptions
-for the two indices, three lots each, intraday. The symbols have independent
+for the requested NIFTY and SENSEX instances, three lots each, intraday. These
+are subscription inputs, not special strategy cases. Symbols have independent
 position locks and can trade concurrently. CE/PE share one position per
-account/index across subscriptions. No live broker order interface is used.
+account/symbol across subscriptions. No live broker order interface is used.
 
 ## Frozen rules
 
 - Standard completed regular-session five-minute spot candles, IST start stamps.
 - Wilder DMI(14), ADX smoothing 14: ADX >25, dominant DI >25, opposite DI <20.
-- CE: next candle crosses signal high +0.05; PE: signal low −0.05. Signal expires
+- CE: next candle crosses signal high +one metadata tick; PE: signal low −one metadata tick. Signal expires
   after that next five-minute candle. Repeated qualifying candles may re-arm it.
 - Initial stop is the opposite signal extreme. Actual observed spot at entry
-  determines R; targets rounded to 0.05 at 1R, 2R, 3R. One option lot each.
+  determines R; targets rounded to the underlying metadata tick at 1R, 2R, 3R. One option lot each.
 - The original spot stop stays unchanged after every partial exit.
 - Morning entries only, 09:20 <= time <12:00 IST, matching the selected Pine
   default. Replay can disable morning-only to test the separate 14:50 cutoff.
@@ -59,9 +63,9 @@ Numerical/entry parity must not be inferred from matching indicator formulas.
 
 Existing admin-token protected endpoint:
 `POST /api/backtests/csv/datasets/{id}/adx-dmi-fixed-partials`
-with JSON `{"from":"2026-06-01","to":"2026-10-31","morningOnly":true}`.
-Existing dataset upload accepts SENSEX too; this does not make other strategy
-engines support SENSEX. The endpoint returns an in-memory underlying proxy
+with JSON `{"from":"2026-06-01","to":"2026-10-31","morningOnly":true,"tickSize":0.05}`.
+Existing dataset upload accepts a symbol input too; this does not make other
+strategy engines support every symbol. The endpoint returns an in-memory underlying proxy
 report/leg ledger and does not create orders/subscriptions. Standard session
 security and CSRF behavior remain unchanged; no-store response header.
 
@@ -72,9 +76,11 @@ java -cp "target/classes:<dependency-classpath>" \
   org.com.sharekhan.strategy.adxdmi.AdxDmiBacktestMain \
   --file nifty-minute.csv --input-minutes 1 --symbol NIFTY \
   --from 2026-06-01 --to 2026-10-31 --execution tv5 \
-  --indicator-history rolling250 --output-dir results
+  --indicator-history rolling250 --tick-size 0.05 --output-dir results
 ```
 
+Replay tick size defaults to 0.05 and must be supplied correctly for the input
+instrument; live Simulator evaluation uses the underlying master tick instead.
 `--execution minute` uses the saved one-minute sub-bars, still five-minute
 signals. `--indicator-history continuous` uses all prior input bars for the
 Pine-style seed. OHLC execution follows TradingView's documented emulator path:

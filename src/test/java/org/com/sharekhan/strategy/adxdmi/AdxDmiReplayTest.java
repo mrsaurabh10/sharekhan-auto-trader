@@ -69,7 +69,7 @@ class AdxDmiReplayTest {
     }
     @Test void productionWarmupDoesNotTradeFromOnlyFortyBars(){
         var bars=entryBars();bars.add(bar(DAY,"09:20",221,240,220,239));
-        assertEquals(0,new AdxDmiReplay().run(bars,new AdxDmiReplay.Config(DAY,DAY,true)).summary().cycles());
+        assertEquals(0,new AdxDmiReplay().run(bars,new AdxDmiReplay.Config("NIFTY",DAY,DAY,true)).summary().cycles());
         assertTrue(AdxDmiRules.latestSignal(bars,DAY.atTime(9,25)).isEmpty());
     }
     @Test void futureCandlesCannotChangeEarlierFillsOrEnableFillBarReentry(){
@@ -77,5 +77,11 @@ class AdxDmiReplayTest {
         var prefix=run(bars);bars.add(bar(DAY,"09:25",224,224,218,219));var full=run(bars);
         assertEquals(prefix.exits(),full.exits().stream().filter(e->e.exitBar().isBefore(DAY.atTime(9,25))).toList());
         assertEquals("FLAT",full.decisions().getLast().state());
+    }
+    @Test void signalUsesSuppliedUnderlyingTickSizeRatherThanAnIndexTick(){
+        var b=bar(DAY,"09:15",100,100.12,99.91,100.1);
+        var s=AdxDmiRules.signal(b,new AdxDmiRules.Reading(30,10,30),true,.01).orElseThrow();
+        assertEquals(100.13,s.trigger(),1e-9);assertEquals(.01,s.tickSize());
+        assertEquals(100.35,s.target(100.13,1),1e-9);
     }
 }
