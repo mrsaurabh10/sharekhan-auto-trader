@@ -33,6 +33,22 @@ class SimulatorBrokerServiceTest {
         assertThat(result.getExecutedPrice()).isEqualTo(123.45);
     }
 
+    @Test void adxUsesFreshAskBidAndCannotReuseDisplayedDepthAcrossPartialExits(){
+        var data=org.mockito.Mockito.mock(org.com.sharekhan.strategy.adxdmi.AdxDmiMarketData.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"adxQuotes",data);
+        var q=org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot.builder().scripCode(42).bestAsk(100d).bestBid(99d)
+                .askQuantity(195d).bidQuantity(65d).lastBookAt(java.time.Instant.now()).bookProviderIdentity("exact").build();
+        org.mockito.Mockito.when(data.book(42,"BF")).thenReturn(q);
+        org.mockito.Mockito.when(data.freshBook(org.mockito.ArgumentMatchers.eq("BF"),org.mockito.ArgumentMatchers.same(q),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq(42))).thenReturn(true);
+        var trade=TriggeredTradeSetupEntity.builder().source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE).scripCode(42).exchange("BF")
+                .optionType("PE").entryAction("BUY").entryPrice(100.05).stopLoss(90d).quantity(195L).build();
+        assertThat(service.placeOrder(trade,null,95).getExecutedPrice()).isEqualTo(100d);
+        trade.setQuantity(65L);trade.setActualEntryPrice(100d);
+        assertThat(service.placeExitOrder(trade,null,120).getExecutedPrice()).isEqualTo(99d);
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->service.placeExitOrder(trade,null,120));
+        trade.setEntryPrice(99d);org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(trade,null,101));
+    }
+
     @Test void naturalGasBuysAtAskAndSellsPeAtBid() {
         var cache=new org.com.sharekhan.cache.QuoteCacheService();
         org.springframework.test.util.ReflectionTestUtils.setField(service,"quotes",cache);

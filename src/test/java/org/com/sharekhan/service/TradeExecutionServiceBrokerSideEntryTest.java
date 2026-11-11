@@ -289,6 +289,53 @@ class TradeExecutionServiceBrokerSideEntryTest {
         }
     }
 
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void adxExecutesThreeIndependentRequestsThroughTheSelectedAdapter(boolean simulator){
+        var ctx=new TestContext(OrderPlacementResult.builder().success(true).build());if(simulator)ctx.useSimulatorBroker();
+        configureFiveAttemptPolicy(ctx);configureTightFreshQuote(ctx,10.50,10.60,10.55);
+        ctx.service=org.mockito.Mockito.spy(ctx.service);
+        org.mockito.Mockito.doNothing().when(ctx.service).handleEntryOrderExecution(any());
+        ReflectionTestUtils.setField(ctx.service,"entryClock",java.time.Clock.fixed(Instant.parse("2026-06-02T04:31:00Z"),java.time.ZoneId.of("Asia/Kolkata")));
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        var admission=mock(org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.class);
+        ReflectionTestUtils.setField(ctx.service,"adxAdmission",admission);
+        var orders=new java.util.ArrayList<TriggerRequest>();var prepared=new java.util.ArrayList<TriggerTradeRequestEntity>();
+        for(int leg=1;leg<=3;leg++){
+            var input=optionRequest();input.setSource(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE);input.setQuantity(1);
+            input.setEntryPrice(10.6);input.setStopLoss(9.6);input.setTarget1(10.6+leg);input.setTarget2(null);input.setTarget3(null);input.setTslEnabled(false);orders.add(input);
+            var saved=triggerRequestEntity();saved.setId(76L+leg);saved.setStatus(TriggeredTradeStatus.TRIGGERED);saved.setSource(input.getSource());
+            saved.setComment("ADX_SIGNAL=2026-06-02T10:00:CE;ADX_DEADLINE=2026-06-02T10:05;");saved.setEntryPrice(10.6);saved.setStopLoss(9.6);saved.setTarget1(10.6+leg);saved.setTarget2(null);saved.setTarget3(null);saved.setTslEnabled(false);prepared.add(saved);
+            when(ctx.triggerRepo.findById(saved.getId())).thenReturn(Optional.of(saved));
+        }
+        when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenReturn(new org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.Batch(prepared,true));
+        when(admission.place(any(),any())).thenAnswer(i->((java.util.function.Supplier<?>)i.getArgument(1)).get());
+        when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenAnswer(i->{var trade=(TriggeredTradeSetupEntity)i.getArgument(0);
+            return OrderPlacementResult.builder().success(true).orderId("ADX-"+trade.getTriggerRequestId()).status("Fully Executed").executedPrice(10.55).build();});
+        assertThat(ctx.service.executeAdxDmiRequests(orders)).hasSize(3);
+        var placed=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(ctx.broker,times(3)).placeOrder(placed.capture(),any(),anyDouble());
+        assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTriggerRequestId).containsExactly(77L,78L,79L);
+        assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTarget1).containsExactly(11.6,12.6,13.6);
+        assertThat(placed.getAllValues()).allSatisfy(t->{assertThat(t.getStopLoss()).isEqualTo(9.6);assertThat(t.getQuantity()).isEqualTo(50L);assertThat(t.getTslEnabled()).isFalse();});
+        assertThat(ctx.savedTrade.get().getEntryPrice()).isEqualTo(10.6);assertThat(ctx.savedTrade.get().getActualEntryPrice()).isEqualTo(10.55);
+    }
+
+    @Test void adxConfirmedFillRecordsActualPriceWithoutMovingFrozenBrackets(){
+        TestContext ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        var trade=TriggeredTradeSetupEntity.builder().source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE)
+                .entryPrice(100d).stopLoss(90d).target1(110d).target2(120d).target3(130d).build();
+        ReflectionTestUtils.invokeMethod(ctx.service,"applyConfirmedEntryPrice",trade,99.5);
+        assertThat(trade.getActualEntryPrice()).isEqualTo(99.5);assertThat(trade.getEntryPrice()).isEqualTo(100d);
+        assertThat(trade.getStopLoss()).isEqualTo(90d);assertThat(trade.getTarget1()).isEqualTo(110d);assertThat(trade.getTarget3()).isEqualTo(130d);
+    }
+
+    @Test void adxSingleLotRequestNeverCreatesStagedTargetChildren(){
+        TestContext ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        var request=TriggeredTradeSetupEntity.builder().id(1L).source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE)
+                .lots(1).quantity(65L).optionType("PE").exchange("NF").entryPrice(100d).stopLoss(90d).target1(120d).tslEnabled(false).build();
+        assertThat((Boolean)ReflectionTestUtils.invokeMethod(ctx.service,"isEligibleForStagedTargetOrders",request)).isFalse();
+        assertThat((Boolean)ReflectionTestUtils.invokeMethod(ctx.service,"resolveTslEnabled",false,request.getSource(),1,null,null)).isFalse();
+    }
+
     @Test
     void stagesAnyTslEquityTargetsByShareQuantity() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());

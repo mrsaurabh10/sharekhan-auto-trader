@@ -229,8 +229,6 @@
     } else { body.lots = Number(body.lots); delete body.investmentPerStock; }
     body.riskSettings=window.StrategyRunView?.readRisk($('#subscriptionRunRisk')) || null;
     if (body.templateId === 'ADX_DMI_FIXED_PARTIALS') {
-      const broker=state.brokers.find(b=>b.id===body.brokerCredentialsId);
-      if (String(broker?.brokerName || '').toUpperCase() !== 'SIMULATOR') throw new Error('Choose a Simulator account for ADX / DMI.');
       body.symbol=String(body.symbol || '').trim().toUpperCase();
       if (!body.symbol) throw new Error('Enter the underlying symbol.');
       body.intraday=true;body.lots=3;body.riskSettings=null;

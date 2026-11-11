@@ -27,11 +27,24 @@ public class DhanInstrumentResolver {
     /** Spot-index research identity, deliberately separate from the order resolver. */
     public String indexIdentity(String symbol) {
         if(!Set.of("NIFTY","BANKNIFTY").contains(symbol))throw new IllegalArgumentException("Unsupported index");
-        String id=current().indexIds().get(symbol);
+        String id=current().indexIds().get("NSE|"+symbol);
         if(id==null||!id.matches("[0-9]+"))throw new IllegalStateException("Index identity missing or ambiguous");
         return id;
     }
+    public record Underlying(String segment,String securityId) { }
+    /** Data-only identity for any unambiguous listed index or cash underlying. */
+    public Underlying underlyingIdentity(String exchange,String symbol) {
+        String cash=segment(exchange),venue=cash.startsWith("NSE")?"NSE":"BSE";
+        String id=current().indexIds().get(venue+"|"+symbol.trim().toUpperCase(Locale.ROOT));
+        if(id!=null) {
+            if(!id.matches("[0-9]+"))throw new IllegalStateException("Ambiguous index identity");
+            return new Underlying("IDX_I",id);
+        }
+        var equity=cashIdentity(exchange,symbol).instrument();
+        return new Underlying(equity.segment(),equity.securityId());
+    }
     private volatile Snapshot snapshot;
+    public boolean hasCurrentSnapshot(){var value=snapshot;return value!=null && value.day().equals(today());}
     private static LocalDate today() { return LocalDate.now(ZoneId.of("Asia/Kolkata")); }
 
     public Instrument resolve(TriggeredTradeSetupEntity trade) {
@@ -80,9 +93,9 @@ public class DhanInstrumentResolver {
             try {
                 String exchange = field(columns,row,"EXCH_ID"), type = field(columns,row,"INSTRUMENT"), rawSegment = field(columns,row,"SEGMENT");
                 if (!Set.of("NSE","BSE").contains(exchange)) continue;
-                if("NSE".equals(exchange)&&"I".equals(rawSegment)&&"INDEX".equals(type)) {
+                if("I".equals(rawSegment)&&"INDEX".equals(type)) {
                     String symbol=field(columns,row,"SYMBOL_NAME"),id=field(columns,row,"SECURITY_ID");
-                    if(Set.of("NIFTY","BANKNIFTY").contains(symbol)&&symbol.equals(field(columns,row,"UNDERLYING_SYMBOL"))&&id.matches("[0-9]+"))indexIds.merge(symbol,id,(a,b)->a.equals(b)?a:"");
+                    if(!symbol.isBlank()&&symbol.equals(field(columns,row,"UNDERLYING_SYMBOL"))&&id.matches("[0-9]+"))indexIds.merge(exchange+"|"+symbol,id,(a,b)->a.equals(b)?a:"");
                     continue;
                 }
                 boolean cash = "E".equals(rawSegment) && "EQUITY".equals(type) && ("BSE".equals(exchange) || "EQ".equals(field(columns,row,"SERIES")));
