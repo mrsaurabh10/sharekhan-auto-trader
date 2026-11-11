@@ -289,8 +289,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
         }
     }
 
-    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
-    void adxExecutesThreeIndependentRequestsThroughTheSelectedAdapter(boolean simulator){
+    @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"false,false","true,false","false,true","true,true"})
+    void adxExecutesThreeIndependentRequestsThroughTheSelectedAdapter(boolean simulator,boolean indexExits){
         var ctx=new TestContext(OrderPlacementResult.builder().success(true).build());if(simulator)ctx.useSimulatorBroker();
         configureFiveAttemptPolicy(ctx);configureTightFreshQuote(ctx,10.50,10.60,10.55);
         ctx.service=org.mockito.Mockito.spy(ctx.service);
@@ -307,6 +307,12 @@ class TradeExecutionServiceBrokerSideEntryTest {
             saved.setComment("ADX_SIGNAL=2026-06-02T10:00:CE;ADX_DEADLINE=2026-06-02T10:05;");saved.setEntryPrice(10.6);saved.setStopLoss(9.6);saved.setTarget1(10.6+leg);saved.setTarget2(null);saved.setTarget3(null);saved.setTslEnabled(false);prepared.add(saved);
             when(ctx.triggerRepo.findById(saved.getId())).thenReturn(Optional.of(saved));
         }
+        if(indexExits)for(int i=0;i<3;i++){
+            var input=orders.get(i);var saved=prepared.get(i);
+            input.setStopLoss(23000d);input.setTarget1(23020d+20*i);input.setUseSpotForSl(true);input.setUseSpotForTarget(true);
+            saved.setStopLoss(input.getStopLoss());saved.setTarget1(input.getTarget1());saved.setUseSpotForSl(true);saved.setUseSpotForTarget(true);
+            saved.setComment(saved.getComment()+"ADX_EXIT=INDEX_15M_V1;ADX_INDEX_T1=23020;");
+        }
         when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenReturn(new org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.Batch(prepared,true));
         when(admission.place(any(),any())).thenAnswer(i->((java.util.function.Supplier<?>)i.getArgument(1)).get());
         when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenAnswer(i->{var trade=(TriggeredTradeSetupEntity)i.getArgument(0);
@@ -314,8 +320,8 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(ctx.service.executeAdxDmiRequests(orders)).hasSize(3);
         var placed=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(ctx.broker,times(3)).placeOrder(placed.capture(),any(),anyDouble());
         assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTriggerRequestId).containsExactly(77L,78L,79L);
-        assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTarget1).containsExactly(11.6,12.6,13.6);
-        assertThat(placed.getAllValues()).allSatisfy(t->{assertThat(t.getStopLoss()).isEqualTo(9.6);assertThat(t.getQuantity()).isEqualTo(50L);assertThat(t.getTslEnabled()).isFalse();});
+        assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTarget1).containsExactly(indexExits?23020d:11.6,indexExits?23040d:12.6,indexExits?23060d:13.6);
+        assertThat(placed.getAllValues()).allSatisfy(t->{assertThat(t.getStopLoss()).isEqualTo(indexExits?23000d:9.6);assertThat(t.getQuantity()).isEqualTo(50L);assertThat(t.getTslEnabled()).isFalse();});
         assertThat(ctx.savedTrade.get().getEntryPrice()).isEqualTo(10.6);assertThat(ctx.savedTrade.get().getActualEntryPrice()).isEqualTo(10.55);
     }
 

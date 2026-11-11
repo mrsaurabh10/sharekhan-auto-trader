@@ -17,13 +17,33 @@ public class AdxDmiScheduler {
     private final StrategySubscriptionService subscriptionService;
     private final AdxDmiPaperBroker paper;
     private final org.com.sharekhan.service.TradeExecutionService execution;
+    private final AdxDmiIndexExitPolicy indexExits;
+    private final AdxDmiMarketData quotes;
     @Scheduled(fixedDelayString="${app.strategy.adx-dmi.poll-ms:2000}")
-    public void poll(){poll(LocalDateTime.now(AdxDmiRules.IST));}
-    void poll(LocalDateTime now){
+    public void poll(){poll(LocalDateTime.now(AdxDmiRules.IST),Clock.system(AdxDmiRules.IST));}
+    void poll(LocalDateTime now){poll(now,Clock.fixed(now.atZone(AdxDmiRules.IST).toInstant(),AdxDmiRules.IST));}
+    private void poll(LocalDateTime now,Clock clock){
         for(var pending:trades.findBySourceAndStatusIn(AdxDmiRules.PREMIUM_SOURCE,List.of(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION))){
             if(!AdxDmiEntryAdmission.validDecision(pending.getComment(),now) && !"ENTRY_USER_CANCEL_REQUESTED".equals(pending.getReason()))
                 try{execution.cancelStrategyRunEntry(pending.getId(),pending.getStrategyRunId());}
                 catch(RuntimeException failure){log.warn("ADX entry {} cancellation pending: {}",pending.getId(),failure.getMessage());}
+        }
+        // Versioned index policy observes fresh exact spot; placement/retries stay in the normal engine.
+        // Continue even after noon or subscription pause, and retain exit intent through missing option books.
+        for(var trade:trades.findBySourceAndStatusIn(AdxDmiRules.PREMIUM_SOURCE,List.of(
+                org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED,org.com.sharekhan.enums.TriggeredTradeStatus.EXIT_TRIGGERED,
+                org.com.sharekhan.enums.TriggeredTradeStatus.EXIT_FAILED))){
+            if(!AdxDmiIndexExitRules.owns(trade))continue;
+            try{
+                Double spot=null;
+                try{if(trade.getSpotScripCode()!=null){
+                    var cash=AdxDmiRules.cashExchange(trade.getExchange());
+                    var quote=quotes.spot(trade.getSpotScripCode(),cash);
+                    if(quotes.freshSpot(cash,quote,Instant.now(),trade.getSpotScripCode()))spot=quote.getLastTradedPrice();
+                }}catch(RuntimeException unavailable){log.debug("ADX index spot unavailable for {}: {}",trade.getId(),unavailable.getMessage());}
+                var reason=indexExits.observe(trade.getId(),spot,LocalDateTime.now(clock));
+                if(reason!=null)execution.squareOffStrategyRunTrade(trade.getId(),trade.getStrategyRunId(),reason);
+            }catch(RuntimeException failure){log.warn("ADX index exit {} awaiting execution: {}",trade.getId(),failure.getMessage());}
         }
         // Existing positions remain managed even after a subscription is paused/cancelled.
         for(var t:trades.findBySourceAndStatusIn(AdxDmiRules.SOURCE,List.of(org.com.sharekhan.enums.TriggeredTradeStatus.EXECUTED)))try{paper.evaluate(t.getId());}
