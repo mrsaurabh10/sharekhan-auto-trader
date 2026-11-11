@@ -9,18 +9,7 @@ class AdxDmiPremiumPlanTest {
         var plan=AdxDmiPremiumPlan.create(100.01,20,.543,.05);
         assertEquals(100.05,plan.entry());assertEquals(10.9,plan.risk());assertEquals(89.15,plan.stop());
         assertEquals(110.95,plan.t1());assertEquals(121.85,plan.t2());assertEquals(132.75,plan.t3());
-        for(int direction:new int[]{1,-1}){
-            var r=new StrategyApplyRequest();r.setSymbol("RELIANCE");r.setUserId(1L);r.setBrokerCredentialsId(2L);
-            var signal=new AdxDmiRules.Signal(direction,LocalDateTime.of(2026,11,11,10,0),1400,1380,new AdxDmiRules.Reading(30,10,30));
-            var requests=AdxDmiStrategy.orders(r,signal,AdxDmiStrategyTest.option(12,signal.side(),"17/11/2026",1400),44,plan,AdxDmiGreeks.Reading.fallback("TEST"));
-            assertEquals(3,requests.size());
-            assertEquals(java.util.List.of(plan.t1(),plan.t2(),plan.t3()),requests.stream().map(TriggerRequest::getTarget1).toList());
-            for(var request:requests){
-                assertEquals("BUY",request.getAction());assertEquals(signal.side(),request.getOptionType());assertEquals(1,request.getQuantity());
-                assertEquals(2L,request.getBrokerCredentialsId());assertEquals(plan.entry(),request.getEntryPrice());assertEquals(plan.stop(),request.getStopLoss());
-                assertFalse(request.getTslEnabled());assertFalse(request.getUseSpotForSl());assertNull(request.getTarget2());assertNull(request.getTarget3());
-            }
-        }
+
     }
     @Test void invalidOrNonPositiveStopCannotCreateOrders(){
         assertThrows(IllegalArgumentException.class,()->AdxDmiPremiumPlan.create(1,10,.5,.05));

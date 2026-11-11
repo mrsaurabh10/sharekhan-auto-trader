@@ -1,139 +1,99 @@
-# ADX / DMI fixed partials — Simulator
+# ADX / DMI Fixed Partials
 
-Template `ADX_DMI_FIXED_PARTIALS` accepts the existing required `symbol` input.
-There is no NIFTY/SENSEX symbol whitelist or forced symbol value. Resolve the
-actual underlying from the instrument master; NC spot maps to NF options and
-BC spot to BF options. A listed matching option contract is required. The
-underlying tick size and option lot size come from their respective metadata.
-When spot tick metadata is absent, use the explicit strategy price increment
-`app.strategy.adx-dmi.fallback-spot-tick` (default 0.05, matching the frozen
-backtest). Positive valid spot metadata takes precedence; invalid numeric
-metadata fails closed. Never substitute an option contract tick for spot.
-Production preflight on 10 November found missing spot ticks on both requested
-index records; option lot metadata is present. SENSEX option tick metadata is also absent.
-Paper option fills use exact fresh quoted ask/bid without price rounding, so
-missing option tick is accepted; invalid numeric tick metadata still rejects.
-Select an active owned Simulator account. Configure two separate subscriptions
-for the requested NIFTY and SENSEX instances, three lots each, intraday. These
-are subscription inputs, not special strategy cases. Symbols have independent
-position locks and can trade concurrently. CE/PE share one position per
-account/symbol across subscriptions. No live broker order interface is used.
+`ADX_DMI_FIXED_PARTIALS` is a broker-independent template. Symbol is an input;
+there is no symbol whitelist. The selected owned account determines execution
+through the normal broker adapter, including Simulator. Market-data providers
+and the execution broker are independent. Current NIFTY/SENSEX subscriptions are
+Simulator test instances; this change does not activate any live subscriptions.
 
-## Frozen rules
+## Entry and requests
 
-- Standard completed regular-session five-minute spot candles, IST start stamps.
-- Wilder DMI(14), ADX smoothing 14: ADX >25, dominant DI >25, opposite DI <20.
-- CE: next candle crosses signal high +one metadata tick; PE: signal low −one metadata tick. Signal expires
-  after that next five-minute candle. Repeated qualifying candles may re-arm it.
-- Initial stop is the opposite signal extreme. Actual observed spot at entry
-  determines R; targets rounded to the underlying metadata tick at 1R, 2R, 3R. One option lot each.
-- The original spot stop stays unchanged after every partial exit.
-- Morning entries only, 09:20 <= time <12:00 IST, matching the selected Pine
-  default. Replay can disable morning-only to test the separate 14:50 cutoff.
-- No new signal from a candle containing an entry/exit fill, or completed while
-  another position was open. Persisted signal key prevents duplicate entries.
-- Remaining positions trigger square-off at 15:20. Exit triggers persist until
-  a fresh executable option book is available; missing books can delay actual
-  exits past 15:20. No fabricated prices or guaranteed execution deadline.
+- Completed regular-session five-minute underlying candles, IST. Wilder
+  DMI(14)/ADX(14), ADX >25, dominant DI >25, opposite DI <20. Carry indicator
+  history across sessions; require 200 bars and use the existing rolling history.
+- Skip only 09:15–09:20 as a signal; retain it in indicator history. Earliest
+  qualifying signal closes09:25. Entries must occur before12:00.
+- Next-bar breakout: signal high plus one underlying tick for CE, low minus one
+  tick for PE. Signal expires after that next five-minute candle.
+- Use exact fresh underlying quotes and an exact fresh ATM option book. Choose
+  the nearest listed strike in the nearest unexpired expiry, ties to lower strike.
+  NC spot maps to NF options and BC spot to BF options. Option lot/tick metadata
+  must be usable; absent underlying tick uses configured0.05 fallback.
+- Submit **three separate normal one-lot BUY requests**, same contract, account,
+  planned option entry and original fixed index SL. Each has only target1 set,
+  respectively index1R/2R/3R; target2/3 unset, TSL false. No staged child orders
+  or separate strategy fill ledger. Standard admission, routing, confirmation,
+  manual exit, reconciliation and exit-order chasing remain responsible for orders.
 
-Simulator entries buy the nearest listed expiry's actual ATM contract at ask,
-requiring displayed depth for three metadata-sized lots. Each persisted leg
-sells bid at its own target/stop. Closed legs are never recreated. A database
-account lock serializes admissions; subscription/run locks prevent entry after
-cancellation or Close All. Manual/run exits route through the same paper path.
-Generic entry/exit paths cannot submit orders for this reserved source.
-Displayed bid depth already used by these strategy legs since that book update
-is deducted before another leg fills. There is no exchange queue simulation.
+## Index exits and 15-minute timeout
 
-The stop and targets are **underlying spot levels**, matching Pine. `0.5 × R`
-is recorded as an option-risk estimate, not an actual premium stop. Option
-prices, spreads, IV, theta and fees make option P&L different. The existing
-application fee model is an estimate and may allocate entry fees across the
-three paper records differently from a broker's combined entry ticket.
+New requests carry server-owned `ADX_EXIT=INDEX_15M_V1` metadata. Their entryPrice
+is the planned option premium (tick-rounded executable ask); their stopLoss and
+target1 are **underlying levels**. `useSpotForEntry=false`, `useSpotForSl=true`,
+`useSpotForTarget=true`. Freeze the reference underlying price from the final
+confirmed breakout quote; R is its distance from the original signal extreme.
+Actual option fills are stored separately and never move those index levels.
 
-## Indicator history and data identity
+The new index policy observes exact fresh underlying quotes every scheduler
+poll (default2s). It exits each independent request on its fixed index SL or
+respective index target. Stops do not wait for a candle close; targets do not
+wait for the option to be profitable. The common candle-stop/profit-floor
+monitor skips this explicit version. Older premium-bracket requests retain
+their old behavior; legacy paper records retain their legacy manager.
 
-The existing application's history service retains up to 250 completed bars
-and 14 calendar days. A minimum of 200 bars is required. The simulator and
-replay default use the same rolling 250-bar RMA initialization; no daily reset.
-Insufficient/stale history or wrong exchange/provider identity waits for data.
-The shared existing weekday/configured-holiday calendar is used, including
-for SENSEX; actual fresh completed session bars and quotes are still required.
-No new data source, broker session refresh, schema, import or background job is
-introduced beyond this template's evaluation loop.
+Start the timeout from the earliest confirmed entry fill in that signal's three
+requests. If indexT1 has not been observed **before15minutes**, exit all remaining
+lots. At the exact deadline, timeout takes precedence over a newly observedT1.
+Once T1 was observed, disable this timeout for the remaining lots, with no SL
+movement. No maximum holding time is added after T1. All remaining intraday
+positions still trigger square-off at15:20; unavailable quotes or pending orders
+can delay actual fills. No guaranteed exit price or deadline is implied.
 
-Pine uses all chart-loaded history, including TradingView index pre-open bars.
-The application history intentionally filters before 09:15. Saved DHAN spot
-history is a different feed from application MStock/Sharekhan and TradingView.
-Numerical/entry parity must not be inferred from matching indicator formulas.
+An additive Hibernate-managed `adx_dmi_exit_state` table stores the first-fill
+clock, T1 observation and timeout for each owner/account/symbol/signal. Account
+locking serializes all three requests' observations. It is observation state,
+not a custom execution lifecycle. Persist exit intent on each existing trade
+before asking the normal engine to square off, so a missing option quote or an
+index reversal cannot erase a trigger. Continue management after subscription
+pause, entry cutoff and restart. Never restart the clock from process startup.
+An observation cannot be reconstructed for periods when the application had no
+fresh quotes; an unobservedT1 does not disable the timeout after an outage.
 
-## Backtesting
+API absolute delta (fallback0.5) and other Greeks are retained as audit context
+only. Delta does not set an option SL/target in this version. An index SL cannot
+cap the option loss at its initial delta-derived estimate. Fees and P&L use
+actual option fills via the ordinary engine. The app's shared fee estimator is
+unchanged; the offline research model has explicit separate2026fee assumptions.
 
-Existing admin-token protected endpoint:
-`POST /api/backtests/csv/datasets/{id}/adx-dmi-fixed-partials`
-with JSON `{"from":"2026-06-01","to":"2026-10-31","morningOnly":true,"tickSize":0.05}`.
-Existing dataset upload accepts a symbol input too; this does not make other
-strategy engines support every symbol. The endpoint returns an in-memory underlying proxy
-report/leg ledger and does not create orders/subscriptions. Standard session
-security and CSRF behavior remain unchanged; no-store response header.
+## Evaluation and limitations
 
-Offline CLI (Java 21, no Spring/database/broker):
+June–October2026 option replay uses106 complete sessions per symbol, fixed entry
+strike throughout each trade, three lots total (NIFTY65units/lot, SENSEX20).
+No missing selected-path minutes or censored positions remain in the final32
+exit-policy comparison scenarios. The implementation's pure Java exit policy
+was checked against all2,316 exit decisions and29,790 minute observations in
+four selected-rule runs, including both symbols and0/0.5%per-fill friction.
+This verifies exit-policy parity conditional on the replay entries, not broker
+fills or end-to-end TradingView parity.
 
-```
-java -cp "target/classes:<dependency-classpath>" \
-  org.com.sharekhan.strategy.adxdmi.AdxDmiBacktestMain \
-  --file nifty-minute.csv --input-minutes 1 --symbol NIFTY \
-  --from 2026-06-01 --to 2026-10-31 --execution tv5 \
-  --indicator-history rolling250 --tick-size 0.05 --output-dir results
-```
+| Selected index-exit + noT1-by15 rule | NIFTY net | SENSEX net |
+|---|---:|---:|
+| Reference fees, no assumed slippage | +40,314.40 | +31,960.50 |
+| Reference fees,0.5% adverse execution per fill | -2,306.87 | -9,907.44 |
 
-Replay tick size defaults to 0.05 and must be supplied correctly for the input
-instrument; live Simulator evaluation uses the underlying master tick instead.
-`--execution minute` uses the saved one-minute sub-bars, still five-minute
-signals. `--indicator-history continuous` uses all prior input bars for the
-Pine-style seed. OHLC execution follows TradingView's documented emulator path:
-open/high/low/close if open is nearer high, otherwise open/low/high/close;
-equal distances use low first. Gaps fill at open, targets re-anchor to entry.
-Missing square-off bars cannot roll an intraday position into a new session.
-Open legs at dataset end are reported, not silently discarded or closed.
+Amounts are estimated INR, not actual broker bills. The stress assumption is
+not a measured spread. Historical replay observes minute-open breakouts and
+minute-open index exit conditions, fills the held option at its minute open,
+and uses fallback delta only for the previous premium-bracket comparisons.
+The running strategy uses fresh quote observations, so intraminute decisions
+can differ. Rolling option archives identify fixed strikes in the front-weekly
+family but do not certify exact expired-contract securityIDs. No independent
+holdout or measured live fills is included. June–October is an exploratory
+selection sample; validate fresh data and bid/ask execution in Simulator.
 
-All P&L is the sum of three **underlying proxy units**, not option rupees.
-Divide by three for P&L per original total unit; this is not actual lot sizing.
-Drawdowns are labelled realized-cycle and marked-equity, not claimed identical
-to TradingView's drawdown convention. Output includes every leg and decision.
-
-## June–October 2026 evidence
-
-See `outputs/adx-dmi-autotrader-20261110/report.html` in the parent workspace.
-106 complete saved sessions, 39,750 scored minute bars, prior May warmup,
-no overlapping source conflicts. Continuous and rolling-250 default trade
-ledgers match on this sample; this does not prove parity for other datasets.
-Initial full period gross: 165 entries, +617.75 points, PF 1.078 with five-minute
-OHLC execution; minute execution 167 entries, +470.85 points, PF 1.059.
-June loses and October supplies most profits. No parameter optimization here.
-
-TradingView Basic exposes August 3–November 9 only. With entries restricted to
-June–October, its August/September/October cycles are 22/28/29 and gross results
-+503.45/+107.00/+2074.45. Saved regular-session replay gives 33/32/37 and
-+233.15/−95.60/+1446.50. **Not matched.** On October 1 at 09:15, OHLC differs
-(open 22558.20 vs 22543.70; close 22556.45 vs 22556.05), and +DI 24.152556 vs
-13.638007 changes the PE admission test. TradingView also starts with a 09:05
-bar and includes pre-open history, absent from saved/app regular-session bars.
-These verified differences preclude a same-data fill-parity claim. TradingView
-June/July and complete historical option results are unavailable here.
-
-## Release state
-
-Prepared locally on `codex/nifty-adx-dmi-fixed-partials`, based on main
-`d3c9024`. No deployment or subscription activation. Production SSH preflight
-was rejected by automatic approval review as lacking explicit server access
-authorization. No retry/bypass or production changes occurred. Release must
-verify current main/server and exact NIFTY/SENSEX masters, snapshot settings
-and backup, publish/review the branch, deploy only the app, verify health, then
-create only the two intended owned Simulator subscriptions through normal UI.
-SENSEX historical profitability and forward paper execution remain unverified.
-
-10 November: user explicitly authorized publishing/merging, production SSH,
-app-only rollout and normal admin UI activation of the two Simulator instances,
-plus private notes backup. Previous authorization blocker is resolved; release
-verification will record the final deployed revision and subscription IDs.
+The existing CSV backtest endpoint and `AdxDmiBacktestMain` still report an
+**underlying proxy**, not this actual-option replay. Do not present their P&L as
+option INR or claim TradingView parity. TradingView index pre-open bars and
+provider feed/history differences remain relevant. Raw option research and
+conditional Java verification artifacts are in the parent workspace under
+`outputs/adx-dmi-option-timing-20261111/`; they are not bundled into the app.

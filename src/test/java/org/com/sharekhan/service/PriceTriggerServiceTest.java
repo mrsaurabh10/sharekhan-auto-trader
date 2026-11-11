@@ -49,6 +49,17 @@ class PriceTriggerServiceTest {
         verify(triggeredRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString(),anyString());
         verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
     }
+    @Test void versionedAdxIndexPolicyBypassesGenericCandleStopAndProfitFloor() {
+        var t=TriggeredTradeSetupEntity.builder().id(602L).source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE)
+                .comment("ADX_EXIT=INDEX_15M_V1;").status(TriggeredTradeStatus.EXECUTED).optionType("CE").scripCode(123)
+                .entryPrice(100d).actualEntryPrice(100d).useSpotForSl(true).useSpotForTarget(true)
+                .stopLoss(22980d).target1(23020d).tslEnabled(false).build();
+        when(triggeredRepo.findById(602L)).thenReturn(Optional.of(t));
+        service.handleTradeWithLock(602L,80d,22970d);
+        service.handleTradeWithLock(602L,80d,23030d);
+        verify(triggeredRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString(),anyString());
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
+    }
     @Test void fundsManagedPremiumRequestCannotBypassQueueOnPriceTick() {
         var request=TriggerTradeRequestEntity.builder().id(700L).scripCode(20000).optionType("CE")
                 .entryPrice(100d).useSpotForEntry(false).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build();
