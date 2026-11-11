@@ -867,7 +867,7 @@ public class TradeExecutionService {
                 .useSpotForTarget(useSpotForTarget)
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
-                .source(request.getSource()).strategyRunId(request.getStrategyRunId()) // store source
+                .source(request.getSource()).strategyRunId(request.getStrategyRunId()).comment(request.getStrategyDecision()) // store source
                 .brokerProductType(request.getBrokerProductType())
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
@@ -1307,6 +1307,7 @@ public class TradeExecutionService {
     }
 
     boolean isIntradayEntryWindowOpen(String source) {
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(source)) return entryQuoteWindowOpen(source);
         return org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source)
                 ? org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(entryClock))
                 : isIntradayEntryWindowOpen();
@@ -1450,7 +1451,7 @@ public class TradeExecutionService {
         trade.setActualEntryPrice(executedPrice);
 
         boolean isSharekhanSource = isSharekhanSource(trade.getSource());
-        if (!isSharekhanSource) {
+        if (!isSharekhanSource && !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trade.getSource())) {
             if (originalEntryPrice != null) {
                 double diff = executedPrice - originalEntryPrice;
                 if (Math.abs(diff) > 0.0001) {
@@ -1852,6 +1853,9 @@ public class TradeExecutionService {
         }
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission adxAdmission;
+
     public TriggerTradeRequestEntity executeTriggeredTrade(TriggerRequest request) {
         if (request == null) {
             throw new InvalidTradeRequestException("Trade request cannot be null");
@@ -1875,7 +1879,44 @@ public class TradeExecutionService {
             }
         }
 
-        TriggerTradeRequestEntity saved = executeTrade(request, false, false);
+        TriggerTradeRequestEntity saved;
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(request.getSource())) {
+            var admission=adxAdmission.prepare(request, () -> executeTrade(request,false,false));
+            if(!admission.created()) return admission.request();
+            saved=admission.request();
+        } else saved = executeTrade(request, false, false);
+        return executePreparedTriggeredRequest(saved);
+    }
+
+    /** Three independent one-lot requests, admitted together; each uses the standard execution path. */
+    public List<TriggerTradeRequestEntity> executeAdxDmiRequests(List<TriggerRequest> orders) {
+        if(orders==null || orders.size()!=3)throw new InvalidTradeRequestException("ADX requires three independent requests");
+        var first=orders.getFirst();
+        for(var order:orders){
+            if(!org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(order.getSource()) || !Integer.valueOf(1).equals(order.getQuantity())
+                    || !Objects.equals(first.getUserId(),order.getUserId()) || !Objects.equals(first.getBrokerCredentialsId(),order.getBrokerCredentialsId())
+                    || !Objects.equals(first.getInstrument(),order.getInstrument()) || !Objects.equals(first.getExchange(),order.getExchange())
+                    || !Objects.equals(first.getOptionType(),order.getOptionType()) || !Objects.equals(first.getExpiry(),order.getExpiry()) || !Objects.equals(first.getStrikePrice(),order.getStrikePrice())
+                    || !Objects.equals(first.getEntryPrice(),order.getEntryPrice()) || !Objects.equals(first.getStopLoss(),order.getStopLoss())
+                    || order.getTarget2()!=null || order.getTarget3()!=null || Boolean.TRUE.equals(order.getTslEnabled()))
+                throw new InvalidTradeRequestException("ADX requests must share contract, account, entry and fixed SL, with one lot and one target each");
+        }
+        var admission=adxAdmission.prepareBatch(orders,order->executeTrade(order,false,false));
+        if(!admission.created())return admission.requests();
+        var completed=new ArrayList<TriggerTradeRequestEntity>();
+        try {
+            for(var saved:admission.requests()) completed.add(executePreparedTriggeredRequest(saved));
+        } catch(RuntimeException failure){
+            // A broker failure can leave a filled/uncertain earlier order. Preserve it, and never submit the unattempted requests.
+            for(int i=completed.size()+1;i<admission.requests().size();i++)triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(
+                    admission.requests().get(i).getId(),TriggeredTradeStatus.TRIGGERED.name(),TriggeredTradeStatus.CANCELLED.name(),
+                    "ADX_BATCH_NOT_SUBMITTED","Another request in this signal failed; this request was not submitted.");
+            throw failure;
+        }
+        return completed;
+    }
+
+    private TriggerTradeRequestEntity executePreparedTriggeredRequest(TriggerTradeRequestEntity saved) {
         int claimed = triggerTradeRequestRepository.claimIfStatusEquals(saved.getId(),
                 TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION.name(),
                 TriggeredTradeStatus.TRIGGERED.name());
@@ -2566,6 +2607,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotForTarget(trigger.getUseSpotForTarget());
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
+            triggeredTradeSetupEntity.setComment(trigger.getComment());
             triggeredTradeSetupEntity.setSource(trigger.getSource()); triggeredTradeSetupEntity.setEntryAction(trigger.getEntryAction());
             triggeredTradeSetupEntity.setStrategyRunId(trigger.getStrategyRunId());
             triggeredTradeSetupEntity.setBrokerProductType(trigger.getBrokerProductType());
@@ -2593,7 +2635,7 @@ public class TradeExecutionService {
                     boolean isSharekhanSource = isSharekhanSource(triggeredTradeSetupEntity.getSource());
 
                     // Sharekhan signals carry source-defined entry/SL/target levels, so keep them unchanged after fill.
-                    if (!isSpotEntry && !isSharekhanSource) {
+                    if (!isSpotEntry && !isSharekhanSource && !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(triggeredTradeSetupEntity.getSource())) {
                         if (originalEntryPrice != null && executedPrice != null) {
                             double diff = executedPrice - originalEntryPrice;
                             if (Math.abs(diff) > 0.0001) {
@@ -3049,6 +3091,8 @@ public class TradeExecutionService {
             log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, triggerLogId(trigger), formatPrice(price));
             TradeEventLogger.logOrderAttempt("ENTRY", trigger, attempt + 1, attempt == 0 ? "PLACE" : "MODIFY", price, orderId);
 
+            if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource())) price=Math.min(price,trigger.getEntryPrice());
+            final double admittedPrice=price;
             OrderPlacementResult result;
             if (attempt == 0) {
                 if (!sharedDecisionExecutable() || !entryQuoteWindowOpen(trigger.getSource())) {
@@ -3058,7 +3102,9 @@ public class TradeExecutionService {
                     return OrderPlacementResult.builder().success(false)
                             .rejectionReason("ENTRY_WINDOW_ELAPSED: no order submitted").build();
                 }
-                result = brokerService.placeOrder(trigger, ctx, price);
+                result = org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource())
+                        ? adxAdmission.place(trigger, () -> brokerService.placeOrder(trigger,ctx,admittedPrice))
+                        : brokerService.placeOrder(trigger, ctx, price);
                 if (result != null && isUsableBrokerOrderId(result.getOrderId())) {
                     orderId = result.getOrderId();
                     trigger.setOrderId(orderId);
@@ -3225,6 +3271,8 @@ public class TradeExecutionService {
     }
 
     private boolean isEntrySignalStillValid(TriggeredTradeSetupEntity trigger) {
+        if(trigger!=null && org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()))
+            return org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.validDecision(trigger.getComment(),LocalDateTime.now(entryClock));
         if (trigger == null || !usesSpotEntryReference(trigger)) {
             return true;
         }
@@ -3267,6 +3315,7 @@ public class TradeExecutionService {
     }
 
     private double entryPriceCeiling(TriggeredTradeSetupEntity trigger, double initialOptionPrice) {
+        if(trigger!=null && org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()))return trigger.getEntryPrice();
         double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent(trigger) / 100d);
         return Math.floor((rawCeiling + 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
     }
@@ -3614,6 +3663,9 @@ public class TradeExecutionService {
                         return;
                     }
 
+                    if(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(latest.getSource()) && !isEntrySignalStillValid(latest)) {
+                        cancelStrategyRunEntry(tradeId,latest.getStrategyRunId());stopEntryOrderChase(tradeId);return;
+                    }
                     if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(latest.getSource())
                             && !org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.entryAllowed(latest.getSource(), LocalDateTime.now(ZoneId.of("Asia/Kolkata")))) {
                         cancelTimedStrategyEntry(tradeId);
@@ -3805,6 +3857,8 @@ public class TradeExecutionService {
                 closeEntryDecision(control);
                 return "The order is no longer awaiting an entry action.";
             }
+            if(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trade.getSource()) && !"cancel".equals(action)
+                    && (!isEntrySignalStillValid(trade) || "market".equals(action)))return "ADX fixed-price signal expired or market repricing is unavailable; cancellation remains available.";
             if(runCoordinator!=null && !runCoordinator.isOpen(trade.getStrategyRunId()) && !"cancel".equals(action)) return "Strategy instance closing; entry retry disabled.";
             if (org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(trade.getSource()) && !"cancel".equals(action))
                 return "Timed straddle entries cannot be retried or repriced manually. Waiting for cancellation/fill reconciliation.";
@@ -4355,6 +4409,7 @@ public class TradeExecutionService {
                     : Math.min(rawPrice, entryPriceCeiling(trigger, fallbackLtp));
         }
 
+        if(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()))rawPrice=Math.min(rawPrice,trigger.getEntryPrice());
         return normalisePriceToTick(diagnostics, rawPrice);
     }
 
@@ -4948,7 +5003,7 @@ public class TradeExecutionService {
 
         Long requestId = trade.getTriggerRequestId();
         String reason = terminalEntryStatus == TriggeredTradeStatus.REJECTED ? trade.getReason() : null;
-        String comment = terminalEntryStatus == TriggeredTradeStatus.REJECTED ? trade.getComment() : null;
+        String comment = terminalEntryStatus == TriggeredTradeStatus.REJECTED || org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trade.getSource()) ? trade.getComment() : null;
         int updated = triggerTradeRequestRepo.claimIfStatusEqualsWithOutcome(
                 requestId,
                 TriggeredTradeStatus.ENTRY_SUBMITTING.name(),
@@ -5970,7 +6025,7 @@ public class TradeExecutionService {
                 || (tradeSetupEntity.getUseSpotForEntry() == null && Boolean.TRUE.equals(tradeSetupEntity.getUseSpotPrice()));
         boolean sharekhanSource = isSharekhanSource(tradeSetupEntity.getSource());
 
-        if (!isSpotEntry && !sharekhanSource) {
+        if (!isSpotEntry && !sharekhanSource && !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(tradeSetupEntity.getSource())) {
             tradeSetupEntity.setEntryPrice(price);
             if (originalTriggerPrice != null) {
                 double diff = price - originalTriggerPrice;
@@ -6502,6 +6557,7 @@ public class TradeExecutionService {
         // direct/replayed call cannot authorize an entry on the wrong side.
         // Real brokers can hold a trigger order themselves; the simulator cannot.
         if (isSimulatorBrokerRequest(requestEntity)
+                && !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(requestEntity.getSource())
                 && !org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(requestEntity.getSource())
                 && !chaseEntryUntilExecuted
                 && !useSpotForEntry
@@ -6543,6 +6599,7 @@ public class TradeExecutionService {
         temp.setTarget2(requestEntity.getTarget2());
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
+        temp.setComment(requestEntity.getComment());
         temp.setSource(requestEntity.getSource()); temp.setEntryAction(requestEntity.getEntryAction());
         temp.setStrategyRunId(requestEntity.getStrategyRunId());
         // This value decides whether Sharekhan submits the documented BKT
@@ -6584,6 +6641,8 @@ public class TradeExecutionService {
     }
 
     private boolean entryQuoteWindowOpen(String source) {
+        if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(source))
+            return org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.entryWindow(LocalDateTime.now(entryClock));
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(source))
             return org.com.sharekhan.strategy.mcx.NaturalGasSession.entryAllowed(LocalDateTime.now(entryClock));
         return !org.com.sharekhan.strategy.straddle.ExpiryLongStraddleStrategy.owns(source)

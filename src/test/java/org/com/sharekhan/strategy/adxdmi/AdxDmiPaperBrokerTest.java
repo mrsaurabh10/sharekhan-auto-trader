@@ -23,7 +23,7 @@ class AdxDmiPaperBrokerTest {
     final QuoteCacheService quotes=mock(QuoteCacheService.class);
     final StrategyRunCoordinator runs=mock(StrategyRunCoordinator.class);
     final TradeAuditService audit=mock(TradeAuditService.class);
-    final AdxDmiPaperBroker paper=new AdxDmiPaperBroker(em,trades,requests,quotes,runs,audit,Clock.fixed(instant,AdxDmiRules.IST));
+    final AdxDmiPaperBroker paper=new AdxDmiPaperBroker(em,trades,requests,new AdxDmiMarketData(quotes,mock(ScriptMasterRepository.class),mock(ShoonyaQuoteService.class),audit,Clock.fixed(instant,AdxDmiRules.IST)),runs,audit,Clock.fixed(instant,AdxDmiRules.IST));
     final StrategyApplyRequest r=new StrategyApplyRequest();
     final ScriptMasterEntity option=AdxDmiStrategyTest.option(123,"CE","10/11/2026",23000);
     final AdxDmiRules.Signal signal=new AdxDmiRules.Signal(1,now.withMinute(0),23001,22980,new AdxDmiRules.Reading(30,10,30));
@@ -135,7 +135,7 @@ class AdxDmiPaperBrokerTest {
     }
     @Test void sessionCloseDoesNotRequireASpotQuoteAndStillUsesOptionBid(){
         var t=position();when(quotes.getSnapshot(20000)).thenReturn(Optional.empty());
-        var late=new AdxDmiPaperBroker(em,trades,requests,quotes,runs,audit,Clock.fixed(now.withHour(15).withMinute(20).atZone(AdxDmiRules.IST).toInstant(),AdxDmiRules.IST));
+        var late=new AdxDmiPaperBroker(em,trades,requests,new AdxDmiMarketData(quotes,mock(ScriptMasterRepository.class),mock(ShoonyaQuoteService.class),audit,Clock.fixed(now.withHour(15).withMinute(20).atZone(AdxDmiRules.IST).toInstant(),AdxDmiRules.IST)),runs,audit,Clock.fixed(now.withHour(15).withMinute(20).atZone(AdxDmiRules.IST).toInstant(),AdxDmiRules.IST));
         var at=now.withHour(15).withMinute(20).atZone(AdxDmiRules.IST).toInstant();
         when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,65,65,at)));late.evaluate(22L);
         assertEquals("ADX_DMI_SESSION_CLOSE",t.getExitReason());assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,t.getStatus());
@@ -164,5 +164,26 @@ class AdxDmiPaperBrokerTest {
         var req=open();assertEquals("SENSEX",req.getSymbol());assertEquals(60,req.getQuantity());
         var capture=org.mockito.ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(trades,times(3)).saveAndFlush(capture.capture());
         capture.getAllValues().forEach(t->{assertEquals(20,t.getQuantity());assertEquals("BF",t.getExchange());assertEquals(22980,t.getStopLoss());});
+    }
+    @Test void verifiedRestFallbackCanOpenAndExitSensexWithExactOptionDepth() {
+        var scripts=mock(ScriptMasterRepository.class);var api=mock(ShoonyaQuoteService.class);
+        var spotMaster=ScriptMasterEntity.builder().scripCode(999901).exchange("BC").tradingSymbol("SENSEX").build();
+        var contract=ScriptMasterEntity.builder().scripCode(321).exchange("BF").tradingSymbol("SENSEX").strikePrice(81900d)
+                .optionType("CE").expiry("12/11/2026").lotSize(20).build();
+        when(scripts.findByScripCode(999901)).thenReturn(spotMaster);when(scripts.findByScripCode(321)).thenReturn(contract);
+        when(api.getExactQuote(spotMaster)).thenReturn(Optional.of(new ShoonyaQuoteService.ExactQuote(
+                new ShoonyaQuoteService.LiveQuote("SENSEX","1","SENSEX","1",81879.4,null,null),"BSE",instant,instant)));
+        when(api.getExactQuote(contract)).thenReturn(Optional.of(new ShoonyaQuoteService.ExactQuote(
+                new ShoonyaQuoteService.LiveQuote("SENSEX26N1281900CE","provider-321","SENSEX26N1281900CE","provider-321",440d,439d,440d,60d,60d),"BFO",instant,instant)));
+        var data=new AdxDmiMarketData(quotes,scripts,api,audit,Clock.fixed(instant,AdxDmiRules.IST));
+        var broker=new AdxDmiPaperBroker(em,trades,requests,data,runs,audit,Clock.fixed(instant,AdxDmiRules.IST));
+        r.setSymbol("SENSEX");
+        var signal=new AdxDmiRules.Signal(1,now.withMinute(0),81800,81700,new AdxDmiRules.Reading(30,10,30));
+        var req=broker.open(r,signal,contract,999901,List.of(contract));
+        assertEquals(60,req.getQuantity());assertEquals(81879.4,req.getEntryPrice());
+        var saved=org.mockito.ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);
+        verify(trades,times(3)).saveAndFlush(saved.capture());assertTrue(saved.getAllValues().stream().allMatch(t->t.getActualEntryPrice()==440d && t.getQuantity()==20L && t.getStopLoss()==81700d));
+        var t=saved.getAllValues().getFirst();when(em.find(TriggeredTradeSetupEntity.class,22L,LockModeType.PESSIMISTIC_WRITE)).thenReturn(t);
+        broker.close(22L,"STRATEGY_MANUAL_CLOSE");assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,t.getStatus());assertEquals(439,t.getExitPrice());
     }
 }

@@ -134,6 +134,33 @@ public class ShoonyaQuoteService {
         }
     }
 
+    /** Read-only exact snapshot for strict consumers; never logs in or refreshes credentials. */
+    public record ExactQuote(LiveQuote quote, String exchange, java.time.Instant receivedAt,
+                             java.time.Instant providerUpdatedAt) { }
+
+    public Optional<ExactQuote> getExactQuote(ScriptMasterEntity script) {
+        var mapped = instrumentMasterService.resolveScript(script);
+        if (mapped.isEmpty()) return Optional.empty();
+        var expected = mapped.get();
+        try {
+            var raw = getQuotes(expected.getExchange(), expected.getToken(), null, false);
+            if (!"Ok".equalsIgnoreCase(raw.optString("stat"))
+                    || !expected.getExchange().equalsIgnoreCase(raw.optString("exch"))) return Optional.empty();
+            var quote = new LiveQuote(expected.getTradingSymbol(), expected.getToken(),
+                    firstText(raw, "tsym", "trading_symbol"), firstText(raw, "tk", "token"),
+                    decimal(raw, "lp"), decimal(raw, "bp1"), decimal(raw, "sp1"), decimal(raw, "bq1"), decimal(raw, "sq1"));
+            if (!quote.hasConfirmedIdentity()) return Optional.empty();
+            java.time.Instant updated = null;
+            if (raw.has("lut")) {
+                try { updated = java.time.Instant.ofEpochSecond(Long.parseLong(raw.optString("lut"))); }
+                catch (RuntimeException invalidTime) { return Optional.empty(); }
+            }
+            return Optional.of(new ExactQuote(quote, expected.getExchange(), java.time.Instant.now(), updated));
+        } catch (RuntimeException unavailable) {
+            return Optional.empty();
+        }
+    }
+
     private static Double decimal(JSONObject quote, String key) {
         String value = quote.optString(key, "");
         try { return StringUtils.hasText(value) ? Double.valueOf(value) : null; }

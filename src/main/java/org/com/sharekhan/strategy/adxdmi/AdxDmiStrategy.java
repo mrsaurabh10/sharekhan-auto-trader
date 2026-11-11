@@ -1,7 +1,6 @@
 package org.com.sharekhan.strategy.adxdmi;
 
 import lombok.RequiredArgsConstructor;
-import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.dto.*;
 import org.com.sharekhan.entity.*;
 import org.com.sharekhan.repository.*;
@@ -17,19 +16,19 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     private final BrokerCredentialsRepository brokers;
     private final ScriptMasterRepository scripts;
     private final StrategySupport support;
-    private final QuoteCacheService quotes;
+    private final AdxDmiMarketData quotes;
     private final TradeExecutionService feeds;
-    private final AdxDmiPaperBroker paper;
+    private final AdxDmiGreeks greeks;
     private final NseMarketCalendar calendar;
     @org.springframework.beans.factory.annotation.Value("${app.strategy.adx-dmi.fallback-spot-tick:0.05}")
     private double fallbackSpotTick=0.05;
-    private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials — Simulator",
-            "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout by one underlying tick, 3 lots at 1R/2R/3R, original spot SL throughout. Entries before noon IST; square-off 15:20. Option ask/bid paper fills; 0.5 delta estimates only.","AUTO");
+    private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials",
+            "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout by one underlying tick, three separate one-lot requests at 1R/2R/3R, fixed option-premium SL throughout. Entries before noon IST; square-off 15:20. API ATM delta (fallback 0.5) sets premium risk. Skip the first opening candle; selected account executes through the standard order engine.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r){
         r.setTemplateId(AdxDmiRules.TEMPLATE);r.setSymbol(AdxDmiRules.symbol(r.getSymbol()));r.setIntraday(true);
         if(r.getLots()!=null && r.getLots()!=3)throw new IllegalArgumentException("This strategy requires three equal lots");
-        r.setLots(3);r.setSource(AdxDmiRules.SOURCE);
+        r.setLots(3);r.setSource(AdxDmiRules.PREMIUM_SOURCE);
         var risk=r.getRiskSettings();
         if(risk!=null && (risk.getMaxLoss()!=null || risk.getProfitTarget()!=null || risk.getTrailActivation()!=null || risk.getSlStepProfit()!=null))
             throw new IllegalArgumentException("Frozen comparison uses the original signal stop and no additional run exits");
@@ -37,22 +36,23 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     }
     public void validateConfiguration(StrategyApplyRequest r){
         validate(r);
-        brokers.findById(r.getBrokerCredentialsId()==null?-1:r.getBrokerCredentialsId())
-                .filter(b->r.getUserId()!=null && Objects.equals(b.getAppUserId(),r.getUserId()) && Boolean.TRUE.equals(b.getActive()) && "SIMULATOR".equalsIgnoreCase(b.getBrokerName()))
-                .orElseThrow(()->new IllegalArgumentException("Choose an active owned Simulator account"));
+        var account=brokers.findById(r.getBrokerCredentialsId()==null?-1:r.getBrokerCredentialsId())
+                .filter(b->r.getUserId()!=null && Objects.equals(b.getAppUserId(),r.getUserId()) && Boolean.TRUE.equals(b.getActive()))
+                .orElseThrow(()->new IllegalArgumentException("Choose an active owned broker account"));
+        org.com.sharekhan.enums.Broker.fromDisplayName(account.getBrokerName());
     }
     @Override public StrategyApplyResponse apply(StrategyApplyRequest r){return apply(r,LocalDateTime.now(AdxDmiRules.IST));}
     public StrategyApplyResponse apply(StrategyApplyRequest r,LocalDateTime now){
         validateConfiguration(r);String symbol=r.getSymbol();
-        if(!calendar.isTradingDay(now.toLocalDate()) || now.toLocalTime().isBefore(LocalTime.of(9,20)) || !now.toLocalTime().isBefore(AdxDmiRules.CUTOFF))return waitFor(symbol,"Waiting for the 09:20–12:00 IST entry window");
+        if(!calendar.isTradingDay(now.toLocalDate()) || now.toLocalTime().isBefore(LocalTime.of(9,25)) || !now.toLocalTime().isBefore(AdxDmiRules.CUTOFF))return waitFor(symbol,"Waiting for the 09:25–12:00 IST entry window");
         var spot=support.resolveSpotScript(symbol);String cash=Objects.toString(spot.getExchange(),"").trim().toUpperCase(Locale.ROOT);
         if(!Set.of("NC","BC").contains(cash) || spot.getScripCode()==null)throw new IllegalStateException("Exact underlying spot identity unavailable");
         feeds.warmUpSpotLtp(spot,"ADX DMI "+symbol+" spot");
         double spotTick=AdxDmiRules.spotTick(spot.getTickSize(),fallbackSpotTick);
         var signal=AdxDmiRules.latestSignal(candles(spot,now),now,spotTick).orElse(null);
         if(signal==null)return waitFor(symbol,"Waiting for a completed qualifying 5m signal (200+ warmup bars)");
-        var q=quotes.getSnapshot(spot.getScripCode()).orElse(null);
-        if(!AdxDmiRules.freshSpot(cash,q,now.atZone(AdxDmiRules.IST).toInstant(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote");
+        var q=quotes.spot(spot.getScripCode(),cash);
+        if(!quotes.freshSpot(cash,q,java.time.Instant.now(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote: "+quotes.reason(spot.getScripCode(),cash,false));
         String exchange=AdxDmiRules.optionExchange(cash);
         var contracts=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange,symbol);
         var option=contract(contracts,symbol,exchange,signal.side(),q.getLastTradedPrice(),now.toLocalDate());
@@ -60,10 +60,48 @@ public class AdxDmiStrategy implements StrategyEvaluator {
         feeds.warmUpOptionLtp(warm,"ADX DMI exact ATM option");
         if(!signal.crossed(q.getLastTradedPrice()))return waitFor(symbol,"Waiting for "+signal.side()+" breakout; signal="+signal.key());
         try{
-            var req=paper.open(r,signal,option,spot.getScripCode(),contracts);
+            var reading=greeks.read(spot,option);
+            var actualNow=LocalDateTime.now(AdxDmiRules.IST);
+            if(!signal.inWindow(actualNow))return waitFor(symbol,"Signal expired while preparing the option order");
+            q=quotes.spot(spot.getScripCode(),cash);
+            if(!quotes.freshSpot(cash,q,Instant.now(),spot.getScripCode()) || !signal.crossed(q.getLastTradedPrice()))
+                return waitFor(symbol,"Waiting for a fresh confirmed breakout");
+            if(!Objects.equals(option.getScripCode(),contract(contracts,symbol,exchange,signal.side(),q.getLastTradedPrice(),actualNow.toLocalDate()).getScripCode()))
+                return waitFor(symbol,"ATM changed during preparation; re-evaluate the selected contract");
+            var book=quotes.book(option.getScripCode(),exchange);
+            if(!quotes.freshBook(exchange,book,Instant.now(),option.getScripCode()))return waitFor(symbol,"Waiting for a fresh exact option book");
+            if(option.getLotSize()==null || option.getLotSize()<=0 || option.getTickSize()==null || option.getTickSize()<=0)
+                return waitFor(symbol,"Option lot/tick metadata unavailable");
+            var plan=AdxDmiPremiumPlan.create(book.getBestAsk(),signal.risk(q.getLastTradedPrice()),reading.delta(),option.getTickSize());
+            var orders=orders(r,signal,option,spot.getScripCode(),plan,reading);
+            var requests=feeds.executeAdxDmiRequests(orders);
+            var req=requests.getFirst();
             return StrategyApplyResponse.builder().templateId(META.id()).symbol(symbol).direction(signal.side()).status("triggered")
-                    .message("Three paper option lots opened at ask. Fixed original spot stop; one lot each at 1R/2R/3R.").tradeRequest(req).breakoutClose(q.getLastTradedPrice()).build();
+                    .message("Three separate one-lot option BUY requests with the same fixed SL and targets 1R/2R/3R. Delta: "+reading.source()).tradeRequest(req).breakoutClose(q.getLastTradedPrice()).build();
         }catch(IllegalStateException waiting){return waitFor(symbol,waiting.getMessage());}
+    }
+    static List<TriggerRequest> orders(StrategyApplyRequest r,AdxDmiRules.Signal signal,ScriptMasterEntity option,int spotCode,
+            AdxDmiPremiumPlan plan,AdxDmiGreeks.Reading reading){
+        var orders=new ArrayList<TriggerRequest>();
+        for(int leg=1;leg<=3;leg++){
+            var order=order(r,signal,option,spotCode,plan,reading);
+            order.setTarget1(leg==1?plan.t1():leg==2?plan.t2():plan.t3());
+            order.setStrategyDecision(order.getStrategyDecision()+"ADX_LEG="+leg+";");orders.add(order);
+        }
+        return List.copyOf(orders);
+    }
+    private static TriggerRequest order(StrategyApplyRequest r,AdxDmiRules.Signal signal,ScriptMasterEntity option,int spotCode,
+            AdxDmiPremiumPlan plan,AdxDmiGreeks.Reading reading){
+        var order=new TriggerRequest();order.setInstrument(r.getSymbol());order.setExchange(option.getExchange());
+        order.setOptionType(signal.side());order.setExpiry(option.getExpiry());order.setStrikePrice(option.getStrikePrice());
+        order.setEntryPrice(plan.entry());order.setStopLoss(plan.stop());order.setTarget1(plan.t1());
+        order.setQuantity(1);order.setLots(1);order.setUserId(r.getUserId());order.setBrokerCredentialsId(r.getBrokerCredentialsId());
+        order.setIntraday(true);order.setAction("BUY");order.setTslEnabled(false);
+        order.setUseSpotPrice(false);order.setUseSpotForEntry(false);order.setUseSpotForSl(false);order.setUseSpotForTarget(false);order.setSpotScripCode(spotCode);
+        order.setSource(AdxDmiRules.PREMIUM_SOURCE);
+        order.setStrategyDecision("ADX_SIGNAL="+signal.key()+";ADX_DEADLINE="+signal.end().plusMinutes(5)+";delta="+plan.delta()+";source="+reading.source()
+                +";gamma="+reading.gamma()+";vega="+reading.vega()+";theta="+reading.theta()+";premiumR="+plan.risk()+";");
+        return order;
     }
     static ScriptMasterEntity contract(List<ScriptMasterEntity> rows,String symbol,String exchange,String side,double spot,LocalDate day){
         AdxDmiRules.symbol(symbol);AdxDmiRules.cashExchange(exchange);

@@ -15,6 +15,31 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
     @org.springframework.beans.factory.annotation.Autowired
     private org.com.sharekhan.cache.QuoteCacheService quotes;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.strategy.adxdmi.AdxDmiMarketData adxQuotes;
+    private final java.util.Map<String,Double> adxConsumed=new java.util.HashMap<>();
+    private synchronized double adxFill(TriggeredTradeSetupEntity trade,double fallback,boolean buy){
+        if(!org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trade.getSource()))return fallback;
+        var q=adxQuotes==null?null:adxQuotes.book(trade.getScripCode(),trade.getExchange());
+        boolean valid=adxQuotes!=null && adxQuotes.freshBook(trade.getExchange(),q,java.time.Instant.now(),trade.getScripCode());
+        if(!valid){
+            if(buy)throw new org.com.sharekhan.exception.EntryNotReadyException("ADX simulator waiting for fresh exact option book");
+            throw new IllegalStateException("ADX simulator exit waiting for fresh exact option bid");
+        }
+        if(buy && (q.getBestAsk()>trade.getEntryPrice()+1e-7 || q.getBestAsk()<=trade.getStopLoss() || (q.getAskQuantity()==null || q.getAskQuantity()<trade.getQuantity())))
+            throw new org.com.sharekhan.exception.EntryNotReadyException("ADX ask moved outside frozen bracket or displayed depth unavailable");
+        if(!buy && (q.getBidQuantity()==null || q.getBidQuantity()<trade.getQuantity()))throw new IllegalStateException("ADX bid depth unavailable; exit remains pending");
+        String key=trade.getExchange()+":"+trade.getScripCode()+":"+q.getBookProviderIdentity()+":"+q.getLastBookAt()+":"+buy;
+        double used=adxConsumed.getOrDefault(key,0d),available=buy?q.getAskQuantity():q.getBidQuantity();
+        if(available-used<trade.getQuantity()){
+            if(buy)throw new org.com.sharekhan.exception.EntryNotReadyException("ADX displayed ask depth already consumed");
+            throw new IllegalStateException("ADX displayed bid depth already consumed; await a new book");
+        }
+        if(adxConsumed.size()>2000)adxConsumed.clear();
+        adxConsumed.put(key,used+trade.getQuantity());
+        return buy?q.getBestAsk():q.getBestBid();
+    }
+
     private double naturalGasFill(TriggeredTradeSetupEntity trade, double fallback, boolean buy) {
         if (!org.com.sharekhan.strategy.mcx.NaturalGasSession.owns(trade.getSource())) return fallback;
         var q = quotes == null ? null : quotes.getSnapshot(trade.getScripCode()).orElse(null);
@@ -43,7 +68,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
-        ltp = naturalGasFill(trade, ltp, true);
+        ltp = adxFill(trade,naturalGasFill(trade, ltp, true),true);
         log.info("🚀 [SIMULATOR] Placing {} entry order for {} at {}", TradeSide.entry(trade), trade.getSymbol(), ltp);
         String orderId = "SIM-" + System.currentTimeMillis();
         
@@ -61,7 +86,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
                                                  BrokerContext context,
                                                  String orderId,
                                                  double newPrice) {
-        newPrice = naturalGasFill(trade, newPrice, true);
+        newPrice = adxFill(trade,naturalGasFill(trade, newPrice, true),true);
         log.info("🔁 [SIMULATOR] Modifying BUY order {} for {} to {}", orderId, trade.getSymbol(), newPrice);
         String effectiveOrderId = orderId != null && !orderId.isBlank()
                 ? orderId
@@ -85,7 +110,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
-        exitPrice = naturalGasFill(trade, exitPrice, false);
+        exitPrice = adxFill(trade,naturalGasFill(trade, exitPrice, false),false);
         log.info("🚀 [SIMULATOR] Placing {} exit order for {} at {}", TradeSide.exit(trade), trade.getSymbol(), exitPrice);
         String orderId = "SIM-EXIT-" + System.currentTimeMillis();
         
