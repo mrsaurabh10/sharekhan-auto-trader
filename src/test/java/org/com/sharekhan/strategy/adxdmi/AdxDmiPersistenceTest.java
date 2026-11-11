@@ -29,7 +29,7 @@ class AdxDmiPersistenceTest {
     @TestConfiguration static class Beans {
         @Bean AdxDmiPaperBroker paper(EntityManager em,TriggeredTradeSetupRepository t,TriggerTradeRequestRepository r,
                                                 QuoteCacheService q,StrategyRunCoordinator runs,TradeAuditService audit){
-            return new AdxDmiPaperBroker(em,t,r,q,runs,audit,Clock.fixed(AT,AdxDmiRules.IST));
+            return new AdxDmiPaperBroker(em,t,r,new AdxDmiMarketData(q,mock(ScriptMasterRepository.class),mock(org.com.sharekhan.service.ShoonyaQuoteService.class),audit,Clock.fixed(AT,AdxDmiRules.IST)),runs,audit,Clock.fixed(AT,AdxDmiRules.IST));
         }
     }
     @MockBean QuoteCacheService quotes;

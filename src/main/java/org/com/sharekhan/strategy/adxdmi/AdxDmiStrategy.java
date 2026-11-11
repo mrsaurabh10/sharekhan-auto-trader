@@ -1,7 +1,6 @@
 package org.com.sharekhan.strategy.adxdmi;
 
 import lombok.RequiredArgsConstructor;
-import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.dto.*;
 import org.com.sharekhan.entity.*;
 import org.com.sharekhan.repository.*;
@@ -17,14 +16,14 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     private final BrokerCredentialsRepository brokers;
     private final ScriptMasterRepository scripts;
     private final StrategySupport support;
-    private final QuoteCacheService quotes;
+    private final AdxDmiMarketData quotes;
     private final TradeExecutionService feeds;
     private final AdxDmiPaperBroker paper;
     private final NseMarketCalendar calendar;
     @org.springframework.beans.factory.annotation.Value("${app.strategy.adx-dmi.fallback-spot-tick:0.05}")
     private double fallbackSpotTick=0.05;
     private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials — Simulator",
-            "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout by one underlying tick, 3 lots at 1R/2R/3R, original spot SL throughout. Entries before noon IST; square-off 15:20. Option ask/bid paper fills; 0.5 delta estimates only.","AUTO");
+            "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout by one underlying tick, 3 lots at 1R/2R/3R, original spot SL throughout. Entries before noon IST; square-off 15:20. Verified Sharekhan/Shoonya ask/bid paper fills; 0.5 delta estimates only.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r){
         r.setTemplateId(AdxDmiRules.TEMPLATE);r.setSymbol(AdxDmiRules.symbol(r.getSymbol()));r.setIntraday(true);
@@ -51,8 +50,8 @@ public class AdxDmiStrategy implements StrategyEvaluator {
         double spotTick=AdxDmiRules.spotTick(spot.getTickSize(),fallbackSpotTick);
         var signal=AdxDmiRules.latestSignal(candles(spot,now),now,spotTick).orElse(null);
         if(signal==null)return waitFor(symbol,"Waiting for a completed qualifying 5m signal (200+ warmup bars)");
-        var q=quotes.getSnapshot(spot.getScripCode()).orElse(null);
-        if(!AdxDmiRules.freshSpot(cash,q,now.atZone(AdxDmiRules.IST).toInstant(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote");
+        var q=quotes.spot(spot.getScripCode(),cash);
+        if(!quotes.freshSpot(cash,q,java.time.Instant.now(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote: "+quotes.reason(spot.getScripCode(),cash,false));
         String exchange=AdxDmiRules.optionExchange(cash);
         var contracts=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange,symbol);
         var option=contract(contracts,symbol,exchange,signal.side(),q.getLastTradedPrice(),now.toLocalDate());

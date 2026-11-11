@@ -105,6 +105,32 @@ class ShoonyaQuoteServiceTest {
         assertThat(service.getQuote(script).orElseThrow().hasConfirmedIdentity()).isFalse();
     }
 
+    @Test
+    void exactSnapshotRequiresEchoedExchangeTokenAndSymbolAndPreservesUpdateTime() throws Exception {
+        var response = new AtomicReference<>("{\"stat\":\"Ok\",\"exch\":\"BSE\",\"token\":\"1\",\"tsym\":\"SENSEX\",\"lp\":\"81879.40\",\"lut\":\"1794371400\"}");
+        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server.createContext("/GetQuotes", exchange -> reply(exchange, 200, response.get()));
+        server.start();
+        var properties = new ShoonyaProperties();properties.setApiUrl("http://localhost:"+server.getAddress().getPort());properties.setUid("test-user");
+        var tokens = mock(TokenStoreService.class);when(tokens.getAccessToken(Broker.SHOONYA)).thenReturn("existing-session");
+        var registry = mock(BrokerAuthProviderRegistry.class);
+        var master = new ShoonyaInstrumentMasterService(mock(org.com.sharekhan.repository.ShoonyaInstrumentRepository.class),mock(ShoonyaInstrumentMasterWriter.class));
+        var service = new ShoonyaQuoteService(properties,tokens,registry,master);
+        var script = org.com.sharekhan.entity.ScriptMasterEntity.builder().scripCode(999901).exchange("BC").tradingSymbol("SENSEX").build();
+        var exact = service.getExactQuote(script).orElseThrow();
+        assertThat(exact.exchange()).isEqualTo("BSE");assertThat(exact.quote().lastPrice()).isEqualTo(81879.4);
+        assertThat(exact.providerUpdatedAt()).isEqualTo(java.time.Instant.ofEpochSecond(1794371400));
+        for (String invalid : java.util.List.of(
+                "{\"stat\":\"Ok\",\"token\":\"1\",\"tsym\":\"SENSEX\"}",
+                "{\"stat\":\"Ok\",\"exch\":\"NSE\",\"token\":\"1\",\"tsym\":\"SENSEX\"}",
+                "{\"stat\":\"Ok\",\"exch\":\"BSE\",\"token\":\"2\",\"tsym\":\"SENSEX\"}",
+                "{\"stat\":\"Ok\",\"exch\":\"BSE\",\"token\":\"1\",\"tsym\":\"BANKEX\"}",
+                "{\"stat\":\"Ok\",\"exch\":\"BSE\",\"token\":\"1\",\"tsym\":\"SENSEX\",\"lut\":\"invalid\"}")) {
+            response.set(invalid);assertThat(service.getExactQuote(script)).isEmpty();
+        }
+        verifyNoInteractions(registry);
+    }
+
     private static void reply(HttpExchange exchange, int status, String response) throws java.io.IOException {
         exchange.sendResponseHeaders(status, response.length());
         exchange.getResponseBody().write(response.getBytes(StandardCharsets.UTF_8));

@@ -21,17 +21,17 @@ public class AdxDmiPaperBroker {
     private final EntityManager em;
     private final TriggeredTradeSetupRepository trades;
     private final TriggerTradeRequestRepository requests;
-    private final QuoteCacheService quotes;
+    private final AdxDmiMarketData quotes;
     private final StrategyRunCoordinator runs;
     private final TradeAuditService audit;
     private final Clock clock;
     @Autowired
     public AdxDmiPaperBroker(EntityManager em,TriggeredTradeSetupRepository trades,TriggerTradeRequestRepository requests,
-                                       QuoteCacheService quotes,StrategyRunCoordinator runs,TradeAuditService audit){
+                                       AdxDmiMarketData quotes,StrategyRunCoordinator runs,TradeAuditService audit){
         this(em,trades,requests,quotes,runs,audit,Clock.system(AdxDmiRules.IST));
     }
     AdxDmiPaperBroker(EntityManager em,TriggeredTradeSetupRepository trades,TriggerTradeRequestRepository requests,
-                                QuoteCacheService quotes,StrategyRunCoordinator runs,TradeAuditService audit,Clock clock){
+                                AdxDmiMarketData quotes,StrategyRunCoordinator runs,TradeAuditService audit,Clock clock){
         this.em=em;this.trades=trades;this.requests=requests;this.quotes=quotes;this.runs=runs;this.audit=audit;this.clock=clock;
     }
     private static boolean terminal(TriggeredTradeStatus status){
@@ -58,19 +58,22 @@ public class AdxDmiPaperBroker {
         simulator(r.getUserId(),r.getBrokerCredentialsId()); // DB row lock serializes CE/PE, subscriptions and instances for this account.
         var now=LocalDateTime.now(clock);var instant=clock.instant();
         if(!signal.inWindow(now))throw new IllegalStateException("The next-candle entry window has expired");
+        final var entryDay=now.toLocalDate();
         var prior=owned(r.getUserId(),r.getBrokerCredentialsId(),r.getSymbol());
         if(prior.stream().anyMatch(t->!terminal(t.getStatus())))throw new IllegalStateException("A CE/PE paper position is already open or unresolved");
-        if(prior.stream().anyMatch(t->isToday(t,now.toLocalDate()) && t.getComment()!=null && t.getComment().contains("signal="+signal.key()+";")))
+        if(prior.stream().anyMatch(t->isToday(t,entryDay) && t.getComment()!=null && t.getComment().contains("signal="+signal.key()+";")))
             throw new IllegalStateException("This signal has already been traded");
         if(prior.stream().anyMatch(t->t.getEntryAt()!=null && !t.getEntryAt().isAfter(signal.end())
                 && t.getExitedAt()!=null && !t.getExitedAt().isBefore(signal.end())))
             throw new IllegalStateException("Signal completed while the previous position was open");
         if(prior.stream().anyMatch(t->activityInSignalBar(t.getEntryAt(),signal.end()) || activityInSignalBar(t.getExitedAt(),signal.end())))
             throw new IllegalStateException("No signal from a candle containing a previous fill");
-        var spot=quotes.getSnapshot(spotCode).orElse(null);
-        var book=quotes.getSnapshot(option.getScripCode()).orElse(null);
-        if(!AdxDmiRules.freshSpot(AdxDmiRules.cashExchange(option.getExchange()),spot,instant,spotCode) || !AdxDmiRules.freshBook(option.getExchange(),book,instant,option.getScripCode()))
-            throw new IllegalStateException("Waiting for fresh exact index spot and option bid/ask");
+        var spot=quotes.spot(spotCode,AdxDmiRules.cashExchange(option.getExchange()));
+        var book=quotes.book(option.getScripCode(),option.getExchange());
+        now=LocalDateTime.now(clock);instant=clock.instant();
+        if(!signal.inWindow(now))throw new IllegalStateException("The next-candle entry window has expired");
+        if(!quotes.freshSpot(AdxDmiRules.cashExchange(option.getExchange()),spot,instant,spotCode) || !quotes.freshBook(option.getExchange(),book,instant,option.getScripCode()))
+            throw new IllegalStateException("Waiting for fresh exact index spot and option bid/ask: spot="+quotes.reason(spotCode,AdxDmiRules.cashExchange(option.getExchange()),false)+", book="+quotes.reason(option.getScripCode(),option.getExchange(),true));
         // Paper fills use the fresh quoted ask/bid directly; no option order-price rounding is performed.
         if(option.getLotSize()==null || option.getLotSize()<=0 || option.getTickSize()!=null && (!Double.isFinite(option.getTickSize()) || option.getTickSize()<=0)
                 || !signal.side().equals(option.getOptionType()) || !r.getSymbol().equalsIgnoreCase(option.getTradingSymbol())
@@ -95,6 +98,10 @@ public class AdxDmiPaperBroker {
         var run=em.find(StrategyRun.class,trigger.getStrategyRunId(),LockModeType.PESSIMISTIC_WRITE);
         if(run==null || !"OPEN".equals(run.getStatus()) || !Objects.equals(run.getAppUserId(),r.getUserId())
                 || !Objects.equals(run.getBrokerCredentialsId(),r.getBrokerCredentialsId()))throw new IllegalStateException("Strategy run is closing or closed");
+        now=LocalDateTime.now(clock);instant=clock.instant();
+        if(!signal.inWindow(now) || !quotes.freshSpot(AdxDmiRules.cashExchange(option.getExchange()),spot,instant,spotCode)
+                || !quotes.freshBook(option.getExchange(),book,instant,option.getScripCode()))
+            throw new IllegalStateException("Entry window or exact quote expired while waiting for account locks");
         var req=TriggerTradeRequestEntity.builder().strategyRunId(trigger.getStrategyRunId()).appUserId(r.getUserId()).brokerCredentialsId(r.getBrokerCredentialsId())
                 .symbol(r.getSymbol()).scripCode(option.getScripCode()).exchange(option.getExchange()).instrumentType(option.getInstrumentType())
                 .strikePrice(option.getStrikePrice()).optionType(signal.side()).expiry(option.getExpiry()).entryAction("BUY")
@@ -123,13 +130,14 @@ public class AdxDmiPaperBroker {
         var b=em.find(BrokerCredentialsEntity.class,t.getBrokerCredentialsId(),LockModeType.PESSIMISTIC_WRITE);
         if(b==null || !"SIMULATOR".equalsIgnoreCase(b.getBrokerName()) || !Objects.equals(t.getAppUserId(),b.getAppUserId()))return;
         var now=LocalDateTime.now(clock);var instant=clock.instant();
-        var book=quotes.getSnapshot(t.getScripCode()).orElse(null);
-        var spot=quotes.getSnapshot(t.getSpotScripCode()).orElse(null);
+        var book=quotes.book(t.getScripCode(),t.getExchange());
+        var spot=quotes.spot(t.getSpotScripCode(),AdxDmiRules.cashExchange(t.getExchange()));
+        now=LocalDateTime.now(clock);instant=clock.instant();
         boolean eod=t.getEntryAt().toLocalDate().isBefore(now.toLocalDate()) || !now.toLocalTime().isBefore(AdxDmiRules.SQUARE_OFF);
         String reason=t.getExitReason(); // Persist the first observed trigger while awaiting an executable book.
         if(reason==null && eod)reason="ADX_DMI_SESSION_CLOSE";
-        boolean usable=AdxDmiRules.freshBook(t.getExchange(),book,instant,t.getScripCode());
-        if(reason==null && AdxDmiRules.freshSpot(AdxDmiRules.cashExchange(t.getExchange()),spot,instant,t.getSpotScripCode())){
+        boolean usable=quotes.freshBook(t.getExchange(),book,instant,t.getScripCode());
+        if(reason==null && quotes.freshSpot(AdxDmiRules.cashExchange(t.getExchange()),spot,instant,t.getSpotScripCode())){
             double p=spot.getLastTradedPrice();boolean pe="PE".equals(t.getOptionType());
             if(pe?p>=t.getStopLoss():p<=t.getStopLoss())reason="ADX_DMI_STOP";
             else if(pe?p<=t.getTarget1():p>=t.getTarget1())reason="ADX_DMI_TARGET";
@@ -148,12 +156,13 @@ public class AdxDmiPaperBroker {
         if(b==null || !"SIMULATOR".equalsIgnoreCase(b.getBrokerName()) || !Objects.equals(b.getAppUserId(),t.getAppUserId()))throw new IllegalStateException("Not an owned paper position");
         // Close All is also an observed exit trigger; retain it through unavailable/insufficient books.
         if(t.getExitReason()==null){t.setExitReason(reason);trades.saveAndFlush(t);}
-        var q=quotes.getSnapshot(t.getScripCode()).orElse(null);
-        if(!AdxDmiRules.freshBook(t.getExchange(),q,clock.instant(),t.getScripCode()))return;
-        finish(t,q,quotes.getSnapshot(t.getSpotScripCode()).orElse(null),t.getExitReason()!=null?t.getExitReason():reason,LocalDateTime.now(clock));
+        var q=quotes.book(t.getScripCode(),t.getExchange());
+        if(!quotes.freshBook(t.getExchange(),q,clock.instant(),t.getScripCode()))return;
+        finish(t,q,quotes.spot(t.getSpotScripCode(),AdxDmiRules.cashExchange(t.getExchange())),t.getExitReason()!=null?t.getExitReason():reason,LocalDateTime.now(clock));
     }
     private static boolean activityInSignalBar(LocalDateTime at,LocalDateTime end){return at!=null && !at.isBefore(end.minusMinutes(5)) && at.isBefore(end);}
     private void finish(TriggeredTradeSetupEntity t,QuoteCacheService.QuoteSnapshot book,QuoteCacheService.QuoteSnapshot spot,String reason,LocalDateTime now){
+        if(!quotes.freshBook(t.getExchange(),book,clock.instant(),t.getScripCode()))return;
         if(book.getBidQuantity()==null || !Double.isFinite(book.getBidQuantity()))return;
         long consumed=owned(t.getAppUserId(),t.getBrokerCredentialsId(),t.getSymbol()).stream()
                 .filter(other->terminal(other.getStatus()) && Objects.equals(other.getScripCode(),t.getScripCode()) && other.getExitedAt()!=null
@@ -163,7 +172,7 @@ public class AdxDmiPaperBroker {
         t.setExitPrice(book.getBestBid());t.setPnl((book.getBestBid()-t.getActualEntryPrice())*t.getQuantity());
         t.setExitReason(reason);t.setExitedAt(now);t.setExitOrderId("SIM-ADXDMI-EXIT-"+UUID.randomUUID());t.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
         trades.saveAndFlush(t);
-        Double spotExit=spot!=null && AdxDmiRules.freshSpot(AdxDmiRules.cashExchange(t.getExchange()),spot,clock.instant(),t.getSpotScripCode())?spot.getLastTradedPrice():null;
+        Double spotExit=spot!=null && quotes.freshSpot(AdxDmiRules.cashExchange(t.getExchange()),spot,clock.instant(),t.getSpotScripCode())?spot.getLastTradedPrice():null;
         double risk=Math.abs(t.getEntryPrice()-t.getStopLoss());
         Double r=spotExit==null?null:("PE".equals(t.getOptionType())?t.getEntryPrice()-spotExit:spotExit-t.getEntryPrice())/risk;
         record(t,"PAPER_EXIT",reason,"spot="+spotExit+", spotR="+r+", optionBid="+book.getBestBid()+", optionGross="+t.getPnl()+", estimatedNet="+t.getEffectivePnl()+", costModel=legacy-option-lot-estimate");

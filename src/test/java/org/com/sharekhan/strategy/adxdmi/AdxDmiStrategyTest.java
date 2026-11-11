@@ -15,7 +15,7 @@ import static org.mockito.Mockito.*;
 class AdxDmiStrategyTest {
     @Test void inputSymbolThreeLotsIntradayAndOwnedSimulatorAreRequired(){
         var brokers=mock(BrokerCredentialsRepository.class);var feeds=mock(TradeExecutionService.class);
-        var strategy=new AdxDmiStrategy(brokers,mock(ScriptMasterRepository.class),mock(StrategySupport.class),mock(QuoteCacheService.class),feeds,mock(AdxDmiPaperBroker.class),mock(NseMarketCalendar.class));
+        var strategy=new AdxDmiStrategy(brokers,mock(ScriptMasterRepository.class),mock(StrategySupport.class),mock(AdxDmiMarketData.class),feeds,mock(AdxDmiPaperBroker.class),mock(NseMarketCalendar.class));
         var r=new StrategyApplyRequest();r.setSymbol("sensex");r.setUserId(1L);r.setBrokerCredentialsId(2L);
         when(brokers.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().appUserId(1L).brokerName("Simulator").active(true).build()));
         strategy.validateConfiguration(r);assertEquals("SENSEX",r.getSymbol());assertEquals(3,r.getLots());assertNull(r.getRiskSettings());assertTrue(r.getIntraday());
@@ -59,7 +59,7 @@ class AdxDmiStrategyTest {
     }
     @Test void missingIndexTickDoesNotPreventLoadingCompletedSignalCandles(){
         var brokers=mock(BrokerCredentialsRepository.class);var support=mock(StrategySupport.class);var calendar=mock(NseMarketCalendar.class);
-        var strategy=new AdxDmiStrategy(brokers,mock(ScriptMasterRepository.class),support,mock(QuoteCacheService.class),mock(TradeExecutionService.class),mock(AdxDmiPaperBroker.class),calendar);
+        var strategy=new AdxDmiStrategy(brokers,mock(ScriptMasterRepository.class),support,mock(AdxDmiMarketData.class),mock(TradeExecutionService.class),mock(AdxDmiPaperBroker.class),calendar);
         var r=new StrategyApplyRequest();r.setSymbol("NIFTY");r.setUserId(3L);r.setBrokerCredentialsId(4L);
         var now=LocalDateTime.of(2026,11,10,10,0);
         when(brokers.findById(4L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().appUserId(3L).active(true).brokerName("Simulator").build()));
