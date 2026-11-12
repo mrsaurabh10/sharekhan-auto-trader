@@ -26,7 +26,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
             if(buy)throw new org.com.sharekhan.exception.EntryNotReadyException("ADX simulator waiting for fresh exact option book");
             throw new IllegalStateException("ADX simulator exit waiting for fresh exact option bid");
         }
-        if(buy && (q.getBestAsk()>trade.getEntryPrice()+1e-7 || q.getBestAsk()<=trade.getStopLoss() || (q.getAskQuantity()==null || q.getAskQuantity()<trade.getQuantity())))
+        if(buy && (q.getBestAsk()>trade.getEntryPrice()+1e-7 || (premiumStop(trade) && trade.getStopLoss()!=null && q.getBestAsk()<=trade.getStopLoss()) || (q.getAskQuantity()==null || q.getAskQuantity()<trade.getQuantity())))
             throw new org.com.sharekhan.exception.EntryNotReadyException("ADX ask moved outside frozen bracket or displayed depth unavailable");
         if(!buy && (q.getBidQuantity()==null || q.getBidQuantity()<trade.getQuantity()))throw new IllegalStateException("ADX bid depth unavailable; exit remains pending");
         String key=trade.getExchange()+":"+trade.getScripCode()+":"+q.getBookProviderIdentity()+":"+q.getLastBookAt()+":"+buy;
@@ -70,7 +70,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
         ltp = adxFill(trade,naturalGasFill(trade, ltp, true),true);
         log.info("🚀 [SIMULATOR] Placing {} entry order for {} at {}", TradeSide.entry(trade), trade.getSymbol(), ltp);
-        String orderId = "SIM-" + System.currentTimeMillis();
+        String orderId = "SIM-" + java.util.UUID.randomUUID();
         
         return OrderPlacementResult.builder()
                 .success(true)
@@ -90,7 +90,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
         log.info("🔁 [SIMULATOR] Modifying BUY order {} for {} to {}", orderId, trade.getSymbol(), newPrice);
         String effectiveOrderId = orderId != null && !orderId.isBlank()
                 ? orderId
-                : "SIM-" + System.currentTimeMillis();
+                : "SIM-" + java.util.UUID.randomUUID();
 
         return OrderPlacementResult.builder()
                 .success(true)
@@ -112,7 +112,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
         exitPrice = adxFill(trade,naturalGasFill(trade, exitPrice, false),false);
         log.info("🚀 [SIMULATOR] Placing {} exit order for {} at {}", TradeSide.exit(trade), trade.getSymbol(), exitPrice);
-        String orderId = "SIM-EXIT-" + System.currentTimeMillis();
+        String orderId = "SIM-EXIT-" + java.util.UUID.randomUUID();
         
         Double pnl = null;
         Double entryPriceForPnl = resolveEntryPriceForPnl(trade);
@@ -137,7 +137,8 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
         if (trade.getActualEntryPrice() != null) {
             return trade.getActualEntryPrice();
         }
-        if (usesSpotReference(trade)) {
+        if (Boolean.TRUE.equals(trade.getUseSpotForEntry())
+                || (trade.getUseSpotForEntry()==null && Boolean.TRUE.equals(trade.getUseSpotPrice()))) {
             log.warn("[SIMULATOR] Cannot compute PnL for spot-referenced trade {} because actualEntryPrice is missing. entryPrice={} is a reference price.",
                     trade.getId(), trade.getEntryPrice());
             return null;
@@ -145,10 +146,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
         return trade.getEntryPrice();
     }
 
-    private boolean usesSpotReference(TriggeredTradeSetupEntity trade) {
-        return Boolean.TRUE.equals(trade.getUseSpotForEntry())
-                || Boolean.TRUE.equals(trade.getUseSpotForSl())
-                || Boolean.TRUE.equals(trade.getUseSpotForTarget())
-                || Boolean.TRUE.equals(trade.getUseSpotPrice());
+    private boolean premiumStop(TriggeredTradeSetupEntity trade) {
+        return trade.getUseSpotForSl()!=null ? !trade.getUseSpotForSl() : !Boolean.TRUE.equals(trade.getUseSpotPrice());
     }
 }

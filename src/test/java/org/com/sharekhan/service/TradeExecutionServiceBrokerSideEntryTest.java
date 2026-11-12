@@ -292,37 +292,76 @@ class TradeExecutionServiceBrokerSideEntryTest {
     @ParameterizedTest @org.junit.jupiter.params.provider.CsvSource({"false,false","true,false","false,true","true,true"})
     void adxExecutesThreeIndependentRequestsThroughTheSelectedAdapter(boolean simulator,boolean indexExits){
         var ctx=new TestContext(OrderPlacementResult.builder().success(true).build());if(simulator)ctx.useSimulatorBroker();
-        configureFiveAttemptPolicy(ctx);configureTightFreshQuote(ctx,10.50,10.60,10.55);
+        configureFiveAttemptPolicy(ctx);configureTightFreshQuote(ctx,226.50,226.60,226.55);
         ctx.service=org.mockito.Mockito.spy(ctx.service);
         org.mockito.Mockito.doNothing().when(ctx.service).handleEntryOrderExecution(any());
         ReflectionTestUtils.setField(ctx.service,"entryClock",java.time.Clock.fixed(Instant.parse("2026-06-02T04:31:00Z"),java.time.ZoneId.of("Asia/Kolkata")));
-        when(ctx.ltpCache.getLtp(123456)).thenReturn(10.55);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(226.55);
         var admission=mock(org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.class);
         ReflectionTestUtils.setField(ctx.service,"adxAdmission",admission);
         var orders=new java.util.ArrayList<TriggerRequest>();var prepared=new java.util.ArrayList<TriggerTradeRequestEntity>();
         for(int leg=1;leg<=3;leg++){
             var input=optionRequest();input.setSource(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE);input.setQuantity(1);
-            input.setEntryPrice(10.6);input.setStopLoss(9.6);input.setTarget1(10.6+leg);input.setTarget2(null);input.setTarget3(null);input.setTslEnabled(false);orders.add(input);
+            input.setEntryPrice(226.6);input.setStopLoss(216.6);input.setTarget1(226.6+leg);input.setTarget2(null);input.setTarget3(null);input.setTslEnabled(false);orders.add(input);
             var saved=triggerRequestEntity();saved.setId(76L+leg);saved.setStatus(TriggeredTradeStatus.TRIGGERED);saved.setSource(input.getSource());
-            saved.setComment("ADX_SIGNAL=2026-06-02T10:00:CE;ADX_DEADLINE=2026-06-02T10:05;");saved.setEntryPrice(10.6);saved.setStopLoss(9.6);saved.setTarget1(10.6+leg);saved.setTarget2(null);saved.setTarget3(null);saved.setTslEnabled(false);prepared.add(saved);
+            saved.setComment("ADX_SIGNAL=2026-06-02T10:00:CE;ADX_DEADLINE=2026-06-02T10:05;");saved.setEntryPrice(226.6);saved.setStopLoss(216.6);saved.setTarget1(226.6+leg);saved.setTarget2(null);saved.setTarget3(null);saved.setTslEnabled(false);prepared.add(saved);
             when(ctx.triggerRepo.findById(saved.getId())).thenReturn(Optional.of(saved));
         }
         if(indexExits)for(int i=0;i<3;i++){
             var input=orders.get(i);var saved=prepared.get(i);
             input.setStopLoss(23000d);input.setTarget1(23020d+20*i);input.setUseSpotForSl(true);input.setUseSpotForTarget(true);
             saved.setStopLoss(input.getStopLoss());saved.setTarget1(input.getTarget1());saved.setUseSpotForSl(true);saved.setUseSpotForTarget(true);
-            saved.setComment(saved.getComment()+"ADX_EXIT=INDEX_15M_V1;ADX_INDEX_T1=23020;");
+            saved.setStrategyDecision(saved.getComment()+"ADX_EXIT=INDEX_15M_V1;ADX_INDEX_T1=23020;");saved.setComment("A separate outcome comment");
         }
         when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenReturn(new org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.Batch(prepared,true));
         when(admission.place(any(),any())).thenAnswer(i->((java.util.function.Supplier<?>)i.getArgument(1)).get());
         when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenAnswer(i->{var trade=(TriggeredTradeSetupEntity)i.getArgument(0);
-            return OrderPlacementResult.builder().success(true).orderId("ADX-"+trade.getTriggerRequestId()).status("Fully Executed").executedPrice(10.55).build();});
+            return OrderPlacementResult.builder().success(true).orderId("ADX-"+trade.getTriggerRequestId()).status("Fully Executed").executedPrice(226.55).build();});
         assertThat(ctx.service.executeAdxDmiRequests(orders)).hasSize(3);
         var placed=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(ctx.broker,times(3)).placeOrder(placed.capture(),any(),anyDouble());
         assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTriggerRequestId).containsExactly(77L,78L,79L);
-        assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTarget1).containsExactly(indexExits?23020d:11.6,indexExits?23040d:12.6,indexExits?23060d:13.6);
-        assertThat(placed.getAllValues()).allSatisfy(t->{assertThat(t.getStopLoss()).isEqualTo(indexExits?23000d:9.6);assertThat(t.getQuantity()).isEqualTo(50L);assertThat(t.getTslEnabled()).isFalse();});
-        assertThat(ctx.savedTrade.get().getEntryPrice()).isEqualTo(10.6);assertThat(ctx.savedTrade.get().getActualEntryPrice()).isEqualTo(10.55);
+        assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTarget1).containsExactly(indexExits?23020d:227.6,indexExits?23040d:228.6,indexExits?23060d:229.6);
+        assertThat(placed.getAllValues()).allSatisfy(t->{assertThat(t.getStopLoss()).isEqualTo(indexExits?23000d:216.6);assertThat(t.getQuantity()).isEqualTo(50L);assertThat(t.getTslEnabled()).isFalse();});
+        assertThat(ctx.savedTrade.get().getEntryPrice()).isEqualTo(226.6);assertThat(ctx.savedTrade.get().getActualEntryPrice()).isEqualTo(226.55);
+    }
+
+    @Test void adxFullEntryPathUsesRealSimulatorForThreePremiumEntriesWithIndexExits(){
+        var ctx=new TestContext(OrderPlacementResult.builder().success(true).build());ctx.useSimulatorBroker();configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx,225.9,226.6,226.55);
+        ctx.service=org.mockito.Mockito.spy(ctx.service);org.mockito.Mockito.doNothing().when(ctx.service).handleEntryOrderExecution(any());
+        ReflectionTestUtils.setField(ctx.service,"entryClock",java.time.Clock.fixed(Instant.parse("2026-06-02T04:31:00Z"),java.time.ZoneId.of("Asia/Kolkata")));
+        var data=mock(org.com.sharekhan.strategy.adxdmi.AdxDmiMarketData.class);
+        var q=org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot.builder()
+                .scripCode(123456).bestBid(225.9).bestAsk(226.6).bidQuantity(300d).askQuantity(300d)
+                .lastBookAt(Instant.now()).bookProviderIdentity("exact").build();
+        when(data.book(123456,"NF")).thenReturn(q);when(data.freshBook(eq("NF"),any(),any(),eq(123456))).thenReturn(true);
+        var simulator=org.mockito.Mockito.spy(new org.com.sharekhan.service.broker.SimulatorBrokerService());
+        ReflectionTestUtils.setField(simulator,"adxQuotes",data);when(ctx.brokerServiceFactory.getService(anyString())).thenReturn(simulator);
+        var admission=mock(org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.class);ReflectionTestUtils.setField(ctx.service,"adxAdmission",admission);
+        var inputs=new java.util.ArrayList<TriggerRequest>();var prepared=new java.util.ArrayList<TriggerTradeRequestEntity>();
+        for(int leg=1;leg<=3;leg++){
+            var input=optionRequest();input.setSource(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE);input.setQuantity(1);
+            input.setEntryPrice(226.6);input.setStopLoss(25266.55);input.setTarget1(25358.45+leg*20);input.setTarget2(null);input.setTarget3(null);input.setTslEnabled(false);
+            input.setUseSpotForEntry(false);input.setUseSpotForSl(true);input.setUseSpotForTarget(true);inputs.add(input);
+            var saved=triggerRequestEntity();saved.setId(76L+leg);saved.setStatus(TriggeredTradeStatus.TRIGGERED);saved.setSource(input.getSource());
+            saved.setEntryPrice(input.getEntryPrice());saved.setStopLoss(input.getStopLoss());saved.setTarget1(input.getTarget1());saved.setTarget2(null);saved.setTarget3(null);saved.setTslEnabled(false);
+            saved.setUseSpotForEntry(false);saved.setUseSpotForSl(true);saved.setUseSpotForTarget(true);
+            saved.setStrategyDecision("ADX_SIGNAL=2026-06-02T10:00:CE;ADX_DEADLINE=2026-06-02T10:05;ADX_EXIT=INDEX_15M_V1;ADX_INDEX_T1=25358.45;");
+            saved.setComment("Outcome may change independently");prepared.add(saved);when(ctx.triggerRepo.findById(saved.getId())).thenReturn(Optional.of(saved));
+        }
+        when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenReturn(new org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.Batch(prepared,true));
+        when(admission.place(any(),any())).thenAnswer(i->((java.util.function.Supplier<?>)i.getArgument(1)).get());
+        assertThat(ctx.service.executeAdxDmiRequests(inputs)).hasSize(3);
+        var placed=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(simulator,times(3)).placeOrder(placed.capture(),any(),anyDouble());
+        assertThat(placed.getAllValues()).allSatisfy(t->{
+            assertThat(t.getStopLoss()).isEqualTo(25266.55);
+            assertThat(t.getStrategyDecision()).contains("ADX_SIGNAL=","INDEX_15M_V1");
+            assertThat(ctx.service.hasUsableTradedExitPrice(t,225.9)).isTrue();
+        });
+        var persisted=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(ctx.triggeredRepo,org.mockito.Mockito.atLeast(3)).save(persisted.capture());
+        var filled=persisted.getAllValues().stream().filter(t->t.getStatus()==TriggeredTradeStatus.EXECUTED).toList();
+        assertThat(filled).allSatisfy(t->assertThat(t.getActualEntryPrice()).isEqualTo(226.6));
+        assertThat(filled.stream().map(TriggeredTradeSetupEntity::getOrderId).distinct().count()).isEqualTo(3);
     }
 
     @Test void adxConfirmedFillRecordsActualPriceWithoutMovingFrozenBrackets(){

@@ -20,6 +20,7 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     private final TradeExecutionService feeds;
     private final AdxDmiGreeks greeks;
     private final NseMarketCalendar calendar;
+    private final AdxDmiContractMetadata contractMetadata;
     @org.springframework.beans.factory.annotation.Value("${app.strategy.adx-dmi.fallback-spot-tick:0.05}")
     private double fallbackSpotTick=0.05;
     private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials",
@@ -70,11 +71,11 @@ public class AdxDmiStrategy implements StrategyEvaluator {
                 return waitFor(symbol,"ATM changed during preparation; re-evaluate the selected contract");
             var book=quotes.book(option.getScripCode(),exchange);
             if(!quotes.freshBook(exchange,book,Instant.now(),option.getScripCode()))return waitFor(symbol,"Waiting for a fresh exact option book");
-            if(option.getLotSize()==null || option.getLotSize()<=0 || option.getTickSize()==null || option.getTickSize()<=0)
-                return waitFor(symbol,"Option lot/tick metadata unavailable");
-            var plan=AdxDmiIndexPlan.create(book.getBestAsk(),q.getLastTradedPrice(),signal,option.getTickSize());
+            double optionTick=contractMetadata.optionTick(option,actualNow);
+            var plan=AdxDmiIndexPlan.create(book.getBestAsk(),q.getLastTradedPrice(),signal,optionTick);
             var orders=orders(r,signal,option,spot.getScripCode(),plan,reading);
             var requests=feeds.executeAdxDmiRequests(orders);
+            if(requests.size()!=3)return waitFor(symbol,"This signal was already processed; waiting for the next qualifying candle");
             var req=requests.getFirst();
             return StrategyApplyResponse.builder().templateId(META.id()).symbol(symbol).direction(signal.side()).status("triggered")
                     .message("Three separate one-lot option BUY requests with the same fixed index SL and index targets 1R/2R/3R; no-T1 timeout 15 minutes. Delta audit: "+reading.source()).tradeRequest(req).breakoutClose(q.getLastTradedPrice()).build();

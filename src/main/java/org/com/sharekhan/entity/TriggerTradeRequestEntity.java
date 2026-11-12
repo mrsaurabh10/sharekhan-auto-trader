@@ -18,6 +18,11 @@ public class TriggerTradeRequestEntity {
     @Column(name="strategy_run_id",length=64)
     private String strategyRunId;
 
+    /** Immutable server-owned decision; outcome comments may change independently. */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name="strategy_decision", length=2000, updatable=false)
+    private String strategyDecision;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;

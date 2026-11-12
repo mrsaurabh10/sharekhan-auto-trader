@@ -123,11 +123,18 @@ public class ShoonyaInstrumentMasterService {
                 exchange, symbol, expiry, script.getOptionType().trim().toUpperCase(Locale.ROOT), script.getStrikePrice());
     }
 
-    private String shoonyaOptionUnderlyingSymbol(String exchange, String tradingSymbol) {
+    private static String shoonyaOptionUnderlyingSymbol(String exchange, String tradingSymbol) {
         if ("BFO".equalsIgnoreCase(exchange) && "SENSEX".equalsIgnoreCase(tradingSymbol == null ? "" : tradingSymbol.trim())) {
             return "BSXOPT";
         }
         return tradingSymbol.trim();
+    }
+
+    /** Provider aliases belong here, independently of any strategy or execution broker. */
+    public static boolean sameOptionUnderlying(ScriptMasterEntity script,ShoonyaInstrumentEntity mapped) {
+        if(script==null || mapped==null || !StringUtils.hasText(script.getTradingSymbol()))return false;
+        return script.getTradingSymbol().trim().equalsIgnoreCase(mapped.getTradingSymbol())
+                || shoonyaOptionUnderlyingSymbol(mapped.getExchange(),script.getTradingSymbol()).equalsIgnoreCase(mapped.getSymbol());
     }
 
     /** Resolves either a cash or F&O script from the Sharekhan master to Shoonya. */

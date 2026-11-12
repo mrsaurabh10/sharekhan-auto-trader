@@ -38,6 +38,12 @@ public class AdxDmiEntryAdmission {
         for(String value:text.split(";"))if(value.startsWith(name+"="))return value.substring(name.length()+1);
         return "";
     }
+    public static String decision(TriggerTradeRequestEntity request){
+        return request.getStrategyDecision()!=null?request.getStrategyDecision():request.getComment();
+    }
+    public static String decision(TriggeredTradeSetupEntity trade){
+        return trade.getStrategyDecision()!=null?trade.getStrategyDecision():trade.getComment();
+    }
     public static boolean validDecision(String metadata,LocalDateTime now){
         try{deadline(metadata,now);return true;}catch(IllegalStateException invalid){return false;}
     }
@@ -71,7 +77,7 @@ public class AdxDmiEntryAdmission {
             for(String source:List.of(AdxDmiRules.SOURCE,AdxDmiRules.PREMIUM_SOURCE)){
                 for(var old:requests.findBySourceIgnoreCaseAndStatusIn(source,List.of(TriggeredTradeStatus.values()))){
                     if(!Objects.equals(old.getAppUserId(),order.getUserId()) || !Objects.equals(old.getBrokerCredentialsId(),order.getBrokerCredentialsId()) || !order.getInstrument().equalsIgnoreCase(old.getSymbol()))continue;
-                    if(key.equals(field(old.getComment(),"ADX_SIGNAL")))return new Admission(old,false);
+                    if(key.equals(field(decision(old),"ADX_SIGNAL")))return new Admission(old,false);
                     // Failure/unknown states must be reconciled, not retried as new entries.
                     if(!terminal.contains(old.getStatus()) && old.getStatus()!=TriggeredTradeStatus.EXECUTED)throw new IllegalStateException("Previous ADX request remains unresolved");
                     if(old.getStatus()==TriggeredTradeStatus.EXECUTED && trades.findBySource(source).stream().noneMatch(t->Objects.equals(t.getTriggerRequestId(),old.getId())))
@@ -89,7 +95,7 @@ public class AdxDmiEntryAdmission {
     }
     public OrderPlacementResult place(TriggeredTradeSetupEntity trade,Supplier<OrderPlacementResult> place){
         return tx.execute(status->{
-            deadline(trade.getComment(),LocalDateTime.now(clock));
+            deadline(decision(trade),LocalDateTime.now(clock));
             if(trade.getStrategyRunId()==null)throw new IllegalStateException("ADX strategy run required");
             var run=runs.findById(trade.getStrategyRunId()).orElseThrow();
             if(run.getSubscriptionId()!=null){

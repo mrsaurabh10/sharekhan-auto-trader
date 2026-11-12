@@ -24,7 +24,7 @@ public class AdxDmiScheduler {
     void poll(LocalDateTime now){poll(now,Clock.fixed(now.atZone(AdxDmiRules.IST).toInstant(),AdxDmiRules.IST));}
     private void poll(LocalDateTime now,Clock clock){
         for(var pending:trades.findBySourceAndStatusIn(AdxDmiRules.PREMIUM_SOURCE,List.of(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION))){
-            if(!AdxDmiEntryAdmission.validDecision(pending.getComment(),now) && !"ENTRY_USER_CANCEL_REQUESTED".equals(pending.getReason()))
+            if(!AdxDmiEntryAdmission.validDecision(AdxDmiEntryAdmission.decision(pending),now) && !"ENTRY_USER_CANCEL_REQUESTED".equals(pending.getReason()))
                 try{execution.cancelStrategyRunEntry(pending.getId(),pending.getStrategyRunId());}
                 catch(RuntimeException failure){log.warn("ADX entry {} cancellation pending: {}",pending.getId(),failure.getMessage());}
         }

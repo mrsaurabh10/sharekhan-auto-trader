@@ -18,7 +18,11 @@ Simulator test instances; this change does not activate any live subscriptions.
 - Use exact fresh underlying quotes and an exact fresh ATM option book. Choose
   the nearest listed strike in the nearest unexpired expiry, ties to lower strike.
   NC spot maps to NF options and BC spot to BF options. Option lot/tick metadata
-  must be usable; absent underlying tick uses configured0.05 fallback.
+  must be usable. If the local option tick is absent, read it from the exact
+  provider-mapped contract in today's master, validating underlying, exchange,
+  expiry, side, strike and matching lot size. Do not guess an option tick or
+  update the local script master. Invalid local ticks and missing lots still wait.
+  Absent underlying tick uses configured0.05 fallback.
 - Submit **three separate normal one-lot BUY requests**, same contract, account,
   planned option entry and original fixed index SL. Each has only target1 set,
   respectively index1R/2R/3R; target2/3 unset, TSL false. No staged child orders
@@ -33,6 +37,17 @@ target1 are **underlying levels**. `useSpotForEntry=false`, `useSpotForSl=true`,
 `useSpotForTarget=true`. Freeze the reference underlying price from the final
 confirmed breakout quote; R is its distance from the original signal extreme.
 Actual option fills are stored separately and never move those index levels.
+The engine validates prices using the entry flag: enabling spot SL/target does
+not turn a premium entry into an index reference. The Simulator similarly compares
+its ask with a stop only when that stop is denominated in option premium. Both
+paths retain exact book, entry-limit, depth and genuine spot-price rejection.
+
+New requests/trades store server-owned metadata in immutable nullable
+`strategy_decision` columns, separately from outcome comments. Admission, entry
+deadlines and index exits prefer that field; older rows fall back to their
+original comment. Rejection/cancellation comments cannot erase new signal IDs
+or cause duplicate batches. Already-processed signals return a waiting response.
+Simulator request IDs use UUIDs so separate immediate lots cannot collide.
 
 The new index policy observes exact fresh underlying quotes every scheduler
 poll (default2s). It exits each independent request on its fixed index SL or
