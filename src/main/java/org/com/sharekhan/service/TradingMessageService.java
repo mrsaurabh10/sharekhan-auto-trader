@@ -814,6 +814,8 @@ public class TradingMessageService {
         t.setQuantity(src.getQuantity());
         t.setSource(src.getSource());
         t.setStrategyRunId(src.getStrategyRunId());
+        t.setStrategyDecision(src.getStrategyDecision());
+        t.setExecutionSettings(src.getExecutionSettings()==null ? null : src.getExecutionSettings().copy());
         t.setUseSpotPrice(src.getUseSpotPrice());
         t.setUseSpotForEntry(src.getUseSpotForEntry());
         t.setUseSpotForSl(src.getUseSpotForSl());

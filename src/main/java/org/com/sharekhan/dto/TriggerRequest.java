@@ -8,6 +8,7 @@ import java.util.List;
 @Data
 public class TriggerRequest {
     @com.fasterxml.jackson.annotation.JsonIgnore private String strategyRunId;
+    private org.com.sharekhan.execution.TradeExecutionSettings executionSettings;
     @com.fasterxml.jackson.annotation.JsonIgnore private String strategyDecision;
     private String instrument;
     private String exchange;

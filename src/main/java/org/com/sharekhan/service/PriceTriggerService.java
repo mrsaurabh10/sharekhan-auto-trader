@@ -931,8 +931,15 @@ public class PriceTriggerService {
         }
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private org.com.sharekhan.execution.TradeTimeExitService tradeTimeExitService;
+
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
         try {
+            // Record progress before target/stop claims so closing T1 cannot erase the group observation.
+            if(tradeTimeExitService!=null && tradeTimeExitService.observeFromCache(tradeId,nowIst())) {
+                tradeExecutionService.squareOffTimeExitTrade(tradeId);return;
+            }
             OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(tradeId, tradedLtp);
             if (confirmedStopPrice.isEmpty()) {
                 return;
@@ -981,7 +988,7 @@ public class PriceTriggerService {
                 // primitive tradedLtp would otherwise force null unboxing and abort all target
                 // evaluation during the trade's first partial minute.
                 Double slRefPrice = usesSpotSl
-                        ? resolveSpotStopClose(persisted)
+                        ? spotStopReference(persisted,spotLtp)
                         : Double.valueOf(confirmedTradedLtp);
                 Double targetRefPrice = usesSpotTarget ? spotLtp : confirmedTradedLtp;
 
@@ -1143,7 +1150,7 @@ public class PriceTriggerService {
                 
                 // Re-determine effective prices for logging/logic
                 Double slRefPrice = usesSpotForSl(reloaded)
-                        ? resolveSpotStopClose(reloaded)
+                        ? spotStopReference(reloaded,spotLtp)
                         : Double.valueOf(confirmedTradedLtp);
                 Double targetRefPrice = usesSpotForTarget(reloaded) ? spotLtp : confirmedTradedLtp;
 
@@ -1709,7 +1716,13 @@ public class PriceTriggerService {
         return true;
     }
 
+    private Double spotStopReference(TriggeredTradeSetupEntity trade,Double spot) {
+        return trade.getExecutionSettings()!=null && Boolean.TRUE.equals(trade.getExecutionSettings().getSpotStopOnTouch())
+                ? spot : resolveSpotStopClose(trade);
+    }
+
     private boolean canExitSpotTargetAtCurrentOptionPrice(TriggeredTradeSetupEntity trade, double tradedLtp) {
+        if (trade.getExecutionSettings()!=null && Boolean.FALSE.equals(trade.getExecutionSettings().getRequireProfitableSpotTarget())) return true;
         if (!usesSpotForTarget(trade)) {
             return true;
         }

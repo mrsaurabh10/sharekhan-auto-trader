@@ -17,6 +17,7 @@ public class TriggerTradeRequestEntity {
 
     @Column(name="strategy_run_id",length=64)
     private String strategyRunId;
+    @jakarta.persistence.Embedded private org.com.sharekhan.execution.TradeExecutionSettings executionSettings;
 
     /** Immutable server-owned decision; outcome comments may change independently. */
     @com.fasterxml.jackson.annotation.JsonIgnore

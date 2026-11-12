@@ -7,7 +7,7 @@ import org.com.sharekhan.enums.TriggeredTradeStatus;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "triggered_trade_setups")
+@Table(name = "triggered_trade_setups", indexes=@Index(name="idx_trade_time_exit_group",columnList="time_exit_group_id,app_user_id,broker_credentials_id"))
 @EntityListeners(TradeCostPersistenceListener.class)
 @Getter
 @Setter
@@ -18,6 +18,7 @@ public class TriggeredTradeSetupEntity {
 
     @Column(name="strategy_run_id",length=64)
     private String strategyRunId;
+    @jakarta.persistence.Embedded private org.com.sharekhan.execution.TradeExecutionSettings executionSettings;
 
     /** Immutable server-owned decision; outcome comments may change independently. */
     @com.fasterxml.jackson.annotation.JsonIgnore

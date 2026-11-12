@@ -867,6 +867,7 @@ public class TradeExecutionService {
                 .useSpotForTarget(useSpotForTarget)
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
+                .executionSettings(org.com.sharekhan.execution.TradeExecutionSettings.prepare(request.getExecutionSettings(), spotScripCode, request.getBrokerProductType()))
                 .source(request.getSource()).strategyRunId(request.getStrategyRunId()).comment(request.getStrategyDecision()).strategyDecision(request.getStrategyDecision()) // store source
                 .brokerProductType(request.getBrokerProductType())
                 .openingRuleReset(Boolean.FALSE)
@@ -1427,6 +1428,7 @@ public class TradeExecutionService {
         trade.setSource(requestEntity.getSource()); trade.setEntryAction(requestEntity.getEntryAction());
         trade.setStrategyRunId(requestEntity.getStrategyRunId());
         trade.setStrategyDecision(requestEntity.getStrategyDecision());
+        trade.setExecutionSettings(requestEntity.getExecutionSettings()==null ? null : requestEntity.getExecutionSettings().copy());
         trade.setBrokerProductType(requestEntity.getBrokerProductType());
         trade.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
         trade.setGapDayOpen(requestEntity.getGapDayOpen());
@@ -1743,6 +1745,7 @@ public class TradeExecutionService {
                 .useSpotPrice(request.getUseSpotPrice())
                 .spotScripCode(spotScripCode)
                 .source(request.getSource())
+                .executionSettings(org.com.sharekhan.execution.TradeExecutionSettings.prepare(request.getExecutionSettings(), spotScripCode, request.getBrokerProductType()))
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
                 .build();
@@ -1784,6 +1787,18 @@ public class TradeExecutionService {
     public void squareOffStrategyRunTrade(Long id,String runId,String reason) {
         var trade=triggeredTradeRepo.findById(id).orElseThrow();
         if(!Objects.equals(runId,trade.getStrategyRunId())) throw new IllegalArgumentException("Trade does not belong to run");
+        squareOffAtCurrentTradedPrice(trade,reason);
+    }
+
+    /** Any request can opt into a timed exit; normal square-off retains broker IDs and recovery. */
+    public void squareOffTimeExitTrade(Long id) {
+        var trade=triggeredTradeRepo.findById(id).orElseThrow();
+        if(trade.getExecutionSettings()==null || trade.getExecutionSettings().getTimeExitMinutes()==null
+                || !"TIME_EXIT".equals(trade.getExitReason()))return;
+        squareOffAtCurrentTradedPrice(trade,"TIME_EXIT");
+    }
+
+    private void squareOffAtCurrentTradedPrice(TriggeredTradeSetupEntity trade,String reason) {
         Double price=strategyProfitExitQuote(trade,Instant.now()).map(q -> TradeSide.isShort(trade) ? q.getBestAsk() : q.getBestBid())
                 .orElseGet(()->resolveEntryReferencePrice(trade.getScripCode(),"strategyRunExit"));
         if(price==null) throw new IllegalStateException("Fresh traded exit price unavailable");
@@ -2284,6 +2299,7 @@ public class TradeExecutionService {
         trade.setUseSpotForTarget(useSpotForTarget);
         trade.setUseSpotPrice(request.getUseSpotPrice()); // Store legacy flag
         trade.setSpotScripCode(spotScripCode);
+        trade.setExecutionSettings(org.com.sharekhan.execution.TradeExecutionSettings.prepare(request.getExecutionSettings(), spotScripCode, request.getBrokerProductType()));
         trade.setSource(request.getSource()); trade.setEntryAction(normalizedEntryAction(request)); // Copy source
         trade.setBrokerProductType(request.getBrokerProductType());
         // Set a dummy orderId to indicate manual entry, or leave null?
@@ -2610,6 +2626,7 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             triggeredTradeSetupEntity.setComment(trigger.getComment());
             triggeredTradeSetupEntity.setStrategyDecision(trigger.getStrategyDecision());
+            triggeredTradeSetupEntity.setExecutionSettings(trigger.getExecutionSettings()==null ? null : trigger.getExecutionSettings().copy());
             triggeredTradeSetupEntity.setSource(trigger.getSource()); triggeredTradeSetupEntity.setEntryAction(trigger.getEntryAction());
             triggeredTradeSetupEntity.setStrategyRunId(trigger.getStrategyRunId());
             triggeredTradeSetupEntity.setBrokerProductType(trigger.getBrokerProductType());
@@ -4349,6 +4366,7 @@ public class TradeExecutionService {
     }
 
     private double applySpotTargetExitFloor(TriggeredTradeSetupEntity trade, double candidatePrice, String exitReason) {
+        if (trade.getExecutionSettings()!=null && Boolean.FALSE.equals(trade.getExecutionSettings().getRequireProfitableSpotTarget())) return candidatePrice;
         boolean targetExit = "TARGET_HIT".equalsIgnoreCase(exitReason)
                 || ("EXIT_CHASE".equalsIgnoreCase(exitReason) && "TARGET_HIT".equalsIgnoreCase(trade.getExitReason()));
         if (!targetExit || !Boolean.TRUE.equals(trade.getUseSpotForTarget())) {
@@ -5368,6 +5386,7 @@ public class TradeExecutionService {
                                                      int stage, int lots, double target, long totalQuantity) {
         TriggeredTradeSetupEntity leg = new TriggeredTradeSetupEntity();
         leg.setTriggerRequestId(root.getTriggerRequestId());
+        leg.setExecutionSettings(root.getExecutionSettings()==null ? null : root.getExecutionSettings().copy());
         leg.setSymbol(root.getSymbol()); leg.setScripCode(root.getScripCode());
         leg.setBrokerCredentialsId(root.getBrokerCredentialsId()); leg.setAppUserId(root.getAppUserId());
         leg.setExchange(root.getExchange()); leg.setInstrumentType(root.getInstrumentType());
@@ -6595,6 +6614,7 @@ public class TradeExecutionService {
         temp.setTrailingSl(requestEntity.getTrailingSl());
         temp.setComment(requestEntity.getComment());
         temp.setStrategyDecision(requestEntity.getStrategyDecision());
+        temp.setExecutionSettings(requestEntity.getExecutionSettings()==null ? null : requestEntity.getExecutionSettings().copy());
         temp.setSource(requestEntity.getSource()); temp.setEntryAction(requestEntity.getEntryAction());
         temp.setStrategyRunId(requestEntity.getStrategyRunId());
         // This value decides whether Sharekhan submits the documented BKT

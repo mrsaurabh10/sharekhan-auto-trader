@@ -342,12 +342,15 @@ class TradeExecutionServiceBrokerSideEntryTest {
         for(int leg=1;leg<=3;leg++){
             var input=optionRequest();input.setSource(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE);input.setQuantity(1);
             input.setEntryPrice(226.6);input.setStopLoss(25266.55);input.setTarget1(25358.45+leg*20);input.setTarget2(null);input.setTarget3(null);input.setTslEnabled(false);
+            var config=new org.com.sharekhan.execution.TradeExecutionSettings();config.setTimeExitMinutes(15);config.setTimeExitGroupId("three-requests");
+            config.setTimeExitProgressPrice(25358.45);config.setTimeExitProgressDirection(org.com.sharekhan.execution.TradeExecutionSettings.Direction.ABOVE);
+            config.setTimeExitUseSpot(true);config.setSpotStopOnTouch(true);config.setRequireProfitableSpotTarget(false);input.setExecutionSettings(config);
             input.setUseSpotForEntry(false);input.setUseSpotForSl(true);input.setUseSpotForTarget(true);inputs.add(input);
             var saved=triggerRequestEntity();saved.setId(76L+leg);saved.setStatus(TriggeredTradeStatus.TRIGGERED);saved.setSource(input.getSource());
             saved.setEntryPrice(input.getEntryPrice());saved.setStopLoss(input.getStopLoss());saved.setTarget1(input.getTarget1());saved.setTarget2(null);saved.setTarget3(null);saved.setTslEnabled(false);
             saved.setUseSpotForEntry(false);saved.setUseSpotForSl(true);saved.setUseSpotForTarget(true);
-            saved.setStrategyDecision("ADX_SIGNAL=2026-06-02T10:00:CE;ADX_DEADLINE=2026-06-02T10:05;ADX_EXIT=INDEX_15M_V1;ADX_INDEX_T1=25358.45;");
-            saved.setComment("Outcome may change independently");prepared.add(saved);when(ctx.triggerRepo.findById(saved.getId())).thenReturn(Optional.of(saved));
+            saved.setStrategyDecision("ADX_SIGNAL=2026-06-02T10:00:CE;ADX_DEADLINE=2026-06-02T10:05;ADX_EXIT=INDEX_REQUEST_V2;ADX_INDEX_T1=25358.45;");
+            saved.setExecutionSettings(config.copy());saved.setComment("Outcome may change independently");prepared.add(saved);when(ctx.triggerRepo.findById(saved.getId())).thenReturn(Optional.of(saved));
         }
         when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenReturn(new org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.Batch(prepared,true));
         when(admission.place(any(),any())).thenAnswer(i->((java.util.function.Supplier<?>)i.getArgument(1)).get());
@@ -355,13 +358,27 @@ class TradeExecutionServiceBrokerSideEntryTest {
         var placed=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(simulator,times(3)).placeOrder(placed.capture(),any(),anyDouble());
         assertThat(placed.getAllValues()).allSatisfy(t->{
             assertThat(t.getStopLoss()).isEqualTo(25266.55);
-            assertThat(t.getStrategyDecision()).contains("ADX_SIGNAL=","INDEX_15M_V1");
+            assertThat(t.getExecutionSettings().getTimeExitGroupId()).isEqualTo("three-requests");
+            assertThat(t.getStrategyDecision()).contains("ADX_SIGNAL=","INDEX_REQUEST_V2");
             assertThat(ctx.service.hasUsableTradedExitPrice(t,225.9)).isTrue();
         });
         var persisted=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(ctx.triggeredRepo,org.mockito.Mockito.atLeast(3)).save(persisted.capture());
         var filled=persisted.getAllValues().stream().filter(t->t.getStatus()==TriggeredTradeStatus.EXECUTED).toList();
-        assertThat(filled).allSatisfy(t->assertThat(t.getActualEntryPrice()).isEqualTo(226.6));
+        assertThat(filled).allSatisfy(t->{assertThat(t.getActualEntryPrice()).isEqualTo(226.6);assertThat(t.getExecutionSettings().getTimeExitMinutes()).isEqualTo(15);});
         assertThat(filled.stream().map(TriggeredTradeSetupEntity::getOrderId).distinct().count()).isEqualTo(3);
+    }
+
+    @Test void genericTimeExitUsesNormalSquareOffWithoutStrategyRunOrTemplateOwnership() {
+        var ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        var c=new org.com.sharekhan.execution.TradeExecutionSettings();c.setTimeExitMinutes(15);
+        var trade=TriggeredTradeSetupEntity.builder().id(900L).source("manual").status(TriggeredTradeStatus.EXIT_TRIGGERED)
+                .executionSettings(c).exitReason("TIME_EXIT").scripCode(123456).entryPrice(226.6).actualEntryPrice(226.6).build();
+        when(ctx.triggeredRepo.findById(900L)).thenReturn(Optional.of(trade));
+        var service=org.mockito.Mockito.spy(ctx.service);
+        org.mockito.Mockito.doReturn(Optional.of(org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot.builder().bestBid(210d).bestAsk(211d).build()))
+                .when(service).strategyProfitExitQuote(eq(trade),any());
+        org.mockito.Mockito.doNothing().when(service).squareOff(any(),anyDouble(),anyString());
+        service.squareOffTimeExitTrade(900L);verify(service).squareOff(trade,210d,"TIME_EXIT");
     }
 
     @Test void adxConfirmedFillRecordsActualPriceWithoutMovingFrozenBrackets(){

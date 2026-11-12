@@ -4,6 +4,6 @@ package org.com.sharekhan.service;
 final class ProtectiveExitReasons {
     private ProtectiveExitReasons() { }
     static boolean contains(String reason) {
-        return FnoMoverExitPolicyService.isExitReason(reason) || NaturalGasScalpProfitLockService.REASON.equals(reason);
+        return "TIME_EXIT".equals(reason) || FnoMoverExitPolicyService.isExitReason(reason) || NaturalGasScalpProfitLockService.REASON.equals(reason);
     }
 }

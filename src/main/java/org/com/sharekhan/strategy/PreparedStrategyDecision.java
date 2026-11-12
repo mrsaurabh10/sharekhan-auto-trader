@@ -28,6 +28,7 @@ public final class PreparedStrategyDecision {
         var response = StrategyApplyResponse.builder().build(); BeanUtils.copyProperties(original, response);
         if (original.getTriggerRequest() != null) {
             var trigger = new TriggerRequest(); BeanUtils.copyProperties(original.getTriggerRequest(), trigger);
+            trigger.setExecutionSettings(original.getTriggerRequest().getExecutionSettings()==null ? null : original.getTriggerRequest().getExecutionSettings().copy());
             response.setTriggerRequest(trigger);
         }
         return response;
