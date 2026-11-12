@@ -52,6 +52,20 @@ class AdxDmiEntryAdmissionTest {
         assertFalse(admission.prepareBatch(java.util.List.of(order,order,order),ignored->{fail("Duplicate batch");return null;}).created());
         assertEquals(3,requests.count());
     }
+    @Test void immutableSignalSurvivesEveryTerminalFailureCommentAndRestart(){
+        var old=save();
+        // Simulate initial insertion of a new-format request, not an update to an immutable column.
+        requests.deleteById(old.getId());
+        old.setId(null);old.setStrategyDecision(order.getStrategyDecision());old.setStatus(TriggeredTradeStatus.TRIGGERED);
+        old=requests.saveAndFlush(old);
+        assertEquals(1,requests.claimIfStatusEqualsWithOutcome(old.getId(),"TRIGGERED","REJECTED","ENTRY_NOT_READY_NO_ORDER","Simulator waiting; no order submitted"));
+        assertFalse(admission.prepare(order,()->{fail("No duplicate batch after rejection");return null;}).created());
+        assertEquals(1,requests.claimIfStatusEqualsWithOutcome(old.getId(),"REJECTED","CANCELLED","ADX_BATCH_NOT_SUBMITTED","Another request in this signal failed"));
+        var restarted=new AdxDmiEntryAdmission(em,requests,trades,runs,subs,manager,Clock.fixed(Instant.parse("2026-11-11T04:31:00Z"),AdxDmiRules.IST));
+        assertFalse(restarted.prepare(order,()->{fail("No duplicate after cancellation/restart");return null;}).created());
+        assertEquals(1,requests.count());
+        assertEquals(order.getStrategyDecision(),requests.findAll().getFirst().getStrategyDecision());
+    }
     @Test void failedPreparationRollsBackAllThreeBeforeAnyBrokerExecution(){
         var count=new java.util.concurrent.atomic.AtomicInteger();
         assertThrows(IllegalStateException.class,()->admission.prepareBatch(java.util.List.of(order,order,order),ignored->{

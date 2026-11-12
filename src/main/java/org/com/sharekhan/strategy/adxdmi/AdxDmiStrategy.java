@@ -20,6 +20,7 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     private final TradeExecutionService feeds;
     private final AdxDmiGreeks greeks;
     private final NseMarketCalendar calendar;
+    private final AdxDmiContractMetadata contractMetadata;
     @org.springframework.beans.factory.annotation.Value("${app.strategy.adx-dmi.fallback-spot-tick:0.05}")
     private double fallbackSpotTick=0.05;
     private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials",
@@ -70,11 +71,11 @@ public class AdxDmiStrategy implements StrategyEvaluator {
                 return waitFor(symbol,"ATM changed during preparation; re-evaluate the selected contract");
             var book=quotes.book(option.getScripCode(),exchange);
             if(!quotes.freshBook(exchange,book,Instant.now(),option.getScripCode()))return waitFor(symbol,"Waiting for a fresh exact option book");
-            if(option.getLotSize()==null || option.getLotSize()<=0 || option.getTickSize()==null || option.getTickSize()<=0)
-                return waitFor(symbol,"Option lot/tick metadata unavailable");
-            var plan=AdxDmiIndexPlan.create(book.getBestAsk(),q.getLastTradedPrice(),signal,option.getTickSize());
+            double optionTick=contractMetadata.optionTick(option,actualNow);
+            var plan=AdxDmiIndexPlan.create(book.getBestAsk(),q.getLastTradedPrice(),signal,optionTick);
             var orders=orders(r,signal,option,spot.getScripCode(),plan,reading);
             var requests=feeds.executeAdxDmiRequests(orders);
+            if(requests.size()!=3)return waitFor(symbol,"This signal was already processed; waiting for the next qualifying candle");
             var req=requests.getFirst();
             return StrategyApplyResponse.builder().templateId(META.id()).symbol(symbol).direction(signal.side()).status("triggered")
                     .message("Three separate one-lot option BUY requests with the same fixed index SL and index targets 1R/2R/3R; no-T1 timeout 15 minutes. Delta audit: "+reading.source()).tradeRequest(req).breakoutClose(q.getLastTradedPrice()).build();
@@ -83,8 +84,15 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     static List<TriggerRequest> orders(StrategyApplyRequest r,AdxDmiRules.Signal signal,ScriptMasterEntity option,int spotCode,
             AdxDmiIndexPlan plan,AdxDmiGreeks.Reading reading){
         var orders=new ArrayList<TriggerRequest>();
+        String timeGroup=java.util.UUID.randomUUID().toString();
         for(int leg=1;leg<=3;leg++){
             var order=order(r,signal,option,spotCode,plan,reading);
+            var settings=new org.com.sharekhan.execution.TradeExecutionSettings();
+            settings.setTimeExitMinutes(15);settings.setTimeExitUseSpot(true);settings.setTimeExitProgressPrice(plan.t1());
+            settings.setTimeExitProgressDirection("PE".equalsIgnoreCase(signal.side())
+                    ? org.com.sharekhan.execution.TradeExecutionSettings.Direction.BELOW : org.com.sharekhan.execution.TradeExecutionSettings.Direction.ABOVE);
+            settings.setTimeExitGroupId(timeGroup);settings.setSpotStopOnTouch(true);settings.setRequireProfitableSpotTarget(false);
+            order.setExecutionSettings(settings);
             order.setTarget1(leg==1?plan.t1():leg==2?plan.t2():plan.t3());
             order.setStrategyDecision(order.getStrategyDecision()+"ADX_LEG="+leg+";");orders.add(order);
         }
@@ -99,7 +107,7 @@ public class AdxDmiStrategy implements StrategyEvaluator {
         order.setIntraday(true);order.setAction("BUY");order.setTslEnabled(false);
         order.setUseSpotPrice(false);order.setUseSpotForEntry(false);order.setUseSpotForSl(true);order.setUseSpotForTarget(true);order.setSpotScripCode(spotCode);
         order.setSource(AdxDmiRules.PREMIUM_SOURCE);
-        order.setStrategyDecision("ADX_SIGNAL="+signal.key()+";ADX_DEADLINE="+signal.end().plusMinutes(5)+";ADX_EXIT="+AdxDmiIndexExitRules.VERSION+";ADX_INDEX_ENTRY="+plan.spotEntry()+";ADX_INDEX_T1="+plan.t1()+";delta="+reading.delta()+";source="+reading.source()
+        order.setStrategyDecision("ADX_SIGNAL="+signal.key()+";ADX_DEADLINE="+signal.end().plusMinutes(5)+";ADX_EXIT="+"INDEX_REQUEST_V2"+";ADX_INDEX_ENTRY="+plan.spotEntry()+";ADX_INDEX_T1="+plan.t1()+";delta="+reading.delta()+";source="+reading.source()
                 +";gamma="+reading.gamma()+";vega="+reading.vega()+";theta="+reading.theta()+";estimatedPremiumR="+(signal.risk(plan.spotEntry())*reading.delta())+";");
         return order;
     }

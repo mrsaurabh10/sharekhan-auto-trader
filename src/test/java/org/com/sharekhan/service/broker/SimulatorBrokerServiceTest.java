@@ -8,6 +8,28 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class SimulatorBrokerServiceTest {
+    @Test void indexSlDoesNotRejectPremiumAskAndThreeIndependentLotsFillAtActualBook() {
+        var data=org.mockito.Mockito.mock(org.com.sharekhan.strategy.adxdmi.AdxDmiMarketData.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"adxQuotes",data);
+        var q=org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot.builder().scripCode(42).bestAsk(226.6).bestBid(225.9)
+                .askQuantity(195d).bidQuantity(195d).lastBookAt(java.time.Instant.now()).bookProviderIdentity("exact").build();
+        org.mockito.Mockito.when(data.book(42,"NF")).thenReturn(q);
+        org.mockito.Mockito.when(data.freshBook(org.mockito.ArgumentMatchers.eq("NF"),org.mockito.ArgumentMatchers.same(q),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq(42))).thenReturn(true);
+        var ids=new java.util.HashSet<String>();
+        for(int leg=1;leg<=3;leg++) {
+            var trade=TriggeredTradeSetupEntity.builder().source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE)
+                    .scripCode(42).exchange("NF").optionType("CE").entryAction("BUY").entryPrice(226.6)
+                    .useSpotForEntry(false).useSpotForSl(true).useSpotForTarget(true).stopLoss(25266.55).target1(25358.45)
+                    .quantity(65L).build();
+            var entry=service.placeOrder(trade,null,25312);
+            ids.add(entry.getOrderId());assertThat(entry.getExecutedPrice()).isEqualTo(226.6);
+            trade.setActualEntryPrice(entry.getExecutedPrice());
+            var exit=service.placeExitOrder(trade,null,25358.45);
+            assertThat(exit.getExecutedPrice()).isEqualTo(225.9);
+            assertThat(exit.getPnl()).isCloseTo(-45.5,org.assertj.core.data.Offset.offset(.000001));
+        }
+        assertThat(ids).hasSize(3);
+    }
 
     private final SimulatorBrokerService service = new SimulatorBrokerService();
 
@@ -47,6 +69,7 @@ class SimulatorBrokerServiceTest {
         assertThat(service.placeExitOrder(trade,null,120).getExecutedPrice()).isEqualTo(99d);
         org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,()->service.placeExitOrder(trade,null,120));
         trade.setEntryPrice(99d);org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(trade,null,101));
+        trade.setEntryPrice(100.05);trade.setStopLoss(101d);org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(trade,null,100));
     }
 
     @Test void naturalGasBuysAtAskAndSellsPeAtBid() {

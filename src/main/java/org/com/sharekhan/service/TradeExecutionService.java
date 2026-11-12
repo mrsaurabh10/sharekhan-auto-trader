@@ -867,7 +867,8 @@ public class TradeExecutionService {
                 .useSpotForTarget(useSpotForTarget)
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
-                .source(request.getSource()).strategyRunId(request.getStrategyRunId()).comment(request.getStrategyDecision()) // store source
+                .executionSettings(org.com.sharekhan.execution.TradeExecutionSettings.prepare(request.getExecutionSettings(), spotScripCode, request.getBrokerProductType()))
+                .source(request.getSource()).strategyRunId(request.getStrategyRunId()).comment(request.getStrategyDecision()).strategyDecision(request.getStrategyDecision()) // store source
                 .brokerProductType(request.getBrokerProductType())
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
@@ -1426,6 +1427,8 @@ public class TradeExecutionService {
         trade.setSpotScripCode(requestEntity.getSpotScripCode());
         trade.setSource(requestEntity.getSource()); trade.setEntryAction(requestEntity.getEntryAction());
         trade.setStrategyRunId(requestEntity.getStrategyRunId());
+        trade.setStrategyDecision(requestEntity.getStrategyDecision());
+        trade.setExecutionSettings(requestEntity.getExecutionSettings()==null ? null : requestEntity.getExecutionSettings().copy());
         trade.setBrokerProductType(requestEntity.getBrokerProductType());
         trade.setGapProtectionEnabled(requestEntity.getGapProtectionEnabled());
         trade.setGapDayOpen(requestEntity.getGapDayOpen());
@@ -1742,6 +1745,7 @@ public class TradeExecutionService {
                 .useSpotPrice(request.getUseSpotPrice())
                 .spotScripCode(spotScripCode)
                 .source(request.getSource())
+                .executionSettings(org.com.sharekhan.execution.TradeExecutionSettings.prepare(request.getExecutionSettings(), spotScripCode, request.getBrokerProductType()))
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
                 .build();
@@ -1783,6 +1787,18 @@ public class TradeExecutionService {
     public void squareOffStrategyRunTrade(Long id,String runId,String reason) {
         var trade=triggeredTradeRepo.findById(id).orElseThrow();
         if(!Objects.equals(runId,trade.getStrategyRunId())) throw new IllegalArgumentException("Trade does not belong to run");
+        squareOffAtCurrentTradedPrice(trade,reason);
+    }
+
+    /** Any request can opt into a timed exit; normal square-off retains broker IDs and recovery. */
+    public void squareOffTimeExitTrade(Long id) {
+        var trade=triggeredTradeRepo.findById(id).orElseThrow();
+        if(trade.getExecutionSettings()==null || trade.getExecutionSettings().getTimeExitMinutes()==null
+                || !"TIME_EXIT".equals(trade.getExitReason()))return;
+        squareOffAtCurrentTradedPrice(trade,"TIME_EXIT");
+    }
+
+    private void squareOffAtCurrentTradedPrice(TriggeredTradeSetupEntity trade,String reason) {
         Double price=strategyProfitExitQuote(trade,Instant.now()).map(q -> TradeSide.isShort(trade) ? q.getBestAsk() : q.getBestBid())
                 .orElseGet(()->resolveEntryReferencePrice(trade.getScripCode(),"strategyRunExit"));
         if(price==null) throw new IllegalStateException("Fresh traded exit price unavailable");
@@ -2283,6 +2299,7 @@ public class TradeExecutionService {
         trade.setUseSpotForTarget(useSpotForTarget);
         trade.setUseSpotPrice(request.getUseSpotPrice()); // Store legacy flag
         trade.setSpotScripCode(spotScripCode);
+        trade.setExecutionSettings(org.com.sharekhan.execution.TradeExecutionSettings.prepare(request.getExecutionSettings(), spotScripCode, request.getBrokerProductType()));
         trade.setSource(request.getSource()); trade.setEntryAction(normalizedEntryAction(request)); // Copy source
         trade.setBrokerProductType(request.getBrokerProductType());
         // Set a dummy orderId to indicate manual entry, or leave null?
@@ -2608,6 +2625,8 @@ public class TradeExecutionService {
             triggeredTradeSetupEntity.setUseSpotPrice(trigger.getUseSpotPrice()); // Store legacy flag
             triggeredTradeSetupEntity.setSpotScripCode(trigger.getSpotScripCode());
             triggeredTradeSetupEntity.setComment(trigger.getComment());
+            triggeredTradeSetupEntity.setStrategyDecision(trigger.getStrategyDecision());
+            triggeredTradeSetupEntity.setExecutionSettings(trigger.getExecutionSettings()==null ? null : trigger.getExecutionSettings().copy());
             triggeredTradeSetupEntity.setSource(trigger.getSource()); triggeredTradeSetupEntity.setEntryAction(trigger.getEntryAction());
             triggeredTradeSetupEntity.setStrategyRunId(trigger.getStrategyRunId());
             triggeredTradeSetupEntity.setBrokerProductType(trigger.getBrokerProductType());
@@ -3272,7 +3291,7 @@ public class TradeExecutionService {
 
     private boolean isEntrySignalStillValid(TriggeredTradeSetupEntity trigger) {
         if(trigger!=null && org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()))
-            return org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.validDecision(trigger.getComment(),LocalDateTime.now(entryClock));
+            return org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.validDecision(org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.decision(trigger),LocalDateTime.now(entryClock));
         if (trigger == null || !usesSpotEntryReference(trigger)) {
             return true;
         }
@@ -4347,6 +4366,7 @@ public class TradeExecutionService {
     }
 
     private double applySpotTargetExitFloor(TriggeredTradeSetupEntity trade, double candidatePrice, String exitReason) {
+        if (trade.getExecutionSettings()!=null && Boolean.FALSE.equals(trade.getExecutionSettings().getRequireProfitableSpotTarget())) return candidatePrice;
         boolean targetExit = "TARGET_HIT".equalsIgnoreCase(exitReason)
                 || ("EXIT_CHASE".equalsIgnoreCase(exitReason) && "TARGET_HIT".equalsIgnoreCase(trade.getExitReason()));
         if (!targetExit || !Boolean.TRUE.equals(trade.getUseSpotForTarget())) {
@@ -4865,11 +4885,11 @@ public class TradeExecutionService {
         if (request == null) {
             return true;
         }
-        boolean usesSpotReference = Boolean.TRUE.equals(request.getUseSpotForEntry())
-                || Boolean.TRUE.equals(request.getUseSpotForSl())
-                || Boolean.TRUE.equals(request.getUseSpotForTarget())
-                || Boolean.TRUE.equals(request.getUseSpotPrice());
-        return !looksLikeSpotPriceForSpotBasedOptionTrade(request.getEntryPrice(), tradedLtp, usesSpotReference);
+        if (!Double.isFinite(tradedLtp) || tradedLtp<=0) return false;
+        boolean spotEntry = spotFlag(request.getUseSpotForEntry(), request.getUseSpotPrice());
+        if (!spotEntry && hasOptionType(request.getOptionType()))
+            return !implausibleOptionPremium(request.getEntryPrice(), tradedLtp);
+        return !looksLikeSpotPriceForSpotBasedOptionTrade(request.getEntryPrice(), tradedLtp, spotEntry);
     }
 
     private Double resolveEntryPriceForPnl(TriggeredTradeSetupEntity trade) {
@@ -4879,7 +4899,7 @@ public class TradeExecutionService {
         if (trade.getActualEntryPrice() != null) {
             return trade.getActualEntryPrice();
         }
-        if (usesSpotReference(trade)) {
+        if (usesSpotEntryReference(trade)) {
             log.warn("Cannot compute PnL for spot-referenced trade {} because actualEntryPrice is missing. entryPrice={} is a reference price, not the traded instrument fill.",
                     trade.getId(), trade.getEntryPrice());
             return null;
@@ -4900,7 +4920,7 @@ public class TradeExecutionService {
             return true;
         }
 
-        if (!usesSpotReference(trade)) {
+        if (!usesSpotEntryReference(trade)) {
             return true;
         }
 
@@ -4938,17 +4958,15 @@ public class TradeExecutionService {
             return false;
         }
 
-        if (candidatePrice > 10000d) {
-            return true;
-        }
-
         Double entryReference = trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice();
-        if (entryReference == null || entryReference <= 0d) {
-            return false;
-        }
+        return implausibleOptionPremium(entryReference, candidatePrice);
+    }
 
-        double ratio = candidatePrice / entryReference;
-        return ratio > 20d || ratio < 0.02d;
+    private boolean implausibleOptionPremium(Double entryReference, double candidatePrice) {
+        if (!Double.isFinite(candidatePrice) || candidatePrice<=0 || candidatePrice>10000d) return true;
+        if (entryReference==null || !Double.isFinite(entryReference) || entryReference<=0) return false;
+        double ratio=candidatePrice/entryReference;
+        return ratio>20d || ratio<0.02d;
     }
 
     private boolean looksLikeSpotPriceForSpotBasedOptionTrade(Double spotReferencePrice,
@@ -4966,12 +4984,6 @@ public class TradeExecutionService {
         return tradedPrice > 100d && Math.abs(tradedPrice - spotPrice) / spotPrice <= 0.20d;
     }
 
-    private boolean usesSpotReference(TriggeredTradeSetupEntity trade) {
-        return Boolean.TRUE.equals(trade.getUseSpotForEntry())
-                || Boolean.TRUE.equals(trade.getUseSpotForSl())
-                || Boolean.TRUE.equals(trade.getUseSpotForTarget())
-                || Boolean.TRUE.equals(trade.getUseSpotPrice());
-    }
 
     public void handleEntryOrderExecution(TriggeredTradeSetupEntity trade) {
         syncLinkedEntryRequestStatus(trade, TriggeredTradeStatus.EXECUTED);
@@ -5374,6 +5386,7 @@ public class TradeExecutionService {
                                                      int stage, int lots, double target, long totalQuantity) {
         TriggeredTradeSetupEntity leg = new TriggeredTradeSetupEntity();
         leg.setTriggerRequestId(root.getTriggerRequestId());
+        leg.setExecutionSettings(root.getExecutionSettings()==null ? null : root.getExecutionSettings().copy());
         leg.setSymbol(root.getSymbol()); leg.setScripCode(root.getScripCode());
         leg.setBrokerCredentialsId(root.getBrokerCredentialsId()); leg.setAppUserId(root.getAppUserId());
         leg.setExchange(root.getExchange()); leg.setInstrumentType(root.getInstrumentType());
@@ -6600,6 +6613,8 @@ public class TradeExecutionService {
         temp.setTarget3(requestEntity.getTarget3());
         temp.setTrailingSl(requestEntity.getTrailingSl());
         temp.setComment(requestEntity.getComment());
+        temp.setStrategyDecision(requestEntity.getStrategyDecision());
+        temp.setExecutionSettings(requestEntity.getExecutionSettings()==null ? null : requestEntity.getExecutionSettings().copy());
         temp.setSource(requestEntity.getSource()); temp.setEntryAction(requestEntity.getEntryAction());
         temp.setStrategyRunId(requestEntity.getStrategyRunId());
         // This value decides whether Sharekhan submits the documented BKT

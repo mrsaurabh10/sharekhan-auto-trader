@@ -60,6 +60,34 @@ class PriceTriggerServiceTest {
         verify(triggeredRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString(),anyString());
         verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());
     }
+    @Test void normalRequestSpotTouchStopsUseTradedPremiumWithoutWaitingForCandle() {
+        var t=normalSpotRequest();
+        when(triggeredRepo.claimIfStatusEquals(603L,"EXECUTED","EXIT_TRIGGERED","STOP_LOSS_HIT")).thenAnswer(inv->{t.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);t.setExitReason("STOP_LOSS_HIT");return 1;});
+        service.handleTradeWithLock(603L,190d,22970d);
+        verify(triggeredRepo).claimIfStatusEquals(603L,"EXECUTED","EXIT_TRIGGERED","STOP_LOSS_HIT");
+        verify(tradeExecutionService).squareOff(t,190d,"STOP_LOSS_HIT");
+    }
+    @Test void normalRequestSpotTargetCanExitBelowPremiumCostWhenExplicitlyConfigured() {
+        var t=normalSpotRequest();
+        when(triggeredRepo.claimIfStatusEquals(603L,"EXECUTED","EXIT_TRIGGERED","TARGET_HIT")).thenAnswer(inv->{t.setStatus(TriggeredTradeStatus.EXIT_TRIGGERED);t.setExitReason("TARGET_HIT");return 1;});
+        service.handleTradeWithLock(603L,190d,23030d);
+        verify(triggeredRepo).claimIfStatusEquals(603L,"EXECUTED","EXIT_TRIGGERED","TARGET_HIT");
+        verify(tradeExecutionService).squareOff(t,190d,"TARGET_HIT");
+    }
+    @Test void spotTouchRequestRecognizesExactTickDespiteDoubleRounding() {
+        var t=normalSpotRequest();t.setTarget1(Math.nextUp(23020d));
+        service.handleTradeWithLock(603L,190d,23020d);
+        verify(triggeredRepo).claimIfStatusEquals(603L,"EXECUTED","EXIT_TRIGGERED","TARGET_HIT");
+    }
+    private TriggeredTradeSetupEntity normalSpotRequest() {
+        var settings=new org.com.sharekhan.execution.TradeExecutionSettings();settings.setSpotStopOnTouch(true);settings.setRequireProfitableSpotTarget(false);
+        var t=TriggeredTradeSetupEntity.builder().id(603L).source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE)
+                .strategyDecision("ADX_EXIT=INDEX_REQUEST_V2;").status(TriggeredTradeStatus.EXECUTED).optionType("CE").scripCode(123).spotScripCode(20000)
+                .entryPrice(226.6d).actualEntryPrice(226.6d).useSpotForSl(true).useSpotForTarget(true)
+                .stopLoss(22980d).target1(23020d).tslEnabled(false).lots(1).quantity(65L).executionSettings(settings).build();
+        when(triggeredRepo.findById(603L)).thenReturn(Optional.of(t));
+        when(tradeExecutionService.hasUsableTradedExitPrice(t,190d)).thenReturn(true);return t;
+    }
     @Test void fundsManagedPremiumRequestCannotBypassQueueOnPriceTick() {
         var request=TriggerTradeRequestEntity.builder().id(700L).scripCode(20000).optionType("CE")
                 .entryPrice(100d).useSpotForEntry(false).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build();

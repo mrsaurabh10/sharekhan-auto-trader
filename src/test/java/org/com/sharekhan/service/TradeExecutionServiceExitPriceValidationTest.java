@@ -11,6 +11,20 @@ import org.junit.jupiter.api.Test;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class TradeExecutionServiceExitPriceValidationTest {
+    @Test void premiumEntryWithIndexExitsAcceptsRealisticPremiumAndRejectsIndexPrices() {
+        for(String side:java.util.List.of("CE","PE")) {
+            var request=TriggerTradeRequestEntity.builder().optionType(side).entryPrice(226.6)
+                    .useSpotPrice(true).useSpotForEntry(false).useSpotForSl(true).useSpotForTarget(true).build();
+            assertThat(service.hasUsableTradedEntryPrice(request,226.55)).isTrue();
+            assertThat(service.hasUsableTradedEntryPrice(request,25312)).isFalse();
+            assertThat(service.hasUsableTradedEntryPrice(request,Double.NaN)).isFalse();
+            var trade=TriggeredTradeSetupEntity.builder().optionType(side).entryPrice(226.6).actualEntryPrice(226.55)
+                    .useSpotPrice(true).useSpotForEntry(false).useSpotForSl(true).useSpotForTarget(true).build();
+            assertThat(service.hasUsableTradedExitPrice(trade,225.9)).isTrue();
+            assertThat(service.hasUsableTradedExitPrice(trade,240.5)).isTrue();
+            assertThat(service.hasUsableTradedExitPrice(trade,25312)).isFalse();
+        }
+    }
 
     private final TradeExecutionService service = new TradeExecutionService(
             null,

@@ -10,7 +10,7 @@ public final class AdxDmiIndexExitRules {
     public static final String STOP="ADX_INDEX_STOP", TARGET="ADX_INDEX_TARGET", TIMEOUT="ADX_NO_T1_15M";
     public static boolean owns(TriggeredTradeSetupEntity trade) {
         return trade!=null && AdxDmiRules.premium(trade.getSource())
-                && VERSION.equals(AdxDmiEntryAdmission.field(trade.getComment(),"ADX_EXIT"));
+                && VERSION.equals(AdxDmiEntryAdmission.field(AdxDmiEntryAdmission.decision(trade),"ADX_EXIT"));
     }
     public record State(LocalDateTime startedAt,LocalDateTime t1ReachedAt,LocalDateTime timedOutAt) { }
     public static State observe(State state,boolean pe,double t1,Double spot,LocalDateTime now) {
