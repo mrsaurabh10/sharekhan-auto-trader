@@ -8,6 +8,9 @@ import org.com.sharekhan.enums.Broker;
 public interface BrokerService {
     Broker getBroker();
 
+    /** Carry-forward option-short capability; checked before any basket leg is submitted. */
+    default boolean supportsCarryOptionShorts() { return false; }
+
     /** Fresh, account-scoped spendable funds; empty means unavailable, never permission to submit. */
     default java.util.OptionalDouble availableOptionBuyingFunds(TriggeredTradeSetupEntity trade, BrokerContext context) {
         return java.util.OptionalDouble.empty();

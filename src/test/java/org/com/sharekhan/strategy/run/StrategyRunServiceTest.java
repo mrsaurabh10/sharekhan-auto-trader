@@ -130,4 +130,26 @@ class StrategyRunServiceTest {
     @Test void equityRunDoesNotAcquireEveningExitSchedule() {
         when(runs.findByStatusIn(anyList())).thenReturn(List.of(am));service.monitor(LocalDate.of(2026,10,26).atTime(23,20));verifyNoInteractions(execution);verify(trades,never()).findByStrategyRunId(anyString());
     }
+    @Test void batmanClosesShortsBeforeReleasingLongHedges() {
+        am.setTemplateId("BATMAN_MONTHLY");var hedge=leg(1,TriggeredTradeStatus.EXECUTED);hedge.setEntryAction("BUY");
+        var shortLeg=leg(2,TriggeredTradeStatus.EXECUTED);shortLeg.setEntryAction("SELL");
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(hedge,shortLeg));
+        service.close("am",1L,false);verify(execution).squareOffStrategyRunTrade(2L,"am","STRATEGY_MANUAL_CLOSE");
+        verify(execution,never()).squareOffStrategyRunTrade(eq(1L),anyString(),anyString());
+        shortLeg.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);service.close("am",1L,false);verify(execution).squareOffStrategyRunTrade(1L,"am","STRATEGY_MANUAL_CLOSE");
+    }
+    @Test void batmanUnknownShortSubmissionRetainsLongsEvenWithoutShortTradeRow() {
+        am.setTemplateId("BATMAN_MONTHLY");var hedge=leg(1,TriggeredTradeStatus.EXECUTED);hedge.setEntryAction("BUY");
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(hedge));
+        when(requests.findByStrategyRunId("am")).thenReturn(List.of(TriggerTradeRequestEntity.builder().id(7L).appUserId(1L).brokerCredentialsId(2L).status(TriggeredTradeStatus.FAILED).reason("ENTRY_SUBMISSION_STATE_UNKNOWN").build()));
+        service.close("am",1L,false);verify(execution,never()).squareOffStrategyRunTrade(anyLong(),anyString(),anyString());verify(runs,never()).markClosed(anyString(),any());
+    }
+
+    @Test void batmanStillCancelsPendingLongEntryWhileKeepingItsFilledHedge() {
+        am.setTemplateId("BATMAN_MONTHLY");var pending=leg(1,TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);pending.setEntryAction("BUY");
+        when(trades.findByStrategyRunId("am")).thenReturn(List.of(pending));
+        when(requests.findByStrategyRunId("am")).thenReturn(List.of(TriggerTradeRequestEntity.builder().id(7L).appUserId(1L).brokerCredentialsId(2L).status(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).build()));
+        service.close("am",1L,false);verify(execution).cancelStrategyRunEntry(1L,"am");verify(runs,never()).markClosed(anyString(),any());
+    }
+
 }

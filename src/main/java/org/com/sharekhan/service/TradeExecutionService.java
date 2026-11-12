@@ -1607,15 +1607,22 @@ public class TradeExecutionService {
      * the execution boundary as well as at the message-ingestion boundary so
      * direct API calls cannot be sent down the F&O lookup path.
      */
-    private static String normalizedEntryAction(TriggerRequest request) {
+    private String normalizedEntryAction(TriggerRequest request) {
+        boolean batman=org.com.sharekhan.strategy.batman.BatmanRules.owns(request.getSource());
+        if(batman && (runCoordinator==null || !runCoordinator.ownsBatmanEntry(request)))
+            throw new InvalidTradeRequestException("Batman entries require the server-owned strategy evaluation context");
         if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.owns(request.getSource()))
             throw new InvalidTradeRequestException("ADX DMI entries are owned by the Simulator paper strategy");
         if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(request.getSource()))
             throw new InvalidTradeRequestException("Nifty three-candle entries are owned by the Simulator paper strategy");
         String action = request.getAction() == null ? (org.com.sharekhan.strategy.SpotAtrPreviousDayBigTradePlusSellStrategy.isSell(request.getSource()) ? "SELL" : "BUY") : request.getAction().trim().toUpperCase(Locale.ROOT);
         if (!Set.of("BUY", "SELL").contains(action)) throw new InvalidTradeRequestException("Entry action must be BUY or SELL");
-        if ("SELL".equals(action) && (!isCashEquityExchange(request.getExchange()) || (request.getOptionType() != null && !request.getOptionType().isBlank()) || !Boolean.TRUE.equals(request.getIntraday())))
+        if ("SELL".equals(action) && !batman && (!isCashEquityExchange(request.getExchange()) || (request.getOptionType() != null && !request.getOptionType().isBlank()) || !Boolean.TRUE.equals(request.getIntraday())))
             throw new InvalidTradeRequestException("SELL entries require intraday cash equity");
+        if(batman && (!"NF".equals(request.getExchange()) || !Set.of("CE","PE").contains(request.getOptionType())
+                || !Boolean.FALSE.equals(request.getIntraday()) || !Boolean.FALSE.equals(request.getTslEnabled()) || request.getStopLoss()!=null
+                || request.getTarget1()!=null || request.getTarget2()!=null || request.getTarget3()!=null))
+            throw new InvalidTradeRequestException("Batman uses carry-forward option legs with basket-owned exits");
         return action;
     }
 
@@ -1800,7 +1807,7 @@ public class TradeExecutionService {
 
     private void squareOffAtCurrentTradedPrice(TriggeredTradeSetupEntity trade,String reason) {
         Double price=strategyProfitExitQuote(trade,Instant.now()).map(q -> TradeSide.isShort(trade) ? q.getBestAsk() : q.getBestBid())
-                .orElseGet(()->resolveEntryReferencePrice(trade.getScripCode(),"strategyRunExit"));
+                .orElseGet(()->org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())?null:resolveEntryReferencePrice(trade.getScripCode(),"strategyRunExit"));
         if(price==null) throw new IllegalStateException("Fresh traded exit price unavailable");
         squareOff(trade,price,reason);
     }
@@ -1813,7 +1820,14 @@ public class TradeExecutionService {
     }
 
     /** A fresh, uncrossed sell-side book for estimating combined straddle profit. No API calls. */
+    @Autowired private org.com.sharekhan.strategy.batman.BatmanBooks batmanBooks;
     public Optional<QuoteCacheService.QuoteSnapshot> strategyProfitExitQuote(TriggeredTradeSetupEntity trade, Instant now) {
+        if(trade!=null && org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())) {
+            var q=batmanBooks.book(trade.getScripCode(),trade.getExchange());
+            boolean shortSide=TradeSide.isShort(trade);
+            return Optional.ofNullable(q).filter(v->org.com.sharekhan.strategy.batman.BatmanBooks.valid(v,Instant.now()))
+                    .filter(v->(shortSide?v.getAskQuantity():v.getBidQuantity())!=null && (shortSide?v.getAskQuantity():v.getBidQuantity())>=trade.getQuantity());
+        }
         if (quoteCacheService == null || trade == null || trade.getScripCode() == null) return Optional.empty();
         return quoteCacheService.getSnapshot(trade.getScripCode()).filter(q -> q.hasBook()
                 && Double.isFinite(q.getBestBid()) && Double.isFinite(q.getBestAsk()) && q.getBestBid() <= q.getBestAsk()
@@ -1883,7 +1897,7 @@ public class TradeExecutionService {
         final boolean isNoStrikeExchange = isCashEquityExchange(exch);
         ScriptMasterEntity script = resolveScriptForRequest(request, isNoStrikeExchange);
 
-        if (!isNoStrikeExchange) {
+        if (!isNoStrikeExchange && !org.com.sharekhan.strategy.batman.BatmanRules.owns(request.getSource())) {
             Double optionLtp = resolveEntryReferencePrice(script.getScripCode(), "executeTriggeredTrade",
                     () -> entryQuoteWindowOpen(request.getSource()));
             if (optionLtp == null) {
@@ -2991,6 +3005,14 @@ public class TradeExecutionService {
                 return OrderPlacementResult.builder().success(false).rejectionReason("BTP shorts require Sharekhan").build();
             }
             return brokerService.placeOrder(trigger, ctx, ltp);
+        }
+        if(org.com.sharekhan.strategy.batman.BatmanRules.owns(trigger.getSource())) {
+            if(!brokerService.supportsCarryOptionShorts()) throw new InvalidTradeRequestException("Execution adapter does not support carry-forward option shorts");
+            var q=batmanBooks.book(trigger.getScripCode(),trigger.getExchange());
+            if(!org.com.sharekhan.strategy.batman.BatmanBooks.valid(q,Instant.now())) throw new EntryNotReadyException("Batman entry book unavailable");
+            boolean buy=!TradeSide.isShort(trigger);var quantity=buy?q.getAskQuantity():q.getBidQuantity();double price=buy?q.getBestAsk():q.getBestBid();
+            if(quantity==null||quantity<trigger.getQuantity()||(buy?price>trigger.getEntryPrice()+1e-7:price<trigger.getEntryPrice()-1e-7))throw new EntryNotReadyException("Batman book moved beyond admitted price/quantity");
+            return brokerService.placeOrder(trigger,ctx,price);
         }
         OrderPlacementResult lastResult = null;
         String orderId = null;

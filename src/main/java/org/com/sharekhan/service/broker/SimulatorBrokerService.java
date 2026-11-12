@@ -61,6 +61,27 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
     }
 
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.strategy.batman.BatmanBooks batmanBooks;
+    private final java.util.Map<String,Long> batmanConsumed=new java.util.HashMap<>();
+    @Override public boolean supportsCarryOptionShorts(){ return true; }
+    private synchronized double batmanFill(TriggeredTradeSetupEntity trade,double limit,boolean entry){
+        if(!org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())) return limit;
+        var q=batmanBooks.book(trade.getScripCode(),trade.getExchange());
+        if(!org.com.sharekhan.strategy.batman.BatmanBooks.valid(q,java.time.Instant.now()))throw new org.com.sharekhan.exception.EntryNotReadyException("Batman Simulator waiting for a fresh exact option book");
+        boolean buy=entry?!TradeSide.isShort(trade):TradeSide.isShort(trade);
+        double price=buy?q.getBestAsk():q.getBestBid();var size=buy?q.getAskQuantity():q.getBidQuantity();
+        if(size==null||trade.getQuantity()==null||trade.getQuantity()<1||size<trade.getQuantity() || entry&&(buy?price>limit+1e-7:price<limit-1e-7))
+            throw new org.com.sharekhan.exception.EntryNotReadyException("Batman displayed price or quantity unavailable");
+        String key=q.getLastBookAt()+"|"+q.getBookProviderIdentity()+"|"+trade.getScripCode()+"|"+buy;
+        long used=batmanConsumed.getOrDefault(key,0L);
+        if(size-used<trade.getQuantity())throw new org.com.sharekhan.exception.EntryNotReadyException("Batman displayed depth already consumed; waiting for a new book");
+        // Keep every fresh observation's consumption across baskets, then retire only aged observations.
+        var cutoff=java.time.Instant.now().minusSeconds(30);
+        batmanConsumed.keySet().removeIf(k->java.time.Instant.parse(k.substring(0,k.indexOf('|'))).isBefore(cutoff));
+        batmanConsumed.put(key,used+trade.getQuantity());return price;
+    }
+
     @Override
     public Broker getBroker() {
         return Broker.SIMULATOR;
@@ -68,7 +89,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double ltp) {
-        ltp = adxFill(trade,naturalGasFill(trade, ltp, true),true);
+        ltp = batmanFill(trade,adxFill(trade,naturalGasFill(trade, ltp, true),true),true);
         log.info("🚀 [SIMULATOR] Placing {} entry order for {} at {}", TradeSide.entry(trade), trade.getSymbol(), ltp);
         String orderId = "SIM-" + java.util.UUID.randomUUID();
         
@@ -86,7 +107,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
                                                  BrokerContext context,
                                                  String orderId,
                                                  double newPrice) {
-        newPrice = adxFill(trade,naturalGasFill(trade, newPrice, true),true);
+        newPrice = batmanFill(trade,adxFill(trade,naturalGasFill(trade, newPrice, true),true),true);
         log.info("🔁 [SIMULATOR] Modifying BUY order {} for {} to {}", orderId, trade.getSymbol(), newPrice);
         String effectiveOrderId = orderId != null && !orderId.isBlank()
                 ? orderId
@@ -110,7 +131,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
 
     @Override
     public OrderPlacementResult placeExitOrder(TriggeredTradeSetupEntity trade, BrokerContext context, double exitPrice) {
-        exitPrice = adxFill(trade,naturalGasFill(trade, exitPrice, false),false);
+        exitPrice = batmanFill(trade,adxFill(trade,naturalGasFill(trade, exitPrice, false),false),false);
         log.info("🚀 [SIMULATOR] Placing {} exit order for {} at {}", TradeSide.exit(trade), trade.getSymbol(), exitPrice);
         String orderId = "SIM-EXIT-" + java.util.UUID.randomUUID();
         
