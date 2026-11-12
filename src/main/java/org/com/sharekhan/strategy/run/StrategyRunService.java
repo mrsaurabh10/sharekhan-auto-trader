@@ -22,6 +22,8 @@ public class StrategyRunService {
     private final TriggerTradeRequestRepository requests;
     private final TradeExecutionService execution;
     private final StrategySubscriptionService subscriptions;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.repository.BatmanBasketRepository batmanBaskets;
     private final StrategyRunRiskEngine risk=new StrategyRunRiskEngine();
     private static final Set<TriggeredTradeStatus> FLAT=EnumSet.of(TriggeredTradeStatus.REJECTED,TriggeredTradeStatus.CANCELLED,TriggeredTradeStatus.FAILED,TriggeredTradeStatus.COMPLETED,TriggeredTradeStatus.EXITED_SUCCESS);
     private static final Set<TriggeredTradeStatus> EXITABLE=EnumSet.of(TriggeredTradeStatus.EXECUTED,TriggeredTradeStatus.TARGET_ORDER_PLACED,TriggeredTradeStatus.EXIT_ORDER_PLACED,TriggeredTradeStatus.EXIT_TRIGGERED,TriggeredTradeStatus.EXIT_FAILED);
@@ -111,6 +113,10 @@ public class StrategyRunService {
         if(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(run.getTemplateId()))return false;
         // Averaging owns paper-net basket targets, daily loss accounting and its monotone premium floor.
         if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(run.getTemplateId()))return false;
+        if(org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(run.getTemplateId()))
+            return batmanBaskets!=null && run.getRiskSettings()!=null && batmanBaskets.findByStrategyRunId(run.getId())
+                    .filter(b->"ARMED".equals(b.getState()))
+                    .map(b->org.com.sharekhan.strategy.batman.BatmanStrategy.matches(b,members,true)).orElse(false);
         if(members.isEmpty()) return false;
         if(!org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(run.getTemplateId())) return true;
         return members.size()==2 && members.stream().allMatch(t->t.getStatus()==TriggeredTradeStatus.EXECUTED)
@@ -131,7 +137,12 @@ public class StrategyRunService {
     /** Cancel unsubmitted requests, reconcile broker entries, then close filled positions. */
     void reconcile(StrategyRun run) {
         cancelUnsubmittedRequests(run);
-        for(var trade:members(run)) {
+        var members=members(run);
+        boolean batman=org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(run.getTemplateId());
+        if(batman) members=new ArrayList<>(members.stream().sorted(java.util.Comparator.comparing(t->!sellSide(t))).toList());
+        for(var trade:members) {
+            // Close shorts first. Long hedges stay until all short fills/cancels and requests are resolved.
+            if(batman && trade.getStatus()!=TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION && !sellSide(trade) && (!entriesResolved(run) || members(run).stream().anyMatch(t->sellSide(t)&&(!flat(t)||uncertain(t.getReason()))))) continue;
             try {
                 if(trade.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION) execution.cancelStrategyRunEntry(trade.getId(),run.getId());
                 else if(trade.getStatus()!=null && EXITABLE.contains(trade.getStatus())) execution.squareOffStrategyRunTrade(trade.getId(),run.getId(),run.getExitReason());

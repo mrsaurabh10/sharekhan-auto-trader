@@ -250,6 +250,13 @@ public class StrategySubscriptionService {
         return subscription.getCompletedAt().toLocalDate().equals(LocalDateTime.now(MARKET_ZONE).toLocalDate());
     }
 
+    /** Monthly carry strategies enter independently of the 09:25 intraday polling cutoff. */
+    @Scheduled(cron = "0,10,20,30,40,50 20-24 9 * * MON-FRI", zone = "Asia/Kolkata")
+    public void enterBatmanBaskets() {
+        if(!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) return;
+        evaluateBatch(repository.findByStatusInOrderByIdDesc(List.of(ACTIVE,TRIGGERED)).stream()
+                .filter(s->org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
+    }
     private void validate(StrategyApplyRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("Request body is required");
@@ -260,6 +267,7 @@ public class StrategySubscriptionService {
         if (!strategyTemplateService.supports(request.getTemplateId())) {
             throw new IllegalArgumentException("Unknown strategy template");
         }
+        if (org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) strategyTemplateService.validateConfiguration(request);
         if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))
             strategyTemplateService.validateConfiguration(request);
         if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))
@@ -347,7 +355,8 @@ public class StrategySubscriptionService {
     }
 
     private boolean isContinuousFnoTemplate(String templateId) {
-        return isAutomaticUniverseTemplate(templateId)
+        return org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(templateId)
+                || isAutomaticUniverseTemplate(templateId)
                 || org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(templateId)
                 || org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(templateId)
                 || org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(templateId)

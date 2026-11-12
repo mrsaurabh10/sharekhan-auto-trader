@@ -86,6 +86,10 @@ public class StrategyTemplateService {
     }
 
     public void validateConfiguration(StrategyApplyRequest request) {
+        if (org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
+            var evaluator=evaluators.get(org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE);
+            if(evaluator instanceof org.com.sharekhan.strategy.batman.BatmanStrategy batman) batman.validateConfiguration(request);
+        }
         if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) {
             var evaluator=evaluators.get(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE);
             if(evaluator instanceof org.com.sharekhan.strategy.adxdmi.AdxDmiStrategy adx) adx.validateConfiguration(request);
@@ -116,6 +120,7 @@ public class StrategyTemplateService {
         if (!StringUtils.hasText(request.getTemplateId())) {
             throw new IllegalArgumentException("templateId is required");
         }
+        if (org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim())) validateConfiguration(request);
         if (org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(request.getTemplateId().trim()))
             validateConfiguration(request);
         if (org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId().trim()))

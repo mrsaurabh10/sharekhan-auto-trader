@@ -9,6 +9,9 @@ import java.time.*;
 import java.math.BigDecimal;
 
 public interface StrategyRunRepository extends JpaRepository<StrategyRun,String> {
+    @Modifying(clearAutomatically=true,flushAutomatically=true) @Transactional
+    @Query("update StrategyRun r set r.riskSettings.amountMode=:mode,r.riskSettings.profitTarget=:credit,r.riskSettings.maxLoss=:credit where r.id=:id and r.templateId='BATMAN_MONTHLY' and r.status='OPEN'")
+    int armBatmanRisk(@Param("id") String id,@Param("credit") BigDecimal credit,@Param("mode") org.com.sharekhan.strategy.run.StrategyRiskSettings.AmountMode mode);
     Page<StrategyRun> findByAppUserIdOrderByCreatedAtDesc(Long userId,Pageable page);
     Page<StrategyRun> findAllByOrderByCreatedAtDesc(Pageable page);
     List<StrategyRun> findByStatusIn(List<String> statuses);

@@ -73,6 +73,12 @@ public class StrategyRunCoordinator {
                 .lots(request.getLots()).riskSettings(rules).status("OPEN").createdAt(now).message("Strategy instance active").build()));
         try {return action.get();} finally {context.remove();}
     }
+    public boolean ownsBatmanEntry(org.com.sharekhan.dto.TriggerRequest request) {
+        var run=context.get();
+        return run!=null && org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(run.getTemplateId())
+                && Objects.equals(run.getAppUserId(),request.getUserId()) && Objects.equals(run.getBrokerCredentialsId(),request.getBrokerCredentialsId())
+                && Objects.equals(run.getSymbol(),request.getInstrument()) && org.com.sharekhan.strategy.batman.BatmanRules.owns(request.getSource());
+    }
     public String ensureCurrentRun() {
         var run=context.get();if(run==null) return null;
         try {
