@@ -250,8 +250,8 @@ public class StrategySubscriptionService {
         return subscription.getCompletedAt().toLocalDate().equals(LocalDateTime.now(MARKET_ZONE).toLocalDate());
     }
 
-    /** Monthly carry strategies enter independently of the 09:25 intraday polling cutoff. */
-    @Scheduled(cron = "0,10,20,30,40,50 20-24 9 * * MON-FRI", zone = "Asia/Kolkata")
+    /** Batman entry and next-day re-entry run only in the 09:20 IST minute. */
+    @Scheduled(cron = "0,10,20,30,40,50 20 9 * * MON-FRI", zone = "Asia/Kolkata")
     public void enterBatmanBaskets() {
         if(!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) return;
         evaluateBatch(repository.findByStatusInOrderByIdDesc(List.of(ACTIVE,TRIGGERED)).stream()

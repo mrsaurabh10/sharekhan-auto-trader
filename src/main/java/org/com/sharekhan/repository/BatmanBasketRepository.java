@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.util.*;
 public interface BatmanBasketRepository extends JpaRepository<BatmanBasket,String>{
+    List<BatmanBasket> findByAppUserIdAndBrokerCredentialsIdAndSymbolOrderByClaimedAtDesc(Long userId,Long brokerId,String symbol);
     Optional<BatmanBasket> findByStrategyRunId(String runId);
     List<BatmanBasket> findByStateIn(List<String> states);
     @Modifying @Transactional
