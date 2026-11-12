@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class TradeTimeExitServiceTest {
     static final LocalDateTime START=LocalDateTime.of(2026,11,12,10,0);
     @Autowired TradeTimeExitService timer;
+    @Autowired LtpCacheService prices;
     @Autowired TriggeredTradeSetupRepository trades;
     @Autowired BrokerCredentialsRepository brokers;
     @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
@@ -88,6 +89,20 @@ class TradeTimeExitServiceTest {
         var t=trades.findById(group.getFirst().getId()).orElseThrow();t.setStatus(TriggeredTradeStatus.EXIT_FAILED);trades.saveAndFlush(t);
         assertTrue(observe(0,140d,START.plusMinutes(20)));
         assertEquals(TriggeredTradeStatus.EXIT_TRIGGERED,trades.findById(t.getId()).orElseThrow().getStatus());
+    }
+    @Test void cacheProgressUsesConfiguredUnderlyingInsteadOfOptionPremium() {
+        var start=LocalDateTime.now(ZoneId.of("Asia/Kolkata")).minusMinutes(1);
+        for(var t:group){t.setEntryAt(start);trades.saveAndFlush(t);}
+        prices.updateLtp(123,140d);prices.updateLtp(456,100d);
+        assertFalse(timer.observeFromCache(group.getFirst().getId()));
+        assertTrue(observe(1,null,start.plusMinutes(15)));
+    }
+    @Test void cacheProgressCanUseTradedPriceWithoutSpotOrStrategyOwnership() {
+        var start=LocalDateTime.now(ZoneId.of("Asia/Kolkata")).minusMinutes(1);
+        for(var t:group){t.setEntryAt(start);t.getExecutionSettings().setTimeExitUseSpot(false);trades.saveAndFlush(t);}
+        prices.updateLtp(123,140d);prices.updateLtp(456,100d);
+        assertFalse(timer.observeFromCache(group.getFirst().getId()));
+        assertFalse(observe(1,null,start.plusMinutes(15)));
     }
     @Test void concurrentLegsCreateOnlyOneState() throws Exception {
         var gate=new CountDownLatch(1);
