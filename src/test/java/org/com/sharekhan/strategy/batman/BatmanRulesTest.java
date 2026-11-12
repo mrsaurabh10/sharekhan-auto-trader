@@ -20,9 +20,9 @@ class BatmanRulesTest{
         var invalid=new ArrayList<>(chain());invalid.remove(5);invalid.add(o("PE",23400,.16));assertThatThrownBy(()->BatmanRules.select(invalid,24000)).isInstanceOf(IllegalArgumentException.class);
         invalid.set(5,o("PE",23400,Double.NaN));assertThatThrownBy(()->BatmanRules.select(invalid,24000)).isInstanceOf(IllegalArgumentException.class);
     }
-    @Test void weekliesCannotBeMistakenForMonthlyAndHolidayMovesEntry(){
+    @Test void weeklyAndMonthlyExpirySelectionHonorsTradingCalendar(){
         var expiry=LocalDate.of(2026,10,27);java.util.function.Predicate<LocalDate> trading=d->d.getDayOfWeek().getValue()<6&&!d.equals(LocalDate.of(2026,9,14));
-        assertThat(BatmanRules.entryDay(expiry,trading)).isEqualTo(LocalDate.of(2026,9,15));
+        assertThat(BatmanRules.expiry(List.of(expiry),LocalDate.of(2026,9,14),trading)).isEmpty();
         assertThat(BatmanRules.expiry(List.of(LocalDate.of(2026,10,6),LocalDate.of(2026,10,13),LocalDate.of(2026,10,20),expiry),LocalDate.of(2026,9,15),trading)).contains(expiry);
         assertThat(BatmanRules.expiry(List.of(expiry),LocalDate.of(2026,9,16),trading)).contains(expiry);
         assertThat(BatmanRules.entryWindow(LocalDateTime.of(2026,9,15,9,20))).isTrue();assertThat(BatmanRules.entryWindow(LocalDateTime.of(2026,9,15,9,25))).isFalse();
@@ -47,4 +47,13 @@ class BatmanRulesTest{
         assertThat(BatmanStrategy.matches(b,actual,true)).isTrue();assertThat(BatmanStrategy.matches(b,actual.subList(0,2),true)).isFalse();assertThat(BatmanStrategy.matches(b,actual.subList(0,2),false)).isTrue();
         actual.get(3).setQuantity(65L);assertThat(BatmanStrategy.matches(b,actual,true)).isFalse();actual.get(3).setQuantity(130L);actual.get(0).setAppUserId(9L);assertThat(BatmanStrategy.matches(b,actual,true)).isFalse();
     }
+    @Test void selectsWeeklyNearest45DteWithinFull40To50Range(){
+        var day=LocalDate.of(2026,11,12);
+        assertThat(BatmanRules.expiry(List.of(day.plusDays(39),day.plusDays(40),day.plusDays(44),day.plusDays(47),day.plusDays(51)),day,d->true)).contains(day.plusDays(44));
+        assertThat(BatmanRules.expiry(List.of(day.plusDays(50)),day,d->true)).contains(day.plusDays(50));
+        assertThat(BatmanRules.expiry(List.of(day.plusDays(39),day.plusDays(51)),day,d->true)).isEmpty();
+        assertThat(BatmanRules.expiry(List.of(day.plusDays(45)),day,d->false)).isEmpty();
+        assertThat(BatmanRules.entryWindow(day.atTime(9,20,59))).isTrue();assertThat(BatmanRules.entryWindow(day.atTime(9,21))).isFalse();
+    }
+
 }

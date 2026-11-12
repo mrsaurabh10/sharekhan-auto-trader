@@ -59,8 +59,8 @@ class BatmanStrategyTest{
   when(baskets.existsById(anyString())).thenReturn(true);strategy.apply(request());assertThat(placedSides).hasSize(1);
  }
  @Test void unsupportedExecutionAdapterRejectedBeforeMarketReadsOrLongEntries(){when(broker.supportsCarryOptionShorts()).thenReturn(false);assertThatThrownBy(()->strategy.apply(request())).isInstanceOf(IllegalArgumentException.class);verifyNoInteractions(chains,execution);}
- @Test void missingGreeksWaitsWithoutRunOrClaim(){when(chains.fetch(anyString(),any())).thenReturn(new DhanOptionChainClient.Chain("NIFTY",LocalDate.of(2026,10,27),24000,now,List.of()));strategy.apply(request());verifyNoInteractions(store,execution);verify(coordinator,never()).ensureCurrentRun();}
- @Test void mismatchedDataAndExecutionContractCannotEnter(){doReturn(new DhanInstrumentResolver.Instrument("NSE_FNO","999",65,BigDecimal.ONE,1800)).when(identities).resolve(any());strategy.apply(request());verifyNoInteractions(execution,store);}
+ @Test void missingGreeksWaitsWithoutRunOrClaim(){when(chains.fetch(anyString(),any())).thenReturn(new DhanOptionChainClient.Chain("NIFTY",LocalDate.of(2026,10,27),24000,now,List.of()));strategy.apply(request());verifyNoInteractions(execution);verify(store,never()).claim(any());verify(coordinator,never()).ensureCurrentRun();}
+ @Test void mismatchedDataAndExecutionContractCannotEnter(){doReturn(new DhanInstrumentResolver.Instrument("NSE_FNO","999",65,BigDecimal.ONE,1800)).when(identities).resolve(any());strategy.apply(request());verifyNoInteractions(execution);verify(store,never()).claim(any());}
  @Test void persistedAbortIntentRetriesRunCloseAfterTransientFailure(){
   var b=BatmanBasket.builder().id("b").strategyRunId("run").state("EXITING").expiry(LocalDate.of(2026,10,27)).build();
   when(baskets.findByStateIn(anyList())).thenReturn(List.of(b));when(runs.findById("run")).thenReturn(Optional.of(StrategyRun.builder().id("run").status("OPEN").build()));
@@ -69,6 +69,11 @@ class BatmanStrategyTest{
  @Test void legacySimulatorRoutingFlagIsPreserved(){
   when(credentials.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(2L).appUserId(1L).brokerName("Simulator").active(true).tradingEnabled(null).build()));
   strategy.validateConfiguration(request());verify(broker).supportsCarryOptionShorts();
+ }
+
+ @Test void reentryGateRunsBeforeGreekSelectionAndAnyExecution(){
+  when(store.entryBlockReason(1L,2L,"NIFTY",LocalDate.of(2026,9,15))).thenReturn("Prior basket has unresolved short exposure");
+  strategy.apply(request());verifyNoInteractions(chains,execution);verify(store,never()).claim(any());
  }
 
 }

@@ -34,8 +34,8 @@ public class BatmanStrategy implements StrategyEvaluator {
             TriggeredTradeSetupRepository trades,TradeExecutionService execution,StrategyRunCoordinator coordinator,NseMarketCalendar calendar,StrategySupport support,SharedMarketDecisions shared){
         this.scripts=scripts;this.credentials=credentials;this.brokers=brokers;this.chains=chains;this.identities=identities;this.books=books;this.baskets=baskets;this.store=store;this.runs=runs;this.trades=trades;this.execution=execution;this.coordinator=coordinator;this.calendar=calendar;this.support=support;this.shared=shared;this.clock=Clock.system(BatmanRules.IST);
     }
-    @Override public StrategyMetadata metadata(){return new StrategyMetadata(BatmanRules.TEMPLATE,"Batman Monthly Ratio Spread",
-            "Monthly 40–50 DTE (start at 45 DTE; retry eligible mornings through 40 DTE, 09:20–09:25 IST). Buy 1 lot near 20 delta and sell 2 near 16 delta per side. Carry overnight; no adjustments. Combined gross TP and equal SL use actual center credit. Base lots scale the entire basket; option-short support depends on the execution adapter.","CE+PE");}
+    @Override public StrategyMetadata metadata(){return new StrategyMetadata(BatmanRules.TEMPLATE,"Batman Ratio Spread",
+            "Weekly or monthly expiry, 40–50 DTE nearest 45; entries at 09:20 IST. After SL/target, re-enter only on a later trading day after all prior exposure is confirmed flat. Buy 1 lot near 20 delta and sell 2 near 16 delta per side. Carry overnight; no adjustments. Combined gross TP and equal SL use actual center credit. Base lots scale the entire basket; option-short support depends on the execution adapter.","CE+PE");}
     public void validateConfiguration(StrategyApplyRequest request){
         BatmanRules.validate(request);
         var account=credentials.findById(request.getBrokerCredentialsId()==null?-1L:request.getBrokerCredentialsId())
@@ -46,13 +46,15 @@ public class BatmanStrategy implements StrategyEvaluator {
     }
     @Override public synchronized StrategyApplyResponse apply(StrategyApplyRequest request){
         validateConfiguration(request);var now=LocalDateTime.now(clock);String symbol=request.getSymbol();
-        if(!calendar.isTradingDay(now.toLocalDate())||!BatmanRules.entryWindow(now))return support.waiting(metadata(),symbol,"Waiting for the monthly entry window, starting at 45 DTE through 40 DTE, 09:20–09:25 IST");
+        if(!calendar.isTradingDay(now.toLocalDate())||!BatmanRules.entryWindow(now))return support.waiting(metadata(),symbol,"Waiting for 09:20 IST; fresh entries require a listed weekly or monthly expiry at 40–50 DTE");
+        String blocked=store.entryBlockReason(request.getUserId(),request.getBrokerCredentialsId(),symbol,now.toLocalDate());
+        if(blocked!=null)return support.waiting(metadata(),symbol,blocked);
         Set<LocalDate> ce=dates(scripts.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol,"CE"));
         ce.retainAll(dates(scripts.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol,"PE")));
         var expiry=BatmanRules.expiry(ce,now.toLocalDate(),calendar::isTradingDay);
-        if(expiry.isEmpty())return support.waiting(metadata(),symbol,"No monthly entry session today within the configured 45–40 DTE window");
-        String id=id(request.getUserId()+":"+request.getBrokerCredentialsId()+":"+symbol+":"+expiry.get());
-        if(baskets.existsById(id))return support.waiting(metadata(),symbol,"This monthly basket was already attempted; no re-entry or adjustments");
+        if(expiry.isEmpty())return support.waiting(metadata(),symbol,"No listed weekly or monthly expiry at 40–50 DTE; waiting for the next eligible morning");
+        String id=id(request.getUserId()+":"+request.getBrokerCredentialsId()+":"+symbol+":"+now.toLocalDate());
+        if(baskets.existsById(id))return support.waiting(metadata(),symbol,"A Batman basket was already attempted today; no same-day re-entry");
         try{
             var chain=shared.share("BATMAN_CHAIN",symbol,expiry.get().toString(),now,()->chains.fetch(symbol,expiry.get()));
             if(!chain.symbol().equals(symbol)||!chain.expiry().equals(expiry.get())||chain.receivedAt().isAfter(clock.instant())||chain.receivedAt().isBefore(clock.instant().minusSeconds(10)))return support.waiting(metadata(),symbol,"Waiting for a fresh exact-expiry delta chain");
@@ -81,8 +83,8 @@ public class BatmanStrategy implements StrategyEvaluator {
             if(Duration.between(Collections.min(quoteTimes),Collections.max(quoteTimes)).compareTo(Duration.ofSeconds(2))>0||Collections.min(quoteTimes).isBefore(clock.instant().minusSeconds(5))||!shared.executionFresh()||!BatmanRules.entryWindow(LocalDateTime.now(clock)))throw new IllegalStateException("Basket quote preparation elapsed; waiting for a synchronized snapshot");
             String runId=coordinator.ensureCurrentRun();if(runId==null)throw new IllegalStateException("Server-owned strategy run is required");
             var basket=BatmanBasket.builder().id(id).appUserId(request.getUserId()).brokerCredentialsId(request.getBrokerCredentialsId()).symbol(symbol).expiry(expiry.get()).strategyRunId(runId)
-                    .claimedAt(LocalDateTime.now(clock)).baseLots(request.getLots()).lotSize(lotSize).planJson(plan.toString()).state("ENTERING").message("Immutable monthly claim; entering long legs first").build();
-            if(!store.claim(basket))return support.waiting(metadata(),symbol,"Monthly basket was already claimed");
+                    .claimedAt(LocalDateTime.now(clock)).baseLots(request.getLots()).lotSize(lotSize).planJson(plan.toString()).state("ENTERING").message("Immutable daily claim; entering long legs first").build();
+            if(!store.claim(basket))return support.waiting(metadata(),symbol,"Basket entry is already claimed or prior exposure/cooldown is unresolved");
             TriggerTradeRequestEntity first=null;boolean completed=false;
             try{
                 for(int i=0;i<orders.size();i++){
