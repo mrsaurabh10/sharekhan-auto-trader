@@ -933,12 +933,14 @@ public class PriceTriggerService {
 
     @org.springframework.beans.factory.annotation.Autowired(required=false)
     private org.com.sharekhan.execution.TradeTimeExitService tradeTimeExitService;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private org.com.sharekhan.execution.TradeTimeExitExecution tradeTimeExitExecution;
 
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
         try {
             // Record progress before target/stop claims so closing T1 cannot erase the group observation.
-            if(tradeTimeExitService!=null && tradeTimeExitService.observeFromCache(tradeId,nowIst())) {
-                tradeExecutionService.squareOffTimeExitTrade(tradeId);return;
+            if(tradeTimeExitService!=null && tradeTimeExitService.observeFromCache(tradeId)) {
+                if(tradeTimeExitExecution!=null)tradeTimeExitExecution.submit(tradeId);return;
             }
             OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(tradeId, tradedLtp);
             if (confirmedStopPrice.isEmpty()) {
@@ -1033,10 +1035,10 @@ public class PriceTriggerService {
                             log.debug("Spot SL requested for trade {} but current spot LTP unavailable; skipping SL evaluation", tradeId);
                         } else if (isPE) {
                             // For PE, both the completed candle close and current spot must be at/above SL.
-                            slHit = slRefPrice >= slVal && spotLtp >= slVal;
+                            slHit = slRefPrice + spotLevelTolerance(persisted) >= slVal && spotLtp + spotLevelTolerance(persisted) >= slVal;
                         } else {
                             // For CE, both the completed candle close and current spot must be at/below SL.
-                            slHit = slRefPrice <= slVal && spotLtp <= slVal;
+                            slHit = slRefPrice <= slVal + spotLevelTolerance(persisted) && spotLtp <= slVal + spotLevelTolerance(persisted);
                         }
                     } else {
                         // Option-price SL: hit immediately from the traded instrument LTP.
@@ -1110,14 +1112,14 @@ public class PriceTriggerService {
                         boolean targetHit;
                         if (TradeSide.isShort(persisted) || (isSpotTarget && isPE)) {
                             // For PE with Spot Target: Hit if Spot Price goes BELOW Target
-                            targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice <= persisted.getTarget1()) ||
-                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice <= persisted.getTarget2()) ||
-                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice <= persisted.getTarget3());
+                            targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice <= persisted.getTarget1() + spotLevelTolerance(persisted)) ||
+                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice <= persisted.getTarget2() + spotLevelTolerance(persisted)) ||
+                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice <= persisted.getTarget3() + spotLevelTolerance(persisted));
                         } else {
                             // For CE (or non-spot Target): Hit if Price goes ABOVE Target
-                            targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice >= persisted.getTarget1()) ||
-                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice >= persisted.getTarget2()) ||
-                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice >= persisted.getTarget3());
+                            targetHit = (persisted.getTarget1() != null && persisted.getTarget1() > 0d && targetRefPrice + spotLevelTolerance(persisted) >= persisted.getTarget1()) ||
+                                        (persisted.getTarget2() != null && persisted.getTarget2() > 0d && targetRefPrice + spotLevelTolerance(persisted) >= persisted.getTarget2()) ||
+                                        (persisted.getTarget3() != null && persisted.getTarget3() > 0d && targetRefPrice + spotLevelTolerance(persisted) >= persisted.getTarget3());
                         }
                         
                         if (targetHit) {
@@ -1714,6 +1716,10 @@ public class PriceTriggerService {
         }
 
         return true;
+    }
+
+    private double spotLevelTolerance(TriggeredTradeSetupEntity trade) {
+        return trade.getExecutionSettings()!=null && Boolean.TRUE.equals(trade.getExecutionSettings().getSpotStopOnTouch()) ? 1e-8 : 0d;
     }
 
     private Double spotStopReference(TriggeredTradeSetupEntity trade,Double spot) {

@@ -24,12 +24,21 @@ public class TradeTimeExitService {
     private final LtpCacheService prices;
 
     @Transactional
+    public boolean observeFromCache(Long id) {
+        return observeCached(id,null);
+    }
+    @Transactional
     public boolean observeFromCache(Long id,LocalDateTime now) {
+        return observeCached(id,now);
+    }
+    private boolean observeCached(Long id,LocalDateTime fixedNow) {
         var trade=em.find(TriggeredTradeSetupEntity.class,id);
         if(!configured(trade))return false;
         var c=trade.getExecutionSettings();
         Integer code=Boolean.TRUE.equals(c.getTimeExitUseSpot())?trade.getSpotScripCode():trade.getScripCode();
         var observation=code==null?null:prices.getPriceObservation(code);
+        // Sample production time after the cache read; DB latency/new ticks must not make fresh observations appear future-dated.
+        var now=fixedNow==null?LocalDateTime.now(ZoneId.of("Asia/Kolkata")):fixedNow;
         return observe(id,observation==null?null:observation.price(),observation==null?null:observation.observedAt(),now);
     }
 

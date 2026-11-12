@@ -10,14 +10,14 @@ import static org.mockito.ArgumentMatchers.*;
 
 class TradeTimeExitMonitorTest {
     @Test void monitorsAnyBrokerWithoutRunAndContinuesOtherLegsWhenAnExitFails() {
-        var repo=mock(TriggeredTradeSetupRepository.class);var timer=mock(TradeTimeExitService.class);var execution=mock(TradeExecutionService.class);
+        var repo=mock(TriggeredTradeSetupRepository.class);var timer=mock(TradeTimeExitService.class);var execution=mock(TradeTimeExitExecution.class);
         when(repo.findByExecutionSettings_TimeExitMinutesIsNotNullAndStatusIn(anyList())).thenReturn(List.of(
             TriggeredTradeSetupEntity.builder().id(1L).source("manual").build(),
             TriggeredTradeSetupEntity.builder().id(2L).source("any-template").build(),
             TriggeredTradeSetupEntity.builder().id(3L).build()));
-        when(timer.observeFromCache(eq(1L),any())).thenReturn(true);when(timer.observeFromCache(eq(2L),any())).thenReturn(true);
-        doThrow(new IllegalStateException("No fresh book")).when(execution).squareOffTimeExitTrade(1L);
+        when(timer.observeFromCache(1L)).thenReturn(true);when(timer.observeFromCache(2L)).thenReturn(true);
+        when(execution.submit(1L)).thenThrow(new IllegalStateException("Queue unavailable"));
         new TradeTimeExitMonitor(repo,timer,execution).poll();
-        verify(execution).squareOffTimeExitTrade(1L);verify(execution).squareOffTimeExitTrade(2L);verify(execution,never()).squareOffTimeExitTrade(3L);
+        verify(execution).submit(1L);verify(execution).submit(2L);verify(execution,never()).submit(3L);
     }
 }

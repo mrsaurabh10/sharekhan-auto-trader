@@ -68,6 +68,8 @@ with ABOVE for CE and BELOW for PE; its three one-lot requests share one key.
 A cache-only monitor polls every two seconds; progress is recorded before normal
 SL/target claims. Timeouts atomically claim remaining group lots, then use the
 normal broker placement, existing-exit-ID, retry and reconciliation paths.
+Timed exits use the shared deduplicating execution queues, preserving Simulator
+priority isolation; no broker RPC runs on the timer or market-data callback.
 Missing quotes do not stop the clock; execution waits for a valid traded price.
 Broker-managed BIGTRADEPLUS brackets reject this option to avoid a second exit owner.
 

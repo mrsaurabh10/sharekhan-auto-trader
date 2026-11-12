@@ -74,6 +74,11 @@ class PriceTriggerServiceTest {
         verify(triggeredRepo).claimIfStatusEquals(603L,"EXECUTED","EXIT_TRIGGERED","TARGET_HIT");
         verify(tradeExecutionService).squareOff(t,190d,"TARGET_HIT");
     }
+    @Test void spotTouchRequestRecognizesExactTickDespiteDoubleRounding() {
+        var t=normalSpotRequest();t.setTarget1(Math.nextUp(23020d));
+        service.handleTradeWithLock(603L,190d,23020d);
+        verify(triggeredRepo).claimIfStatusEquals(603L,"EXECUTED","EXIT_TRIGGERED","TARGET_HIT");
+    }
     private TriggeredTradeSetupEntity normalSpotRequest() {
         var settings=new org.com.sharekhan.execution.TradeExecutionSettings();settings.setSpotStopOnTouch(true);settings.setRequireProfitableSpotTarget(false);
         var t=TriggeredTradeSetupEntity.builder().id(603L).source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE)
