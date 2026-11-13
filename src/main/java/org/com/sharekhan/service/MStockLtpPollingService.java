@@ -45,6 +45,10 @@ public class MStockLtpPollingService {
     private final TokenStoreService tokenStoreService;
     private final NseMarketCalendar nseMarketCalendar;
 
+    @Autowired
+    private SpotQuoteService spotQuotes;
+    private final Map<Integer,Instant> publishedSpotAt=new ConcurrentHashMap<>();
+
     @Autowired(required = false)
     private ShoonyaQuoteService shoonyaQuoteService;
     @Autowired(required = false)
@@ -155,6 +159,19 @@ public class MStockLtpPollingService {
             }
             attempted++;
             try {
+                if(spotQuotes!=null && Set.of("NC","BC").contains(script.getExchange())
+                        && (script.getOptionType()==null||script.getOptionType().isBlank())) {
+                    var spot=spotQuotes.spot(scripCode,script.getExchange());var observedNow=Instant.now();
+                    if(!spotQuotes.fresh(spot,observedNow,scripCode,script.getExchange()))continue;
+                    var previous=publishedSpotAt.put(scripCode,spot.getLastLtpAt());
+                    if(previous!=null&&!spot.getLastLtpAt().isAfter(previous))continue;
+                    double spotPrice=spot.getLastTradedPrice();
+                    if(!ltpCacheService.updateObservedLtp(scripCode,spotPrice,spot.getLastLtpAt()))continue;
+                    shoonyaLastRefreshAt.put(scripCode,observedNow);refreshed.add(scripCode);
+                    scripExecutorManager.submitTriggerTask(scripCode,()->priceTriggerService.evaluatePriceTrigger(scripCode,spotPrice));
+                    scripExecutorManager.submitMonitorTask(scripCode,()->priceTriggerService.monitorOpenTrades(scripCode,spotPrice));
+                    continue;
+                }
                 Optional<ShoonyaQuoteService.LiveQuote> quoteOpt = shoonyaQuoteService.getQuote(script);
                 if (quoteOpt.isEmpty()) {
                     continue;

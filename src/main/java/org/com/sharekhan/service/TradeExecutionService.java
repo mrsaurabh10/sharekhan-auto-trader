@@ -354,6 +354,9 @@ public class TradeExecutionService {
     private org.com.sharekhan.shadow.MoverShadowRecorder moverShadowRecorder;
     private boolean sharedDecisionExecutable() { return sharedDecisions == null || sharedDecisions.executionFresh(); }
 
+    @Autowired
+    private SpotQuoteService spotQuotes;
+
     private Double resolveEntryReferencePrice(Integer scripCode, String context) {
         return resolveEntryReferencePrice(scripCode, context, () -> true);
     }
@@ -382,6 +385,13 @@ public class TradeExecutionService {
             log.warn("[{}] Shoonya option quote unavailable for scrip {}. Falling back to MStock LTP.", context, scripCode);
             Double fallback = fetchLtpViaMStockFallback(scripCode, context);
             return quoteWindowOpen.getAsBoolean() ? fallback : null;
+        }
+        if (spotQuotes != null && script != null && Set.of("NC","BC").contains(script.getExchange())
+                && !hasOptionType(script.getOptionType())) {
+            if (!quoteWindowOpen.getAsBoolean()) return null;
+            var spot = spotQuotes.spot(scripCode,script.getExchange());
+            return quoteWindowOpen.getAsBoolean() && spotQuotes.fresh(spot,Instant.now(),scripCode,script.getExchange())
+                    ? spot.getLastTradedPrice() : null;
         }
         Double sharekhanQuotePrice = resolveFreshSharekhanReferencePrice(scripCode, context);
         if (isUsableMarketPrice(sharekhanQuotePrice)) {

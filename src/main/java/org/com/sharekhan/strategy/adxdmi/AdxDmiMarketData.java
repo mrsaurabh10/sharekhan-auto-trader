@@ -19,6 +19,7 @@ public class AdxDmiMarketData {
     private final ShoonyaQuoteService shoonya;
     private final TradeAuditService audit;
     private final Clock clock;
+    @Autowired private org.com.sharekhan.service.SpotQuoteService spotQuotes;
     private record Key(int code, String exchange, boolean book) { }
     private record Attempt(Instant at, QuoteCacheService.QuoteSnapshot quote, Instant providerAt, String reason) { }
     private record Notice(Instant at, String reason) { }
@@ -32,10 +33,10 @@ public class AdxDmiMarketData {
     AdxDmiMarketData(QuoteCacheService cache,ScriptMasterRepository scripts,ShoonyaQuoteService shoonya,TradeAuditService audit,Clock clock) {
         this.cache=cache;this.scripts=scripts;this.shoonya=shoonya;this.audit=audit;this.clock=clock;
     }
-    public QuoteCacheService.QuoteSnapshot spot(int code,String exchange){return read(new Key(code,exchange,false));}
+    public QuoteCacheService.QuoteSnapshot spot(int code,String exchange){return spotQuotes==null?read(new Key(code,exchange,false)):spotQuotes.spot(code,exchange);}
     public QuoteCacheService.QuoteSnapshot book(int code,String exchange){return read(new Key(code,exchange,true));}
     public boolean freshSpot(String exchange,QuoteCacheService.QuoteSnapshot q,Instant at,int code){
-        return AdxDmiRules.freshSpot(exchange,q,at,code) || issued(new Key(code,exchange,false),q,at);
+        return spotQuotes==null?(AdxDmiRules.freshSpot(exchange,q,at,code) || issued(new Key(code,exchange,false),q,at)):spotQuotes.fresh(q,at,code,exchange);
     }
     public boolean freshBook(String exchange,QuoteCacheService.QuoteSnapshot q,Instant at,int code){
         return AdxDmiRules.freshBook(exchange,q,at,code) || issued(new Key(code,exchange,true),q,at);
@@ -84,6 +85,7 @@ public class AdxDmiMarketData {
         return new Attempt(at,snapshot,exact.providerUpdatedAt(),"SHOONYA_VERIFIED");
     }
     public String reason(int code,String exchange,boolean book){
+        if(!book && spotQuotes!=null)return spotQuotes.reason(code,exchange);
         var a=attempts.get(new Key(code,exchange,book));
         return a==null?"NO_QUOTE":rejection(new Key(code,exchange,book),a);
     }

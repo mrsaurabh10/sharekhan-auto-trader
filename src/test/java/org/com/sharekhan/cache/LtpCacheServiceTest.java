@@ -11,6 +11,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class LtpCacheServiceTest {
 
+    @Test void olderPolledSpotCannotOverwriteOrRepublishANewerWebsocketTick() {
+        var cache=new LtpCacheService();var at=java.time.LocalDateTime.of(2026,11,13,11,0);
+        cache.updateSharekhanWebSocketLtpAt(20000,25010d,at);
+        var older=at.minusSeconds(1).atZone(java.time.ZoneId.of("Asia/Kolkata")).toInstant();
+        org.junit.jupiter.api.Assertions.assertFalse(cache.updateObservedLtp(20000,25000d,older));
+        org.junit.jupiter.api.Assertions.assertEquals(25010d,cache.getLtp(20000));
+        org.junit.jupiter.api.Assertions.assertEquals(at,cache.getPriceObservation(20000).observedAt());
+        org.junit.jupiter.api.Assertions.assertTrue(cache.updateObservedLtp(20000,25011d,older.plusSeconds(2)));
+        org.junit.jupiter.api.Assertions.assertEquals(25011d,cache.getLtp(20000));
+    }
+
     @Test
     void publishesCompletedOneMinuteOhlcWhenNextMinuteStarts() {
         LtpCacheService cache = new LtpCacheService();

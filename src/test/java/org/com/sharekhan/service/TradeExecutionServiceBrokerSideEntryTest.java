@@ -58,6 +58,20 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class TradeExecutionServiceBrokerSideEntryTest {
+    @Test void cashEntryReferenceUsesTheSharedSpotFeedAndNeverFallsBackToUnverifiedLtp() {
+        var ctx=new TestContext(OrderPlacementResult.builder().success(true).orderId("UNUSED").build());
+        var shared=mock(SpotQuoteService.class);ReflectionTestUtils.setField(ctx.service,"spotQuotes",shared);
+        when(ctx.scriptRepo.findByScripCode(20000)).thenReturn(ScriptMasterEntity.builder().scripCode(20000).exchange("NC").tradingSymbol("NIFTY").build());
+        var q=QuoteCacheService.QuoteSnapshot.builder().scripCode(20000).lastTradedPrice(25000d).ltpSource("MSTOCK").build();
+        when(shared.spot(20000,"NC")).thenReturn(q);when(shared.fresh(eq(q),any(),eq(20000),eq("NC"))).thenReturn(true);
+        Double price=ReflectionTestUtils.invokeMethod(ctx.service,"resolveEntryReferencePrice",20000,"executeTriggeredTrade");
+        assertThat(price).isEqualTo(25000d);
+        when(shared.fresh(eq(q),any(),eq(20000),eq("NC"))).thenReturn(false);
+        when(ctx.ltpCache.getLtp(20000)).thenReturn(26000d);
+        price=ReflectionTestUtils.invokeMethod(ctx.service,"resolveEntryReferencePrice",20000,"executeTriggeredTrade");
+        assertThat(price).isNull();
+    }
+
     private TriggerRequest shortCashInput(TestContext ctx) {
         ctx.useSimulatorBroker(); configureFiveAttemptPolicy(ctx);
         ctx.service=org.mockito.Mockito.spy(ctx.service);

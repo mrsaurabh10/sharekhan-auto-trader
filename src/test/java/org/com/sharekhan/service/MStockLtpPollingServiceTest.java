@@ -25,6 +25,29 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class MStockLtpPollingServiceTest {
+    @Test void sharedSpotPreservesObservationTimeAndDrivesBothExistingCallbacksOnce() {
+        var feeds=mock(WebSocketSubscriptionService.class);var cache=mock(LtpCacheService.class);
+        var executors=mock(ScripExecutorManager.class);var monitor=mock(PriceTriggerService.class);
+        var poller=new MStockLtpPollingService(feeds,mock(MStockLtpService.class),cache,mock(QuoteCacheService.class),
+                monitor,executors,mock(MStockInstrumentResolver.class),mock(TokenStoreService.class),mock(NseMarketCalendar.class));
+        var shared=mock(SpotQuoteService.class);var scripts=mock(ScriptMasterRepository.class);
+        ReflectionTestUtils.setField(poller,"spotQuotes",shared);ReflectionTestUtils.setField(poller,"scriptMasterRepository",scripts);
+        ReflectionTestUtils.setField(poller,"shoonyaQuoteService",mock(ShoonyaQuoteService.class));
+        ReflectionTestUtils.setField(poller,"shoonyaPollMaxActiveScrips",20);ReflectionTestUtils.setField(poller,"shoonyaPollMinIntervalMs",1L);
+        when(scripts.findByScripCode(20000)).thenReturn(ScriptMasterEntity.builder().scripCode(20000).exchange("NC").tradingSymbol("NIFTY").build());
+        var at=Instant.now().minusSeconds(1);
+        var q=QuoteCacheService.QuoteSnapshot.builder().scripCode(20000).lastTradedPrice(25000d).lastLtpAt(at).ltpSource("MSTOCK").build();
+        when(shared.spot(20000,"NC")).thenReturn(q);when(shared.fresh(eq(q),any(),eq(20000),eq("NC"))).thenReturn(true);
+        when(cache.updateObservedLtp(20000,25000d,at)).thenReturn(true);
+        ReflectionTestUtils.invokeMethod(poller,"refreshActiveQuotesFromShoonya",Set.of("NC20000"));
+        verify(cache).updateObservedLtp(20000,25000d,at);verify(cache,never()).updateLtp(eq(20000),org.mockito.ArgumentMatchers.anyDouble());
+        var task=org.mockito.ArgumentCaptor.forClass(Runnable.class);verify(executors).submitTriggerTask(eq(20000),task.capture());
+        task.getValue().run();verify(monitor).evaluatePriceTrigger(20000,25000d);
+        verify(executors).submitMonitorTask(eq(20000),task.capture());task.getValue().run();verify(monitor).monitorOpenTrades(20000,25000d);
+        ReflectionTestUtils.invokeMethod(poller,"refreshActiveQuotesFromShoonya",Set.of("NC20000"));
+        verify(cache,org.mockito.Mockito.times(1)).updateObservedLtp(eq(20000),org.mockito.ArgumentMatchers.anyDouble(),any());
+    }
+
     @Test void observerOnlyRoutesNeverConsumeFallbackProviderSlots() {
         var feeds=mock(WebSocketSubscriptionService.class);
         var poller=new MStockLtpPollingService(feeds,mock(MStockLtpService.class),mock(LtpCacheService.class),mock(QuoteCacheService.class),
