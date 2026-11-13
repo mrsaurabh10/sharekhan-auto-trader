@@ -10,6 +10,18 @@ import static org.assertj.core.api.Assertions.*;
 class SharedMarketDecisionsTest {
     final LocalDateTime now=LocalDateTime.of(2026,10,22,13,30,5);
     final Clock clock=Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE);
+    @Test void batmanRetriesEveryTenSecondsWithoutChangingOtherTemplates() {
+        var at=now.withSecond(0);var instant=new AtomicReference<>(at.atZone(StrategySupport.MARKET_ZONE).toInstant());
+        var ticking=new Clock(){public ZoneId getZone(){return StrategySupport.MARKET_ZONE;}public Clock withZone(ZoneId z){return this;}public Instant instant(){return instant.get();}};
+        var shared=new SharedMarketDecisions(ticking);var count=new AtomicInteger();
+        assertThat(shared.share("BATMAN_CHAIN","NIFTY","expiry",at,count::incrementAndGet)).isEqualTo(1);
+        instant.set(at.plusSeconds(5).atZone(StrategySupport.MARKET_ZONE).toInstant());
+        assertThat(shared.share("BATMAN_CHAIN","NIFTY","expiry",at.plusSeconds(5),count::incrementAndGet)).isEqualTo(1);
+        instant.set(at.plusSeconds(10).atZone(StrategySupport.MARKET_ZONE).toInstant());
+        assertThat(shared.share("BATMAN_CHAIN","NIFTY","expiry",at.plusSeconds(10),count::incrementAndGet)).isEqualTo(2);
+        instant.set(at.plusSeconds(20).atZone(StrategySupport.MARKET_ZONE).toInstant());
+        assertThat(shared.share("BATMAN_CHAIN","NIFTY","expiry",at.plusSeconds(20),count::incrementAndGet)).isEqualTo(3);
+    }
     @Test void matchingConcurrentSubscribersCalculateOnceAndHaveTheSameSignalId() throws Exception {
         var shared=new SharedMarketDecisions(clock); var count=new AtomicInteger(); var pool=Executors.newFixedThreadPool(8);
         try {

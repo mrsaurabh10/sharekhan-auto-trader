@@ -18,7 +18,7 @@ final class QuotePayloadParser {
     static Quantities extractQuantities(JsonNode data,BidAsk best) {
         if(data==null || best==null)return new Quantities(null,null);
         Double bid=quantityAtDirectPrice(data,DIRECT_BID_KEYS,Set.of("bestBidQty","bestBidQuantity","bidQty","bidQuantity"),best.bid());
-        Double ask=quantityAtDirectPrice(data,DIRECT_ASK_KEYS,Set.of("bestAskQty","bestAskQuantity","bestOfferQty","askQty","askQuantity","offerQty"),best.ask());
+        Double ask=quantityAtDirectPrice(data,DIRECT_ASK_KEYS,Set.of("bestAskQty","bestAskQuantity","bestOfferQty","askQty","askQuantity","offerQty","offQty"),best.ask());
         var depth=data.get("depth");
         if(depth!=null && depth.isObject()){
             if(bid==null)bid=quantityAtDepthPrice(depth,DEPTH_BID_KEYS,best.bid());

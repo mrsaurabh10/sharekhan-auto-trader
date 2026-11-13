@@ -20,6 +20,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class QuoteCacheService {
 
     private final Map<Integer, QuoteSnapshot> quotesByScrip = new ConcurrentHashMap<>();
+    private final Map<Integer, QuoteSnapshot> sharekhanByScrip = new ConcurrentHashMap<>();
 
     @Value
     @Builder
@@ -61,6 +62,9 @@ public class QuoteCacheService {
 
     public void recordQuote(int scripCode, Double bid, Double ask, Double ltp, String source,
                             String exchange, String identity, Double bidQuantity, Double askQuantity) {
+        if ("SHAREKHAN_WS".equals(source)) {
+            sharekhanByScrip.compute(scripCode,(code,existing)->merge(existing,code,bid,ask,ltp,source,exchange,identity,bidQuantity,askQuantity));
+        }
         quotesByScrip.compute(scripCode, (code, existing) -> merge(existing, code, bid, ask, ltp,
                 source,exchange,identity,bidQuantity,askQuantity));
     }
@@ -131,6 +135,11 @@ public class QuoteCacheService {
         return value != null && Double.isFinite(value) && value > 0;
     }
 
+    /** Independent provider book: polling another provider must not erase the stream snapshot. */
+    public Optional<QuoteSnapshot> getSharekhanSnapshot(int scripCode) {
+        return Optional.ofNullable(sharekhanByScrip.get(scripCode));
+    }
+
     public Optional<QuoteSnapshot> getSnapshot(int scripCode) {
         return Optional.ofNullable(quotesByScrip.get(scripCode));
     }
@@ -165,5 +174,6 @@ public class QuoteCacheService {
 
     public void clear() {
         quotesByScrip.clear();
+        sharekhanByScrip.clear();
     }
 }

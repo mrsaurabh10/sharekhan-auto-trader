@@ -46,7 +46,8 @@ public class SharedMarketDecisions {
     public <T> T share(String kind, String symbol, String parameters, LocalDateTime now, Supplier<T> calculate) {
         LocalDateTime at = cycle.get() == null ? now : cycle.get();
         requireCurrent(at);
-        var bucket = at.withSecond(at.getSecond() < 30 ? 0 : 30).withNano(0);
+        int bucketSeconds = "BATMAN_CHAIN".equals(kind) ? 10 : 30;
+        var bucket = at.withSecond(at.getSecond() / bucketSeconds * bucketSeconds).withNano(0);
         var key = new Key(kind, symbol.trim().toUpperCase(Locale.ROOT), parameters, bucket);
         decisions.keySet().removeIf(k -> k.bucket().isBefore(LocalDateTime.now(clock).minusSeconds(60)));
         if (decisions.size() >= 2_048 && !decisions.containsKey(key))

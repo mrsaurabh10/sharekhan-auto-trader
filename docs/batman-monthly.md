@@ -7,7 +7,7 @@ subscription is NIFTY on Simulator with one base basket.
 
 ## Entries and next-day re-entry
 
-- Consider every actually listed common CE/PE expiry, **weekly or monthly**, with
+- Consider every actually listed common CE/PE expiry, **monthly**, with
   **40–50 calendar DTE**. Choose the expiry closest to 45 DTE; prefer the earlier
   expiry if distances tie. Do not synthesize expiry dates or bypass the DTE range.
 - Check entries during the **09:20 IST minute** on trading days. Missing data can
@@ -74,3 +74,94 @@ Paper trading does not model exchange SPAN margin, financing or broker-reconcile
 short-option charges. Historical Dhan strike coverage has not established a
 backtest for this strategy. The existing NSE holiday calendar and fresh-book
 checks are honored. No actual market fill is implied by code or smoke tests.
+
+### Quote fallbacks and a missed scheduled entry
+
+Before reading books, Batman prepares full Sharekhan feeds for all four selected
+contracts. It checks Sharekhan, mStock full-depth WebSocket, then exact Shoonya
+REST snapshots. A provider with insufficient executable-side quantity, stale or
+crossed books, a spread above 5%, or wrong identity is skipped. mStock reuses the
+existing instrument resolver and unexpired session; it never logs in or refreshes
+credentials. Its demand leases expire after 60 seconds without a reader, and
+connection failures back off for 30 seconds. LTP alone cannot simulate these fills.
+Type-A packet layout and 1980 timestamp origin follow the official mStock SDK.
+The initial live depth handshake returned HTTP 502; availability is reported in
+entry blockers rather than treating the feed as usable.
+
+Dhan chains use 10-second shared buckets to match the entry freshness guard.
+Entry attempts record their status and reason in trade audit history; later
+scheduled evaluations can still show the usual waiting-for-09:20 message.
+
+An authenticated administrator may explicitly call
+`POST /api/strategies/subscriptions/{id}/batman-entry-today?tradingDay=YYYY-MM-DD`
+for an ACTIVE **Simulator** subscription. This one request can enter between
+09:20 and 15:00 IST on that trading day. It retains the normal expiry, delta,
+liquidity, daily claim, exposure checks and standard run/order pipeline. The date
+flag is server-owned and ignored by generic apply JSON. It does not change the
+recurring schedule or enable live manual entries.
+
+Sharekhan snapshots are retained independently of the latest shared quote: a
+Shoonya poll cannot overwrite a fresh Sharekhan book. Partial Sharekhan messages
+retain the same coherence/freshness rules. Administrators can inspect currently
+warmed contracts at `GET /api/strategies/batman-books` without fetching quotes or
+placing orders.
+
+The Sharekhan stream connection decrypts persisted API keys and URL-encodes both
+credentials. Connection errors log only their exception type, because transport
+exceptions can contain authenticated URLs. Batman explicitly requests the
+provider's documented `depth` mode with its own reference counts; existing
+`full`/LTP subscribers keep their existing behavior. A reconnect that clears
+subscription references causes Batman to reacquire its depth feed on the next
+book preparation/read.
+
+For Shoonya GetQuotes, freshness uses the provider's `request_time` (IST) and the
+local receipt time, both within five seconds. `lut` records the last change and
+can be older for an unchanged standing book. A missing response timestamp falls
+back to the original strict last-change check; a malformed timestamp is rejected.
+Identity, crossed-book, spread and executable-side quantity checks remain in
+force. This matches the provider's description of GetQuotes as a current REST
+snapshot: https://www.shoonya.com/api-documentation/get-quotes .
+
+Live Sharekhan probes found an initial array of feed rows followed by individual
+rows, and `offQty` paired with `offPrice`. Both are parsed now. The existing
+Sharekhan session still closes with provider error 103 (Invalid Api Key), even
+using the SDK's token-only connection format; a valid stored expiry does not
+prove provider acceptance. No credential or account settings were changed.
+
+Contract identity preparation runs before quote collection. Exact Shoonya and
+mStock mappings are cached for at most 60 seconds using the full contract
+fingerprint; changed contracts invalidate the old route/book. Execution-master
+contracts are resolved once per selection. This avoids master scans between
+book reads while retaining the two-second basket skew and five-second snapshot
+limits. The Dhan chain's ten-second age is rechecked after preparation as well.
+
+Delta selection chooses the nearest strike **among strikes with enough displayed
+quantity for the complete leg** (one base lot at the ask for buys, two at the bid
+for shorts), still within the existing 1.5-delta-point tolerance. A slightly closer
+16-delta strike with only one lot at the bid cannot block another qualifying
+strike inside that same band. This initial Dhan liquidity filter does not replace
+the later exact executable-book checks on the selected provider.
+
+### Reviewed additional Simulator attempt
+
+An administrator may explicitly supply `retryOfRunId` and `marketEntry=true`
+to the date-scoped catch-up endpoint after review. Exactly one additional
+`MANUAL_RETRY` run is permitted after the original same-day `DAY` basket closed
+with `BATMAN_ENTRY_ABORT`, with all prior exposure confirmed flat and the same
+subscription/account/symbol. The new claim has a different deterministic ID;
+the original history is retained. Another claimed retry exhausts this path.
+
+The explicitly approved market-entry assumption is **Simulator-only**. It does
+not reject fills for price movement, displayed quantity, spread, snapshot skew
+or quote age. The latest verified-contract bid/ask is used when available;
+otherwise the recorded observed premium is used. Exact Dhan bid/ask observations
+can seed admission if the separate quote refresh is unavailable. No prices are
+invented, and trade comments identify the assumption. Contract/account identity,
+positive observed premiums, closed prior exposure and duplicate prevention
+remain enforced. Standard trade requests and actual Simulator fill prices are
+used; the complete basket's credit determines its combined TP and equal SL.
+Scheduled entries keep normal execution checks.
+
+As requested on 13 November 2026, Batman now selects **monthly expiries only**:
+the final actually listed common CE/PE expiry of each month, then the existing
+40–50 DTE/nearest-45 choice. Weekly series no longer compete for selection.

@@ -39,6 +39,10 @@ public class StrategyRunCoordinator {
         if(context.get()!=null) throw new IllegalStateException("Nested strategy evaluation is not supported");
         var now=LocalDateTime.now(clock);
         String instance="DAY";
+        if(org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId()) && request.getBatmanRetryOfRunId()!=null) {
+            if(request.getBatmanManualEntryDay()==null || !now.toLocalDate().equals(request.getBatmanManualEntryDay()))throw new IllegalArgumentException("Explicit same-day manual Batman retry required");
+            instance="MANUAL_RETRY";
+        }
         if(org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE.equalsIgnoreCase(request.getTemplateId())) {
             var baskets=runs.findByAppUserIdAndBrokerCredentialsIdAndTemplateIdAndTradingDayOrderByCreatedAtAsc(
                     request.getUserId(),request.getBrokerCredentialsId(),org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.TEMPLATE,now.toLocalDate()).stream()

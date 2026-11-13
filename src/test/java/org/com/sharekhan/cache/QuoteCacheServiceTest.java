@@ -7,6 +7,20 @@ import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.*;
 
 class QuoteCacheServiceTest {
+    @org.junit.jupiter.api.Test void independentSharekhanBookSurvivesOtherProviderUpdates(){
+        var cache=new QuoteCacheService();
+        cache.recordQuote(1,99d,100d,99.5,"SHAREKHAN_WS","NF","scrip:1",130d,65d);
+        cache.recordQuote(1,98d,101d,100d,"SHOONYA","NF","other:1",65d,65d);
+        org.assertj.core.api.Assertions.assertThat(cache.getSnapshot(1).orElseThrow().getBookSource()).isEqualTo("SHOONYA");
+        var stream=cache.getSharekhanSnapshot(1).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(stream.getBookSource()).isEqualTo("SHAREKHAN_WS");
+        org.assertj.core.api.Assertions.assertThat(stream.getBestBid()).isEqualTo(99);
+        org.assertj.core.api.Assertions.assertThat(stream.getBidQuantity()).isEqualTo(130);
+        cache.recordQuote(1,99.25,null,99.5,"SHAREKHAN_WS","NF","scrip:1",65d,null);
+        org.assertj.core.api.Assertions.assertThat(cache.getSharekhanSnapshot(1).orElseThrow().isCoherentBook()).isFalse();
+        cache.clear();org.assertj.core.api.Assertions.assertThat(cache.getSharekhanSnapshot(1)).isEmpty();
+    }
+
 
     private final QuoteCacheService service = new QuoteCacheService();
 

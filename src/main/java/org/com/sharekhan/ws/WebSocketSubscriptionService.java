@@ -15,6 +15,11 @@ public interface WebSocketSubscriptionService {
      */
     boolean subscribeToScrip(String scripCode);
 
+    /** Sharekhan's documented order-book depth feed, independently reference counted. */
+    boolean subscribeToScripDepth(String scripCode);
+    boolean unsubscribeFromScripDepth(String scripCode);
+    boolean hasDepthFeed(String scripCode);
+
     /**
      * Subscribe to LTP-only feed for a given scrip key.
      * Use this for spot/index references where full-depth feed may not publish.

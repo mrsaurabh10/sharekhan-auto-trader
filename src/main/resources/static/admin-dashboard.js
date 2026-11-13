@@ -1240,7 +1240,7 @@
                        '<td>' + escapeHtml(String(entry)) + '</td>' +
                        '<td>' + escapeHtml(String(sl)) + '</td>' +
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
-                       '<td>' + escapeHtml(String(qty)) + '</td>' +
+                       '<td>' + escapeHtml(String(window.StrategyRunView.signedQuantity(r,qty))) + '</td>' +
                        '<td class="trade-status-cell">' + escapeHtml(String(status)) + '</td>';
         if(window.StrategyRunView) {
           tr.querySelector('.trade-date-cell').replaceChildren(window.StrategyRunView.timestamp(createdAt));
@@ -1490,7 +1490,7 @@
                        '<td>' + escapeHtml(String(entry)) + '</td>' +
                        '<td>' + escapeHtml(String(sl)) + '</td>' +
                        '<td>' + escapeHtml(String(t1)) + '</td>' +
-                       '<td>' + escapeHtml(String(qty)) + '</td>';
+                       '<td>' + escapeHtml(String(window.StrategyRunView.signedQuantity(t,qty))) + '</td>';
         if(window.StrategyRunView) {
           tr.querySelector('.trade-date-cell').replaceChildren(window.StrategyRunView.timestamp(setupDate));
           tr.querySelector('.trade-status-cell').replaceChildren(window.StrategyRunView.statusTag(status,t.reason));

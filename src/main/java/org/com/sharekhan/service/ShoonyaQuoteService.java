@@ -33,6 +33,22 @@ public class ShoonyaQuoteService {
     private final TokenStoreService tokenStoreService;
     private final BrokerAuthProviderRegistry providerRegistry;
     private final ShoonyaInstrumentMasterService instrumentMasterService;
+    private record ExactIdentity(String exchange,String token,String tradingSymbol) { }
+    private record CachedIdentity(ExactIdentity identity,java.time.Instant validatedAt) { }
+    private final java.util.Map<String,CachedIdentity> exactIdentities=new java.util.concurrent.ConcurrentHashMap<>();
+    private String exactKey(ScriptMasterEntity s){return java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata"))+"|"+s.getScripCode()+"|"+s.getExchange()+"|"+s.getTradingSymbol()+"|"+s.getExpiry()+"|"+s.getStrikePrice()+"|"+s.getOptionType()+"|"+s.getLotSize();}
+    public void prepareExactQuote(ScriptMasterEntity script){exactIdentity(script);}
+    private Optional<ExactIdentity> exactIdentity(ScriptMasterEntity script){
+        if(script==null)return Optional.empty();var now=java.time.Instant.now();String key=exactKey(script);
+        var cached=exactIdentities.get(key);
+        if(cached!=null&&cached.validatedAt().plusSeconds(60).isAfter(now))return Optional.of(cached.identity());
+        exactIdentities.entrySet().removeIf(e->e.getValue().validatedAt().plusSeconds(60).isBefore(now));
+        return instrumentMasterService.resolveScript(script).map(row->{
+            var identity=new ExactIdentity(row.getExchange(),row.getToken(),row.getTradingSymbol());
+            if(exactIdentities.size()<2048)exactIdentities.put(key,new CachedIdentity(identity,now));return identity;
+        });
+    }
+
 
     /**
      * A quote retains both the identity we requested and the identity echoed by
@@ -136,17 +152,31 @@ public class ShoonyaQuoteService {
 
     /** Read-only exact snapshot for strict consumers; never logs in or refreshes credentials. */
     public record ExactQuote(LiveQuote quote, String exchange, java.time.Instant receivedAt,
-                             java.time.Instant providerUpdatedAt) { }
+                             java.time.Instant providerUpdatedAt, java.time.Instant providerSnapshotAt) {
+        public ExactQuote(LiveQuote quote,String exchange,java.time.Instant receivedAt,java.time.Instant providerUpdatedAt){
+            this(quote,exchange,receivedAt,providerUpdatedAt,providerUpdatedAt);
+        }
+    }
+
+    /** GetQuotes is a current REST snapshot; lut is the last change, not the response time. */
+    static java.time.Instant snapshotTime(JSONObject raw,java.time.Instant lastChange){
+        if(!raw.has("request_time"))return lastChange;
+        try{return java.time.LocalDateTime.parse(raw.getString("request_time"),
+                java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd-MM-uuuu",java.util.Locale.ROOT)
+                        .withResolverStyle(java.time.format.ResolverStyle.STRICT))
+                .atZone(java.time.ZoneId.of("Asia/Kolkata")).toInstant();}
+        catch(RuntimeException invalid){return null;}
+    }
 
     public Optional<ExactQuote> getExactQuote(ScriptMasterEntity script) {
-        var mapped = instrumentMasterService.resolveScript(script);
+        var mapped = exactIdentity(script);
         if (mapped.isEmpty()) return Optional.empty();
         var expected = mapped.get();
         try {
-            var raw = getQuotes(expected.getExchange(), expected.getToken(), null, false);
+            var raw = getQuotes(expected.exchange(), expected.token(), null, false);
             if (!"Ok".equalsIgnoreCase(raw.optString("stat"))
-                    || !expected.getExchange().equalsIgnoreCase(raw.optString("exch"))) return Optional.empty();
-            var quote = new LiveQuote(expected.getTradingSymbol(), expected.getToken(),
+                    || !expected.exchange().equalsIgnoreCase(raw.optString("exch"))) return Optional.empty();
+            var quote = new LiveQuote(expected.tradingSymbol(), expected.token(),
                     firstText(raw, "tsym", "trading_symbol"), firstText(raw, "tk", "token"),
                     decimal(raw, "lp"), decimal(raw, "bp1"), decimal(raw, "sp1"), decimal(raw, "bq1"), decimal(raw, "sq1"));
             if (!quote.hasConfirmedIdentity()) return Optional.empty();
@@ -155,7 +185,7 @@ public class ShoonyaQuoteService {
                 try { updated = java.time.Instant.ofEpochSecond(Long.parseLong(raw.optString("lut"))); }
                 catch (RuntimeException invalidTime) { return Optional.empty(); }
             }
-            return Optional.of(new ExactQuote(quote, expected.getExchange(), java.time.Instant.now(), updated));
+            return Optional.of(new ExactQuote(quote, expected.exchange(), java.time.Instant.now(), updated,snapshotTime(raw,updated)));
         } catch (RuntimeException unavailable) {
             return Optional.empty();
         }

@@ -66,8 +66,8 @@ public class StrategyTemplateService {
             throw new IllegalArgumentException("Unknown strategy template: " + request.getTemplateId());
         }
         request.setRiskSettings(org.com.sharekhan.strategy.run.StrategyRiskSettings.validate(request.getRiskSettings(),request.getLots()));
-        java.util.function.Supplier<StrategyApplyResponse> work = () -> runCoordinator==null
-                ? evaluator.apply(request) : runCoordinator.evaluate(request,()->evaluator.apply(request));
+        java.util.function.Supplier<StrategyApplyResponse> work = () -> request.isBatmanResumeNoOrder() && evaluator instanceof org.com.sharekhan.strategy.batman.BatmanStrategy batman
+                ? batman.resumeMarket(request) : runCoordinator==null ? evaluator.apply(request) : runCoordinator.evaluate(request,()->evaluator.apply(request));
         var response = sharedDecisions == null ? work.get() : sharedDecisions.evaluate(work);
         if (response != null && response.getSharedSignalIds() != null && !response.getSharedSignalIds().isEmpty())
             log.info("STRATEGY_SHARED_SIGNALS | subscriptionId={} | userId={} | brokerCredentialsId={} | template={} | symbol={} | signalIds={}",
@@ -82,6 +82,14 @@ public class StrategyTemplateService {
                     .strategyRunId(response.getTradeRequest().getStrategyRunId())
                     .eventType("SHARED_STRATEGY_DECISION").outcome(response.getStatus() == null ? "CREATED" : response.getStatus().toUpperCase(Locale.ROOT))
                     .reason("COMMON_MARKET_SIGNAL").details("sharedSignalIds=" + response.getSharedSignalIds()).build());
+        if (tradeAudit != null && response != null && org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId())
+                && response.getMessage()!=null && !response.getMessage().startsWith("Waiting for 09:20 IST")) {
+            log.info("BATMAN_EVALUATION | subscription={} | status={} | reason={}", request.getSubscriptionId(), response.getStatus(), response.getMessage());
+            tradeAudit.record(org.com.sharekhan.entity.TradeAuditEventEntity.builder()
+                    .occurredAt(java.time.LocalDateTime.now(org.com.sharekhan.strategy.StrategySupport.MARKET_ZONE))
+                    .appUserId(request.getUserId()).strategyId(request.getTemplateId()).symbol(request.getSymbol())
+                    .eventType("BATMAN_EVALUATION").outcome(response.getStatus()).reason(response.getMessage()).build());
+        }
         return response;
     }
 
