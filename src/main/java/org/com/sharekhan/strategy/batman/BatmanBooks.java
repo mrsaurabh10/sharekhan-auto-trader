@@ -41,7 +41,7 @@ public class BatmanBooks {
     public synchronized QuoteCacheService.QuoteSnapshot book(int code,String exchange,boolean buy,long units){
         var script=scripts.findByScripCode(code);
         if(script==null||!exchange.equals(script.getExchange())){reasons.put(code,"Execution contract unavailable");return null;}
-        watch(script);var now=Instant.now();var shared=cache.getSnapshot(code).orElse(null);
+        watch(script);var now=Instant.now();var shared=cache.getSharekhanSnapshot(code).orElse(null);
         if(shared!=null&&"SHAREKHAN_WS".equals(shared.getBookSource())&&exchange.equals(shared.getBookExchange())&&("scrip:"+code).equals(shared.getBookProviderIdentity())&&usable(shared,now,buy,units))return shared;
         var depth=mstock.book(code);
         if(depth!=null&&exchange.equals(depth.getBookExchange())&&usable(depth,now,buy,units))return depth;
@@ -62,11 +62,22 @@ public class BatmanBooks {
         }
         if(old!=null&&recent(old.providerAt(),Instant.now())&&usable(old.snapshot(),Instant.now(),buy,units))return old.snapshot();
         // Asynchronous full-feed packets may have arrived during the REST request.
-        shared=cache.getSnapshot(code).orElse(null);depth=mstock.book(code);now=Instant.now();
+        shared=cache.getSharekhanSnapshot(code).orElse(null);depth=mstock.book(code);now=Instant.now();
         if(shared!=null&&"SHAREKHAN_WS".equals(shared.getBookSource())&&exchange.equals(shared.getBookExchange())&&("scrip:"+code).equals(shared.getBookProviderIdentity())&&usable(shared,now,buy,units))return shared;
         if(depth!=null&&exchange.equals(depth.getBookExchange())&&usable(depth,now,buy,units))return depth;
         reasons.put(code,"No provider passed exact identity, 5-second freshness, spread <=5% and "+(buy?"ask":"bid")+" quantity >="+units+"; "+mstock.availability());
         return null;
+    }
+    public synchronized List<Map<String,Object>> diagnostics(){
+        List<Map<String,Object>> result=new ArrayList<>();
+        for(String key:leases.keySet()){
+            int code=Integer.parseInt(key.substring(2));var row=new LinkedHashMap<String,Object>();
+            row.put("key",key);row.put("sharekhan",cache.getSharekhanSnapshot(code).orElse(null));
+            row.put("latestCache",cache.getSnapshot(code).orElse(null));row.put("mstock",mstock.book(code));
+            row.put("shoonya",issued.containsKey(code)?issued.get(code).snapshot():null);
+            row.put("reason",reasons.get(code));row.put("mstockAvailability",mstock.availability());result.add(row);
+        }
+        return result;
     }
     static boolean usable(QuoteCacheService.QuoteSnapshot q,Instant now,boolean buy,long units){
         return valid(q,now)&&(q.getBestAsk()-q.getBestBid())/q.getBestAsk()<=.05&&(buy?q.getAskQuantity():q.getBidQuantity())>=units;

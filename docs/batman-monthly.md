@@ -99,3 +99,9 @@ for an ACTIVE **Simulator** subscription. This one request can enter between
 liquidity, daily claim, exposure checks and standard run/order pipeline. The date
 flag is server-owned and ignored by generic apply JSON. It does not change the
 recurring schedule or enable live manual entries.
+
+Sharekhan snapshots are retained independently of the latest shared quote: a
+Shoonya poll cannot overwrite a fresh Sharekhan book. Partial Sharekhan messages
+retain the same coherence/freshness rules. Administrators can inspect currently
+warmed contracts at `GET /api/strategies/batman-books` without fetching quotes or
+placing orders.

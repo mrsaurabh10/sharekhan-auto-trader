@@ -30,10 +30,17 @@ public class StrategyController {
     private final org.com.sharekhan.service.StrategySubscriptionLifecycleService lifecycle;
 
     private final org.com.sharekhan.repository.StrategySubscriptionRepository subscriptions;
+    private final org.com.sharekhan.strategy.batman.BatmanBooks batmanBooks;
+
+    @GetMapping("/batman-books")
+    public ResponseEntity<?> batmanBooks(){
+        if(!currentUserService.isAdmin())throw new org.springframework.security.access.AccessDeniedException("Administrator required");
+        return ResponseEntity.ok(batmanBooks.diagnostics());
+    }
 
     /** Explicit one-call Simulator catch-up. Does not alter the recurring 09:20 schedule. */
     @PostMapping("/subscriptions/{id}/batman-entry-today")
-    public ResponseEntity<?> enterBatmanToday(@PathVariable Long id,@RequestParam java.time.LocalDate tradingDay) {
+    public ResponseEntity<?> enterBatmanToday(@PathVariable Long id,@RequestParam @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate tradingDay) {
         if(!currentUserService.isAdmin())throw new org.springframework.security.access.AccessDeniedException("Administrator required");
         var now=java.time.LocalDate.now(org.com.sharekhan.strategy.batman.BatmanRules.IST);
         if(!now.equals(tradingDay))return ResponseEntity.badRequest().body(Map.of("error","Explicit current trading day required"));
