@@ -67,9 +67,9 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
     @Override public boolean supportsCarryOptionShorts(){ return true; }
     private synchronized double batmanFill(TriggeredTradeSetupEntity trade,double limit,boolean entry){
         if(!org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())) return limit;
-        var q=batmanBooks.book(trade.getScripCode(),trade.getExchange());
-        if(!org.com.sharekhan.strategy.batman.BatmanBooks.valid(q,java.time.Instant.now()))throw new org.com.sharekhan.exception.EntryNotReadyException("Batman Simulator waiting for a fresh exact option book");
         boolean buy=entry?!TradeSide.isShort(trade):TradeSide.isShort(trade);
+        var q=batmanBooks.book(trade.getScripCode(),trade.getExchange(),buy,trade.getQuantity());
+        if(!org.com.sharekhan.strategy.batman.BatmanBooks.valid(q,java.time.Instant.now()))throw new org.com.sharekhan.exception.EntryNotReadyException("Batman Simulator waiting for a fresh exact option book");
         double price=buy?q.getBestAsk():q.getBestBid();var size=buy?q.getAskQuantity():q.getBidQuantity();
         if(size==null||trade.getQuantity()==null||trade.getQuantity()<1||size<trade.getQuantity() || entry&&(buy?price>limit+1e-7:price<limit-1e-7))
             throw new org.com.sharekhan.exception.EntryNotReadyException("Batman displayed price or quantity unavailable");

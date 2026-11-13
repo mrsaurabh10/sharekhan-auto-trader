@@ -16,4 +16,5 @@ public class StrategyApplyRequest {
     private Long userId;
     private Long brokerCredentialsId;
     private String source;
+    @com.fasterxml.jackson.annotation.JsonIgnore private java.time.LocalDate batmanManualEntryDay;
 }

@@ -36,10 +36,10 @@ class BatmanStrategyTest{
   when(chains.fetch("NIFTY",LocalDate.of(2026,10,27))).thenReturn(new DhanOptionChainClient.Chain("NIFTY",LocalDate.of(2026,10,27),24000,now,chain));
   for(var option:chain){int code=Integer.parseInt(option.securityId());var script=ScriptMasterEntity.builder().scripCode(code).exchange("NF").tradingSymbol("NIFTY").strikePrice(option.strike()).optionType(option.side()).expiry("27/10/2026").lotSize(65).build();
    when(scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry("NIFTY",option.strike(),option.side(),"27/10/2026")).thenReturn(Optional.of(script));
-   when(books.book(code,"NF")).thenReturn(QuoteCacheService.QuoteSnapshot.builder().scripCode(code).coherentBook(true).bestBid(60d).bestAsk(95d).bidQuantity(10000d).askQuantity(10000d).lastBookAt(now).build());
+   when(books.book(eq(code),eq("NF"),anyBoolean(),anyLong())).thenReturn(QuoteCacheService.QuoteSnapshot.builder().scripCode(code).coherentBook(true).bestBid(60d).bestAsk(95d).bidQuantity(10000d).askQuantity(10000d).lastBookAt(now).build());
   }
   // Validity checks use the strategy clock; use a fixed source timestamp instead of the test process wall clock.
-  when(books.book(anyInt(),eq("NF"))).thenAnswer(a->{int code=a.getArgument(0);double bid=code<=2?99:70,ask=code<=2?100:71;
+  when(books.book(anyInt(),eq("NF"),anyBoolean(),anyLong())).thenAnswer(a->{int code=a.getArgument(0);double bid=code<=2?99:70,ask=code<=2?100:71;
    return QuoteCacheService.QuoteSnapshot.builder().scripCode(code).coherentBook(true).bestBid(bid).bestAsk(ask).bidQuantity(10000d).askQuantity(10000d).lastBookAt(now).build();});
   when(identities.resolve(any())).thenAnswer(a->{TriggeredTradeSetupEntity t=a.getArgument(0);return new DhanInstrumentResolver.Instrument("NSE_FNO",chain.stream().filter(o->o.strike()==t.getStrikePrice()&&o.side().equals(t.getOptionType())).findFirst().orElseThrow().securityId(),65,new BigDecimal(".05"),1800);});
   when(coordinator.ensureCurrentRun()).thenReturn("run");when(store.claim(any())).thenAnswer(a->{claimed=a.getArgument(0);return true;});
@@ -71,6 +71,35 @@ class BatmanStrategyTest{
   strategy.validateConfiguration(request());verify(broker).supportsCarryOptionShorts();
  }
 
+ @Test void manualSimulatorEntryKeepsDailyClaimAndUsesNormalFourLegPipeline(){
+  var later=now.plusSeconds(3600);ReflectionTestUtils.setField(strategy,"clock",Clock.fixed(later,BatmanRules.IST));
+  var r=request();r.setBatmanManualEntryDay(LocalDate.of(2026,9,15));
+  when(chains.fetch(anyString(),any())).thenReturn(new DhanOptionChainClient.Chain("NIFTY",LocalDate.of(2026,10,27),24000,later,
+      List.of(o("CE",24500,.2,1),o("CE",24600,.16,3),o("PE",23500,-.2,2),o("PE",23400,-.16,4))));
+  // The shared-decision clock must agree with the strategy clock.
+  ReflectionTestUtils.setField(strategy,"shared",new SharedMarketDecisions(Clock.fixed(later,BatmanRules.IST)));
+  when(books.book(anyInt(),anyString(),anyBoolean(),anyLong())).thenAnswer(a->{int code=a.getArgument(0);return QuoteCacheService.QuoteSnapshot.builder()
+      .scripCode(code).coherentBook(true).bestBid(code<=2?99d:70d).bestAsk(code<=2?100d:71d).bidQuantity(10000d).askQuantity(10000d).lastBookAt(later).build();});
+  assertThat(strategy.apply(r).getStatus()).isEqualTo("triggered");assertThat(placedSides).containsExactly("BUY","BUY","SELL","SELL");
+  when(baskets.existsById(anyString())).thenReturn(true);strategy.apply(r);assertThat(placedSides).hasSize(4);
+ }
+ @Test void manualOverrideCannotReachLiveAdapter(){
+  when(credentials.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(2L).appUserId(1L).brokerName("Sharekhan").active(true).tradingEnabled(true).build()));
+  var r=request();r.setBatmanManualEntryDay(LocalDate.of(2026,9,15));
+  assertThatThrownBy(()->strategy.apply(r)).hasMessageContaining("only for Simulator");verifyNoInteractions(chains,execution);
+ }
+ @Test void manualWindowDoesNotPersistToTomorrowOrAfter1500(){
+  var r=request();r.setBatmanManualEntryDay(LocalDate.of(2026,9,15));
+  assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,15,11,0))).isTrue();
+  assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,16,11,0))).isFalse();
+  assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,15,15,0))).isFalse();
+  r.setBatmanManualEntryDay(null);assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,15,11,0))).isFalse();
+ }
+ @Test void manualFlagCannotBeSetThroughGenericApplyJson() throws Exception {
+  var r=new com.fasterxml.jackson.databind.ObjectMapper().registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
+       .readValue("{\"batmanManualEntryDay\":\"2026-09-15\"}",StrategyApplyRequest.class);
+  assertThat(r.getBatmanManualEntryDay()).isNull();
+ }
  @Test void reentryGateRunsBeforeGreekSelectionAndAnyExecution(){
   when(store.entryBlockReason(1L,2L,"NIFTY",LocalDate.of(2026,9,15))).thenReturn("Prior basket has unresolved short exposure");
   strategy.apply(request());verifyNoInteractions(chains,execution);verify(store,never()).claim(any());

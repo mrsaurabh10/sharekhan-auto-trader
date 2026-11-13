@@ -82,6 +82,14 @@ public class StrategyTemplateService {
                     .strategyRunId(response.getTradeRequest().getStrategyRunId())
                     .eventType("SHARED_STRATEGY_DECISION").outcome(response.getStatus() == null ? "CREATED" : response.getStatus().toUpperCase(Locale.ROOT))
                     .reason("COMMON_MARKET_SIGNAL").details("sharedSignalIds=" + response.getSharedSignalIds()).build());
+        if (tradeAudit != null && response != null && org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId())
+                && response.getMessage()!=null && !response.getMessage().startsWith("Waiting for 09:20 IST")) {
+            log.info("BATMAN_EVALUATION | subscription={} | status={} | reason={}", request.getSubscriptionId(), response.getStatus(), response.getMessage());
+            tradeAudit.record(org.com.sharekhan.entity.TradeAuditEventEntity.builder()
+                    .occurredAt(java.time.LocalDateTime.now(org.com.sharekhan.strategy.StrategySupport.MARKET_ZONE))
+                    .appUserId(request.getUserId()).strategyId(request.getTemplateId()).symbol(request.getSymbol())
+                    .eventType("BATMAN_EVALUATION").outcome(response.getStatus()).reason(response.getMessage()).build());
+        }
         return response;
     }
 

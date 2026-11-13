@@ -74,3 +74,28 @@ Paper trading does not model exchange SPAN margin, financing or broker-reconcile
 short-option charges. Historical Dhan strike coverage has not established a
 backtest for this strategy. The existing NSE holiday calendar and fresh-book
 checks are honored. No actual market fill is implied by code or smoke tests.
+
+### Quote fallbacks and a missed scheduled entry
+
+Before reading books, Batman prepares full Sharekhan feeds for all four selected
+contracts. It checks Sharekhan, mStock full-depth WebSocket, then exact Shoonya
+REST snapshots. A provider with insufficient executable-side quantity, stale or
+crossed books, a spread above 5%, or wrong identity is skipped. mStock reuses the
+existing instrument resolver and unexpired session; it never logs in or refreshes
+credentials. Its demand leases expire after 60 seconds without a reader, and
+connection failures back off for 30 seconds. LTP alone cannot simulate these fills.
+Type-A packet layout and 1980 timestamp origin follow the official mStock SDK.
+The initial live depth handshake returned HTTP 502; availability is reported in
+entry blockers rather than treating the feed as usable.
+
+Dhan chains use 10-second shared buckets to match the entry freshness guard.
+Entry attempts record their status and reason in trade audit history; later
+scheduled evaluations can still show the usual waiting-for-09:20 message.
+
+An authenticated administrator may explicitly call
+`POST /api/strategies/subscriptions/{id}/batman-entry-today?tradingDay=YYYY-MM-DD`
+for an ACTIVE **Simulator** subscription. This one request can enter between
+09:20 and 15:00 IST on that trading day. It retains the normal expiry, delta,
+liquidity, daily claim, exposure checks and standard run/order pipeline. The date
+flag is server-owned and ignored by generic apply JSON. It does not change the
+recurring schedule or enable live manual entries.

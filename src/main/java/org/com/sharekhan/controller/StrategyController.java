@@ -29,6 +29,29 @@ public class StrategyController {
     private final org.com.sharekhan.onboarding.UserTradingAccess tradingAccess;
     private final org.com.sharekhan.service.StrategySubscriptionLifecycleService lifecycle;
 
+    private final org.com.sharekhan.repository.StrategySubscriptionRepository subscriptions;
+
+    /** Explicit one-call Simulator catch-up. Does not alter the recurring 09:20 schedule. */
+    @PostMapping("/subscriptions/{id}/batman-entry-today")
+    public ResponseEntity<?> enterBatmanToday(@PathVariable Long id,@RequestParam java.time.LocalDate tradingDay) {
+        if(!currentUserService.isAdmin())throw new org.springframework.security.access.AccessDeniedException("Administrator required");
+        var now=java.time.LocalDate.now(org.com.sharekhan.strategy.batman.BatmanRules.IST);
+        if(!now.equals(tradingDay))return ResponseEntity.badRequest().body(Map.of("error","Explicit current trading day required"));
+        var sub=subscriptions.findById(id).orElseThrow(()->new IllegalArgumentException("Subscription not found"));
+        if(!"BATMAN_MONTHLY".equals(sub.getTemplateId())||!"ACTIVE".equals(sub.getStatus()))
+            return ResponseEntity.badRequest().body(Map.of("error","Active Batman subscription required"));
+        var request=new StrategyApplyRequest();request.setSubscriptionId(sub.getId());request.setTemplateId(sub.getTemplateId());
+        request.setUserId(sub.getAppUserId());request.setBrokerCredentialsId(sub.getBrokerCredentialsId());
+        request.setSymbol(sub.getSymbol());request.setLots(sub.getLots());request.setIntraday(false);
+        request.setBatmanManualEntryDay(tradingDay);
+        var response=strategyTemplateService.apply(request);
+        sub.setLastEvaluatedAt(java.time.LocalDateTime.now(org.com.sharekhan.strategy.batman.BatmanRules.IST));
+        sub.setLastEvaluationStatus(response.getStatus());sub.setLastMessage(response.getMessage());
+        if(response.getTradeRequest()!=null)sub.setGeneratedTradeRequestId(response.getTradeRequest().getId());
+        subscriptions.recordEvaluationIfActive(sub);
+        return ResponseEntity.ok(response);
+    }
+
     @PostMapping("/subscriptions/{id}/pause")
     public ResponseEntity<?> pause(@PathVariable Long id) {
         return ResponseEntity.ok(lifecycle.pause(id, currentUserService.currentAppUserIdOrNull(), currentUserService.isAdmin()));

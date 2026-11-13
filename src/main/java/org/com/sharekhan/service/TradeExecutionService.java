@@ -1823,7 +1823,7 @@ public class TradeExecutionService {
     @Autowired private org.com.sharekhan.strategy.batman.BatmanBooks batmanBooks;
     public Optional<QuoteCacheService.QuoteSnapshot> strategyProfitExitQuote(TriggeredTradeSetupEntity trade, Instant now) {
         if(trade!=null && org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())) {
-            var q=batmanBooks.book(trade.getScripCode(),trade.getExchange());
+            var q=batmanBooks.book(trade.getScripCode(),trade.getExchange(),TradeSide.isShort(trade),trade.getQuantity());
             boolean shortSide=TradeSide.isShort(trade);
             return Optional.ofNullable(q).filter(v->org.com.sharekhan.strategy.batman.BatmanBooks.valid(v,Instant.now()))
                     .filter(v->(shortSide?v.getAskQuantity():v.getBidQuantity())!=null && (shortSide?v.getAskQuantity():v.getBidQuantity())>=trade.getQuantity());
@@ -3008,7 +3008,7 @@ public class TradeExecutionService {
         }
         if(org.com.sharekhan.strategy.batman.BatmanRules.owns(trigger.getSource())) {
             if(!brokerService.supportsCarryOptionShorts()) throw new InvalidTradeRequestException("Execution adapter does not support carry-forward option shorts");
-            var q=batmanBooks.book(trigger.getScripCode(),trigger.getExchange());
+            var q=batmanBooks.book(trigger.getScripCode(),trigger.getExchange(),!TradeSide.isShort(trigger),trigger.getQuantity());
             if(!org.com.sharekhan.strategy.batman.BatmanBooks.valid(q,Instant.now())) throw new EntryNotReadyException("Batman entry book unavailable");
             boolean buy=!TradeSide.isShort(trigger);var quantity=buy?q.getAskQuantity():q.getBidQuantity();double price=buy?q.getBestAsk():q.getBestBid();
             if(quantity==null||quantity<trigger.getQuantity()||(buy?price>trigger.getEntryPrice()+1e-7:price<trigger.getEntryPrice()-1e-7))throw new EntryNotReadyException("Batman book moved beyond admitted price/quantity");
