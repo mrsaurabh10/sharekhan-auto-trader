@@ -3138,7 +3138,7 @@ public class TradeExecutionService {
             log.info("🎯 Entry attempt {} for trigger {} at price {}", attempt + 1, triggerLogId(trigger), formatPrice(price));
             TradeEventLogger.logOrderAttempt("ENTRY", trigger, attempt + 1, attempt == 0 ? "PLACE" : "MODIFY", price, orderId);
 
-            if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource())) price=Math.min(price,trigger.getEntryPrice());
+            if (org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()) && !marketableEntry(trigger)) price=Math.min(price,trigger.getEntryPrice());
             final double admittedPrice=price;
             OrderPlacementResult result;
             if (attempt == 0) {
@@ -3357,12 +3357,26 @@ public class TradeExecutionService {
                 : attemptedPrice > ceiling + 0.000001d;
     }
 
+    private boolean marketableEntry(TriggeredTradeSetupEntity trade) {
+        return trade!=null && trade.getExecutionSettings()!=null && Boolean.TRUE.equals(trade.getExecutionSettings().getMarketableEntry());
+    }
+
+    private double marketableEntryReference(TriggeredTradeSetupEntity trade,double fallback) {
+        if(!marketableEntry(trade))return fallback;
+        Double reference=trade.getEntryPrice();
+        if(reference==null || !Double.isFinite(reference) || reference<=0)throw new IllegalArgumentException("Marketable entry requires a positive frozen traded entry reference");
+        if(usesSpotEntryReference(trade))throw new IllegalArgumentException("Marketable entry requires a traded-price reference, not a spot entry");
+        return reference;
+    }
+
     private double entryPriceFloor(TriggeredTradeSetupEntity trigger, double reference) {
+        reference=marketableEntryReference(trigger,reference);
         return Math.ceil((reference * (1d - configuredEntryMaxSlippagePercent(trigger) / 100d) - 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
     }
 
     private double entryPriceCeiling(TriggeredTradeSetupEntity trigger, double initialOptionPrice) {
-        if(trigger!=null && org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()))return trigger.getEntryPrice();
+        if(trigger!=null && org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()) && !marketableEntry(trigger))return trigger.getEntryPrice();
+        initialOptionPrice=marketableEntryReference(trigger,initialOptionPrice);
         double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent(trigger) / 100d);
         return Math.floor((rawCeiling + 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
     }
@@ -4433,6 +4447,10 @@ public class TradeExecutionService {
                 throw new EntryNotReadyException("Averaging ask exceeds its originally admitted basket budget; no order submitted");
             return price;
         }
+        if(marketableEntry(trigger)) {
+            if(!hasFreshEntryBook(diagnostics))throw new EntryNotReadyException("Marketable entry requires a fresh executable book");
+            return TradeSide.isShort(trigger) ? entryPriceFloor(trigger,fallbackLtp) : entryPriceCeiling(trigger,fallbackLtp);
+        }
         Double bid = diagnostics.bestBid();
         Double ask = diagnostics.bestAsk();
         Double mid = diagnostics.recommendedLimit();
@@ -4457,7 +4475,7 @@ public class TradeExecutionService {
                     : Math.min(rawPrice, entryPriceCeiling(trigger, fallbackLtp));
         }
 
-        if(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()))rawPrice=Math.min(rawPrice,trigger.getEntryPrice());
+        if(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()) && !marketableEntry(trigger))rawPrice=Math.min(rawPrice,trigger.getEntryPrice());
         return normalisePriceToTick(diagnostics, rawPrice);
     }
 

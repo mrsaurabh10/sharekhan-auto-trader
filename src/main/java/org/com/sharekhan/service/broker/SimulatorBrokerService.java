@@ -26,8 +26,20 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
             if(buy)throw new org.com.sharekhan.exception.EntryNotReadyException("ADX simulator waiting for fresh exact option book");
             throw new IllegalStateException("ADX simulator exit waiting for fresh exact option bid");
         }
-        if(buy && (q.getBestAsk()>trade.getEntryPrice()+1e-7 || (premiumStop(trade) && trade.getStopLoss()!=null && q.getBestAsk()<=trade.getStopLoss()) || (q.getAskQuantity()==null || q.getAskQuantity()<trade.getQuantity())))
-            throw new org.com.sharekhan.exception.EntryNotReadyException("ADX ask moved outside frozen bracket or displayed depth unavailable");
+        boolean marketable=trade.getExecutionSettings()!=null && Boolean.TRUE.equals(trade.getExecutionSettings().getMarketableEntry());
+        double entryLimit=marketable?fallback:trade.getEntryPrice();
+        if(buy && (!Double.isFinite(entryLimit) || entryLimit<=0 || q.getBestAsk()>entryLimit+1e-7
+                || (premiumStop(trade) && trade.getStopLoss()!=null && q.getBestAsk()<=trade.getStopLoss())))
+            throw new org.com.sharekhan.exception.EntryNotReadyException("ADX ask exceeds submitted entry limit or premium stop");
+        if(trade.getQuantity()==null || trade.getQuantity()<=0)throw new IllegalArgumentException("Simulator requires a positive trade quantity");
+        boolean requireDepth=trade.getExecutionSettings()==null || !Boolean.FALSE.equals(trade.getExecutionSettings().getRequireDisplayedDepth());
+        if(!requireDepth) {
+            log.info("SIMULATOR_DISPLAYED_DEPTH_NOT_REQUIRED | tradeId={} | scrip={} | side={} | price={} | quantity={} | fillAssumption=fresh executable quote; displayed quantities not used",
+                    trade.getId(),trade.getScripCode(),buy?"BUY":"SELL",buy?q.getBestAsk():q.getBestBid(),trade.getQuantity());
+            return buy?q.getBestAsk():q.getBestBid();
+        }
+        if(buy && (q.getAskQuantity()==null || q.getAskQuantity()<trade.getQuantity()))
+            throw new org.com.sharekhan.exception.EntryNotReadyException("ADX displayed ask depth unavailable");
         if(!buy && (q.getBidQuantity()==null || q.getBidQuantity()<trade.getQuantity()))throw new IllegalStateException("ADX bid depth unavailable; exit remains pending");
         String key=trade.getExchange()+":"+trade.getScripCode()+":"+q.getBookProviderIdentity()+":"+q.getLastBookAt()+":"+buy;
         double used=adxConsumed.getOrDefault(key,0d),available=buy?q.getAskQuantity():q.getBidQuantity();
