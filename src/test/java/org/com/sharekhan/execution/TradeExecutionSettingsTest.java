@@ -8,9 +8,9 @@ import static org.junit.jupiter.api.Assertions.*;
 class TradeExecutionSettingsTest {
     @Test void optionalSettingsDefaultToExistingBehaviorAndCopyIndependently() {
         assertNull(TradeExecutionSettings.prepare(null,null));
-        var c=new TradeExecutionSettings();c.setTimeExitMinutes(15);
+        var c=new TradeExecutionSettings();c.setMarketableEntry(true);c.setRequireDisplayedDepth(false);c.setTimeExitMinutes(15);
         var prepared=TradeExecutionSettings.prepare(c,null);assertNotNull(prepared.getTimeExitGroupId());assertNull(c.getTimeExitGroupId());
-        assertNull(prepared.getSpotStopOnTouch());assertNull(prepared.getRequireProfitableSpotTarget());
+        assertTrue(prepared.getMarketableEntry());assertFalse(prepared.getRequireDisplayedDepth());assertNull(prepared.getSpotStopOnTouch());assertNull(prepared.getRequireProfitableSpotTarget());
         var other=prepared.copy();other.setTimeExitMinutes(30);assertEquals(15,prepared.getTimeExitMinutes());
     }
     @Test void validatesDurationAndProgressPairAndSpotReference() {

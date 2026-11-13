@@ -31,6 +31,28 @@ class SimulatorBrokerServiceTest {
         assertThat(ids).hasSize(3);
     }
 
+    @Test void configuredQuoteFillsDoNotRequireDisplayedQuantitiesOrConsumeInventedDepth() {
+        var data=org.mockito.Mockito.mock(org.com.sharekhan.strategy.adxdmi.AdxDmiMarketData.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"adxQuotes",data);
+        var q=org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot.builder().scripCode(42).bestAsk(631.7).bestBid(630.15)
+                .lastBookAt(java.time.Instant.now()).bookProviderIdentity("exact").build();
+        org.mockito.Mockito.when(data.book(42,"BF")).thenReturn(q);
+        org.mockito.Mockito.when(data.freshBook(org.mockito.ArgumentMatchers.eq("BF"),org.mockito.ArgumentMatchers.same(q),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq(42))).thenReturn(true);
+        var c=new org.com.sharekhan.execution.TradeExecutionSettings();c.setMarketableEntry(true);c.setRequireDisplayedDepth(false);
+        var t=TriggeredTradeSetupEntity.builder().source(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE)
+                .scripCode(42).exchange("BF").optionType("PE").entryAction("BUY").entryPrice(630.8).actualEntryPrice(631.7)
+                .useSpotForEntry(false).useSpotForSl(true).useSpotForTarget(true).stopLoss(81607.79).target1(81475.45).quantity(20L).executionSettings(c).build();
+        var ids=new java.util.HashSet<String>();
+        for(int leg=0;leg<3;leg++){
+            var entry=service.placeOrder(t,null,643.4);assertThat(entry.getExecutedPrice()).isEqualTo(631.7);ids.add(entry.getOrderId());
+            assertThat(service.placeExitOrder(t,null,630.15).getExecutedPrice()).isEqualTo(630.15);
+        }
+        assertThat(ids).hasSize(3);assertThat(t.getStopLoss()).isEqualTo(81607.79);
+        org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(t,null,631.65));
+        org.mockito.Mockito.when(data.freshBook(org.mockito.ArgumentMatchers.eq("BF"),org.mockito.ArgumentMatchers.same(q),org.mockito.ArgumentMatchers.any(),org.mockito.ArgumentMatchers.eq(42))).thenReturn(false);
+        org.junit.jupiter.api.Assertions.assertThrows(org.com.sharekhan.exception.EntryNotReadyException.class,()->service.placeOrder(t,null,643.4));
+    }
+
     private final SimulatorBrokerService service = new SimulatorBrokerService();
 
     @Test void shortExitBuysBackAndProfitsOnlyWhenPriceFalls() {
