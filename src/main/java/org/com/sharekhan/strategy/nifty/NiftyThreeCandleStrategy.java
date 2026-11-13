@@ -1,6 +1,5 @@
 package org.com.sharekhan.strategy.nifty;
 
-import lombok.RequiredArgsConstructor;
 import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.dto.*;
 import org.com.sharekhan.entity.*;
@@ -14,7 +13,7 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 
-@Component @RequiredArgsConstructor
+@Component
 public class NiftyThreeCandleStrategy implements StrategyEvaluator {
     private final BrokerCredentialsRepository brokers;
     private final ScriptMasterRepository scripts;
@@ -24,6 +23,19 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
     private final TradeExecutionService feeds;
     private final NiftyThreeCandlePaperBroker paper;
     private final NseMarketCalendar calendar;
+    private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    public NiftyThreeCandleStrategy(BrokerCredentialsRepository brokers, ScriptMasterRepository scripts,
+            StrategySupport support, NiftyThreeCandleMarketData data, QuoteCacheService quotes,
+            TradeExecutionService feeds, NiftyThreeCandlePaperBroker paper, NseMarketCalendar calendar) {
+        this(brokers,scripts,support,data,quotes,feeds,paper,calendar,Clock.system(NiftyThreeCandleRules.IST));
+    }
+    NiftyThreeCandleStrategy(BrokerCredentialsRepository brokers, ScriptMasterRepository scripts,
+            StrategySupport support, NiftyThreeCandleMarketData data, QuoteCacheService quotes,
+            TradeExecutionService feeds, NiftyThreeCandlePaperBroker paper, NseMarketCalendar calendar, Clock clock) {
+        this.brokers=brokers;this.scripts=scripts;this.support=support;this.data=data;this.quotes=quotes;
+        this.feeds=feeds;this.paper=paper;this.calendar=calendar;this.clock=clock;
+    }
     private static final StrategyMetadata META=new StrategyMetadata(NiftyThreeCandleRules.TEMPLATE,"Nifty Three Candles — Simulator",
             "Nifty 5-minute three green/rising EMA20 → ATM CE, or three red/falling EMA20 → ATM PE. Fourth-candle breakout, C3 spot stop, 1R target. One lot, one shared position, ₹5,000 combined daily paper loss control; exits at 15:30. Paper ask/bid fills require displayed depth. PE is a mirrored trial, not backtested here.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
@@ -48,7 +60,7 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
                         && "SIMULATOR".equalsIgnoreCase(b.getBrokerName()))
                 .orElseThrow(()->new IllegalArgumentException("Choose an active owned Simulator account"));
     }
-    @Override public StrategyApplyResponse apply(StrategyApplyRequest r){return apply(r,LocalDateTime.now(NiftyThreeCandleRules.IST));}
+    @Override public StrategyApplyResponse apply(StrategyApplyRequest r){return apply(r,LocalDateTime.now(clock));}
     public StrategyApplyResponse apply(StrategyApplyRequest r,LocalDateTime now){
         validateConfiguration(r);
         if(!calendar.isTradingDay(now.toLocalDate()) || now.toLocalTime().isBefore(LocalTime.of(9,30)) || !now.toLocalTime().isBefore(LocalTime.of(15,30)))
@@ -56,10 +68,15 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
         var spot=support.resolveSpotScript("NIFTY");
         if(!"NC".equalsIgnoreCase(spot.getExchange()) || spot.getScripCode()==null)throw new IllegalStateException("NSE Nifty spot identity is unavailable");
         var bars=data.candles(spot,now);
-        var signal=NiftyThreeCandleRules.signal(bars,now).orElse(null);
-        if(signal==null)return waitFor("Waiting for three completed candles and matching EMA20 direction; at least 200 warmup candles required");
+        var check=NiftyThreeCandleRules.check(bars,now);
+        var signal=check.signal();
+        if(signal==null)return waitFor(check.reason());
         var q=quotes.getSnapshot(spot.getScripCode()).orElse(null);
-        if(!NiftyThreeCandleRules.freshSpot(q,now.atZone(NiftyThreeCandleRules.IST).toInstant(),spot.getScripCode()))return waitFor("Waiting for fresh Nifty spot quote");
+        // Read the clock after the snapshot: ticks received while candles load are not future data.
+        var observedAt=clock.instant();
+        if(!signal.inWindow(LocalDateTime.ofInstant(observedAt,NiftyThreeCandleRules.IST)))
+            return waitFor("The fourth-candle entry window has expired; signal="+signal.key());
+        if(!NiftyThreeCandleRules.freshSpot(q,observedAt,spot.getScripCode()))return waitFor("Waiting for fresh Nifty spot quote");
         var contracts=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("NF","NIFTY");
         var option=contract(contracts,signal.side(),q.getLastTradedPrice(),now.toLocalDate());
         var warm=new TriggerRequest();warm.setInstrument("NIFTY");warm.setExchange(option.getExchange());warm.setOptionType(signal.side());warm.setExpiry(option.getExpiry());warm.setStrikePrice(option.getStrikePrice());

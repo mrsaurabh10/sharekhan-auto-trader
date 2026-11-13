@@ -18,6 +18,14 @@ class NiftyThreeCandleRulesTest {
         }
         return out;
     }
+    @Test void diagnosticsDistinguishWarmupGapsAndMixedCandleColors() {
+        var bars=candles(false);var now=DAY.atTime(9,30);
+        assertTrue(NiftyThreeCandleRules.check(bars.subList(30,bars.size()),now).reason().contains("198/200"));
+        bars.remove(bars.size()-2);
+        assertTrue(NiftyThreeCandleRules.check(bars,now).reason().contains("gap; expected 09:20"));
+        bars=candles(false);bars.set(bars.size()-1,new StrategyCandle(DAY,LocalTime.of(9,25),102,103,101,102,null));
+        assertTrue(NiftyThreeCandleRules.check(bars,now).reason().contains("not all green or all red"));
+    }
     @Test void frozenCeAndMirroredPeNeedNoVolumeOrBodyFilters(){
         var ce=NiftyThreeCandleRules.signal(candles(false),DAY.atTime(9,30)).orElseThrow();
         assertEquals("CE",ce.side());assertEquals(103.25,ce.trigger(),1e-9);assertEquals(101.8,ce.stop(),1e-9);
