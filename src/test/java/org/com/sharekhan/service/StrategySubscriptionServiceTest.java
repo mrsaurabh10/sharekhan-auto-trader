@@ -13,6 +13,45 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 
 class StrategySubscriptionServiceTest {
+    @org.junit.jupiter.api.Test void auditFailureDoesNotPreventNiftyEvaluation() {
+        var repo=mock(StrategySubscriptionRepository.class);var evaluator=mock(StrategyTemplateService.class);
+        var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));
+        var audit=mock(TradeAuditService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"tradeAudit",audit);
+        doThrow(new IllegalStateException("audit unavailable")).when(audit).record(any());
+        var sub=StrategySubscriptionEntity.builder().id(188L).templateId("NIFTY_THREE_CANDLE_ATM").status("ACTIVE")
+                .symbol("NIFTY").appUserId(3L).brokerCredentialsId(4L).build();
+        when(evaluator.apply(any())).thenReturn(StrategyApplyResponse.builder().status("waiting").message("Waiting for fresh Nifty spot quote").build());
+        service.evaluate(sub);
+        assertThat(sub.getLastEvaluationStatus()).isEqualTo("waiting");
+        assertThat(sub.getLastMessage()).isEqualTo("Waiting for fresh Nifty spot quote");
+        verify(repo).recordEvaluationIfActive(sub);
+    }
+
+    @org.junit.jupiter.api.Test void niftyBlockersRetainTransitionsAndFiveMinuteSnapshotsOnly() {
+        var repo=mock(StrategySubscriptionRepository.class);
+        var service=new StrategySubscriptionService(repo,mock(StrategyTemplateService.class),mock(NseMarketCalendar.class),enrollment(repo));
+        var audit=mock(TradeAuditService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"tradeAudit",audit);
+        var sub=StrategySubscriptionEntity.builder().id(188L).templateId("NIFTY_THREE_CANDLE_ATM")
+                .symbol("NIFTY").appUserId(3L).brokerCredentialsId(4L).build();
+        var at=java.time.LocalDateTime.of(2026,11,13,10,1);
+        service.auditNiftyEvaluation(sub,"waiting","Waiting for fresh Nifty spot quote",at);
+        sub.setLastEvaluatedAt(at);sub.setLastEvaluationStatus("waiting");sub.setLastMessage("Waiting for fresh Nifty spot quote");
+        service.auditNiftyEvaluation(sub,"waiting",sub.getLastMessage(),at.plusSeconds(2));
+        verify(audit,times(1)).record(any());
+        service.auditNiftyEvaluation(sub,"waiting","Paper entry requires one lot displayed at the ask",at.plusSeconds(4));
+        service.auditNiftyEvaluation(sub,"waiting",sub.getLastMessage(),at.withMinute(5));
+        verify(audit,times(3)).record(any());
+        var events=org.mockito.ArgumentCaptor.forClass(org.com.sharekhan.entity.TradeAuditEventEntity.class);
+        verify(audit,times(3)).record(events.capture());
+        assertThat(events.getAllValues().get(1).getReason()).contains("one lot displayed");
+        assertThat(events.getValue().getDetails()).contains("subscription=188", "broker=4");
+        sub.setTemplateId("ADX_DMI_FIXED_PARTIALS");
+        service.auditNiftyEvaluation(sub,"waiting","other strategy",at.plusMinutes(10));
+        verifyNoMoreInteractions(audit);
+    }
+
     @org.junit.jupiter.api.Test void expiryIsWaitingButFeedFailureRemainsAnError() {
         var repo=mock(StrategySubscriptionRepository.class); var evaluator=mock(StrategyTemplateService.class);
         var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));

@@ -73,7 +73,7 @@ public class NiftyThreeCandlePaperBroker {
     public TriggerTradeRequestEntity open(StrategyApplyRequest r,NiftyThreeCandleRules.Signal signal,ScriptMasterEntity option,int spotCode,List<ScriptMasterEntity> contracts){
         NiftyThreeCandleStrategy.validate(r);
         simulator(r.getUserId(),r.getBrokerCredentialsId()); // DB row lock serializes CE/PE, subscriptions and instances for this account.
-        var now=LocalDateTime.now(clock);var instant=clock.instant();
+        var now=LocalDateTime.now(clock);
         if(!signal.inWindow(now))throw new IllegalStateException("The fourth-candle entry window has expired");
         var prior=owned(r.getUserId(),r.getBrokerCredentialsId());
         if(prior.stream().anyMatch(t->!terminal(t.getStatus())))throw new IllegalStateException("A CE/PE paper position is already open or unresolved");
@@ -87,8 +87,13 @@ public class NiftyThreeCandlePaperBroker {
             throw new IllegalStateException("₹5,000 combined daily paper loss limit reached; entries stopped for today");
         var spot=quotes.getSnapshot(spotCode).orElse(null);
         var book=quotes.getSnapshot(option.getScripCode()).orElse(null);
-        if(!NiftyThreeCandleRules.freshSpot(spot,instant,spotCode) || !NiftyThreeCandleRules.freshBook(book,instant,option.getScripCode()))
-            throw new IllegalStateException("Waiting for fresh exact Nifty spot and option bid/ask");
+        var instant=clock.instant();
+        var observedAt=LocalDateTime.ofInstant(instant,NiftyThreeCandleRules.IST);
+        if(!signal.inWindow(observedAt))throw new IllegalStateException("The fourth-candle entry window has expired");
+        if(!NiftyThreeCandleRules.freshSpot(spot,instant,spotCode))
+            throw new IllegalStateException("Waiting for fresh exact Nifty spot quote");
+        if(!NiftyThreeCandleRules.freshBook(book,instant,option.getScripCode()))
+            throw new IllegalStateException("Waiting for fresh exact option bid/ask; scrip="+option.getScripCode());
         if(option.getLotSize()==null || option.getLotSize()<=0 || option.getTickSize()==null || !Double.isFinite(option.getTickSize()) || option.getTickSize()<=0
                 || !signal.side().equals(option.getOptionType()) || !"NIFTY".equalsIgnoreCase(option.getTradingSymbol())
                 || !Set.of("NF","NFO").contains(Objects.toString(option.getExchange(),"")))throw new IllegalArgumentException("Invalid Nifty option contract metadata");
@@ -112,6 +117,11 @@ public class NiftyThreeCandlePaperBroker {
         var run=em.find(StrategyRun.class,trigger.getStrategyRunId(),LockModeType.PESSIMISTIC_WRITE);
         if(run==null || !"OPEN".equals(run.getStatus()) || !Objects.equals(run.getAppUserId(),r.getUserId())
                 || !Objects.equals(run.getBrokerCredentialsId(),r.getBrokerCredentialsId()))throw new IllegalStateException("Strategy run is closing or closed");
+        var fillInstant=clock.instant();
+        if(!signal.inWindow(LocalDateTime.ofInstant(fillInstant,NiftyThreeCandleRules.IST)))
+            throw new IllegalStateException("The fourth-candle entry window has expired");
+        if(!NiftyThreeCandleRules.freshSpot(spot,fillInstant,spotCode) || !NiftyThreeCandleRules.freshBook(book,fillInstant,option.getScripCode()))
+            throw new IllegalStateException("Entry quotes expired while acquiring strategy locks; waiting for fresh data");
         var req=TriggerTradeRequestEntity.builder().strategyRunId(trigger.getStrategyRunId()).appUserId(r.getUserId()).brokerCredentialsId(r.getBrokerCredentialsId())
                 .symbol("NIFTY").scripCode(option.getScripCode()).exchange(option.getExchange()).instrumentType(option.getInstrumentType())
                 .strikePrice(option.getStrikePrice()).optionType(signal.side()).expiry(option.getExpiry()).entryAction("BUY")
@@ -138,9 +148,10 @@ public class NiftyThreeCandlePaperBroker {
         if(t==null || !NiftyThreeCandleRules.owns(t.getSource()) || terminal(t.getStatus()))return;
         var b=em.find(BrokerCredentialsEntity.class,t.getBrokerCredentialsId());
         if(b==null || !"SIMULATOR".equalsIgnoreCase(b.getBrokerName()) || !Objects.equals(t.getAppUserId(),b.getAppUserId()))return;
-        var now=LocalDateTime.now(clock);var instant=clock.instant();
         var book=quotes.getSnapshot(t.getScripCode()).orElse(null);
         var spot=quotes.getSnapshot(t.getSpotScripCode()).orElse(null);
+        var instant=clock.instant();
+        var now=LocalDateTime.ofInstant(instant,NiftyThreeCandleRules.IST);
         boolean eod=t.getEntryAt().toLocalDate().isBefore(now.toLocalDate()) || !now.toLocalTime().isBefore(LocalTime.of(15,30));
         String reason=t.getExitReason(); // Persist the first observed trigger while awaiting an executable book.
         if(reason==null && eod)reason="NIFTY_3C_SESSION_CLOSE";

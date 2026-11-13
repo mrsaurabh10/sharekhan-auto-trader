@@ -45,6 +45,28 @@ public class StrategySubscriptionService {
     @org.springframework.beans.factory.annotation.Autowired
     private MoverStrategyEvaluationDispatcher moverDispatcher;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private TradeAuditService tradeAudit;
+
+    /** Retain changing blockers without writing an audit row on every two-second poll. */
+    void auditNiftyEvaluation(StrategySubscriptionEntity subscription, String status, String message, LocalDateTime at) {
+        if (tradeAudit == null || !org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(subscription.getTemplateId())) return;
+        var previous=subscription.getLastEvaluatedAt();
+        boolean newBucket=previous==null || !previous.toLocalDate().equals(at.toLocalDate())
+                || previous.toLocalTime().toSecondOfDay()/300!=at.toLocalTime().toSecondOfDay()/300;
+        if (!newBucket && Objects.equals(status,subscription.getLastEvaluationStatus())
+                && Objects.equals(message,subscription.getLastMessage())) return;
+        try {
+            tradeAudit.record(org.com.sharekhan.entity.TradeAuditEventEntity.builder().occurredAt(at)
+                .appUserId(subscription.getAppUserId()).strategyId(subscription.getTemplateId())
+                .source(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.SOURCE).symbol(subscription.getSymbol())
+                .eventType("ENTRY_EVALUATION").outcome(status).reason(message)
+                .details("subscription="+subscription.getId()+", broker="+subscription.getBrokerCredentialsId()).build());
+        } catch (RuntimeException failure) {
+            log.warn("Unable to audit Nifty subscription {} evaluation: {}",subscription.getId(),failure.getMessage());
+        }
+    }
+
     public StrategySubscriptionEntity start(StrategyApplyRequest request) {
         validate(request);
         String templateId = request.getTemplateId().trim().toUpperCase(Locale.ROOT);
@@ -213,7 +235,9 @@ public class StrategySubscriptionService {
             request.setSource(effectiveSource(subscription.getSource(), subscription.getTemplateId()));
 
             StrategyApplyResponse response = strategyTemplateService.apply(request);
-            subscription.setLastEvaluatedAt(LocalDateTime.now());
+            var evaluatedAt=LocalDateTime.now(MARKET_ZONE);
+            auditNiftyEvaluation(subscription,response.getStatus(),response.getMessage(),evaluatedAt);
+            subscription.setLastEvaluatedAt(evaluatedAt);
             subscription.setLastEvaluationStatus(response.getStatus());
             subscription.setLastMessage(response.getMessage());
             if (response.getTradeRequest() != null && (!"duplicate".equalsIgnoreCase(response.getStatus()) || matchingDailyDuplicate(subscription, response))) {
@@ -235,7 +259,8 @@ public class StrategySubscriptionService {
             repository.recordEvaluationIfActive(subscription);
             log.info("Strategy subscription {} waiting for a fresh market decision", subscription.getId());
         } catch (Exception e) {
-            subscription.setLastEvaluatedAt(LocalDateTime.now());
+            auditNiftyEvaluation(subscription,"error",e.getMessage(),LocalDateTime.now(MARKET_ZONE));
+            subscription.setLastEvaluatedAt(LocalDateTime.now(MARKET_ZONE));
             subscription.setLastEvaluationStatus("error");
             subscription.setLastMessage(e.getMessage());
             repository.recordEvaluationIfActive(subscription);

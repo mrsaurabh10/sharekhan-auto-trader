@@ -55,6 +55,39 @@ class NiftyThreeCandlePaperBrokerTest {
                 .status(TriggeredTradeStatus.EXECUTED).entryAt(now.minusMinutes(1)).build();
         when(em.find(TriggeredTradeSetupEntity.class,22L,LockModeType.PESSIMISTIC_WRITE)).thenReturn(t);rows.add(t);return t;
     }
+    @Test void entryAcceptsBookReceivedDuringSnapshotRead() {
+        var moving=new NiftyThreeCandleTimingTest.MovingClock(instant);
+        var timed=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,moving);
+        when(quotes.getSnapshot(123)).thenAnswer(c->{moving.at=instant.plusMillis(1);return Optional.of(book(100,101,65,65,moving.at));});
+        assertEquals(11L,timed.open(r,signal,option,20000,List.of(option)).getId());
+    }
+    @Test void exitAcceptsBookReceivedDuringSnapshotRead() {
+        var t=position();t.setExitReason("NIFTY_3C_STOP");
+        var moving=new NiftyThreeCandleTimingTest.MovingClock(instant);
+        var timed=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,moving);
+        when(quotes.getSnapshot(123)).thenAnswer(c->{moving.at=instant.plusMillis(1);return Optional.of(book(100,101,65,65,moving.at));});
+        timed.evaluate(22L);
+        assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,t.getStatus());
+        assertEquals(100,t.getExitPrice());
+    }
+    @Test void entryCannotUseWindowThatExpiresDuringPriorTradeLookup() {
+        var moving=new NiftyThreeCandleTimingTest.MovingClock(instant);
+        var timed=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,moving);
+        when(trades.findBySource(NiftyThreeCandleRules.SOURCE)).thenAnswer(c->{moving.at=instant.plusSeconds(240);return List.of();});
+        var error=assertThrows(IllegalStateException.class,()->timed.open(r,signal,option,20000,List.of(option)));
+        assertTrue(error.getMessage().contains("window has expired"));
+        verify(requests,never()).save(any());
+    }
+    @Test void entryRechecksDeadlineAndFreshnessAfterRunLocks() {
+        var moving=new NiftyThreeCandleTimingTest.MovingClock(instant);
+        var timed=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,moving);
+        doAnswer(c->{((TriggerRequest)c.getArgument(0)).setStrategyRunId("run-1");moving.at=instant.plusSeconds(6);return null;}).when(runs).attach(any());
+        assertTrue(assertThrows(IllegalStateException.class,()->timed.open(r,signal,option,20000,List.of(option))).getMessage().contains("quotes expired"));
+        moving.at=instant;
+        doAnswer(c->{((TriggerRequest)c.getArgument(0)).setStrategyRunId("run-1");moving.at=instant.plusSeconds(240);return null;}).when(runs).attach(any());
+        assertTrue(assertThrows(IllegalStateException.class,()->timed.open(r,signal,option,20000,List.of(option))).getMessage().contains("window has expired"));
+        verify(requests,never()).save(any());
+    }
     @Test void entryBuysAskAndRecordsSpotBracketSeparatelyWithLotMetadata(){
         var req=open();assertEquals(65L,req.getQuantity());assertEquals(23002,req.getEntryPrice());assertEquals(23024,req.getTarget1());
         var capture=org.mockito.ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(trades).saveAndFlush(capture.capture());

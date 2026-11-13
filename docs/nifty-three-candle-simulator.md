@@ -100,3 +100,18 @@ concurrent-entry test cover the new behavior. Shared strategy, run, price-trigge
 simulator and broker-entry tests cover the integration. Java 21 Maven offline build,
 JavaScript syntax checks and a manual code review are required before rollout.
 No SonarQube scan is requested for this project.
+
+## Entry diagnostics and quote timing
+
+Quote freshness uses a clock sampled after reading the quote snapshots, including
+paper entry and exit. A tick received during candle loading is eligible under the
+same five-second limit. The fourth-candle deadline and snapshot freshness are
+checked again after entry locks; slow data or locking never extends that window.
+
+The subscription displays separate warmup counts, candle gaps, mixed candle
+colors, EMA direction, expired-window, spot-quote and option-book blockers.
+`trade_audit_events` retains `ENTRY_EVALUATION` events for this template when the
+status/reason changes and at the first evaluation in each five-minute interval.
+Events include subscription and broker IDs; unchanged two-second polls do not
+create duplicate audit rows. Audit failure does not block evaluation. Historical
+candle replay alone does not establish that executable depth was available.
