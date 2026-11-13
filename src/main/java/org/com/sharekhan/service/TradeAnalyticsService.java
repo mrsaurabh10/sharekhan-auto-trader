@@ -690,6 +690,7 @@ public class TradeAnalyticsService {
                 .sorted(Comparator.comparing(TriggeredTradeSetupEntity::getExitedAt).reversed())
                 .limit(10)
                 .map(trade -> TradeAnalyticsResponse.RecentClosedTrade.builder()
+                        .entryAction(org.com.sharekhan.util.TradeSide.entry(trade))
                         .id(trade.getId())
                         .symbol(trade.getSymbol())
                         .quantity(trade.getQuantity())

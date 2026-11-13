@@ -48,7 +48,7 @@
     rows.forEach(row => { const tr = node('tr'); columns.forEach(c => { const td = node('td', null, c[2]); const value = typeof c[1] === 'function' ? c[1](row) : row[c[1]]; if (value instanceof Node) td.append(value); else td.textContent = value == null ? '—' : String(value); tr.append(td); }); if (action) { const td = node('td'); action(row, td); tr.append(td); } body.append(tr); });
     t.append(body); container.append(t);
   }
-  const orderColumns = [['Instrument', 'symbol'], ['Side', r=>r.entryAction || 'BUY'], ['Exchange','exchange'], ['Quantity', row => row.lots ? row.lots+' lots' : row.quantity], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => window.StrategyRunView?.statusTag(row.status || 'PENDING',row.reason) || badge(row.status || 'PENDING')], ['Source', r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified']];
+  const orderColumns = [['Instrument', 'symbol'], ['Side', r=>r.entryAction || 'BUY'], ['Exchange','exchange'], ['Quantity', row => row.lots ? window.StrategyRunView.signedQuantity(row,row.lots)+' lots' : window.StrategyRunView.signedQuantity(row)], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => window.StrategyRunView?.statusTag(row.status || 'PENDING',row.reason) || badge(row.status || 'PENDING')], ['Source', r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified']];
   function readyBrokers() { return state.brokers.filter(b => ['Sharekhan','Dhan'].includes(b.brokerName) && b.connected && b.active && b.tradingEnabled); }
   function brokerLabel(b) { return b.brokerName + ' · ' + (b.clientCode || 'Account ' + b.id); }
   function refreshSelectors() {
@@ -257,7 +257,7 @@
       if (!await confirmAction('Cancel this order request?')) return;
       await api('/api/trades/cancel-request/'+row.id,'POST',{}); notify('Request cancelled.'); await loadOrders();
     })));
-    table($('#executions'),[['Instrument','symbol'],['Side',r=>r.entryAction || 'BUY'],['Source',r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified'],['Quantity','quantity'],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Est. costs',r=>money(r.totalTradeCost),'numeric'],['Est. net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>window.StrategyRunView?.statusTag(r.status,r.reason) || badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
+    table($('#executions'),[['Instrument','symbol'],['Side',r=>r.entryAction || 'BUY'],['Source',r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified'],['Quantity',r=>window.StrategyRunView.signedQuantity(r)],['Entry ₹',r=>r.actualEntryPrice || r.entryPrice],['Stop-loss ₹','stopLoss'],['Target ₹','target1'],['Running / booked P&L',r=>positionPnlValue(r),'numeric'],['Est. costs',r=>money(r.totalTradeCost),'numeric'],['Est. net P&L',r=>pnlValue(r.effectivePnl),'numeric'],['Status',r=>window.StrategyRunView?.statusTag(r.status,r.reason) || badge(r.status)],['Order ID','orderId']],state.executions,(row,td)=>{
       window.PersonalTradeActions.mount(td, row, {api, refresh:loadOrders, notify, button});
     });
     $('#requestPage').textContent='Page '+(state.requestPage+1); $('#executionPage').textContent='Page '+(state.executionPage+1);
@@ -407,7 +407,7 @@
     }
     table($('#symbolAnalytics'),[['Instrument','symbol'],['Closed trades','closedCount','numeric'],['Gross P&L',r=>pnlValue(r.realizedPnl),'numeric'],['Win rate',r=>winRate(r.winRate),'numeric']],data.bySymbol || []);
     table($('#dayAnalytics'),[['Date','date'],['Closed trades','closedCount','numeric'],['Gross P&L',r=>pnlValue(r.realizedPnl),'numeric'],['Cumulative',r=>pnlValue(r.cumulativeRealizedPnl),'numeric']],data.byDay || []);
-    table($('#closedTrades'),[['Instrument','symbol'],['Quantity','quantity','numeric'],['Entry',r=>money(r.entryPrice),'numeric'],['Exit',r=>money(r.exitPrice),'numeric'],['Gross P&L',r=>pnlValue(r.pnl),'numeric'],['Exit reason','exitReason']],data.recentClosedTrades || []);
+    table($('#closedTrades'),[['Instrument','symbol'],['Quantity',r=>window.StrategyRunView.signedQuantity(r),'numeric'],['Entry',r=>money(r.entryPrice),'numeric'],['Exit',r=>money(r.exitPrice),'numeric'],['Gross P&L',r=>pnlValue(r.pnl),'numeric'],['Exit reason','exitReason']],data.recentClosedTrades || []);
     renderEquityChart(data.byDay || []);
   }
   $('#analyticsForm').addEventListener('submit',event=>{event.preventDefault();busy(event.target.querySelector('button'),loadAnalytics);});

@@ -141,6 +141,7 @@ public class TradeAnalyticsResponse {
     @Data
     @Builder
     public static class RecentClosedTrade {
+        private String entryAction;
         private Long id;
         private String symbol;
         private Long quantity;

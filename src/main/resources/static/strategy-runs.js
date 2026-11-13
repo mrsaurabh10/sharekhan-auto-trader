@@ -4,6 +4,11 @@
   const node=(tag,text,cls)=>{const e=document.createElement(tag);if(text!=null)e.textContent=text;if(cls)e.className=cls;return e;};
   const money=value=>value==null?'Unavailable':'₹'+Number(value).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
   const sourceName=value=>typeof value==='string' && value.trim() ? value.trim() : 'Unspecified';
+  function signedQuantity(row,value=row.quantity ?? row.qty) {
+    if(value==null || value==='' || !Number.isFinite(Number(value)))return value ?? '—';
+    const action=row.entryAction ?? (String(row.source || '').toLowerCase()==='spot-atr-pdl-bigtradeplus'?'SELL':'BUY');
+    return Math.abs(Number(value))*(String(action).trim().toUpperCase()==='SELL'?-1:1);
+  }
   function sourceLabel(value) {
     const source=sourceName(value);
     const labels={FNO_0925_MOVER_ATR_BREAKOUT:'F&O 09:25',STOCK_0925_MOVER_ATR_BREAKOUT:'Stocks 09:25',EXPIRY_LONG_STRADDLE:'Expiry straddle'};
@@ -78,7 +83,7 @@
           const wrap=node('div',null,'table-wrap'),table=node('table'),head=node('tr');
           for(const label of ['Trade','Symbol','Leg','Quantity','Actual entry','Exit','Status','Gross P&L','Source'])head.append(node('th',label));
           table.append(head);
-          for(const leg of view.positions) {const row=node('tr');for(const value of [leg.id,leg.symbol,[leg.strikePrice,leg.optionType,leg.expiry].filter(Boolean).join(' '),leg.quantity,money(leg.actualEntryPrice),money(leg.exitPrice),leg.status,money(leg.pnl)])row.append(node('td',value));const sourceCell=node('td');sourceCell.append(sourceTag(leg.source));row.append(sourceCell);table.append(row);}
+          for(const leg of view.positions) {const row=node('tr');for(const value of [leg.id,leg.symbol,[leg.strikePrice,leg.optionType,leg.expiry].filter(Boolean).join(' '),signedQuantity(leg),money(leg.actualEntryPrice),money(leg.exitPrice),leg.status,money(leg.pnl)])row.append(node('td',value));const sourceCell=node('td');sourceCell.append(sourceTag(leg.source));row.append(sourceCell);table.append(row);}
           wrap.append(table);details.append(wrap);container.append(details);
         }
         if(!result.content.length)container.append(node('p','No tracked strategy instances yet. New strategy entries will appear here.','muted'));
@@ -116,5 +121,5 @@
     return enabled?risk:null;
   }
   function resetRisk(container) {if(container)for(const input of container.querySelectorAll('[data-risk-field]'))if(input.tagName==='SELECT')input.value='TOTAL';else input.value='';}
-  window.StrategyRunView={mount,riskForm,averagingHelp,readRisk,resetRisk,sourceTag,statusTag,timestamp};
+  window.StrategyRunView={mount,riskForm,averagingHelp,readRisk,resetRisk,sourceTag,statusTag,timestamp,signedQuantity};
 })();
