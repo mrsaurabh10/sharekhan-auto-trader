@@ -136,7 +136,21 @@ public class ShoonyaQuoteService {
 
     /** Read-only exact snapshot for strict consumers; never logs in or refreshes credentials. */
     public record ExactQuote(LiveQuote quote, String exchange, java.time.Instant receivedAt,
-                             java.time.Instant providerUpdatedAt) { }
+                             java.time.Instant providerUpdatedAt, java.time.Instant providerSnapshotAt) {
+        public ExactQuote(LiveQuote quote,String exchange,java.time.Instant receivedAt,java.time.Instant providerUpdatedAt){
+            this(quote,exchange,receivedAt,providerUpdatedAt,providerUpdatedAt);
+        }
+    }
+
+    /** GetQuotes is a current REST snapshot; lut is the last change, not the response time. */
+    static java.time.Instant snapshotTime(JSONObject raw,java.time.Instant lastChange){
+        if(!raw.has("request_time"))return lastChange;
+        try{return java.time.LocalDateTime.parse(raw.getString("request_time"),
+                java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss dd-MM-uuuu",java.util.Locale.ROOT)
+                        .withResolverStyle(java.time.format.ResolverStyle.STRICT))
+                .atZone(java.time.ZoneId.of("Asia/Kolkata")).toInstant();}
+        catch(RuntimeException invalid){return null;}
+    }
 
     public Optional<ExactQuote> getExactQuote(ScriptMasterEntity script) {
         var mapped = instrumentMasterService.resolveScript(script);
@@ -155,7 +169,7 @@ public class ShoonyaQuoteService {
                 try { updated = java.time.Instant.ofEpochSecond(Long.parseLong(raw.optString("lut"))); }
                 catch (RuntimeException invalidTime) { return Optional.empty(); }
             }
-            return Optional.of(new ExactQuote(quote, expected.getExchange(), java.time.Instant.now(), updated));
+            return Optional.of(new ExactQuote(quote, expected.getExchange(), java.time.Instant.now(), updated,snapshotTime(raw,updated)));
         } catch (RuntimeException unavailable) {
             return Optional.empty();
         }

@@ -48,5 +48,16 @@ class BatmanBooksTest {
         var q=books.book(1,"NF",false,130);assertThat(q.getBookSource()).isEqualTo("SHOONYA");assertThat(q.getLastBookAt()).isEqualTo(updated);
         assertThat(books.book(1,"NF",false,130)).isSameAs(q);verify(shoonya,times(1)).getExactQuote(script);
     }
+    @Test void unchangedStandingBookCanBeCurrentWhenProviderConfirmsFreshSnapshot(){
+        var snapshot=Instant.now().minusSeconds(1);
+        when(shoonya.getExactQuote(script)).thenReturn(Optional.of(new ShoonyaQuoteService.ExactQuote(
+            new ShoonyaQuoteService.LiveQuote("OPTION","1","OPTION","1",100d,99d,100d,130d,130d),"NFO",Instant.now(),Instant.now().minusSeconds(300),snapshot)));
+        assertThat(books.book(1,"NF",false,130).getLastBookAt()).isEqualTo(snapshot);
+    }
+    @Test void staleProviderSnapshotIsRejectedEvenWhenLastChangeLooksRecent(){
+        when(shoonya.getExactQuote(script)).thenReturn(Optional.of(new ShoonyaQuoteService.ExactQuote(
+            new ShoonyaQuoteService.LiveQuote("OPTION","1","OPTION","1",100d,99d,100d,130d,130d),"NFO",Instant.now(),Instant.now(),Instant.now().minusSeconds(6))));
+        assertThat(books.book(1,"NF",false,130)).isNull();
+    }
     @Test void neverAcceptsLtpOnlyOrNanQuantity(){assertThat(BatmanBooks.usable(q("SHAREKHAN_WS",Double.NaN,Instant.now()),Instant.now(),true,65)).isFalse();}
 }

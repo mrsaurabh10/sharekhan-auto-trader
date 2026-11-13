@@ -51,11 +51,11 @@ public class BatmanBooks {
             var exact=shoonya.getExactQuote(script).orElse(null);
             if(exact!=null){
                 var q=exact.quote();now=Instant.now();String expected="NF".equals(exchange)?"NFO":"BF".equals(exchange)?"BFO":"";
-                if(q!=null&&q.hasConfirmedIdentity()&&expected.equals(exact.exchange())&&recent(exact.providerUpdatedAt(),now)&&recent(exact.receivedAt(),now)){
+                if(q!=null&&q.hasConfirmedIdentity()&&expected.equals(exact.exchange())&&(exact.providerUpdatedAt()==null||!exact.providerUpdatedAt().isAfter(now))&&recent(exact.providerSnapshotAt(),now)&&recent(exact.receivedAt(),now)){
                     var snapshot=QuoteCacheService.QuoteSnapshot.builder().scripCode(code).bookSource("SHOONYA").bookExchange(exchange)
                             .bookProviderIdentity(q.returnedToken()+":"+q.returnedTradingSymbol()).coherentBook(true)
-                            .bestBid(q.bestBid()).bestAsk(q.bestAsk()).bidQuantity(q.bidQuantity()).askQuantity(q.askQuantity()).lastBookAt(exact.providerUpdatedAt()).updatedAt(exact.receivedAt()).build();
-                    issued.put(code,new Issued(now,exact.providerUpdatedAt(),snapshot));
+                            .bestBid(q.bestBid()).bestAsk(q.bestAsk()).bidQuantity(q.bidQuantity()).askQuantity(q.askQuantity()).lastBookAt(exact.providerSnapshotAt()).updatedAt(exact.receivedAt()).build();
+                    issued.put(code,new Issued(now,exact.providerSnapshotAt(),snapshot));
                 }
             }
             old=issued.get(code);

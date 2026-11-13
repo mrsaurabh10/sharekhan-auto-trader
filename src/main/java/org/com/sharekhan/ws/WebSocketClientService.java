@@ -146,51 +146,7 @@ public class WebSocketClientService  {
         try {
             JsonNode json = OBJECT_MAPPER.readTree(message);
             if (json.has("message") && "feed".equalsIgnoreCase(json.get("message").asText())) {
-                 JsonNode data = json.has("data") ? json.get("data") : null;
-                 if (data == null) {
-                    log.debug("Received feed message without data");
-                 } else {
-                    // Try various common field names for scripCode and ltp.
-                    Integer scripCode = extractFirstInt(data,
-                            "scripCode", "ScripCode", "scripcode", "scrip_code",
-                            "scrip", "token", "instrumentToken", "instrument_token");
-
-                    // ltp may be number or string under 'ltp' or 'last_price' or 'lastPrice'
-                    Double ltp = extractFirstDouble(data, "ltp", "LTP", "last_price", "lastPrice", "lastTradedPrice");
-                    BidAsk bidAsk = QuotePayloadParser.extractBestBidAsk(data);
-                    Double bestBid = bidAsk.bid();
-                    Double bestAsk = bidAsk.ask();
-
-                    if (scripCode == null || scripCode == 0) {
-                        log.debug("Feed message missing scripCode");
-                    } else if (ltp == null && bestBid == null && bestAsk == null) {
-                        log.debug("Feed message for {} missing price fields", scripCode);
-                    } else {
-                        boolean depthLogged = false;
-                        JsonNode depthNode = data.get("depth");
-                        if (depthNode != null && !depthNode.isNull()) {
-                            depthLogged = logDepthPayload(scripCode, bestBid, bestAsk, depthNode);
-                        }
-                        if ((bestBid == null || bestAsk == null) && !depthLogged) {
-                            logQuotePayload(scripCode, bestBid, bestAsk, data);
-                        }
-                        if ((bestBid != null || bestAsk != null) && log.isDebugEnabled()) {
-                            log.debug("Depth update - scripCode={} bid={} ask={} ltp={}",
-                                    scripCode,
-                                    bestBid != null ? bestBid : "NA",
-                                    bestAsk != null ? bestAsk : "NA",
-                                    ltp != null ? ltp : "NA");
-                        }
-                        // Independent collector; quote ingestion/order monitoring must survive a persistence error.
-                        try {
-                            eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.Tick(data,java.time.Instant.now(),json.path("timestamp").asText(null)));
-                        } catch (Exception collectorError) {
-                            log.warn("MCX live candle observation failed for scrip {} ({})",scripCode,collectorError.getClass().getSimpleName());
-                        }
-                        var quantities=QuotePayloadParser.extractQuantities(data,bidAsk);
-                        processLtpUpdate(scripCode, ltp, bestBid, bestAsk, QuotePayloadParser.exchange(data),quantities.bid(),quantities.ask());
-                    }
-                }
+                for(JsonNode row:feedRows(json.get("data")))processFeed(row,json.path("timestamp").asText(null));
             } else if (json.has("message")  && "ack".equalsIgnoreCase(json.get("message").asText()) ) {
                 JsonNode data = json.get("data");
                 if (data == null) {
@@ -206,6 +162,57 @@ public class WebSocketClientService  {
          } catch (Exception e) {
             log.error("❌ Failed to parse WebSocket message", e);
          }
+    }
+
+    static java.util.List<JsonNode> feedRows(JsonNode data){
+        if(data==null)return java.util.List.of();
+        if(data.isObject())return java.util.List.of(data);
+        java.util.List<JsonNode> rows=new java.util.ArrayList<>();
+        if(data.isArray())for(JsonNode row:data)if(row.isObject())rows.add(row);
+        return rows;
+    }
+
+    private void processFeed(JsonNode data,String providerTimestamp){
+        // Try various common field names for scripCode and ltp.
+        Integer scripCode = extractFirstInt(data,
+                "scripCode", "ScripCode", "scripcode", "scrip_code",
+                "scrip", "token", "instrumentToken", "instrument_token");
+
+        // ltp may be number or string under 'ltp' or 'last_price' or 'lastPrice'
+        Double ltp = extractFirstDouble(data, "ltp", "LTP", "last_price", "lastPrice", "lastTradedPrice");
+        BidAsk bidAsk = QuotePayloadParser.extractBestBidAsk(data);
+        Double bestBid = bidAsk.bid();
+        Double bestAsk = bidAsk.ask();
+
+        if (scripCode == null || scripCode == 0) {
+            log.debug("Feed message missing scripCode");
+        } else if (ltp == null && bestBid == null && bestAsk == null) {
+            log.debug("Feed message for {} missing price fields", scripCode);
+        } else {
+            boolean depthLogged = false;
+            JsonNode depthNode = data.get("depth");
+            if (depthNode != null && !depthNode.isNull()) {
+                depthLogged = logDepthPayload(scripCode, bestBid, bestAsk, depthNode);
+            }
+            if ((bestBid == null || bestAsk == null) && !depthLogged) {
+                logQuotePayload(scripCode, bestBid, bestAsk, data);
+            }
+            if ((bestBid != null || bestAsk != null) && log.isDebugEnabled()) {
+                log.debug("Depth update - scripCode={} bid={} ask={} ltp={}",
+                        scripCode,
+                        bestBid != null ? bestBid : "NA",
+                        bestAsk != null ? bestAsk : "NA",
+                        ltp != null ? ltp : "NA");
+            }
+            // Independent collector; quote ingestion/order monitoring must survive a persistence error.
+            try {
+                eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.Tick(data,java.time.Instant.now(),providerTimestamp));
+            } catch (Exception collectorError) {
+                log.warn("MCX live candle observation failed for scrip {} ({})",scripCode,collectorError.getClass().getSimpleName());
+            }
+            var quantities=QuotePayloadParser.extractQuantities(data,bidAsk);
+            processLtpUpdate(scripCode, ltp, bestBid, bestAsk, QuotePayloadParser.exchange(data),quantities.bid(),quantities.ask());
+        }
     }
 
     private boolean logDepthPayload(Integer scripCode,
@@ -406,7 +413,7 @@ public class WebSocketClientService  {
                 log.info("🔌 WebSocket session closed.");
             }
         } catch (IOException e) {
-            log.error("❌ Error while closing WebSocket", e);
+            log.warn("SHAREKHAN_WS_CLOSE_FAILED | type={}",e.getClass().getSimpleName());
         }
     }
 
@@ -470,7 +477,7 @@ public class WebSocketClientService  {
     @OnError
     public void onError(Session session, Throwable thr) {
         eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
-        log.error("❗ WebSocket error", thr);
+        log.warn("SHAREKHAN_WS_ERROR | type={}",thr.getClass().getSimpleName());
     }
 
 
@@ -481,7 +488,7 @@ public class WebSocketClientService  {
     @OnClose
     public void onClose(Session session, CloseReason closeReason) {
         eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
-        log.warn("🔌 WebSocket closed: {}", closeReason);
+        log.warn("SHAREKHAN_WS_CLOSED | code={}",closeReason.getCloseCode().getCode());
 
         LocalTime now = LocalTime.now(ZoneId.of("Asia/Kolkata"));
         if (!now.isBefore(LocalTime.of(9, 10)) && !now.isAfter(LocalTime.of(15, 35))) {
@@ -490,7 +497,7 @@ public class WebSocketClientService  {
                 Thread.sleep(5000); // brief pause before reconnecting
                 this.connect();
             } catch (Exception e) {
-                log.error("❌ Immediate reconnect failed", e);
+                log.warn("SHAREKHAN_WS_RECONNECT_FAILED | type={}",e.getClass().getSimpleName());
             }
         }
     }

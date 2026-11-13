@@ -24,6 +24,15 @@ class QuotePayloadParserTest {
         var q=QuotePayloadParser.extractQuantities(data,QuotePayloadParser.extractBestBidAsk(data));assertNull(q.bid());assertNull(q.ask());
     }
 
+    @Test void liveSharekhanOffQtyAndInitialFeedBatchAreParsed() throws Exception {
+        var batch=MAPPER.readTree("[{\"exchangeCode\":\"NF\",\"scripCode\":64159,\"bidPrice\":113.2,\"bidQty\":65,\"offPrice\":114.2,\"offQty\":130}]");
+        var rows=WebSocketClientService.feedRows(batch);assertEquals(1,rows.size());
+        var book=QuotePayloadParser.extractBestBidAsk(rows.get(0));var size=QuotePayloadParser.extractQuantities(rows.get(0),book);
+        assertEquals(113.2,book.bid());assertEquals(114.2,book.ask());assertEquals(65,size.bid());assertEquals(130,size.ask());
+        assertEquals("NF",QuotePayloadParser.exchange(rows.get(0)));
+        assertEquals(1,WebSocketClientService.feedRows(rows.get(0)).size());
+        assertTrue(WebSocketClientService.feedRows(null).isEmpty());assertTrue(WebSocketClientService.feedRows(MAPPER.readTree("\"not a quote\"")).isEmpty());
+    }
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
     @Test

@@ -113,3 +113,17 @@ provider's documented `depth` mode with its own reference counts; existing
 `full`/LTP subscribers keep their existing behavior. A reconnect that clears
 subscription references causes Batman to reacquire its depth feed on the next
 book preparation/read.
+
+For Shoonya GetQuotes, freshness uses the provider's `request_time` (IST) and the
+local receipt time, both within five seconds. `lut` records the last change and
+can be older for an unchanged standing book. A missing response timestamp falls
+back to the original strict last-change check; a malformed timestamp is rejected.
+Identity, crossed-book, spread and executable-side quantity checks remain in
+force. This matches the provider's description of GetQuotes as a current REST
+snapshot: https://www.shoonya.com/api-documentation/get-quotes .
+
+Live Sharekhan probes found an initial array of feed rows followed by individual
+rows, and `offQty` paired with `offPrice`. Both are parsed now. The existing
+Sharekhan session still closes with provider error 103 (Invalid Api Key), even
+using the SDK's token-only connection format; a valid stored expiry does not
+prove provider acceptance. No credential or account settings were changed.
