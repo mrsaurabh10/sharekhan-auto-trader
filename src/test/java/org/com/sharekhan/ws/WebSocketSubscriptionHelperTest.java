@@ -16,6 +16,15 @@ class WebSocketSubscriptionHelperTest {
         helper = new WebSocketSubscriptionHelper(connector);
     }
 
+    @Test void explicitDepthFeedUsesDocumentedModeAndSeparateReferences(){
+        helper.subscribeToScripDepth("NF64159");helper.subscribeToScripDepth("NF64159");
+        assertTrue(helper.hasDepthFeed("NF64159"));
+        assertEquals(1,connector.lastMessages.size());
+        assertEquals("{\"action\":\"feed\",\"key\":[\"depth\"],\"value\":[\"NF64159\"]}",connector.lastMessages.get(0));
+        helper.subscribeToScrip("NF64159");assertFalse(helper.unsubscribeFromScripDepth("NF64159"));
+        assertTrue(helper.unsubscribeFromScripDepth("NF64159"));assertFalse(helper.hasDepthFeed("NF64159"));
+        assertTrue(helper.getActiveScripKeys().contains("NF64159"));
+    }
     @Test
     void firstDepthSubscriptionSendsFullFeed() {
         boolean newSub = helper.subscribeToScrip("NC22");

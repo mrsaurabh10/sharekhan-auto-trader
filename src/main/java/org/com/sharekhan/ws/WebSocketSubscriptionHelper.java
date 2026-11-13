@@ -50,6 +50,10 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         return subscribe(scripKey, "full");
     }
 
+    @Override public boolean subscribeToScripDepth(String key){return subscribe(key,"depth");}
+    @Override public boolean unsubscribeFromScripDepth(String key){return unsubscribe(key,"depth");}
+    @Override public boolean hasDepthFeed(String key){return refCounts.containsKey(refKey("depth",key));}
+
     @Override
     public boolean subscribeToScripLtp(String scripKey) {
         return subscribe(scripKey, "ltp");

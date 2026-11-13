@@ -105,3 +105,11 @@ Shoonya poll cannot overwrite a fresh Sharekhan book. Partial Sharekhan messages
 retain the same coherence/freshness rules. Administrators can inspect currently
 warmed contracts at `GET /api/strategies/batman-books` without fetching quotes or
 placing orders.
+
+The Sharekhan stream connection decrypts persisted API keys and URL-encodes both
+credentials. Connection errors log only their exception type, because transport
+exceptions can contain authenticated URLs. Batman explicitly requests the
+provider's documented `depth` mode with its own reference counts; existing
+`full`/LTP subscribers keep their existing behavior. A reconnect that clears
+subscription references causes Batman to reacquire its depth feed on the next
+book preparation/read.

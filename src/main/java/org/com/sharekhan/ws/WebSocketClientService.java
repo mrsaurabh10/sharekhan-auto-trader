@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class WebSocketClientService  {
 
     private final TokenStoreService tokenStoreService;
+    private final org.com.sharekhan.util.CryptoService cryptoService;
     private final PriceTriggerService priceTriggerService;
     private final TradeExecutionService tradeExecutionService;
     private final WebSocketConnector webSocketConnector;
@@ -80,13 +81,22 @@ public class WebSocketClientService  {
                  return;
             }
 
-            String wsUrl = String.format("wss://stream.sharekhan.com/skstream/api/stream?ACCESS_TOKEN=%s&API_KEY=%s", accessToken, apiKey);
+            URI wsUri = connectionUri(accessToken,apiKey,cryptoService);
             WebSocketContainer container = ContainerProvider.getWebSocketContainer();
-            container.connectToServer(this, new URI(wsUrl));
+            container.connectToServer(this, wsUri);
 
         } catch (Exception e) {
-            log.error("❌ Failed to connect WebSocket", e);
+            log.warn("SHAREKHAN_WS_CONNECT_FAILED | type={}", e.getClass().getSimpleName());
         }
+    }
+
+    static URI connectionUri(String accessToken,String storedApiKey,org.com.sharekhan.util.CryptoService crypto){
+        String apiKey;
+        try{apiKey=crypto.decrypt(storedApiKey);}catch(RuntimeException legacyPlaintext){apiKey=storedApiKey;}
+        if(apiKey==null||apiKey.isBlank()||accessToken==null||accessToken.isBlank())throw new IllegalArgumentException("Existing Sharekhan stream credentials required");
+        return URI.create("wss://stream.sharekhan.com/skstream/api/stream?ACCESS_TOKEN="
+                +java.net.URLEncoder.encode(accessToken,java.nio.charset.StandardCharsets.UTF_8)+"&API_KEY="
+                +java.net.URLEncoder.encode(apiKey,java.nio.charset.StandardCharsets.UTF_8));
     }
 
     @OnOpen

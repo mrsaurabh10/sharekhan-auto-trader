@@ -19,15 +19,15 @@ class BatmanBooksTest {
     final MStockDepthService mstock=mock(MStockDepthService.class);
     final BatmanBooks books=new BatmanBooks(cache,scripts,shoonya,feeds,mstock);
     final ScriptMasterEntity script=ScriptMasterEntity.builder().scripCode(1).exchange("NF").build();
-    @BeforeEach void setup(){when(scripts.findByScripCode(1)).thenReturn(script);when(cache.getSharekhanSnapshot(1)).thenReturn(Optional.empty());}
+    @BeforeEach void setup(){when(feeds.hasDepthFeed(anyString())).thenReturn(true);when(scripts.findByScripCode(1)).thenReturn(script);when(cache.getSharekhanSnapshot(1)).thenReturn(Optional.empty());}
     QuoteCacheService.QuoteSnapshot q(String source,double qty,Instant time){return QuoteCacheService.QuoteSnapshot.builder().scripCode(1)
         .bookSource(source).bookExchange("NF").bookProviderIdentity("scrip:1").coherentBook(true)
         .bestBid(99d).bestAsk(100d).bidQuantity(qty).askQuantity(qty).lastBookAt(time).build();}
     @Test void warmsAllLegsAndRetainsOnlyOneReferencePerKey(){
         var two=ScriptMasterEntity.builder().scripCode(2).exchange("NF").build();
         books.prepare(List.of(script,two));books.prepare(List.of(script,two));
-        verify(feeds,times(1)).subscribeToScrip("NF1");verify(feeds,times(1)).subscribeToScrip("NF2");
-        books.close();verify(feeds).unsubscribeFromScrip("NF1");verify(feeds).unsubscribeFromScrip("NF2");
+        verify(feeds,times(1)).subscribeToScripDepth("NF1");verify(feeds,times(1)).subscribeToScripDepth("NF2");
+        books.close();verify(feeds).unsubscribeFromScripDepth("NF1");verify(feeds).unsubscribeFromScripDepth("NF2");
     }
     @Test void freshSharekhanBookAvoidsRest(){var q=q("SHAREKHAN_WS",130,Instant.now());when(cache.getSharekhanSnapshot(1)).thenReturn(Optional.of(q));assertThat(books.book(1,"NF",false,130)).isSameAs(q);verifyNoInteractions(shoonya);}
     @Test void insufficientSharekhanDepthFallsBackToMstockFullBook(){

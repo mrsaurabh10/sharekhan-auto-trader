@@ -32,7 +32,7 @@ public class BatmanBooks {
     private void watch(ScriptMasterEntity script){
         if(script==null||script.getScripCode()==null)return;
         String key=script.getExchange()+script.getScripCode();
-        if(!leases.containsKey(key)){feeds.subscribeToScrip(key);leases.put(key,Instant.now());}
+        if(!leases.containsKey(key)||!feeds.hasDepthFeed(key)){feeds.subscribeToScripDepth(key);leases.put(key,Instant.now());}
         else leases.put(key,Instant.now());
         mstock.watch(script);
     }
@@ -86,9 +86,9 @@ public class BatmanBooks {
     private static boolean recent(Instant t,Instant now){return t!=null&&!t.isAfter(now)&&!t.isBefore(now.minusSeconds(5));}
     @Scheduled(fixedDelay=10000) public synchronized void releaseIdle(){
         var cutoff=Instant.now().minusSeconds(60);
-        for(var key:new ArrayList<>(leases.keySet()))if(leases.get(key).isBefore(cutoff)){feeds.unsubscribeFromScrip(key);leases.remove(key);}
+        for(var key:new ArrayList<>(leases.keySet()))if(leases.get(key).isBefore(cutoff)){feeds.unsubscribeFromScripDepth(key);leases.remove(key);}
         issued.entrySet().removeIf(e->e.getValue().attempted().isBefore(cutoff));
         reasons.keySet().removeIf(code->!issued.containsKey(code));
     }
-    @PreDestroy public synchronized void close(){for(var key:leases.keySet())feeds.unsubscribeFromScrip(key);leases.clear();}
+    @PreDestroy public synchronized void close(){for(var key:leases.keySet())feeds.unsubscribeFromScripDepth(key);leases.clear();}
 }
