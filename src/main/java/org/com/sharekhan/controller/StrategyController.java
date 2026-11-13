@@ -41,7 +41,7 @@ public class StrategyController {
     /** Explicit one-call Simulator catch-up. Does not alter the recurring 09:20 schedule. */
     @PostMapping("/subscriptions/{id}/batman-entry-today")
     public ResponseEntity<?> enterBatmanToday(@PathVariable Long id,@RequestParam @org.springframework.format.annotation.DateTimeFormat(iso=org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate tradingDay,
-            @RequestParam(required=false) String retryOfRunId,@RequestParam(defaultValue="false") boolean marketEntry) {
+            @RequestParam(required=false) String retryOfRunId,@RequestParam(defaultValue="false") boolean marketEntry,@RequestParam(defaultValue="false") boolean resumeNoOrder) {
         if(!currentUserService.isAdmin())throw new org.springframework.security.access.AccessDeniedException("Administrator required");
         var now=java.time.LocalDate.now(org.com.sharekhan.strategy.batman.BatmanRules.IST);
         if(!now.equals(tradingDay))return ResponseEntity.badRequest().body(Map.of("error","Explicit current trading day required"));
@@ -53,7 +53,7 @@ public class StrategyController {
         request.setSymbol(sub.getSymbol());request.setLots(sub.getLots());request.setIntraday(false);
         request.setBatmanManualEntryDay(tradingDay);
         if(marketEntry && retryOfRunId==null)return ResponseEntity.badRequest().body(Map.of("error","Market-style Simulator entry requires the reviewed aborted run"));
-        request.setBatmanRetryOfRunId(retryOfRunId);request.setBatmanMarketEntry(marketEntry);
+        request.setBatmanRetryOfRunId(retryOfRunId);request.setBatmanMarketEntry(marketEntry);request.setBatmanResumeNoOrder(resumeNoOrder);
         var response=strategyTemplateService.apply(request);
         sub.setLastEvaluatedAt(java.time.LocalDateTime.now(org.com.sharekhan.strategy.batman.BatmanRules.IST));
         sub.setLastEvaluationStatus(response.getStatus());sub.setLastMessage(response.getMessage());

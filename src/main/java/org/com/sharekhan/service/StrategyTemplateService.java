@@ -66,8 +66,8 @@ public class StrategyTemplateService {
             throw new IllegalArgumentException("Unknown strategy template: " + request.getTemplateId());
         }
         request.setRiskSettings(org.com.sharekhan.strategy.run.StrategyRiskSettings.validate(request.getRiskSettings(),request.getLots()));
-        java.util.function.Supplier<StrategyApplyResponse> work = () -> runCoordinator==null
-                ? evaluator.apply(request) : runCoordinator.evaluate(request,()->evaluator.apply(request));
+        java.util.function.Supplier<StrategyApplyResponse> work = () -> request.isBatmanResumeNoOrder() && evaluator instanceof org.com.sharekhan.strategy.batman.BatmanStrategy batman
+                ? batman.resumeMarket(request) : runCoordinator==null ? evaluator.apply(request) : runCoordinator.evaluate(request,()->evaluator.apply(request));
         var response = sharedDecisions == null ? work.get() : sharedDecisions.evaluate(work);
         if (response != null && response.getSharedSignalIds() != null && !response.getSharedSignalIds().isEmpty())
             log.info("STRATEGY_SHARED_SIGNALS | subscriptionId={} | userId={} | brokerCredentialsId={} | template={} | symbol={} | signalIds={}",

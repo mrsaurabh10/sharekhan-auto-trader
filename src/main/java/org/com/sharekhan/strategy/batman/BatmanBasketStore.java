@@ -58,6 +58,34 @@ public class BatmanBasketStore{
         }));}
         catch(RuntimeException e){if(baskets.existsById(basket.getId()))return false;throw e;}
     }
+    /** Resume the same reviewed basket only after a terminal pre-broker trigger rejection and zero fills. */
+    public BatmanBasket resumeNoOrder(Long user,Long broker,String symbol,Long subscription,LocalDate day,String originalRun){
+        return tx.execute(t->{
+            users.lockForEnrollment(user).orElseThrow();
+            var history=baskets.findByAppUserIdAndBrokerCredentialsIdAndSymbolOrderByClaimedAtDesc(user,broker,symbol);
+            BatmanBasket candidate=null;org.com.sharekhan.entity.StrategyRun retry=null;boolean original=false;int today=0;
+            for(var b:history){
+                var run=runs.findById(b.getStrategyRunId()).orElse(null);
+                if(run==null||!Objects.equals(run.getAppUserId(),user)||!Objects.equals(run.getBrokerCredentialsId(),broker)||!Objects.equals(run.getSymbol(),symbol)
+                        ||!Objects.equals(run.getSubscriptionId(),subscription)||!BatmanRules.TEMPLATE.equals(run.getTemplateId())
+                        ||!BatmanReentryRules.confirmedFlat(run,trades.findByStrategyRunId(run.getId()),requests.findByStrategyRunId(run.getId())))return null;
+                if(!day.equals(b.getClaimedAt().toLocalDate()))continue;today++;
+                if(run.getId().equals(originalRun)&&"DAY".equals(run.getInstance())&&"BATMAN_ENTRY_ABORT".equals(run.getExitReason()))original=true;
+                if("MANUAL_RETRY".equals(run.getInstance())){candidate=b;retry=run;}
+            }
+            if(today!=2||!original||candidate==null||!"CLOSED".equals(candidate.getState())||!"BATMAN_ENTRY_ABORT".equals(retry.getExitReason())||!trades.findByStrategyRunId(retry.getId()).isEmpty())return null;
+            var attempted=requests.findByStrategyRunId(retry.getId());
+            if(attempted.isEmpty()||attempted.stream().anyMatch(q->q.getStatus()!=org.com.sharekhan.enums.TriggeredTradeStatus.REJECTED||!"ENTRY_NOT_READY_NO_ORDER".equals(q.getReason())
+                    ||q.getComment()==null||!q.getComment().startsWith("Simulator waiting for traded LTP to reach")))return null;
+            var plan=new org.json.JSONArray(candidate.getPlanJson());
+            for(int i=0;i<plan.length();i++){var leg=plan.getJSONObject(i);if(!leg.optBoolean("marketEntry")||leg.optBoolean("noOrderResumeUsed"))return null;leg.put("noOrderResumeUsed",true);}
+            em.persist(org.com.sharekhan.entity.TradeAuditEventEntity.builder().occurredAt(java.time.LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")))
+                    .appUserId(user).strategyId(BatmanRules.TEMPLATE).strategyRunId(retry.getId()).symbol(symbol).eventType("BATMAN_NO_ORDER_RESUME").outcome("REVIEWED")
+                    .reason("RESUME_SAME_APPROVED_MARKET_BASKET").details("No fills; terminal no-order requests retained; prior closedAt="+retry.getClosedAt()+"; prior exitReason="+retry.getExitReason()).build());
+            retry.setStatus("OPEN");retry.setClosedAt(null);retry.setCloseRequestedAt(null);retry.setExitReason(null);retry.setMessage("Resuming reviewed market basket after terminal pre-broker trigger rejection");
+            candidate.setState("ENTERING");candidate.setMessage("Same approved basket resumed; prior no-order rejection retained in audit");candidate.setPlanJson(plan.toString());em.flush();return candidate;
+        });
+    }
     public void arm(BatmanBasket basket,BigDecimal credit){tx.executeWithoutResult(t->{
         if(baskets.arm(basket.getId(),credit)==1&&runs.armBatmanRisk(basket.getStrategyRunId(),credit,org.com.sharekhan.strategy.run.StrategyRiskSettings.AmountMode.TOTAL)!=1)throw new IllegalStateException("Basket run is closing; risk arming cancelled");
     });}

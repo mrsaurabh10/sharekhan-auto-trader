@@ -6600,6 +6600,7 @@ public class TradeExecutionService {
         // direct/replayed call cannot authorize an entry on the wrong side.
         // Real brokers can hold a trigger order themselves; the simulator cannot.
         if (isSimulatorBrokerRequest(requestEntity)
+                && reviewedMarket.isEmpty()
                 && !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(requestEntity.getSource())
                 && !org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(requestEntity.getSource())
                 && !chaseEntryUntilExecuted

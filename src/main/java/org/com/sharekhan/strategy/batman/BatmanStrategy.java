@@ -119,6 +119,31 @@ public class BatmanStrategy implements StrategyEvaluator {
             return StrategyApplyResponse.builder().templateId(metadata().id()).symbol(symbol).direction("CE+PE").status(completed?"triggered":"error").message(completed?"Four confirmed Batman legs; actual center-credit TP and equal SL armed":"Basket entry incomplete; standard cancellation and exit recovery are active").tradeRequest(first).build();
         }catch(IllegalArgumentException|IllegalStateException waiting){return support.waiting(metadata(),symbol,waiting.getMessage());}
     }
+    public synchronized StrategyApplyResponse resumeMarket(StrategyApplyRequest request){
+        validateConfiguration(request);var now=LocalDateTime.now(clock);
+        if(!request.isBatmanMarketEntry()||request.getBatmanRetryOfRunId()==null||!calendar.isTradingDay(now.toLocalDate())||!entryWindow(request,now))throw new IllegalArgumentException("Current reviewed Simulator market basket required");
+        var basket=store.resumeNoOrder(request.getUserId(),request.getBrokerCredentialsId(),request.getSymbol(),request.getSubscriptionId(),now.toLocalDate(),request.getBatmanRetryOfRunId());
+        if(basket==null)return support.waiting(metadata(),request.getSymbol(),"No eligible unfilled reviewed basket to resume");
+        return coordinator.evaluate(request,()->{
+            TriggerTradeRequestEntity first=null;
+            try{
+                var plan=new JSONArray(basket.getPlanJson());
+                for(int i=0;i<plan.length();i++){
+                    var leg=plan.getJSONObject(i);var order=new TriggerRequest();order.setInstrument(basket.getSymbol());order.setExchange(leg.getString("exchange"));
+                    order.setStrikePrice(leg.getDouble("strike"));order.setOptionType(leg.getString("side"));order.setExpiry(basket.getExpiry().format(DateTimeFormatter.ofPattern("dd/MM/uuuu")));
+                    order.setUserId(basket.getAppUserId());order.setBrokerCredentialsId(basket.getBrokerCredentialsId());order.setAction(leg.getString("action"));
+                    order.setQuantity(Math.toIntExact(leg.getLong("quantity")/basket.getLotSize()));order.setLots(order.getQuantity());order.setIntraday(false);order.setTslEnabled(false);
+                    order.setEntryPrice(leg.getDouble("admittedPremium"));order.setSource(BatmanRules.PREFIX+basket.getId()+":"+i);
+                    order.setStrategyDecision("Reviewed monthly Simulator MARKET continuation; entry guards waived; latest or recorded observed premium; basket credit TP/SL");
+                    var placed=execution.executeTriggeredTrade(order);if(first==null)first=placed;
+                    var actual=members(basket);if(placed==null||actual.size()!=i+1||!matches(basket,actual,false))throw new IllegalStateException("Market basket confirmation is unresolved");
+                }
+                arm(basket,members(basket));
+                return StrategyApplyResponse.builder().templateId(BatmanRules.TEMPLATE).symbol(basket.getSymbol()).direction("CE+PE").status("triggered").message("Four confirmed monthly Simulator market legs; actual center-credit TP and equal SL armed").tradeRequest(first).build();
+            }catch(RuntimeException failure){abort(basket,"Market continuation failed; standard cancellation/exit recovery active");log.warn("Reviewed Batman continuation failed: {}",failure.getMessage());
+                return StrategyApplyResponse.builder().templateId(BatmanRules.TEMPLATE).symbol(basket.getSymbol()).status("error").message("Market continuation failed; recovery active").tradeRequest(first).build();}
+        });
+    }
     static boolean entryWindow(StrategyApplyRequest request,LocalDateTime now){
         if(request.getBatmanManualEntryDay()==null)return BatmanRules.entryWindow(now);
         return request.getBatmanManualEntryDay().equals(now.toLocalDate())

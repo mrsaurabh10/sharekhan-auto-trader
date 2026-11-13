@@ -16,6 +16,7 @@ public class StrategyApplyRequest {
     private Long userId;
     private Long brokerCredentialsId;
     private String source;
+    @com.fasterxml.jackson.annotation.JsonIgnore private boolean batmanResumeNoOrder;
     @com.fasterxml.jackson.annotation.JsonIgnore private String batmanRetryOfRunId;
     @com.fasterxml.jackson.annotation.JsonIgnore private boolean batmanMarketEntry;
     @com.fasterxml.jackson.annotation.JsonIgnore private java.time.LocalDate batmanManualEntryDay;

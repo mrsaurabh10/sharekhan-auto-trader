@@ -49,6 +49,16 @@ class BatmanStrategyTest{
  BatmanRules.Option o(String side,double k,double delta,int code){return new BatmanRules.Option(side,k,delta,70,71,10000,10000,Integer.toString(code));}
  StrategyApplyRequest request(){var r=new StrategyApplyRequest();r.setTemplateId(BatmanRules.TEMPLATE);r.setSymbol("NIFTY");r.setLots(1);r.setUserId(1L);r.setBrokerCredentialsId(2L);return r;}
  TriggeredTradeSetupEntity fill(TriggerRequest r){int code=r.getStrikePrice()==24500?1:r.getStrikePrice()==23500?2:r.getStrikePrice()==24600?3:4;return TriggeredTradeSetupEntity.builder().id((long)actual.size()+1).strategyRunId("run").appUserId(1L).brokerCredentialsId(2L).symbol("NIFTY").exchange("NF").scripCode(code).expiry(r.getExpiry()).strikePrice(r.getStrikePrice()).optionType(r.getOptionType()).entryAction(r.getAction()).source(r.getSource()).quantity((long)65*r.getQuantity()).actualEntryPrice(r.getEntryPrice()).intraday(false).status(TriggeredTradeStatus.EXECUTED).build();}
+ @Test void resumesSameReviewedMonthlyPlanThroughNormalFourLegPipeline(){
+  strategy.apply(request());actual.clear();placedSides.clear();
+  var plan=new org.json.JSONArray(claimed.getPlanJson());for(int i=0;i<plan.length();i++)plan.getJSONObject(i).put("marketEntry",true);claimed.setPlanJson(plan.toString());
+  var r=request();r.setBatmanManualEntryDay(LocalDate.of(2026,9,15));r.setBatmanRetryOfRunId("original");r.setBatmanMarketEntry(true);
+  when(store.resumeNoOrder(1L,2L,"NIFTY",null,LocalDate.of(2026,9,15),"original")).thenReturn(claimed);
+  when(coordinator.evaluate(eq(r),any())).thenAnswer(a->((java.util.function.Supplier<StrategyApplyResponse>)a.getArgument(1)).get());
+  assertThat(strategy.resumeMarket(r).getStatus()).isEqualTo("triggered");
+  assertThat(placedSides).containsExactly("BUY","BUY","SELL","SELL");assertThat(actual).hasSize(4);
+  verify(store,times(2)).arm(eq(claimed),eq(new BigDecimal("5200.00")));verify(store,times(1)).claim(any());
+ }
  @Test void confirmsBothLongsBeforeShortsAndArmsActualCredit(){
   var response=strategy.apply(request());assertThat(placedSides).containsExactly("BUY","BUY","SELL","SELL");assertThat(response.getStatus()).isEqualTo("triggered");
   verify(store).arm(eq(claimed),eq(new BigDecimal("5200.00")));assertThat(claimed.getBaseLots()).isEqualTo(1);assertThat(actual).allMatch(t->Boolean.FALSE.equals(t.getIntraday()));

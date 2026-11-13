@@ -1101,6 +1101,22 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     @Test
+    void reviewedBatmanMarketEntryDoesNotWaitForDirectionalTrigger() {
+        TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
+        ctx.useSimulatorBroker(); configureFiveAttemptPolicy(ctx);
+        var market=mock(org.com.sharekhan.strategy.batman.BatmanMarketEntry.class);
+        ReflectionTestUtils.setField(ctx.service,"batmanMarketEntry",market);
+        when(market.requestPrice(any())).thenReturn(java.util.OptionalDouble.of(10.55));
+        var request=triggerRequestEntity(); request.setEntryPrice(20d);
+        when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenReturn(OrderPlacementResult.builder()
+                .success(true).orderId("SIM-MARKET").status("Fully Executed").executedPrice(10.55).executedQuantity(50L).build());
+        var executed=ctx.service.executeTradeFromEntity(request);
+        assertThat(executed).isNotNull();
+        assertThat(executed.getStatus()).isEqualTo(TriggeredTradeStatus.EXECUTED);
+        verify(ctx.broker).placeOrder(any(),any(),eq(10.55));
+    }
+
+    @Test
     void simulatorDoesNotFillBuyAboveRequestBelowItsEntryPrice() {
         TestContext ctx = new TestContext(OrderPlacementResult.builder().success(true).build());
         ctx.useSimulatorBroker();
