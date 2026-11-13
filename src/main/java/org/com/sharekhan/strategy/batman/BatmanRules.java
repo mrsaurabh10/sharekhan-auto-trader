@@ -31,13 +31,16 @@ public final class BatmanRules {
                 .min(Comparator.<LocalDate>comparingLong(e->Math.abs(java.time.temporal.ChronoUnit.DAYS.between(day,e)-45)).thenComparing(Comparator.naturalOrder()));
     }
 
-    public static List<Leg> select(List<Option> chain,double spot){
+    public static List<Leg> select(List<Option> chain,double spot){return select(chain,spot,0);}
+    /** Choose the nearest delta among contracts with displayed quantity for the complete leg. */
+    public static List<Leg> select(List<Option> chain,double spot,long baseUnits){
+        if(baseUnits<0||baseUnits>Long.MAX_VALUE/2)throw new IllegalArgumentException("Invalid basket units");
         if(!Double.isFinite(spot)||spot<=0)throw new IllegalArgumentException("Fresh option-chain spot is required");
         List<Leg> longs=new ArrayList<>(),shorts=new ArrayList<>();
         for(String side:List.of("CE","PE")){
             var options=chain.stream().filter(o->side.equals(o.side())&&valid(o)&&("CE".equals(side)?o.strike()>spot:o.strike()<spot)).toList();
-            var buy=nearest(options,.20);
-            var sell=nearest(options.stream().filter(o->"CE".equals(side)?o.strike()>buy.strike():o.strike()<buy.strike()).toList(),.16);
+            var buy=nearest(options.stream().filter(o->o.askQty()>=baseUnits).toList(),.20);
+            var sell=nearest(options.stream().filter(o->"CE".equals(side)?o.strike()>buy.strike():o.strike()<buy.strike()).filter(o->o.bidQty()>=baseUnits*2).toList(),.16);
             if(Math.abs(buy.delta())<=Math.abs(sell.delta()))throw new IllegalArgumentException("Delta order does not match the 1:2 ratio spread");
             longs.add(new Leg(buy,"BUY",1));shorts.add(new Leg(sell,"SELL",2));
         }

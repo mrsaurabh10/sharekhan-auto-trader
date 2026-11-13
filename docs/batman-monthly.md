@@ -134,3 +134,10 @@ fingerprint; changed contracts invalidate the old route/book. Execution-master
 contracts are resolved once per selection. This avoids master scans between
 book reads while retaining the two-second basket skew and five-second snapshot
 limits. The Dhan chain's ten-second age is rechecked after preparation as well.
+
+Delta selection chooses the nearest strike **among strikes with enough displayed
+quantity for the complete leg** (one base lot at the ask for buys, two at the bid
+for shorts), still within the existing 1.5-delta-point tolerance. A slightly closer
+16-delta strike with only one lot at the bid cannot block another qualifying
+strike inside that same band. This initial Dhan liquidity filter does not replace
+the later exact executable-book checks on the selected provider.

@@ -10,6 +10,17 @@ import static org.assertj.core.api.Assertions.*;
 class BatmanRulesTest{
     BatmanRules.Option o(String side,double strike,double delta){return new BatmanRules.Option(side,strike,delta,99,100,10000,10000,"123");}
     List<BatmanRules.Option> chain(){return List.of(o("CE",24000,.5),o("CE",24500,.201),o("CE",24600,.16),o("PE",24000,-.5),o("PE",23500,-.198),o("PE",23400,-.161));}
+    @Test void selectsNearestLiquidStrikesWithoutWideningDeltaTolerance(){
+        var rows=new ArrayList<>(chain());rows.set(2,new BatmanRules.Option("CE",24600,.16,99,100,65,65,"123"));
+        rows.set(5,new BatmanRules.Option("PE",23400,-.161,99,100,65,65,"123"));
+        rows.add(o("CE",24700,.1545));rows.add(o("PE",23300,-.1545));
+        var legs=BatmanRules.select(rows,24000,65);
+        assertThat(legs).extracting(x->x.option().strike()).containsExactly(24500d,23500d,24700d,23300d);
+        assertThat(legs).extracting(BatmanRules.Leg::ratio).containsExactly(1,1,2,2);
+        rows.removeIf(o->Math.abs(o.delta())==.1545);rows.add(o("CE",24700,.14));rows.add(o("PE",23300,-.14));
+        assertThatThrownBy(()->BatmanRules.select(rows,24000,65)).isInstanceOf(IllegalArgumentException.class);
+    }
+    @Test void baseLotsScaleDisplayedQuantityChecks(){assertThatThrownBy(()->BatmanRules.select(chain(),24000,10001)).isInstanceOf(IllegalArgumentException.class);}
     @Test void selectsOtmActualDeltaRatioAndLongsFirst(){
         var legs=BatmanRules.select(chain(),24000);assertThat(legs).extracting(BatmanRules.Leg::action).containsExactly("BUY","BUY","SELL","SELL");
         assertThat(legs).extracting(BatmanRules.Leg::ratio).containsExactly(1,1,2,2);

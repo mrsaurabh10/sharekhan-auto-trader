@@ -60,8 +60,13 @@ public class BatmanStrategy implements StrategyEvaluator {
         try{
             var chain=shared.share("BATMAN_CHAIN",symbol,expiry.get().toString(),now,()->chains.fetch(symbol,expiry.get()));
             if(!chain.symbol().equals(symbol)||!chain.expiry().equals(expiry.get())||chain.receivedAt().isAfter(clock.instant())||chain.receivedAt().isBefore(clock.instant().minusSeconds(10)))return support.waiting(metadata(),symbol,"Waiting for a fresh exact-expiry delta chain");
-            var selected=BatmanRules.select(chain.options(),chain.spot());
+            var nearest=BatmanRules.select(chain.options(),chain.spot());
             String expiryText=expiry.get().format(DateTimeFormatter.ofPattern("dd/MM/uuuu"));
+            var reference=nearest.getFirst().option();
+            var referenceContract=scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,reference.strike(),reference.side(),expiryText)
+                    .orElseThrow(()->new IllegalStateException("Selected delta strike is absent from the execution master"));
+            if(referenceContract.getLotSize()==null||referenceContract.getLotSize()<1)throw new IllegalStateException("Exact option lot size required");
+            var selected=BatmanRules.select(chain.options(),chain.spot(),(long)referenceContract.getLotSize()*request.getLots());
             var contracts=selected.stream().map(l->scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,l.option().strike(),l.option().side(),expiryText)
                     .orElseThrow(()->new IllegalStateException("Selected delta strike is absent from the execution master"))).toList();
             books.prepare(contracts);
