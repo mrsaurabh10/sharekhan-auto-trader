@@ -7,7 +7,7 @@ subscription is NIFTY on Simulator with one base basket.
 
 ## Entries and next-day re-entry
 
-- Consider every actually listed common CE/PE expiry, **weekly or monthly**, with
+- Consider every actually listed common CE/PE expiry, **monthly**, with
   **40–50 calendar DTE**. Choose the expiry closest to 45 DTE; prefer the earlier
   expiry if distances tie. Do not synthesize expiry dates or bypass the DTE range.
 - Check entries during the **09:20 IST minute** on trading days. Missing data can
@@ -141,3 +141,27 @@ for shorts), still within the existing 1.5-delta-point tolerance. A slightly clo
 16-delta strike with only one lot at the bid cannot block another qualifying
 strike inside that same band. This initial Dhan liquidity filter does not replace
 the later exact executable-book checks on the selected provider.
+
+### Reviewed additional Simulator attempt
+
+An administrator may explicitly supply `retryOfRunId` and `marketEntry=true`
+to the date-scoped catch-up endpoint after review. Exactly one additional
+`MANUAL_RETRY` run is permitted after the original same-day `DAY` basket closed
+with `BATMAN_ENTRY_ABORT`, with all prior exposure confirmed flat and the same
+subscription/account/symbol. The new claim has a different deterministic ID;
+the original history is retained. Another claimed retry exhausts this path.
+
+The explicitly approved market-entry assumption is **Simulator-only**. It does
+not reject fills for price movement, displayed quantity, spread, snapshot skew
+or quote age. The latest verified-contract bid/ask is used when available;
+otherwise the recorded observed premium is used. Exact Dhan bid/ask observations
+can seed admission if the separate quote refresh is unavailable. No prices are
+invented, and trade comments identify the assumption. Contract/account identity,
+positive observed premiums, closed prior exposure and duplicate prevention
+remain enforced. Standard trade requests and actual Simulator fill prices are
+used; the complete basket's credit determines its combined TP and equal SL.
+Scheduled entries keep normal execution checks.
+
+As requested on 13 November 2026, Batman now selects **monthly expiries only**:
+the final actually listed common CE/PE expiry of each month, then the existing
+40–50 DTE/nearest-45 choice. Weekly series no longer compete for selection.

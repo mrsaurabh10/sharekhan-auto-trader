@@ -25,22 +25,25 @@ public final class BatmanRules {
     }
     public static boolean entryWindow(LocalDateTime now){return !now.toLocalTime().isBefore(LocalTime.of(9,20))&&now.toLocalTime().isBefore(LocalTime.of(9,21));}
     public static Optional<LocalDate> expiry(Collection<LocalDate> listed,LocalDate day,Predicate<LocalDate> trading){
-        // Weekly and monthly series are both eligible; never invent an expiry from a weekday.
+        // Monthly only: use the final actually listed expiry in each month; never invent a calendar date.
         if(!trading.test(day))return Optional.empty();
-        return listed.stream().filter(e->{long d=java.time.temporal.ChronoUnit.DAYS.between(day,e);return d>=40&&d<=50;})
+        var monthly=new java.util.HashMap<java.time.YearMonth,LocalDate>();
+        for(var expiry:listed)monthly.merge(java.time.YearMonth.from(expiry),expiry,(a,b)->a.isAfter(b)?a:b);
+        return monthly.values().stream().filter(e->{long d=java.time.temporal.ChronoUnit.DAYS.between(day,e);return d>=40&&d<=50;})
                 .min(Comparator.<LocalDate>comparingLong(e->Math.abs(java.time.temporal.ChronoUnit.DAYS.between(day,e)-45)).thenComparing(Comparator.naturalOrder()));
     }
 
     public static List<Leg> select(List<Option> chain,double spot){return select(chain,spot,0);}
     /** Choose the nearest delta among contracts with displayed quantity for the complete leg. */
-    public static List<Leg> select(List<Option> chain,double spot,long baseUnits){
+    public static List<Leg> select(List<Option> chain,double spot,long baseUnits){return select(chain,spot,baseUnits,false);}
+    public static List<Leg> select(List<Option> chain,double spot,long baseUnits,boolean marketEntry){
         if(baseUnits<0||baseUnits>Long.MAX_VALUE/2)throw new IllegalArgumentException("Invalid basket units");
         if(!Double.isFinite(spot)||spot<=0)throw new IllegalArgumentException("Fresh option-chain spot is required");
         List<Leg> longs=new ArrayList<>(),shorts=new ArrayList<>();
         for(String side:List.of("CE","PE")){
-            var options=chain.stream().filter(o->side.equals(o.side())&&valid(o)&&("CE".equals(side)?o.strike()>spot:o.strike()<spot)).toList();
-            var buy=nearest(options.stream().filter(o->o.askQty()>=baseUnits).toList(),.20);
-            var sell=nearest(options.stream().filter(o->"CE".equals(side)?o.strike()>buy.strike():o.strike()<buy.strike()).filter(o->o.bidQty()>=baseUnits*2).toList(),.16);
+            var options=chain.stream().filter(o->side.equals(o.side())&&(marketEntry?validGreek(o):valid(o))&&("CE".equals(side)?o.strike()>spot:o.strike()<spot)).toList();
+            var buy=nearest(options.stream().filter(o->marketEntry||o.askQty()>=baseUnits).toList(),.20);
+            var sell=nearest(options.stream().filter(o->"CE".equals(side)?o.strike()>buy.strike():o.strike()<buy.strike()).filter(o->marketEntry||o.bidQty()>=baseUnits*2).toList(),.16);
             if(Math.abs(buy.delta())<=Math.abs(sell.delta()))throw new IllegalArgumentException("Delta order does not match the 1:2 ratio spread");
             longs.add(new Leg(buy,"BUY",1));shorts.add(new Leg(sell,"SELL",2));
         }
@@ -51,8 +54,9 @@ public final class BatmanRules {
         if(Math.abs(Math.abs(o.delta())-desired)>.015)throw new IllegalArgumentException("No listed strike within 1.5 delta points of "+desired);
         return o;
     }
-    private static boolean valid(Option o){return Double.isFinite(o.strike())&&o.strike()>0&&Double.isFinite(o.delta())&&Math.abs(o.delta())>0&&Math.abs(o.delta())<1
-            &&("CE".equals(o.side())?o.delta()>0:o.delta()<0)&&Double.isFinite(o.bid())&&Double.isFinite(o.ask())&&o.bid()>0&&o.ask()>=o.bid()
+    private static boolean validGreek(Option o){return Double.isFinite(o.strike())&&o.strike()>0&&Double.isFinite(o.delta())&&Math.abs(o.delta())>0&&Math.abs(o.delta())<1
+            &&("CE".equals(o.side())?o.delta()>0:o.delta()<0)&&o.securityId()!=null&&o.securityId().matches("[0-9]+");}
+    private static boolean valid(Option o){return validGreek(o)&&Double.isFinite(o.bid())&&Double.isFinite(o.ask())&&o.bid()>0&&o.ask()>=o.bid()
             &&o.bidQty()>0&&o.askQty()>0&&o.securityId()!=null&&o.securityId().matches("[0-9]+")&&(o.ask()-o.bid())/o.ask()<=.05;}
     public static BigDecimal credit(List<TriggeredTradeSetupEntity> trades){
         if(trades.size()!=4)throw new IllegalArgumentException("Four confirmed legs are required");

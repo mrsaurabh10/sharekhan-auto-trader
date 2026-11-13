@@ -10,6 +10,11 @@ import static org.assertj.core.api.Assertions.*;
 class BatmanRulesTest{
     BatmanRules.Option o(String side,double strike,double delta){return new BatmanRules.Option(side,strike,delta,99,100,10000,10000,"123");}
     List<BatmanRules.Option> chain(){return List.of(o("CE",24000,.5),o("CE",24500,.201),o("CE",24600,.16),o("PE",24000,-.5),o("PE",23500,-.198),o("PE",23400,-.161));}
+    @Test void monthlyOnlyDoesNotUseAnEligibleWeeklyWhenMonthlyIsOutsideDteBand(){
+        var day=LocalDate.of(2026,9,1);
+        assertThat(BatmanRules.expiry(List.of(LocalDate.of(2026,10,13),LocalDate.of(2026,10,27)),day,d->true)).isEmpty();
+        assertThat(BatmanRules.expiry(List.of(LocalDate.of(2026,10,13),LocalDate.of(2026,10,27)),LocalDate.of(2026,9,15),d->true)).contains(LocalDate.of(2026,10,27));
+    }
     @Test void selectsNearestLiquidStrikesWithoutWideningDeltaTolerance(){
         var rows=new ArrayList<>(chain());rows.set(2,new BatmanRules.Option("CE",24600,.16,99,100,65,65,"123"));
         rows.set(5,new BatmanRules.Option("PE",23400,-.161,99,100,65,65,"123"));
@@ -58,9 +63,9 @@ class BatmanRulesTest{
         assertThat(BatmanStrategy.matches(b,actual,true)).isTrue();assertThat(BatmanStrategy.matches(b,actual.subList(0,2),true)).isFalse();assertThat(BatmanStrategy.matches(b,actual.subList(0,2),false)).isTrue();
         actual.get(3).setQuantity(65L);assertThat(BatmanStrategy.matches(b,actual,true)).isFalse();actual.get(3).setQuantity(130L);actual.get(0).setAppUserId(9L);assertThat(BatmanStrategy.matches(b,actual,true)).isFalse();
     }
-    @Test void selectsWeeklyNearest45DteWithinFull40To50Range(){
+    @Test void selectsListedMonthlyWithinFull40To50Range(){
         var day=LocalDate.of(2026,11,12);
-        assertThat(BatmanRules.expiry(List.of(day.plusDays(39),day.plusDays(40),day.plusDays(44),day.plusDays(47),day.plusDays(51)),day,d->true)).contains(day.plusDays(44));
+        assertThat(BatmanRules.expiry(List.of(day.plusDays(39),day.plusDays(40),day.plusDays(44),day.plusDays(47),day.plusDays(51)),day,d->true)).contains(day.plusDays(47));
         assertThat(BatmanRules.expiry(List.of(day.plusDays(50)),day,d->true)).contains(day.plusDays(50));
         assertThat(BatmanRules.expiry(List.of(day.plusDays(39),day.plusDays(51)),day,d->true)).isEmpty();
         assertThat(BatmanRules.expiry(List.of(day.plusDays(45)),day,d->false)).isEmpty();

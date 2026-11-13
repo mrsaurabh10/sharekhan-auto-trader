@@ -71,6 +71,22 @@ class BatmanStrategyTest{
   strategy.validateConfiguration(request());verify(broker).supportsCarryOptionShorts();
  }
 
+ @Test void reviewedMarketRetryCompletesAllLegsDespiteThinDepthAndOldObservations(){
+  var r=request();r.setSubscriptionId(191L);r.setBatmanManualEntryDay(LocalDate.of(2026,9,15));r.setBatmanRetryOfRunId("prior");r.setBatmanMarketEntry(true);
+  when(store.claim(any(),eq("prior"))).thenAnswer(a->{claimed=a.getArgument(0);return true;});
+  when(books.marketBook(anyInt(),eq("NF"))).thenAnswer(a->{int code=a.getArgument(0);return QuoteCacheService.QuoteSnapshot.builder()
+      .scripCode(code).bestBid(code<=2?99d:70d).bestAsk(code<=2?100d:71d).bidQuantity(0d).askQuantity(0d).lastBookAt(now.minusSeconds(120)).build();});
+  assertThat(strategy.apply(r).getStatus()).isEqualTo("triggered");assertThat(placedSides).containsExactly("BUY","BUY","SELL","SELL");
+  verify(store).arm(eq(claimed),eq(new BigDecimal("5200.00")));assertThat(claimed.getPlanJson()).contains("marketEntry");
+  verify(books,never()).book(anyInt(),anyString(),anyBoolean(),anyLong());
+ }
+ @Test void marketRetryCanUseAnIdentifiedDhanObservedPremiumWhenQuoteRefreshIsUnavailable(){
+  var r=request();r.setSubscriptionId(191L);r.setBatmanManualEntryDay(LocalDate.of(2026,9,15));r.setBatmanRetryOfRunId("prior");r.setBatmanMarketEntry(true);
+  when(store.claim(any(),eq("prior"))).thenAnswer(a->{claimed=a.getArgument(0);return true;});
+  assertThat(strategy.apply(r).getStatus()).isEqualTo("triggered");assertThat(placedSides).hasSize(4);
+  verify(store).arm(eq(claimed),eq(new BigDecimal("8970.00")));
+ }
+ @Test void marketModeRequiresReviewedRetryScope(){var r=request();r.setBatmanMarketEntry(true);assertThatThrownBy(()->strategy.apply(r)).hasMessageContaining("Reviewed same-day retry");verifyNoInteractions(chains,execution);}
  @Test void longPreparationCannotAdmitAChainThatExpiredWhileBooksWerePrepared(){
   var later=now.plusSeconds(11);
   doAnswer(a->{ReflectionTestUtils.setField(strategy,"clock",Clock.fixed(later,BatmanRules.IST));return null;}).when(books).prepare(anyList());
@@ -106,6 +122,8 @@ class BatmanStrategyTest{
   var r=new com.fasterxml.jackson.databind.ObjectMapper().registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())
        .readValue("{\"batmanManualEntryDay\":\"2026-09-15\"}",StrategyApplyRequest.class);
   assertThat(r.getBatmanManualEntryDay()).isNull();
+  var forged=new com.fasterxml.jackson.databind.ObjectMapper().readValue("{\"batmanMarketEntry\":true,\"batmanRetryOfRunId\":\"prior\"}",StrategyApplyRequest.class);
+  assertThat(forged.isBatmanMarketEntry()).isFalse();assertThat(forged.getBatmanRetryOfRunId()).isNull();
  }
  @Test void reentryGateRunsBeforeGreekSelectionAndAnyExecution(){
   when(store.entryBlockReason(1L,2L,"NIFTY",LocalDate.of(2026,9,15))).thenReturn("Prior basket has unresolved short exposure");

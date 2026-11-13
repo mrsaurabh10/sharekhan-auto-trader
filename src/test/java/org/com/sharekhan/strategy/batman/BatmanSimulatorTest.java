@@ -28,5 +28,11 @@ class BatmanSimulatorTest{
  @Test void nonFiniteBookDepthCannotCreateAFill(){
   when(books.book(eq(1),eq("NF"),anyBoolean(),anyLong())).thenReturn(q(Instant.now(),Double.NaN));assertThatThrownBy(()->broker.placeOrder(trade("BUY"),context,100)).hasMessageContaining("fresh");
  }
+ @Test void approvedMarketFillUsesObservedPriceWithoutFrozenLimitOrDepthRejection(){
+  var market=mock(BatmanMarketEntry.class);ReflectionTestUtils.setField(broker,"batmanMarketEntry",market);
+  when(market.price(any())).thenReturn(java.util.OptionalDouble.of(70));
+  assertThat(broker.placeOrder(trade("SELL"),context,99).getExecutedPrice()).isEqualTo(70);
+  verifyNoInteractions(books);
+ }
  @Test void cannotFillBeyondFrozenEntryLimit(){when(books.book(eq(1),eq("NF"),anyBoolean(),anyLong())).thenReturn(q(Instant.now(),1000));assertThatThrownBy(()->broker.placeOrder(trade("SELL"),context,100)).hasMessageContaining("price");}
 }

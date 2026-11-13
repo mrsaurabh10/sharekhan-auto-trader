@@ -37,6 +37,13 @@ class StrategyRunCoordinatorTest {
         var r=new StrategyApplyRequest();r.setUserId(1L);r.setBrokerCredentialsId(2L);r.setTemplateId("EXPIRY_LONG_STRADDLE");
         r.setSymbol("NIFTY");r.setSubscriptionId(10L);r.setLots(2);return r;
     }
+    @Test void approvedRetryGetsOneDistinctRunWithoutReopeningTheOriginal(){
+        var c=coordinator("12:30:00");var r=request();r.setTemplateId("BATMAN_MONTHLY");subs.findById(10L).orElseThrow().setTemplateId("BATMAN_MONTHLY");
+        c.evaluate(r,()->{c.ensureCurrentRun();return null;});var original=saved.values().iterator().next();original.setStatus("CLOSED");
+        r.setBatmanManualEntryDay(LocalDate.of(2026,10,19));r.setBatmanRetryOfRunId(original.getId());
+        c.evaluate(r,()->{c.ensureCurrentRun();return null;});assertThat(saved).hasSize(2);assertThat(original.getStatus()).isEqualTo("CLOSED");
+        c.evaluate(r,()->{c.ensureCurrentRun();return null;});assertThat(saved).hasSize(2);assertThat(saved.values()).extracting(StrategyRun::getInstance).containsExactlyInAnyOrder("DAY","MANUAL_RETRY");
+    }
     @Test void closesOnlyOneDeterministicInstanceAndCapturesRules() {
         var r=request();var rules=new StrategyRiskSettings();rules.setProfitTarget(new BigDecimal("2000"));rules.setAmountMode(StrategyRiskSettings.AmountMode.PER_LOT);r.setRiskSettings(rules);
         var am=coordinator("09:30:15");var entries=new AtomicInteger();

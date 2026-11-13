@@ -29,6 +29,20 @@ public class BatmanBooks {
     }
     /** Prepare all legs before reading any; subsequent scheduled attempts see warmed full feeds. */
     public synchronized void prepare(List<ScriptMasterEntity> contracts){for(var script:contracts){watch(script);shoonya.prepareExactQuote(script);}}
+    public void prepareMarket(List<ScriptMasterEntity> contracts){for(var script:contracts)shoonya.prepareExactQuote(script);}
+    /** User-approved paper market fill: verified contract, observed prices, no depth/age/spread gate. */
+    public synchronized QuoteCacheService.QuoteSnapshot marketBook(int code,String exchange){
+        var script=scripts.findByScripCode(code);if(script==null||!exchange.equals(script.getExchange()))return null;
+        var exact=shoonya.getExactQuote(script).orElse(null);if(exact==null||exact.quote()==null||!exact.quote().hasConfirmedIdentity())return null;
+        String providerExchange="NF".equals(exchange)?"NFO":"BF".equals(exchange)?"BFO":"";
+        if(!providerExchange.equals(exact.exchange()))return null;
+        var q=exact.quote();Double bid=positive(q.bestBid())?q.bestBid():q.lastPrice(),ask=positive(q.bestAsk())?q.bestAsk():q.lastPrice();
+        if(!positive(bid)||!positive(ask))return null;
+        return QuoteCacheService.QuoteSnapshot.builder().scripCode(code).bookSource("SHOONYA_SIM_MARKET").bookExchange(exchange)
+                .bookProviderIdentity(q.returnedToken()+":"+q.returnedTradingSymbol()).coherentBook(true).bestBid(bid).bestAsk(ask)
+                .bidQuantity(q.bidQuantity()).askQuantity(q.askQuantity()).lastBookAt(exact.receivedAt()).updatedAt(exact.receivedAt()).build();
+    }
+    private static boolean positive(Double value){return value!=null&&Double.isFinite(value)&&value>0;}
     private void watch(ScriptMasterEntity script){
         if(script==null||script.getScripCode()==null)return;
         String key=script.getExchange()+script.getScripCode();

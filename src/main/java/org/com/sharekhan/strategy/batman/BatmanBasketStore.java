@@ -31,12 +31,29 @@ public class BatmanBasketStore{
         }
         return latest==null?null:BatmanReentryRules.cooldown(history.getFirst(),latest,day);
     }
-    public boolean claim(BatmanBasket basket){
+    /** One extra, auditable attempt after today's original DAY basket aborted and is confirmed flat. */
+    public String retryBlockReason(Long user,Long broker,String symbol,LocalDate day,String priorRunId,Long subscription){
+        var history=baskets.findByAppUserIdAndBrokerCredentialsIdAndSymbolOrderByClaimedAtDesc(user,broker,symbol);
+        BatmanBasket original=null;int today=0;
+        for(var b:history){
+            var run=runs.findById(b.getStrategyRunId()).orElse(null);
+            if(run==null||!Objects.equals(run.getAppUserId(),user)||!Objects.equals(run.getBrokerCredentialsId(),broker)||!Objects.equals(run.getSymbol(),symbol)||!BatmanRules.TEMPLATE.equals(run.getTemplateId())
+                    ||!BatmanReentryRules.confirmedFlat(run,trades.findByStrategyRunId(run.getId()),requests.findByStrategyRunId(run.getId())))return "Prior Batman exposure is not confirmed flat";
+            if(day.equals(b.getClaimedAt().toLocalDate())){today++;if(Objects.equals(priorRunId,run.getId()) && "CLOSED".equals(b.getState())
+                    && "DAY".equals(run.getInstance()) && "BATMAN_ENTRY_ABORT".equals(run.getExitReason())
+                    && day.equals(run.getClosedAt().toLocalDate()) && Objects.equals(subscription,run.getSubscriptionId()))original=b;}
+        }
+        return today==1&&original!=null?null:"One manual retry is allowed only after today's original aborted basket; no additional retry is available";
+    }
+    public boolean claim(BatmanBasket basket){return claim(basket,null);}
+    public boolean claim(BatmanBasket basket,String retryOfRunId){
         if(baskets.existsById(basket.getId()))return false;
         try{return Boolean.TRUE.equals(tx.execute(t->{
             users.lockForEnrollment(basket.getAppUserId()).orElseThrow(()->new IllegalArgumentException("Account not found"));
-            // Serialize account-scoped admission across processes and re-read all exposure after taking the lock.
-            if(baskets.existsById(basket.getId())||entryBlockReason(basket.getAppUserId(),basket.getBrokerCredentialsId(),basket.getSymbol(),basket.getClaimedAt().toLocalDate())!=null)return false;
+            var run=runs.findById(basket.getStrategyRunId()).orElse(null);
+            String blocked=retryOfRunId==null?entryBlockReason(basket.getAppUserId(),basket.getBrokerCredentialsId(),basket.getSymbol(),basket.getClaimedAt().toLocalDate())
+                    :run==null?"Missing retry run":retryBlockReason(basket.getAppUserId(),basket.getBrokerCredentialsId(),basket.getSymbol(),basket.getClaimedAt().toLocalDate(),retryOfRunId,run.getSubscriptionId());
+            if(baskets.existsById(basket.getId())||blocked!=null)return false;
             em.persist(basket);em.flush();return true;
         }));}
         catch(RuntimeException e){if(baskets.existsById(basket.getId()))return false;throw e;}

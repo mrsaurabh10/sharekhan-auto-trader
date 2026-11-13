@@ -1821,6 +1821,7 @@ public class TradeExecutionService {
 
     /** A fresh, uncrossed sell-side book for estimating combined straddle profit. No API calls. */
     @Autowired private org.com.sharekhan.strategy.batman.BatmanBooks batmanBooks;
+    @Autowired private org.com.sharekhan.strategy.batman.BatmanMarketEntry batmanMarketEntry;
     public Optional<QuoteCacheService.QuoteSnapshot> strategyProfitExitQuote(TriggeredTradeSetupEntity trade, Instant now) {
         if(trade!=null && org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())) {
             var q=batmanBooks.book(trade.getScripCode(),trade.getExchange(),TradeSide.isShort(trade),trade.getQuantity());
@@ -3008,6 +3009,11 @@ public class TradeExecutionService {
         }
         if(org.com.sharekhan.strategy.batman.BatmanRules.owns(trigger.getSource())) {
             if(!brokerService.supportsCarryOptionShorts()) throw new InvalidTradeRequestException("Execution adapter does not support carry-forward option shorts");
+            var marketPrice=batmanMarketEntry==null?java.util.OptionalDouble.empty():batmanMarketEntry.price(trigger);
+            if(marketPrice.isPresent()) {
+                if(!(brokerService instanceof org.com.sharekhan.service.broker.SimulatorBrokerService))throw new InvalidTradeRequestException("Reviewed market entry requires Simulator adapter");
+                return brokerService.placeOrder(trigger,ctx,marketPrice.getAsDouble());
+            }
             var q=batmanBooks.book(trigger.getScripCode(),trigger.getExchange(),!TradeSide.isShort(trigger),trigger.getQuantity());
             if(!org.com.sharekhan.strategy.batman.BatmanBooks.valid(q,Instant.now())) throw new EntryNotReadyException("Batman entry book unavailable");
             boolean buy=!TradeSide.isShort(trigger);var quantity=buy?q.getAskQuantity():q.getBidQuantity();double price=buy?q.getBestAsk():q.getBestBid();
@@ -6538,7 +6544,9 @@ public class TradeExecutionService {
         String exchange = requestEntity.getExchange();
         boolean isMxExchange = exchange != null && exchange.equalsIgnoreCase("MX");
 
-        if (!isMxExchange) {
+        var reviewedMarket=batmanMarketEntry==null?java.util.OptionalDouble.empty():batmanMarketEntry.requestPrice(requestEntity);
+        if(reviewedMarket.isPresent())ltp=reviewedMarket.getAsDouble();
+        if (!isMxExchange && reviewedMarket.isEmpty()) {
             ltp = resolveEntryReferencePrice(optionScripCode, "executeTradeFromEntity",
                     () -> entryQuoteWindowOpen(requestEntity.getSource()));
 
