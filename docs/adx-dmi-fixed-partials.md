@@ -29,6 +29,25 @@ Simulator test instances; this change does not activate any live subscriptions.
   or separate strategy fill ledger. Standard admission, routing, confirmation,
   manual exit, reconciliation and exit-order chasing remain responsible for orders.
 
+## Executable entry limits and Simulator depth assumption
+
+New requests set generic `executionSettings.marketableEntry=true` and
+`requireDisplayedDepth=false`. The engine submits a marketable limit within its
+existing configured entry-slippage allowance (default 2%), anchored to the frozen
+planned option premium. It never resets this allowance from a later LTP. The
+Simulator uses the fresh verified ask for BUY fills, subject to that submitted
+limit, and the fresh verified bid for exits. The fill price is the quoted price,
+not the worst allowed limit. Original index SL/targets do not move with the fill.
+
+Optional displayed quantities are not treated as executable volume guarantees in
+this Simulator mode; absent, zero or small depth fields do not block its fills.
+No depth is invented or consumed in this mode. This is an explicit simulation
+assumption, logged per fill, and does not bypass real broker fill confirmation.
+Exact contract identity, fresh coherent bid/ask, spread, finite price, positive
+quantity, account ownership, signal deadline and entry-window checks remain.
+Null settings retain the existing frozen-limit/depth behavior for older records.
+This change neither retries already processed signals nor extends the noon cutoff.
+
 ## Index exits and 15-minute timeout
 
 New requests carry server-owned `ADX_EXIT=INDEX_REQUEST_V2` metadata. Their entryPrice

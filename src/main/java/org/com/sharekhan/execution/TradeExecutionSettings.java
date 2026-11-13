@@ -13,6 +13,10 @@ public class TradeExecutionSettings {
     @Enumerated(EnumType.STRING) private Direction timeExitProgressDirection;
     private Boolean timeExitUseSpot;
     @JsonIgnore @Column(length=64) private String timeExitGroupId;
+    /** Submit a marketable limit bounded by the existing configured entry-slippage allowance. */
+    private Boolean marketableEntry;
+    /** Simulator assumption only: false ignores optional displayed quantities, never broker fill status. */
+    private Boolean requireDisplayedDepth;
     private Boolean spotStopOnTouch;
     private Boolean requireProfitableSpotTarget;
 
@@ -20,6 +24,7 @@ public class TradeExecutionSettings {
         var c=new TradeExecutionSettings(); c.timeExitMinutes=timeExitMinutes;
         c.timeExitProgressPrice=timeExitProgressPrice;c.timeExitProgressDirection=timeExitProgressDirection;
         c.timeExitUseSpot=timeExitUseSpot;c.timeExitGroupId=timeExitGroupId;
+        c.marketableEntry=marketableEntry;c.requireDisplayedDepth=requireDisplayedDepth;
         c.spotStopOnTouch=spotStopOnTouch;c.requireProfitableSpotTarget=requireProfitableSpotTarget;return c;
     }
     public static TradeExecutionSettings prepare(TradeExecutionSettings settings,Integer spotCode) {

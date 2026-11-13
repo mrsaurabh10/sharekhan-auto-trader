@@ -25,6 +25,7 @@ class AdxDmiIndexExitRulesTest {
                 assertFalse(order.getTslEnabled());assertNull(order.getTarget2());assertNull(order.getTarget3());
                 assertEquals("INDEX_REQUEST_V2",AdxDmiEntryAdmission.field(order.getStrategyDecision(),"ADX_EXIT"));
                 var settings=order.getExecutionSettings();assertNotNull(settings);
+                assertTrue(settings.getMarketableEntry());assertFalse(settings.getRequireDisplayedDepth());
                 assertEquals(15,settings.getTimeExitMinutes());assertEquals(plan.t1(),settings.getTimeExitProgressPrice());
                 assertEquals(direction==1?org.com.sharekhan.execution.TradeExecutionSettings.Direction.ABOVE:org.com.sharekhan.execution.TradeExecutionSettings.Direction.BELOW,settings.getTimeExitProgressDirection());
                 assertEquals(orders.getFirst().getExecutionSettings().getTimeExitGroupId(),settings.getTimeExitGroupId());

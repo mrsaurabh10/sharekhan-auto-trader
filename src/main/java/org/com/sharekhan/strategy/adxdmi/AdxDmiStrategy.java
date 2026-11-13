@@ -88,6 +88,7 @@ public class AdxDmiStrategy implements StrategyEvaluator {
         for(int leg=1;leg<=3;leg++){
             var order=order(r,signal,option,spotCode,plan,reading);
             var settings=new org.com.sharekhan.execution.TradeExecutionSettings();
+            settings.setMarketableEntry(true);settings.setRequireDisplayedDepth(false);
             settings.setTimeExitMinutes(15);settings.setTimeExitUseSpot(true);settings.setTimeExitProgressPrice(plan.t1());
             settings.setTimeExitProgressDirection("PE".equalsIgnoreCase(signal.side())
                     ? org.com.sharekhan.execution.TradeExecutionSettings.Direction.BELOW : org.com.sharekhan.execution.TradeExecutionSettings.Direction.ABOVE);
@@ -107,7 +108,7 @@ public class AdxDmiStrategy implements StrategyEvaluator {
         order.setIntraday(true);order.setAction("BUY");order.setTslEnabled(false);
         order.setUseSpotPrice(false);order.setUseSpotForEntry(false);order.setUseSpotForSl(true);order.setUseSpotForTarget(true);order.setSpotScripCode(spotCode);
         order.setSource(AdxDmiRules.PREMIUM_SOURCE);
-        order.setStrategyDecision("ADX_SIGNAL="+signal.key()+";ADX_DEADLINE="+signal.end().plusMinutes(5)+";ADX_EXIT="+"INDEX_REQUEST_V2"+";ADX_INDEX_ENTRY="+plan.spotEntry()+";ADX_INDEX_T1="+plan.t1()+";delta="+reading.delta()+";source="+reading.source()
+        order.setStrategyDecision("ADX_SIGNAL="+signal.key()+";ADX_DEADLINE="+signal.end().plusMinutes(5)+";ADX_EXIT="+"INDEX_REQUEST_V2"+";ADX_ENTRY=MARKETABLE_LIMIT_V1;ADX_INDEX_ENTRY="+plan.spotEntry()+";ADX_INDEX_T1="+plan.t1()+";delta="+reading.delta()+";source="+reading.source()
                 +";gamma="+reading.gamma()+";vega="+reading.vega()+";theta="+reading.theta()+";estimatedPremiumR="+(signal.risk(plan.spotEntry())*reading.delta())+";");
         return order;
     }
