@@ -127,3 +127,10 @@ rows, and `offQty` paired with `offPrice`. Both are parsed now. The existing
 Sharekhan session still closes with provider error 103 (Invalid Api Key), even
 using the SDK's token-only connection format; a valid stored expiry does not
 prove provider acceptance. No credential or account settings were changed.
+
+Contract identity preparation runs before quote collection. Exact Shoonya and
+mStock mappings are cached for at most 60 seconds using the full contract
+fingerprint; changed contracts invalidate the old route/book. Execution-master
+contracts are resolved once per selection. This avoids master scans between
+book reads while retaining the two-second basket skew and five-second snapshot
+limits. The Dhan chain's ten-second age is rechecked after preparation as well.

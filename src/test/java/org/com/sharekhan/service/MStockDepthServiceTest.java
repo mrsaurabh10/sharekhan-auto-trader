@@ -29,6 +29,11 @@ class MStockDepthServiceTest {
         if(size>=184){b.putInt(64,(int)(time.getEpochSecond()-315532800L));b.putInt(68,130);b.putInt(72,9900);b.putInt(128,65);b.putInt(132,10000);}
         return b.array();
     }
+    @Test void repeatedBookReadsDoNotRepeatMasterScansAndChangedContractInvalidatesOldBook(){
+        service.watch(script);verify(resolver,times(1)).resolveInstrumentKey(1);
+        var now=Instant.now();service.accept(frame(184,64157,now.minusSeconds(1)),now);assertThat(service.book(1)).isNotNull();
+        script.setStrikePrice(26500d);service.watch(script);verify(resolver,times(2)).resolveInstrumentKey(1);assertThat(service.book(1)).isNull();
+    }
     @Test void acceptsOnlyMappedFullPacketWithExchangeTimestampAndDepth(){
         var now=Instant.now();service.accept(frame(184,64157,now.minusSeconds(1)),now);
         var q=service.book(1);assertThat(q.getBookSource()).isEqualTo("MSTOCK_WS");assertThat(q.getBestBid()).isEqualTo(99);

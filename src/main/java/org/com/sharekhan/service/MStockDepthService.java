@@ -26,6 +26,8 @@ import java.util.concurrent.*;
 @Slf4j @Service
 public class MStockDepthService implements WebSocket.Listener {
     private record Route(int code,String exchange,long wireToken,String key) { }
+    private record Mapping(String signature,Route route,Instant validatedAt) { }
+    private final Map<Integer,Mapping> mapped=new ConcurrentHashMap<>();
     private final TokenStoreService tokens;
     private final CryptoService crypto;
     private final MStockInstrumentResolver resolver;
@@ -46,6 +48,15 @@ public class MStockDepthService implements WebSocket.Listener {
     public String availability(){return availability;}
     public void watch(ScriptMasterEntity script){
         if(script==null||script.getScripCode()==null)return;
+        String signature=LocalDate.now(ZoneId.of("Asia/Kolkata"))+"|"+script.getExchange()+"|"+script.getTradingSymbol()+"|"+script.getExpiry()+"|"+script.getStrikePrice()+"|"+script.getOptionType()+"|"+script.getLotSize();
+        var cached=mapped.get(script.getScripCode());
+        if(cached!=null&&cached.signature().equals(signature)&&cached.validatedAt().plusSeconds(60).isAfter(Instant.now())
+                &&routes.containsKey(cached.route().wireToken())){
+            demanded.put(cached.route().wireToken(),Instant.now());connectIfNeeded();return;
+        }
+        if(cached!=null){
+            mapped.remove(script.getScripCode());routes.remove(cached.route().wireToken());demanded.remove(cached.route().wireToken());books.remove(script.getScripCode());
+        }
         String exchange="NF".equals(script.getExchange())?"NFO":"BF".equals(script.getExchange())?"BFO":"";
         if(exchange.isEmpty())return;
         var key=resolver.resolveInstrumentKey(script.getScripCode()).orElse(null);
@@ -60,6 +71,7 @@ public class MStockDepthService implements WebSocket.Listener {
         var route=new Route(script.getScripCode(),script.getExchange(),token,key);
         var previous=routes.putIfAbsent(token,route);
         if(previous!=null&&!previous.equals(route))return;
+        mapped.put(script.getScripCode(),new Mapping(signature,route,Instant.now()));
         demanded.put(token,Instant.now());
         if(previous==null&&socket!=null)subscribe(socket,List.of(token));
         connectIfNeeded();
@@ -146,7 +158,7 @@ public class MStockDepthService implements WebSocket.Listener {
     public synchronized void maintain(){
         var cutoff=Instant.now().minusSeconds(60);List<Long> expired=new ArrayList<>();
         demanded.forEach((id,at)->{if(at.isBefore(cutoff))expired.add(id);});
-        for(long id:expired){demanded.remove(id);var route=routes.remove(id);if(route!=null)books.remove(route.code());}
+        for(long id:expired){demanded.remove(id);var route=routes.remove(id);if(route!=null){books.remove(route.code());mapped.remove(route.code());}}
         if(socket!=null&&!expired.isEmpty())socket.sendText(new JSONObject().put("a","unsubscribe").put("v",expired).toString(),true);
         if(routes.isEmpty()){close();return;}
         if(socket!=null)socket.sendPing(ByteBuffer.wrap(new byte[]{1}));else connectIfNeeded();

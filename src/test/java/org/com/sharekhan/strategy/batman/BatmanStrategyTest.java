@@ -71,6 +71,13 @@ class BatmanStrategyTest{
   strategy.validateConfiguration(request());verify(broker).supportsCarryOptionShorts();
  }
 
+ @Test void longPreparationCannotAdmitAChainThatExpiredWhileBooksWerePrepared(){
+  var later=now.plusSeconds(11);
+  doAnswer(a->{ReflectionTestUtils.setField(strategy,"clock",Clock.fixed(later,BatmanRules.IST));return null;}).when(books).prepare(anyList());
+  when(books.book(anyInt(),anyString(),anyBoolean(),anyLong())).thenAnswer(a->{int code=a.getArgument(0);return QuoteCacheService.QuoteSnapshot.builder()
+      .scripCode(code).coherentBook(true).bestBid(code<=2?99d:70d).bestAsk(code<=2?100d:71d).bidQuantity(10000d).askQuantity(10000d).lastBookAt(later).build();});
+  strategy.apply(request());verifyNoInteractions(execution);verify(coordinator,never()).ensureCurrentRun();
+ }
  @Test void manualSimulatorEntryKeepsDailyClaimAndUsesNormalFourLegPipeline(){
   var later=now.plusSeconds(3600);ReflectionTestUtils.setField(strategy,"clock",Clock.fixed(later,BatmanRules.IST));
   var r=request();r.setBatmanManualEntryDay(LocalDate.of(2026,9,15));

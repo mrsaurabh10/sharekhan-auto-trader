@@ -28,7 +28,7 @@ public class BatmanBooks {
         this.cache=cache;this.scripts=scripts;this.shoonya=shoonya;this.feeds=feeds;this.mstock=mstock;
     }
     /** Prepare all legs before reading any; subsequent scheduled attempts see warmed full feeds. */
-    public synchronized void prepare(List<ScriptMasterEntity> contracts){for(var script:contracts)watch(script);}
+    public synchronized void prepare(List<ScriptMasterEntity> contracts){for(var script:contracts){watch(script);shoonya.prepareExactQuote(script);}}
     private void watch(ScriptMasterEntity script){
         if(script==null||script.getScripCode()==null)return;
         String key=script.getExchange()+script.getScripCode();

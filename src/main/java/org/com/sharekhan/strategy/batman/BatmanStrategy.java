@@ -62,13 +62,14 @@ public class BatmanStrategy implements StrategyEvaluator {
             if(!chain.symbol().equals(symbol)||!chain.expiry().equals(expiry.get())||chain.receivedAt().isAfter(clock.instant())||chain.receivedAt().isBefore(clock.instant().minusSeconds(10)))return support.waiting(metadata(),symbol,"Waiting for a fresh exact-expiry delta chain");
             var selected=BatmanRules.select(chain.options(),chain.spot());
             String expiryText=expiry.get().format(DateTimeFormatter.ofPattern("dd/MM/uuuu"));
-            books.prepare(selected.stream().map(l->scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,l.option().strike(),l.option().side(),expiryText)
-                    .orElseThrow(()->new IllegalStateException("Selected delta strike is absent from the execution master"))).toList());
+            var contracts=selected.stream().map(l->scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,l.option().strike(),l.option().side(),expiryText)
+                    .orElseThrow(()->new IllegalStateException("Selected delta strike is absent from the execution master"))).toList();
+            books.prepare(contracts);
             JSONArray plan=new JSONArray();List<TriggerRequest> orders=new ArrayList<>();Integer lotSize=null;
             List<Instant> quoteTimes=new ArrayList<>();BigDecimal estimatedCredit=BigDecimal.ZERO;
             for(int i=0;i<selected.size();i++){
                 var leg=selected.get(i);var o=leg.option();String text=expiry.get().format(DateTimeFormatter.ofPattern("dd/MM/uuuu"));
-                var contract=scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,o.strike(),o.side(),text).orElseThrow(()->new IllegalStateException("Selected delta strike is absent from the execution master"));
+                var contract=contracts.get(i);
                 if(!"NF".equals(contract.getExchange())||contract.getLotSize()==null||contract.getLotSize()<1||(lotSize!=null&&!lotSize.equals(contract.getLotSize())))throw new IllegalStateException("Exact matching NSE option contract/lot sizes required");
                 lotSize=contract.getLotSize();
                 var mapped=identities.resolve(TriggeredTradeSetupEntity.builder().symbol(symbol).exchange(contract.getExchange()).expiry(text).strikePrice(o.strike()).optionType(o.side()).build());
@@ -86,7 +87,7 @@ public class BatmanStrategy implements StrategyEvaluator {
                 plan.put(new JSONObject().put("code",contract.getScripCode()).put("exchange",contract.getExchange()).put("side",o.side()).put("strike",o.strike()).put("action",leg.action()).put("quantity",units).put("delta",o.delta()).put("dhanSecurityId",o.securityId()));
             }
             if(estimatedCredit.signum()<=0)throw new IllegalStateException("Center credit is not positive after executable spreads");
-            if(Duration.between(Collections.min(quoteTimes),Collections.max(quoteTimes)).compareTo(Duration.ofSeconds(2))>0||Collections.min(quoteTimes).isBefore(clock.instant().minusSeconds(5))||!shared.executionFresh()||!entryWindow(request,LocalDateTime.now(clock)))throw new IllegalStateException("Basket quote preparation elapsed; waiting for a synchronized snapshot");
+            if(chain.receivedAt().isBefore(clock.instant().minusSeconds(10))||Duration.between(Collections.min(quoteTimes),Collections.max(quoteTimes)).compareTo(Duration.ofSeconds(2))>0||Collections.min(quoteTimes).isBefore(clock.instant().minusSeconds(5))||!shared.executionFresh()||!entryWindow(request,LocalDateTime.now(clock)))throw new IllegalStateException("Basket quote preparation elapsed; waiting for a synchronized snapshot");
             String runId=coordinator.ensureCurrentRun();if(runId==null)throw new IllegalStateException("Server-owned strategy run is required");
             var basket=BatmanBasket.builder().id(id).appUserId(request.getUserId()).brokerCredentialsId(request.getBrokerCredentialsId()).symbol(symbol).expiry(expiry.get()).strategyRunId(runId)
                     .claimedAt(LocalDateTime.now(clock)).baseLots(request.getLots()).lotSize(lotSize).planJson(plan.toString()).state("ENTERING").message("Immutable daily claim; entering long legs first").build();
