@@ -42,6 +42,17 @@ public class LtpCacheService {
     /**
      * Update the LTP for a scripCode (called from WebSocket listener)
      */
+    /** Preserve the verified observation time when sharing a polled spot across consumers. */
+    public boolean updateObservedLtp(int scripCode,double ltp,java.time.Instant observedAt) {
+        if(observedAt==null || !Double.isFinite(ltp) || ltp<=0)return false;
+        var at=LocalDateTime.ofInstant(observedAt,IST_ZONE);boolean[] accepted={false};
+        priceObservations.compute(scripCode,(code,old)->{
+            if(old!=null && old.observedAt()!=null && !at.isAfter(old.observedAt()))return old;
+            updatePriceCaches(code,ltp,at);accepted[0]=true;return new CachedPriceObservation(ltp,at);
+        });
+        return accepted[0];
+    }
+
     public void updateLtp(int scripCode, double ltp) {
         updateLtpAt(scripCode, ltp, LocalDateTime.now(IST_ZONE));
     }
@@ -65,7 +76,12 @@ public class LtpCacheService {
     }
 
     void updateLtpAt(int scripCode, double ltp, LocalDateTime observedAt) {
-        priceObservations.put(scripCode, new CachedPriceObservation(ltp, observedAt));
+        priceObservations.compute(scripCode,(code,old)->{
+            updatePriceCaches(code,ltp,observedAt);return new CachedPriceObservation(ltp,observedAt);
+        });
+    }
+
+    private void updatePriceCaches(int scripCode,double ltp,LocalDateTime observedAt) {
         ltpCache.put(scripCode, ltp);
         if (observedAt != null) {
             ltpObservedAtCache.put(scripCode, observedAt);

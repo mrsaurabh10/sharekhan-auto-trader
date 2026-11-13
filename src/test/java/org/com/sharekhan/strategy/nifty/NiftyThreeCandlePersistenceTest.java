@@ -33,6 +33,7 @@ class NiftyThreeCandlePersistenceTest {
         }
     }
     @MockBean QuoteCacheService quotes;
+    @MockBean org.com.sharekhan.service.SpotQuoteService spotQuotes;
     @MockBean StrategyRunCoordinator runs;
     @MockBean TradeAuditService audit;
     @Autowired NiftyThreeCandlePaperBroker paper;
@@ -50,6 +51,8 @@ class NiftyThreeCandlePersistenceTest {
         runRepository.saveAndFlush(StrategyRun.builder().id("paper-test-run").appUserId(1L).brokerCredentialsId(b.getId())
                 .templateId(NiftyThreeCandleRules.TEMPLATE).symbol("NIFTY").tradingDay(NOW.toLocalDate()).instance("DAY").lots(1).status("OPEN").createdAt(NOW).build());
         when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(23002)));
+        when(spotQuotes.spot(20000,"NC")).thenAnswer(c->quotes.getSnapshot(20000).orElse(null));
+        when(spotQuotes.fresh(any(),any(),eq(20000),eq("NC"))).thenAnswer(c->NiftyThreeCandleRules.freshSpot(c.getArgument(0),c.getArgument(1),20000));
         when(quotes.getSnapshot(123)).thenReturn(Optional.of(QuoteCacheService.QuoteSnapshot.builder().scripCode(123).bestBid(100d).bestAsk(101d)
                 .bidQuantity(65d).askQuantity(65d).coherentBook(true).lastBookAt(AT).bookSource("SHAREKHAN_WS").bookExchange("NF").bookProviderIdentity("scrip:123").build()));
         doAnswer(c->{((TriggerRequest)c.getArgument(0)).setStrategyRunId("paper-test-run");return null;}).when(runs).attach(any());

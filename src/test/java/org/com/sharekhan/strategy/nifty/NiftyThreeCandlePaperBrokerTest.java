@@ -55,6 +55,15 @@ class NiftyThreeCandlePaperBrokerTest {
                 .status(TriggeredTradeStatus.EXECUTED).entryAt(now.minusMinutes(1)).build();
         when(em.find(TriggeredTradeSetupEntity.class,22L,LockModeType.PESSIMISTIC_WRITE)).thenReturn(t);rows.add(t);return t;
     }
+    @Test void paperEntryAndPriceExitUseTheSameSharedSpotResolver() {
+        var shared=mock(SpotQuoteService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(paper,"spotQuotes",shared);
+        var q=spot(23002);when(shared.spot(20000,"NC")).thenReturn(q);when(shared.fresh(q,instant,20000,"NC")).thenReturn(true);
+        assertEquals(11L,open().getId());
+        var t=position();t.setTarget1(23001d);
+        paper.evaluate(22L);assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,t.getStatus());
+        verify(shared,times(2)).spot(20000,"NC");
+    }
     @Test void entryAcceptsBookReceivedDuringSnapshotRead() {
         var moving=new NiftyThreeCandleTimingTest.MovingClock(instant);
         var timed=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,moving);

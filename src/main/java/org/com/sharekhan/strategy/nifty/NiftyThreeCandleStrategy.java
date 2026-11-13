@@ -25,6 +25,15 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
     private final NseMarketCalendar calendar;
     private final Clock clock;
     @org.springframework.beans.factory.annotation.Autowired
+    private SpotQuoteService spotQuotes;
+    private QuoteCacheService.QuoteSnapshot spotQuote(int code) {
+        return spotQuotes==null?quotes.getSnapshot(code).orElse(null):spotQuotes.spot(code,"NC");
+    }
+    private boolean freshSpot(QuoteCacheService.QuoteSnapshot quote,Instant at,int code) {
+        return spotQuotes==null?NiftyThreeCandleRules.freshSpot(quote,at,code):spotQuotes.fresh(quote,at,code,"NC");
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
     public NiftyThreeCandleStrategy(BrokerCredentialsRepository brokers, ScriptMasterRepository scripts,
             StrategySupport support, NiftyThreeCandleMarketData data, QuoteCacheService quotes,
             TradeExecutionService feeds, NiftyThreeCandlePaperBroker paper, NseMarketCalendar calendar) {
@@ -71,12 +80,12 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
         var check=NiftyThreeCandleRules.check(bars,now);
         var signal=check.signal();
         if(signal==null)return waitFor(check.reason());
-        var q=quotes.getSnapshot(spot.getScripCode()).orElse(null);
+        var q=spotQuote(spot.getScripCode());
         // Read the clock after the snapshot: ticks received while candles load are not future data.
         var observedAt=clock.instant();
         if(!signal.inWindow(LocalDateTime.ofInstant(observedAt,NiftyThreeCandleRules.IST)))
             return waitFor("The fourth-candle entry window has expired; signal="+signal.key());
-        if(!NiftyThreeCandleRules.freshSpot(q,observedAt,spot.getScripCode()))return waitFor("Waiting for fresh Nifty spot quote");
+        if(!freshSpot(q,observedAt,spot.getScripCode()))return waitFor("Waiting for verified Nifty spot quote"+(spotQuotes==null?"":": "+spotQuotes.reason(spot.getScripCode(),"NC")));
         var contracts=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase("NF","NIFTY");
         var option=contract(contracts,signal.side(),q.getLastTradedPrice(),now.toLocalDate());
         var warm=new TriggerRequest();warm.setInstrument("NIFTY");warm.setExchange(option.getExchange());warm.setOptionType(signal.side());warm.setExpiry(option.getExpiry());warm.setStrikePrice(option.getStrikePrice());

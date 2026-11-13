@@ -25,6 +25,15 @@ public class NiftyThreeCandlePaperBroker {
     private final StrategyRunCoordinator runs;
     private final TradeAuditService audit;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    private SpotQuoteService spotQuotes;
+    private QuoteCacheService.QuoteSnapshot spotQuote(int code) {
+        return spotQuotes==null?quotes.getSnapshot(code).orElse(null):spotQuotes.spot(code,"NC");
+    }
+    private boolean freshSpot(QuoteCacheService.QuoteSnapshot quote,Instant at,int code) {
+        return spotQuotes==null?NiftyThreeCandleRules.freshSpot(quote,at,code):spotQuotes.fresh(quote,at,code,"NC");
+    }
+
     @Autowired
     public NiftyThreeCandlePaperBroker(EntityManager em,TriggeredTradeSetupRepository trades,TriggerTradeRequestRepository requests,
                                        QuoteCacheService quotes,StrategyRunCoordinator runs,TradeAuditService audit){
@@ -85,12 +94,12 @@ public class NiftyThreeCandlePaperBroker {
         if(prior.stream().anyMatch(t->isToday(t,now.toLocalDate()) && lossExit(t.getExitReason()))
                 || realized(prior,now.toLocalDate())<=-NiftyThreeCandleRules.DAILY_LOSS)
             throw new IllegalStateException("₹5,000 combined daily paper loss limit reached; entries stopped for today");
-        var spot=quotes.getSnapshot(spotCode).orElse(null);
+        var spot=spotQuote(spotCode);
         var book=quotes.getSnapshot(option.getScripCode()).orElse(null);
         var instant=clock.instant();
         var observedAt=LocalDateTime.ofInstant(instant,NiftyThreeCandleRules.IST);
         if(!signal.inWindow(observedAt))throw new IllegalStateException("The fourth-candle entry window has expired");
-        if(!NiftyThreeCandleRules.freshSpot(spot,instant,spotCode))
+        if(!freshSpot(spot,instant,spotCode))
             throw new IllegalStateException("Waiting for fresh exact Nifty spot quote");
         if(!NiftyThreeCandleRules.freshBook(book,instant,option.getScripCode()))
             throw new IllegalStateException("Waiting for fresh exact option bid/ask; scrip="+option.getScripCode());
@@ -120,7 +129,7 @@ public class NiftyThreeCandlePaperBroker {
         var fillInstant=clock.instant();
         if(!signal.inWindow(LocalDateTime.ofInstant(fillInstant,NiftyThreeCandleRules.IST)))
             throw new IllegalStateException("The fourth-candle entry window has expired");
-        if(!NiftyThreeCandleRules.freshSpot(spot,fillInstant,spotCode) || !NiftyThreeCandleRules.freshBook(book,fillInstant,option.getScripCode()))
+        if(!freshSpot(spot,fillInstant,spotCode) || !NiftyThreeCandleRules.freshBook(book,fillInstant,option.getScripCode()))
             throw new IllegalStateException("Entry quotes expired while acquiring strategy locks; waiting for fresh data");
         var req=TriggerTradeRequestEntity.builder().strategyRunId(trigger.getStrategyRunId()).appUserId(r.getUserId()).brokerCredentialsId(r.getBrokerCredentialsId())
                 .symbol("NIFTY").scripCode(option.getScripCode()).exchange(option.getExchange()).instrumentType(option.getInstrumentType())
@@ -149,7 +158,7 @@ public class NiftyThreeCandlePaperBroker {
         var b=em.find(BrokerCredentialsEntity.class,t.getBrokerCredentialsId());
         if(b==null || !"SIMULATOR".equalsIgnoreCase(b.getBrokerName()) || !Objects.equals(t.getAppUserId(),b.getAppUserId()))return;
         var book=quotes.getSnapshot(t.getScripCode()).orElse(null);
-        var spot=quotes.getSnapshot(t.getSpotScripCode()).orElse(null);
+        var spot=spotQuote(t.getSpotScripCode());
         var instant=clock.instant();
         var now=LocalDateTime.ofInstant(instant,NiftyThreeCandleRules.IST);
         boolean eod=t.getEntryAt().toLocalDate().isBefore(now.toLocalDate()) || !now.toLocalTime().isBefore(LocalTime.of(15,30));
@@ -160,7 +169,7 @@ public class NiftyThreeCandlePaperBroker {
             double daily=realized(owned(t.getAppUserId(),t.getBrokerCredentialsId()),now.toLocalDate())+netAt(t,book.getBestBid());
             if(daily<=-NiftyThreeCandleRules.DAILY_LOSS)reason="NIFTY_3C_DAILY_LOSS";
         }
-        if(reason==null && NiftyThreeCandleRules.freshSpot(spot,instant,t.getSpotScripCode())){
+        if(reason==null && freshSpot(spot,instant,t.getSpotScripCode())){
             double p=spot.getLastTradedPrice();boolean pe="PE".equals(t.getOptionType());
             if(pe?p>=t.getStopLoss():p<=t.getStopLoss())reason="NIFTY_3C_STOP";
             else if(pe?p<=t.getTarget1():p>=t.getTarget1())reason="NIFTY_3C_TARGET";
@@ -182,14 +191,14 @@ public class NiftyThreeCandlePaperBroker {
         if(t.getExitReason()==null){t.setExitReason(reason);trades.saveAndFlush(t);}
         var q=quotes.getSnapshot(t.getScripCode()).orElse(null);
         if(!NiftyThreeCandleRules.freshBook(q,clock.instant(),t.getScripCode()))return;
-        finish(t,q,quotes.getSnapshot(t.getSpotScripCode()).orElse(null),t.getExitReason()!=null?t.getExitReason():reason,LocalDateTime.now(clock));
+        finish(t,q,spotQuotes==null?quotes.getSnapshot(t.getSpotScripCode()).orElse(null):spotQuotes.cached(t.getSpotScripCode(),"NC"),t.getExitReason()!=null?t.getExitReason():reason,LocalDateTime.now(clock));
     }
     private void finish(TriggeredTradeSetupEntity t,QuoteCacheService.QuoteSnapshot book,QuoteCacheService.QuoteSnapshot spot,String reason,LocalDateTime now){
         if(book.getBidQuantity()==null || !Double.isFinite(book.getBidQuantity()) || book.getBidQuantity()<t.getQuantity())return;
         t.setExitPrice(book.getBestBid());t.setPnl((book.getBestBid()-t.getActualEntryPrice())*t.getQuantity());
         t.setExitReason(reason);t.setExitedAt(now);t.setExitOrderId("SIM-N3C-EXIT-"+UUID.randomUUID());t.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
         trades.saveAndFlush(t);
-        Double spotExit=spot!=null && NiftyThreeCandleRules.freshSpot(spot,clock.instant(),t.getSpotScripCode())?spot.getLastTradedPrice():null;
+        Double spotExit=spot!=null && freshSpot(spot,clock.instant(),t.getSpotScripCode())?spot.getLastTradedPrice():null;
         double risk=Math.abs(t.getEntryPrice()-t.getStopLoss());
         Double r=spotExit==null?null:("PE".equals(t.getOptionType())?t.getEntryPrice()-spotExit:spotExit-t.getEntryPrice())/risk;
         record(t,"PAPER_EXIT",reason,"spot="+spotExit+", spotR="+r+", optionBid="+book.getBestBid()+", optionGross="+t.getPnl()+", estimatedNet="+t.getEffectivePnl()+", costModel=legacy-option-lot-estimate");

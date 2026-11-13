@@ -36,6 +36,14 @@ class MStockInstrumentResolverTest {
         when(mStockInstrumentRepository.count()).thenReturn(100L);
     }
 
+    @Test void knownIndexTokensWorkWithoutMasterRowsButNeverCrossExchangeOrIdentity() {
+        assertThat(resolver.expectedSpotToken(spotScript(20000,"NIFTY","NC"),"NSE:Nifty 50")).contains(26000L);
+        assertThat(resolver.expectedSpotToken(spotScript(999901,"SENSEX","BC"),"BSE:SENSEX")).contains(51L);
+        assertThat(resolver.expectedSpotToken(spotScript(26009,"BANKNIFTY","NC"),"NSE:Nifty Bank")).contains(26009L);
+        assertThat(resolver.expectedSpotToken(spotScript(20000,"BANKNIFTY","NC"),"NSE:Nifty 50")).isEmpty();
+        assertThat(resolver.expectedSpotToken(spotScript(20000,"NIFTY","BC"),"NSE:Nifty 50")).isEmpty();
+    }
+
     @Test
     void resolvesMStockIndexLtpKeysUsingDisplayNamesAcceptedByMStock() {
         assertThat(resolver.resolveInstrumentKey(spotScript(20000, "NIFTY", "NC")))

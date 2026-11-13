@@ -45,7 +45,7 @@ depth waits. The websocket adapter passes quantities only from explicit direct
 top-of-book fields or a matching side/price in a depth object; total buy/sell volume
 and side-ambiguous depth arrays are not treated as executable quantity.
 
-Nifty entry and price exits also need a fresh exact NSE spot quote. Regular-session
+Nifty entry and price exits also need a fresh exact NSE spot quote from the shared spot feed. Regular-session
 candles currently use the existing MStock intraday/Sharekhan history adapter. That
 is a different live feed from the saved DHAN research archive. No tick-level or
 provider-parity claim is made. Polling is every two seconds, not exchange matching.
@@ -115,3 +115,30 @@ status/reason changes and at the first evaluation in each five-minute interval.
 Events include subscription and broker IDs; unchanged two-second polls do not
 create duplicate audit rows. Audit failure does not block evaluation. Historical
 candle replay alone does not establish that executable depth was available.
+
+## Shared spot feed
+
+Nifty Three Candles, ADX/DMI spot reads, normal cash/spot entry-reference reads,
+and the existing active-scrip polling dispatcher use `SpotQuoteService`.
+Execution accounts and order adapters stay separate from data providers.
+
+The service retains the existing Sharekhan LTP-only subscription and reads the
+source-specific websocket snapshot, so another provider cannot overwrite its
+provenance. If unavailable, it uses an exact Shoonya quote; a current provider
+snapshot is eligible even when the last price change is older. MStock's existing
+read-only LTP adapter is the next fallback: resolved instrument key, exchange and
+returned instrument token must match its master row or the existing verified index mapping. MStock LTP has no last-change
+timestamp; freshness describes the current response observation and bounded request
+latency, not a claim that a new trade occurred. These fallbacks use existing REST
+adapters; this change does not introduce MStock or Shoonya websocket clients.
+
+All accepted observations retain price, provider, identity and receive time with a
+five-second limit. Fallback calls are shared/throttled per spot, do not authenticate
+or refresh credentials, and never relabel another provider as Sharekhan. Accepted
+spot observations reach the normal entry/SL/target callbacks with their original
+observation time. No synthetic price tick is created from an old cache read.
+
+Admin GET `/api/strategies/spot-quote?scripCode=20000&exchange=NC` inspects source
+snapshots and rejection reasons only; it does not subscribe, fetch, evaluate, or
+place orders. Strategy signals, option-book execution gates and risk settings are
+unchanged. A spot-data correction alone does not establish executable option depth.

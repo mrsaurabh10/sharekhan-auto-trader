@@ -13,6 +13,18 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 class MStockLtpReadOnlyTest {
+    @Test void indexResponseKeyMayDifferOnlyInCase() throws Exception {
+        var connection=mock(HttpURLConnection.class);when(connection.getResponseCode()).thenReturn(200);
+        when(connection.getInputStream()).thenReturn(new ByteArrayInputStream(
+                "{\"status\":\"success\",\"data\":{\"NSE:NIFTY 50\":{\"instrument_token\":26000,\"last_price\":25000}}}".getBytes(StandardCharsets.UTF_8)));
+        var tokens=mock(TokenStoreService.class);when(tokens.getAccessToken(Broker.MSTOCK)).thenReturn("test-session");
+        var service=new MStockLtpService(tokens,mock(CryptoService.class)){@Override HttpURLConnection openConnection(URL url){return connection;}};
+        ReflectionTestUtils.setField(service,"apiKey","test-key");
+        var q=service.fetchLtpForInstrumentReadOnly("NSE:Nifty 50");
+        assertThat(q.get("instrument_token")).isEqualTo(26000L);assertThat(q.get("last_price")).isEqualTo(25000d);
+        verify(tokens,never()).refreshToken(any(),any());
+    }
+
     @Test
     void unauthorizedOptionReadIsBoundedAndNeverRefreshesAuthentication() throws Exception {
         var connection = mock(HttpURLConnection.class);

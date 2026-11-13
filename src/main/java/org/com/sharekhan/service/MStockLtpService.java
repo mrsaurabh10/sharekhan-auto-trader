@@ -103,10 +103,19 @@ public class MStockLtpService {
             JSONObject data = root.optJSONObject("data");
             Map<String, Map<String, Object>> result = new LinkedHashMap<>();
             for (String inst : instruments) {
-                if (data == null || data.isNull(inst)) {
+                String responseKey=inst;
+                if(data!=null&&!data.has(responseKey)) {
+                    String match=null;boolean ambiguous=false;
+                    for(var keys=data.keys();keys.hasNext();) {
+                        String key=keys.next();
+                        if(key.equalsIgnoreCase(inst)) {if(match!=null){ambiguous=true;break;}match=key;}
+                    }
+                    if(!ambiguous&&match!=null)responseKey=match;
+                }
+                if (data == null || data.isNull(responseKey)) {
                     result.put(inst, null);
                 } else {
-                    JSONObject instObj = data.optJSONObject(inst);
+                    JSONObject instObj = data.optJSONObject(responseKey);
                     if (instObj == null) {
                         result.put(inst, null);
                     } else {

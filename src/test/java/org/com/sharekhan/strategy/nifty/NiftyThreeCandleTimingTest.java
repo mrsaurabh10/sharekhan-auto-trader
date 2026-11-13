@@ -44,6 +44,15 @@ class NiftyThreeCandleTimingTest {
     }
     QuoteCacheService.QuoteSnapshot spot(Instant at){return QuoteCacheService.QuoteSnapshot.builder().scripCode(20000).lastTradedPrice(104d)
             .lastLtpAt(at).ltpSource("SHAREKHAN_WS").ltpExchange("NC").ltpProviderIdentity("scrip:20000").build();}
+    @Test void admissionUsesSharedProviderIndependentSpotFeed() {
+        var shared=mock(SpotQuoteService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(strategy,"spotQuotes",shared);
+        when(data.candles(any(),any())).thenReturn(NiftyThreeCandleRulesTest.candles(false));
+        var snapshot=QuoteCacheService.QuoteSnapshot.builder().scripCode(20000).lastTradedPrice(104d).lastLtpAt(clock.at).ltpSource("SHOONYA").ltpExchange("NC").build();
+        when(shared.spot(20000,"NC")).thenReturn(snapshot);when(shared.fresh(snapshot,clock.at,20000,"NC")).thenReturn(true);
+        assertEquals("triggered",strategy.apply(request).getStatus());
+        verify(shared).spot(20000,"NC");verifyNoInteractions(quotes);
+    }
     @Test void tickReceivedDuringCandleLoadCanEnter(){
         when(data.candles(any(),any())).thenAnswer(c->{clock.at=clock.at.plusSeconds(2);return NiftyThreeCandleRulesTest.candles(false);});
         when(quotes.getSnapshot(20000)).thenAnswer(c->{clock.at=clock.at.plusMillis(1);return Optional.of(spot(clock.at));});
@@ -59,9 +68,9 @@ class NiftyThreeCandleTimingTest {
     @Test void staleAndFutureQuotesStillWait(){
         when(data.candles(any(),any())).thenReturn(NiftyThreeCandleRulesTest.candles(false));
         when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(clock.at.minusSeconds(6))));
-        assertTrue(strategy.apply(request).getMessage().contains("fresh Nifty spot"));
+        assertTrue(strategy.apply(request).getMessage().contains("verified Nifty spot"));
         when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(clock.at.plusSeconds(1))));
-        assertTrue(strategy.apply(request).getMessage().contains("fresh Nifty spot"));
+        assertTrue(strategy.apply(request).getMessage().contains("verified Nifty spot"));
         verifyNoInteractions(paper);
     }
 }

@@ -88,6 +88,24 @@ public class MStockInstrumentResolver {
             DateTimeFormatter.ofPattern("dd-MMM-uuuu", Locale.ROOT)
     );
 
+    /** Provider index IDs already used by the candle adapter; verify local identity as well. */
+    public Optional<Long> expectedSpotToken(ScriptMasterEntity script,String key) {
+        if(script==null || !Set.of("NC","BC").contains(script.getExchange())
+                || (script.getOptionType()!=null&&!script.getOptionType().isBlank()))return Optional.empty();
+        String symbol=normalizeSymbolKey(script.getTradingSymbol());var code=script.getScripCode();
+        if(Integer.valueOf(20000).equals(code))return "NC".equals(script.getExchange()) && Set.of("NIFTY","NIFTY50").contains(symbol)
+                && "NSE:Nifty 50".equalsIgnoreCase(key)?Optional.of(26000L):Optional.empty();
+        if(Integer.valueOf(26009).equals(code))return "NC".equals(script.getExchange()) && Set.of("BANKNIFTY","NIFTYBANK").contains(symbol)
+                && "NSE:Nifty Bank".equalsIgnoreCase(key)?Optional.of(26009L):Optional.empty();
+        if(Integer.valueOf(51).equals(code)||Integer.valueOf(999901).equals(code))return "BC".equals(script.getExchange()) && "SENSEX".equals(symbol)
+                && "BSE:SENSEX".equalsIgnoreCase(key)?Optional.of(51L):Optional.empty();
+        String exchange=normalizeExchangeForApi(script.getExchange());
+        if(key==null||!key.startsWith(exchange+":"))return Optional.empty();
+        return mStockInstrumentRepository.findByInstrumentKey(key)
+                .filter(row->exchange.equals(row.getExchange())&&row.getInstrumentToken()!=null&&row.getInstrumentToken()>0)
+                .map(MStockInstrumentEntity::getInstrumentToken);
+    }
+
     public Optional<String> resolveInstrumentKey(Integer scripCode) {
         if (scripCode == null) return Optional.empty();
 

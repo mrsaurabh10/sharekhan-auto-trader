@@ -32,6 +32,16 @@ public class StrategyController {
     private final org.com.sharekhan.repository.StrategySubscriptionRepository subscriptions;
     private final org.com.sharekhan.strategy.batman.BatmanBooks batmanBooks;
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.service.SpotQuoteService spotQuotes;
+
+    @GetMapping("/spot-quote")
+    public ResponseEntity<?> spotQuote(@org.springframework.web.bind.annotation.RequestParam("scripCode") int scripCode,
+            @org.springframework.web.bind.annotation.RequestParam("exchange") String exchange) {
+        if(!currentUserService.isAdmin())throw new org.springframework.security.access.AccessDeniedException("Administrator required");
+        return ResponseEntity.ok(spotQuotes.diagnostics(scripCode,exchange));
+    }
+
     @GetMapping("/batman-books")
     public ResponseEntity<?> batmanBooks(){
         if(!currentUserService.isAdmin())throw new org.springframework.security.access.AccessDeniedException("Administrator required");
