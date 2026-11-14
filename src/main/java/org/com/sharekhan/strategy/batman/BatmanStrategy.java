@@ -35,7 +35,7 @@ public class BatmanStrategy implements StrategyEvaluator {
         this.scripts=scripts;this.credentials=credentials;this.brokers=brokers;this.chains=chains;this.identities=identities;this.books=books;this.baskets=baskets;this.store=store;this.runs=runs;this.trades=trades;this.execution=execution;this.coordinator=coordinator;this.calendar=calendar;this.support=support;this.shared=shared;this.clock=Clock.system(BatmanRules.IST);
     }
     @Override public StrategyMetadata metadata(){return new StrategyMetadata(BatmanRules.TEMPLATE,"Batman Ratio Spread",
-            "Monthly expiry only, 40–50 DTE nearest 45; entries at 09:20 IST. After SL/target, re-enter only on a later trading day after all prior exposure is confirmed flat. Buy 1 lot near 20 delta and sell 2 near 16 delta per side. Carry overnight; no adjustments. Combined gross TP and equal SL use actual center credit. Base lots scale the entire basket; option-short support depends on the execution adapter.","CE+PE");}
+            "Listed weekly or monthly expiry, 40–45 DTE nearest 45; entries at 09:20 IST. After SL/target, re-enter only on a later trading day after all prior exposure is confirmed flat. Buy 1 lot near 20 delta and sell 2 near 16 delta per side. Carry overnight; no adjustments. Combined gross TP and equal SL use actual center credit. Base lots scale the entire basket; option-short support depends on the execution adapter.","CE+PE");}
     public void validateConfiguration(StrategyApplyRequest request){
         BatmanRules.validate(request);
         if(request.isBatmanMarketEntry()&&(request.getBatmanManualEntryDay()==null||request.getBatmanRetryOfRunId()==null))throw new IllegalArgumentException("Reviewed same-day retry is required for Simulator market entry");
@@ -49,27 +49,28 @@ public class BatmanStrategy implements StrategyEvaluator {
     }
     @Override public synchronized StrategyApplyResponse apply(StrategyApplyRequest request){
         validateConfiguration(request);var now=LocalDateTime.now(clock);String symbol=request.getSymbol();
-        if(!calendar.isTradingDay(now.toLocalDate())||!entryWindow(request,now))return support.waiting(metadata(),symbol,"Waiting for 09:20 IST; fresh entries require a listed monthly expiry at 40–50 DTE");
+        if(!calendar.isTradingDay(now.toLocalDate())||!entryWindow(request,now))return support.waiting(metadata(),symbol,"Waiting for 09:20 IST; fresh entries require a listed expiry at 40–45 DTE");
         boolean market=request.isBatmanMarketEntry();
+        boolean freshLtp=!market&&credentials.findById(request.getBrokerCredentialsId()).map(c->"Simulator".equalsIgnoreCase(c.getBrokerName())).orElse(false);
         String blocked=request.getBatmanRetryOfRunId()==null?store.entryBlockReason(request.getUserId(),request.getBrokerCredentialsId(),symbol,now.toLocalDate())
                 :store.retryBlockReason(request.getUserId(),request.getBrokerCredentialsId(),symbol,now.toLocalDate(),request.getBatmanRetryOfRunId(),request.getSubscriptionId());
         if(blocked!=null)return support.waiting(metadata(),symbol,blocked);
         Set<LocalDate> ce=dates(scripts.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol,"CE"));
         ce.retainAll(dates(scripts.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol,"PE")));
         var expiry=BatmanRules.expiry(ce,now.toLocalDate(),calendar::isTradingDay);
-        if(expiry.isEmpty())return support.waiting(metadata(),symbol,"No listed monthly expiry at 40–50 DTE; waiting for the next eligible morning");
+        if(expiry.isEmpty())return support.waiting(metadata(),symbol,"No listed expiry at 40–45 DTE; waiting for the next eligible morning");
         String id=id(request.getUserId()+":"+request.getBrokerCredentialsId()+":"+symbol+":"+now.toLocalDate()+(request.getBatmanRetryOfRunId()==null?"":":manual-retry"));
         if(baskets.existsById(id))return support.waiting(metadata(),symbol,"A Batman basket was already attempted today; no same-day re-entry");
         try{
             var chain=shared.share("BATMAN_CHAIN",symbol,expiry.get().toString(),now,()->chains.fetch(symbol,expiry.get()));
             if(!chain.symbol().equals(symbol)||!chain.expiry().equals(expiry.get())||chain.receivedAt().isAfter(clock.instant())||(!market&&chain.receivedAt().isBefore(clock.instant().minusSeconds(10))))return support.waiting(metadata(),symbol,"Waiting for a fresh exact-expiry delta chain");
-            var nearest=BatmanRules.select(chain.options(),chain.spot(),0,market);
+            var nearest=BatmanRules.select(chain.options(),chain.spot(),0,true);
             String expiryText=expiry.get().format(DateTimeFormatter.ofPattern("dd/MM/uuuu"));
             var reference=nearest.getFirst().option();
             var referenceContract=scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,reference.strike(),reference.side(),expiryText)
                     .orElseThrow(()->new IllegalStateException("Selected delta strike is absent from the execution master"));
             if(referenceContract.getLotSize()==null||referenceContract.getLotSize()<1)throw new IllegalStateException("Exact option lot size required");
-            var selected=BatmanRules.select(chain.options(),chain.spot(),(long)referenceContract.getLotSize()*request.getLots(),market);
+            var selected=BatmanRules.select(chain.options(),chain.spot(),(long)referenceContract.getLotSize()*request.getLots(),true);
             var contracts=selected.stream().map(l->scripts.findByTradingSymbolAndStrikePriceAndOptionTypeAndExpiry(symbol,l.option().strike(),l.option().side(),expiryText)
                     .orElseThrow(()->new IllegalStateException("Selected delta strike is absent from the execution master"))).toList();
             if(market)books.prepareMarket(contracts);else books.prepare(contracts);
@@ -83,22 +84,22 @@ public class BatmanStrategy implements StrategyEvaluator {
                 var mapped=identities.resolve(TriggeredTradeSetupEntity.builder().symbol(symbol).exchange(contract.getExchange()).expiry(text).strikePrice(o.strike()).optionType(o.side()).build());
                 if(!mapped.securityId().equals(o.securityId())||mapped.lotSize()!=lotSize)throw new IllegalStateException("Dhan Greeks and execution contract identity differ");
                 long units=(long)lotSize*request.getLots()*leg.ratio();
-                boolean buy="BUY".equals(leg.action());var q=market?books.marketBook(contract.getScripCode(),contract.getExchange()):books.book(contract.getScripCode(),contract.getExchange(),buy,units);
+                boolean buy="BUY".equals(leg.action());var q=market?books.marketBook(contract.getScripCode(),contract.getExchange()):freshLtp?books.simulatorPrice(contract.getScripCode(),contract.getExchange(),buy,units):books.book(contract.getScripCode(),contract.getExchange(),buy,units);
                 if(market&&q==null){
                     double bid=Double.isFinite(o.bid())&&o.bid()>0?o.bid():o.ask(),ask=Double.isFinite(o.ask())&&o.ask()>0?o.ask():o.bid();
                     if(Double.isFinite(bid)&&bid>0&&Double.isFinite(ask)&&ask>0)q=org.com.sharekhan.cache.QuoteCacheService.QuoteSnapshot.builder()
                             .scripCode(contract.getScripCode()).bookSource("DHAN_CHAIN_SIM_MARKET").bookExchange(contract.getExchange()).bookProviderIdentity(o.securityId())
                             .bestBid(bid).bestAsk(ask).lastBookAt(chain.receivedAt()).updatedAt(chain.receivedAt()).build();
                 }
-                if(q==null||!market&&(!BatmanBooks.valid(q,clock.instant())||(buy?q.getAskQuantity():q.getBidQuantity())==null||(buy?q.getAskQuantity():q.getBidQuantity())<units))throw new IllegalStateException("Waiting for "+o.strike()+o.side()+": "+books.reason(contract.getScripCode()));
-                if(!market&&(q.getBestAsk()-q.getBestBid())/q.getBestAsk()>.05)throw new IllegalStateException("Option spread exceeds 5%; waiting");
+                if(q==null||!market&&(!BatmanBooks.valid(q,clock.instant())||!freshLtp&&((buy?q.getAskQuantity():q.getBidQuantity())==null||(buy?q.getAskQuantity():q.getBidQuantity())<units)))throw new IllegalStateException("Waiting for "+o.strike()+o.side()+": "+books.reason(contract.getScripCode()));
+                if(!market&&!freshLtp&&(q.getBestAsk()-q.getBestBid())/q.getBestAsk()>.05)throw new IllegalStateException("Option spread exceeds 5%; waiting");
                 quoteTimes.add(q.getLastBookAt());double premium=buy?q.getBestAsk():q.getBestBid();
                 estimatedCredit=estimatedCredit.add(BigDecimal.valueOf(premium).multiply(BigDecimal.valueOf(units)).multiply(BigDecimal.valueOf(buy?-1:1)));
                 var order=new TriggerRequest();order.setInstrument(symbol);order.setExchange(contract.getExchange());order.setStrikePrice(o.strike());order.setOptionType(o.side());order.setExpiry(text);
                 order.setUserId(request.getUserId());order.setBrokerCredentialsId(request.getBrokerCredentialsId());order.setAction(leg.action());order.setQuantity(request.getLots()*leg.ratio());order.setLots(order.getQuantity());
                 order.setIntraday(false);order.setTslEnabled(false);order.setEntryPrice(premium);order.setSource(BatmanRules.PREFIX+id+":"+i);
-                order.setStrategyDecision("Batman "+expiry.get()+"; delta="+o.delta()+"; DhanSecurityId="+o.securityId()+"; no adjustments; basket credit TP/SL"+(market?"; USER-APPROVED SIMULATED MARKET ENTRY: size/price guards waived; latest or admitted observed premiums":""));orders.add(order);
-                plan.put(new JSONObject().put("code",contract.getScripCode()).put("exchange",contract.getExchange()).put("side",o.side()).put("strike",o.strike()).put("action",leg.action()).put("quantity",units).put("delta",o.delta()).put("dhanSecurityId",o.securityId()).put("marketEntry",market).put("admittedPremium",premium).put("observedAt",q.getLastBookAt().toString()));
+                order.setStrategyDecision("Batman "+expiry.get()+"; delta="+o.delta()+"; DhanSecurityId="+o.securityId()+"; no adjustments; basket credit TP/SL"+(freshLtp?"; SIMULATED fresh LTP/current quote fill; no displayed-depth guarantee":"")+(market?"; USER-APPROVED SIMULATED MARKET ENTRY: size/price guards waived; latest or admitted observed premiums":""));orders.add(order);
+                plan.put(new JSONObject().put("code",contract.getScripCode()).put("exchange",contract.getExchange()).put("side",o.side()).put("strike",o.strike()).put("action",leg.action()).put("quantity",units).put("delta",o.delta()).put("dhanSecurityId",o.securityId()).put("marketEntry",market).put("freshLtpEntry",freshLtp).put("priceSource",q.getBookSource()).put("admittedPremium",premium).put("observedAt",q.getLastBookAt().toString()));
             }
             if(estimatedCredit.signum()<=0)throw new IllegalStateException("Center credit is not positive after executable spreads");
             if(!market&&(chain.receivedAt().isBefore(clock.instant().minusSeconds(10))||Duration.between(Collections.min(quoteTimes),Collections.max(quoteTimes)).compareTo(Duration.ofSeconds(2))>0||Collections.min(quoteTimes).isBefore(clock.instant().minusSeconds(5))||!shared.executionFresh()||!entryWindow(request,LocalDateTime.now(clock))))throw new IllegalStateException("Basket quote preparation elapsed; waiting for a synchronized snapshot");

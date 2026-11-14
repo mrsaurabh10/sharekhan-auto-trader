@@ -35,4 +35,10 @@ class BatmanSimulatorTest{
   verifyNoInteractions(books);
  }
  @Test void cannotFillBeyondFrozenEntryLimit(){when(books.book(eq(1),eq("NF"),anyBoolean(),anyLong())).thenReturn(q(Instant.now(),1000));assertThatThrownBy(()->broker.placeOrder(trade("SELL"),context,100)).hasMessageContaining("price");}
+ @Test void persistedFreshLtpPolicyCanCloseBothSidesWithoutDisplayedDepth(){
+  var policy=mock(BatmanMarketEntry.class);ReflectionTestUtils.setField(broker,"batmanMarketEntry",policy);
+  var quote=q(Instant.now(),0);when(policy.freshQuote(any())).thenReturn(java.util.Optional.of(quote));
+  assertThat(broker.placeExitOrder(trade("BUY"),context,1).getExecutedPrice()).isEqualTo(99d);
+  assertThat(broker.placeExitOrder(trade("SELL"),context,1).getExecutedPrice()).isEqualTo(100d);verifyNoInteractions(books);
+ }
 }

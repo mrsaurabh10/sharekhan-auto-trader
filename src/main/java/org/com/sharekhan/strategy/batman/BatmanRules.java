@@ -25,11 +25,8 @@ public final class BatmanRules {
     }
     public static boolean entryWindow(LocalDateTime now){return !now.toLocalTime().isBefore(LocalTime.of(9,20))&&now.toLocalTime().isBefore(LocalTime.of(9,21));}
     public static Optional<LocalDate> expiry(Collection<LocalDate> listed,LocalDate day,Predicate<LocalDate> trading){
-        // Monthly only: use the final actually listed expiry in each month; never invent a calendar date.
         if(!trading.test(day))return Optional.empty();
-        var monthly=new java.util.HashMap<java.time.YearMonth,LocalDate>();
-        for(var expiry:listed)monthly.merge(java.time.YearMonth.from(expiry),expiry,(a,b)->a.isAfter(b)?a:b);
-        return monthly.values().stream().filter(e->{long d=java.time.temporal.ChronoUnit.DAYS.between(day,e);return d>=40&&d<=50;})
+        return listed.stream().filter(e->{long d=java.time.temporal.ChronoUnit.DAYS.between(day,e);return d>=40&&d<=45;})
                 .min(Comparator.<LocalDate>comparingLong(e->Math.abs(java.time.temporal.ChronoUnit.DAYS.between(day,e)-45)).thenComparing(Comparator.naturalOrder()));
     }
 

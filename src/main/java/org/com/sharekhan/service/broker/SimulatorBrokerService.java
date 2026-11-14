@@ -81,6 +81,7 @@ public class SimulatorBrokerService implements ModifiableEntryBrokerService {
     private synchronized double batmanFill(TriggeredTradeSetupEntity trade,double limit,boolean entry){
         if(!org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())) return limit;
         if(entry&&batmanMarketEntry!=null){var marketPrice=batmanMarketEntry.price(trade);if(marketPrice.isPresent())return marketPrice.getAsDouble();}
+        if(!entry&&batmanMarketEntry!=null){var q=batmanMarketEntry.freshQuote(trade);if(q.isPresent())return TradeSide.isShort(trade)?q.get().getBestAsk():q.get().getBestBid();}
         boolean buy=entry?!TradeSide.isShort(trade):TradeSide.isShort(trade);
         var q=batmanBooks.book(trade.getScripCode(),trade.getExchange(),buy,trade.getQuantity());
         if(!org.com.sharekhan.strategy.batman.BatmanBooks.valid(q,java.time.Instant.now()))throw new org.com.sharekhan.exception.EntryNotReadyException("Batman Simulator waiting for a fresh exact option book");
