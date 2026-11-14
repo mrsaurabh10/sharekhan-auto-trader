@@ -18,6 +18,62 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
     private final ConcurrentHashMap<String, AtomicInteger> refCounts = new ConcurrentHashMap<>();
 
     private final WebSocketConnector connector;
+    private final java.util.Map<String,String> liveLtpOwners=new ConcurrentHashMap<>();
+    private final Set<String> sentFeeds=ConcurrentHashMap.newKeySet();
+    private final java.util.Map<String,java.time.Instant> lastLtpTicks=new ConcurrentHashMap<>();
+    private volatile boolean feedConnectionReady=true;
+
+    @Override public synchronized boolean retainLtpFeed(String owner,String key) {
+        if(owner==null||owner.isBlank()||key==null||!key.matches("[A-Z]{2}[0-9]+"))throw new IllegalArgumentException("Feed owner and exact feed key are required");
+        if(liveLtpOwners.size()>=2048&&!liveLtpOwners.containsKey(owner))return false;
+        String previous=liveLtpOwners.put(owner,key);
+        requestIfNeeded("ltp",key);
+        if(previous!=null&&!previous.equals(key))releaseUnusedLtp(previous);
+        return true;
+    }
+    @Override public synchronized void releaseLtpFeed(String owner) {
+        String key=liveLtpOwners.remove(owner);if(key!=null)releaseUnusedLtp(key);
+    }
+    private void releaseUnusedLtp(String key) {
+        if(!liveLtpOwners.containsValue(key)&&!refCounts.containsKey(refKey("ltp",key)))sendUnsubscribe("ltp",key);
+    }
+    public synchronized void connectionLost(){feedConnectionReady=false;sentFeeds.clear();lastLtpTicks.clear();}
+    @Override public synchronized void restoreOwnedLtpFeeds() {
+        feedConnectionReady=true;
+        for(String key:new java.util.HashSet<>(liveLtpOwners.values()))requestIfNeeded("ltp",key);
+    }
+    public synchronized void retryOwnedLtpFeeds() {
+        for(String key:new java.util.HashSet<>(liveLtpOwners.values()))requestIfNeeded("ltp",key);
+    }
+    public void recordLtpReceived(String key,java.time.Instant receivedAt) {
+        if(receivedAt!=null&&(liveLtpOwners.containsValue(key)||refCounts.containsKey(refKey("ltp",key))||refCounts.containsKey(refKey("full",key))))
+            lastLtpTicks.put(key,receivedAt);
+    }
+    @Override public synchronized java.util.Map<String,Object> ltpFeedStatus(String key) {
+        var now=java.time.Instant.now();var tick=lastLtpTicks.get(key);
+        boolean requested=liveLtpOwners.containsValue(key)||refCounts.containsKey(refKey("ltp",key));
+        boolean connected=feedConnectionReady&&connector.isConnected();
+        boolean sent=connected&&sentFeeds.contains(refKey("ltp",key));
+        boolean receiving=sent&&tick!=null&&!tick.isAfter(now)&&!tick.isBefore(now.minusSeconds(5));
+        var status=new java.util.LinkedHashMap<String,Object>();
+        status.put("key",key);status.put("owners",liveLtpOwners.entrySet().stream().filter(e->e.getValue().equals(key)).map(java.util.Map.Entry::getKey).sorted().toList());
+        status.put("requested",requested);status.put("connected",connected);status.put("sentOnConnection",sent);
+        status.put("lastTickAt",tick);status.put("receivingFreshTicks",receiving);
+        status.put("state",!requested?"NOT_REQUESTED":!connected?"DISCONNECTED":!sent?"PENDING_SUBSCRIBE":receiving?"RECEIVING":tick==null?"WAITING_FOR_TICKS":"STALE");
+        return status;
+    }
+    private boolean requestIfNeeded(String mode,String key) {
+        String ref=refKey(mode,key);
+        if(!feedConnectionReady||sentFeeds.contains(ref)||!connector.isConnected())return false;
+        boolean sent=connector.trySend("{\"action\":\"feed\",\"key\":[\""+mode+"\"],\"value\":[\""+key+"\"]}");
+        if(sent)sentFeeds.add(ref);return sent;
+    }
+    private boolean sendUnsubscribe(String mode,String key) {
+        if(!sentFeeds.remove(refKey(mode,key)))return false;
+        if("ltp".equals(mode))lastLtpTicks.remove(key);
+        return connector.trySend("{\"action\":\"unsubscribe\",\"key\":[\""+mode+"\"],\"value\":[\""+key+"\"]}");
+    }
+
 
     private final java.util.Map<String,String> observerRefs = new java.util.concurrent.ConcurrentHashMap<>();
     @Override public synchronized boolean retainObserverFeed(String owner,String key,boolean full) {
@@ -35,6 +91,7 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         observerRefs.values().forEach(ref->owned.merge(scripKey(ref),1,Integer::sum));
         java.util.Map<String,Integer> all=new java.util.HashMap<>();
         refCounts.forEach((ref,count)->all.merge(scripKey(ref),count.get(),Integer::sum));
+        liveLtpOwners.values().forEach(key->all.merge(key,1,Integer::sum));
         java.util.Set<String> result=new java.util.HashSet<>();
         owned.forEach((key,count)->{if(all.getOrDefault(key,0)>0&&all.getOrDefault(key,0)<=count)result.add(key);});
         return result;
@@ -43,6 +100,7 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         observerRefs.clear();
         log.info("🧹 Resetting WebSocket subscription reference counts");
         refCounts.clear();
+        connectionLost();
     }
 
     @Override
@@ -59,27 +117,17 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         return subscribe(scripKey, "ltp");
     }
 
-    private boolean subscribe(String scripKey, String feedMode) {
+    private synchronized boolean subscribe(String scripKey, String feedMode) {
         String refKey = refKey(feedMode, scripKey);
-        final AtomicInteger[] created = new AtomicInteger[1];
         refCounts.compute(refKey, (k, v) -> {
             if (v == null) {
-                created[0] = new AtomicInteger(1);
-                return created[0];
+                return new AtomicInteger(1);
             }
             v.incrementAndGet();
             return v;
         });
 
-        // If we created a new counter, this is the first subscription (0 -> 1)
-        if (created[0] != null) {
-            log.info("📡 Subscribing to {} with {} feed", scripKey, feedMode);
-            connector.send("{\"action\":\"feed\",\"key\":[\"" + feedMode + "\"],\"value\":[\"" + scripKey + "\"]}");
-            return true;
-        } else {
-            log.debug("Already subscribed to {} feed for {}, ref++ -> {}", feedMode, scripKey, refCounts.get(refKey).get());
-            return false;
-        }
+        return requestIfNeeded(feedMode,scripKey);
     }
 
     @Override
@@ -98,7 +146,7 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         return unsubscribe(scripKey, "ltp");
     }
 
-    private boolean unsubscribe(String scripKey, String feedMode) {
+    private synchronized boolean unsubscribe(String scripKey, String feedMode) {
         String refKey = refKey(feedMode, scripKey);
         final boolean[] shouldUnsub = {false};
         refCounts.compute(refKey, (k, v) -> {
@@ -114,25 +162,15 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
             return v;
         });
 
-        if (shouldUnsub[0]) {
-            log.info("🛑 Unsubscribing from {} {} feed", scripKey, feedMode);
-            connector.send("{\"action\":\"unsubscribe\",\"key\":[\"" + feedMode + "\"],\"value\":[\"" + scripKey + "\"]}");
-            return true;
-        } else {
-            if (!refCounts.containsKey(refKey)) {
-                log.debug("⚠️ Not currently subscribed to {} feed: {}", feedMode, scripKey);
-            } else {
-                log.debug("Still {} watcher(s) for {} {} feed - skip unsubscribe", refCounts.get(refKey).get(), scripKey, feedMode);
-            }
-            return false;
-        }
+        if(shouldUnsub[0] && !("ltp".equals(feedMode)&&liveLtpOwners.containsValue(scripKey)))
+            return sendUnsubscribe(feedMode,scripKey);
+        return false;
     }
 
     @Override
     public Set<String> getActiveScripKeys() {
-        return refCounts.keySet().stream()
-                .map(WebSocketSubscriptionHelper::scripKey)
-                .collect(Collectors.toSet());
+        var keys=refCounts.keySet().stream().map(WebSocketSubscriptionHelper::scripKey).collect(Collectors.toSet());
+        keys.addAll(liveLtpOwners.values());return keys;
     }
 
     private static String refKey(String feedMode, String scripKey) {

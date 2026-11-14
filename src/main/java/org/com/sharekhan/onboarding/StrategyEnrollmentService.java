@@ -16,6 +16,15 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class StrategyEnrollmentService {
     private final StrategySubscriptionRepository subscriptions;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.context.ApplicationEventPublisher events;
+    private StrategySubscriptionEntity saveAndNotify(StrategySubscriptionEntity row) {
+        var saved=subscriptions.save(row);
+        if(events!=null&&org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(saved.getTemplateId()))
+            events.publishEvent(new org.com.sharekhan.strategy.StrategyFeedChanged(saved.getTemplateId()));
+        return saved;
+    }
+
     private final AppUserRepository users;
 
     @Transactional
@@ -50,11 +59,11 @@ public class StrategyEnrollmentService {
             if (!"ACTIVE".equalsIgnoreCase(subscription.getStatus())) {
                 subscription.setStatus("ACTIVE");
                 subscription.setLastMessage("Strategy is active and will run daily until cancelled.");
-                return subscriptions.save(subscription);
+                return saveAndNotify(subscription);
             }
-            return subscriptions.save(subscription);
+            return saveAndNotify(subscription);
         }
-        return subscriptions.save(StrategySubscriptionEntity.builder()
+        return saveAndNotify(StrategySubscriptionEntity.builder()
                 .templateId(templateId).symbol(symbol).lots(stockMover ? null : request.getLots())
                 .investmentPerStock(stockMover ? request.getInvestmentPerStock() : null)
                 .profitTargetPerLot(profitTarget).riskSettings(risk)

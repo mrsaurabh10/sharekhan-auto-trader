@@ -115,6 +115,7 @@ public class SpotQuoteService {
     public Map<String,Object> diagnostics(int code,String exchange) {
         var out=new LinkedHashMap<String,Object>();var now=clock.instant();var q=cache.getSharekhanSnapshot(code).orElse(null);var attempt=attempts.get(new Key(code,exchange));
         out.put("scripCode",code);out.put("exchange",exchange);out.put("checkedAt",now);out.put("sharekhan",q);
+        out.put("websocketSubscription",websocket.ltpFeedStatus(exchange+code));
         out.put("sharekhanAccepted",websocketQuote(q,now,code,exchange));out.put("latestSharedCache",cache.getSnapshot(code).orElse(null));
         out.put("fallback",attempt==null?null:attempt.quote());out.put("fallbackProviderAt",attempt==null?null:attempt.providerAt());
         out.put("fallbackAccepted",attempt!=null&&issued(new Key(code,exchange),attempt.quote(),now));

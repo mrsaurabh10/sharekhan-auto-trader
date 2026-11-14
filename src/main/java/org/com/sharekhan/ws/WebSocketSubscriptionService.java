@@ -3,6 +3,12 @@ package org.com.sharekhan.ws;
 import java.util.Set;
 
 public interface WebSocketSubscriptionService {
+    /** Named live demand; repeated retention is idempotent and survives a reconnect. */
+    default boolean retainLtpFeed(String owner,String key){return false;}
+    default void releaseLtpFeed(String owner) { }
+    default void restoreOwnedLtpFeeds() { }
+    default java.util.Map<String,Object> ltpFeedStatus(String key){return java.util.Map.of();}
+
     /** Observer may retain only an already active route. Implementations without ownership support refuse. */
     default boolean retainObserverFeed(String owner,String key,boolean full) { return false; }
     default void releaseObserverFeed(String owner) { }
@@ -42,7 +48,8 @@ public interface WebSocketSubscriptionService {
     void subscribeToAck(String customerId);
 
     /**
-     * Get all currently active scrip keys.
+     * Get locally retained feed demand, including pending/disconnected routes.
+     * This is not proof of a sent subscription or current ticks; use ltpFeedStatus for LTP health.
      */
     Set<String> getActiveScripKeys();
 }

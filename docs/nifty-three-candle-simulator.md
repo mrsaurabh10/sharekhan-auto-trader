@@ -142,3 +142,32 @@ Admin GET `/api/strategies/spot-quote?scripCode=20000&exchange=NC` inspects sour
 snapshots and rejection reasons only; it does not subscribe, fetch, evaluate, or
 place orders. Strategy signals, option-book execution gates and risk settings are
 unchanged. A spot-data correction alone does not establish executable option depth.
+
+## Strategy-owned Nifty subscription
+
+An ACTIVE/TRIGGERED subscription owns a named `NC20000` LTP lease using the
+resolved Nifty spot master. Ownership is acquired after enrollment/resume commits,
+restored from persisted subscriptions on application startup, and reconciled by
+the existing Nifty poll before its 09:30 entry gate. The feed is retained throughout
+the active strategy lifetime, including premarket; existing socket/session rules
+still govern when a real connection is available. No quote request or order is
+created simply by acquiring ownership.
+
+Open Nifty positions own separate leases, so pausing/cancelling entries does not
+interrupt their spot monitoring. Reconciliation acquires position demand before
+releasing subscription demand. Flat, inactive strategies release only their own
+lease; ordinary requests and other consumers retain their references. The generic
+open-trade reconnect path leaves these Nifty spot leases to the lifecycle manager.
+
+A successful socket handshake restores strategy leases before ordinary open-trade
+subscriptions. Leases survive a socket reset; observers and legacy trade counts
+are rebuilt as before. Failed sends remain pending and retry idempotently. The
+socket is closed for reconnect if the initial subscription frame cannot be sent.
+Stale close/error callbacks do not invalidate a replacement connection.
+
+The spot diagnostic response includes `websocketSubscription`: retained owners,
+requested demand, connection state, whether a subscription frame was sent on this
+connection, last actual websocket LTP receipt and five-second tick freshness.
+States distinguish DISCONNECTED, PENDING_SUBSCRIBE, WAITING_FOR_TICKS, RECEIVING,
+STALE and NOT_REQUESTED. Shoonya/MStock fallback quotes never mark websocket ticks
+as received. No exchange/server acknowledgement is inferred from a local request.

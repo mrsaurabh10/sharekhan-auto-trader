@@ -6376,8 +6376,8 @@ public class TradeExecutionService {
                     log.debug("Already subscribed to LTP for scrip {} (ref++)", scripCode);
                 }
 
-                // Always subscribe to spot scrip if it exists
-                if (request.getSpotScripCode() != null) {
+                // Nifty strategy/position spot demand is owned by its feed lifecycle manager.
+                if (request.getSpotScripCode() != null && !org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(request.getSource())) {
                     ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(request.getSpotScripCode());
                     if (spotScript != null) {
                         String spotKey = spotFeedKey(spotScript);
@@ -6441,8 +6441,8 @@ public class TradeExecutionService {
                         log.debug("Already subscribed to LTP for executed scrip {} (ref++)", scripCode);
                     }
 
-                    // Always subscribe to spot scrip if it exists
-                    if (tradeSetupEntity.getSpotScripCode() != null) {
+                    // Nifty strategy/position spot demand is owned by its feed lifecycle manager.
+                    if (tradeSetupEntity.getSpotScripCode() != null && !org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.owns(tradeSetupEntity.getSource())) {
                         ScriptMasterEntity spotScript = scriptMasterRepository.findByScripCode(tradeSetupEntity.getSpotScripCode());
                         if (spotScript != null) {
                             String spotKey = spotFeedKey(spotScript);
