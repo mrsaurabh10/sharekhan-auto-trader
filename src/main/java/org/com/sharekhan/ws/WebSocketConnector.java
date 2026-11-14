@@ -12,23 +12,29 @@ public class WebSocketConnector {
     private volatile Session session;
 
     public void setSession(Session session) {
-        this.session = session;
+        synchronized(sendLock){this.session=session;}
     }
 
+    public boolean clearSession(Session expected) {
+        synchronized(sendLock){
+            if(this.session!=expected)return false;
+            this.session=null;return true;
+        }
+    }
+
+    public boolean isConnected(){Session current=session;return current!=null&&current.isOpen();}
+
     public void send(String message) {
-        Session currentSession = this.session;
-        if (currentSession != null && currentSession.isOpen()) {
-            try {
-                synchronized (sendLock) {
-                    if (currentSession.isOpen()) {
-                        currentSession.getBasicRemote().sendText(message);
-                    }
-                }
-            } catch (Exception e) {
-                log.error("❌ Failed to send WebSocket message: {}", e.getMessage(), e);
-            }
-        } else {
-            log.warn("⚠️ WebSocket session is not open. Skipping message.");
+        if(!trySend(message))log.warn("WebSocket message was not sent; connection unavailable or send failed");
+    }
+
+    /** Success means the frame was sent, not that a feed was acknowledged or is receiving ticks. */
+    public boolean trySend(String message) {
+        synchronized(sendLock){
+            Session current=session;
+            if(current==null||!current.isOpen())return false;
+            try {current.getBasicRemote().sendText(message);return true;}
+            catch(Exception failure){log.warn("WebSocket send failed: {}",failure.getClass().getSimpleName());return false;}
         }
     }
 }

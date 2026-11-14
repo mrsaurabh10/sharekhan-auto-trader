@@ -73,7 +73,8 @@ class SpotQuoteServiceTest {
         clearInvocations(shoonya,mstock,websocket);
         var diagnostics=service.diagnostics(20000,"NC");assertEquals("SHOONYA_VERIFIED",diagnostics.get("reason"));
         assertNotNull(service.cached(20000,"NC"));
-        verifyNoInteractions(shoonya,mstock,websocket);
+        verify(websocket).ltpFeedStatus("NC20000");verifyNoMoreInteractions(websocket);
+        verifyNoInteractions(shoonya,mstock);
     }
     @Test void derivativesCannotBeReadAsSpot(){
         script.setOptionType("CE");assertNull(service.spot(20000,"NC"));verifyNoInteractions(shoonya,mstock,websocket);

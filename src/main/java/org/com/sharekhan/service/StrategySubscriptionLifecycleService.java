@@ -18,6 +18,15 @@ import java.util.List;
 @RequiredArgsConstructor
 public class StrategySubscriptionLifecycleService {
     private final StrategySubscriptionRepository subscriptions;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.context.ApplicationEventPublisher events;
+    private StrategySubscriptionEntity saveAndNotify(StrategySubscriptionEntity row) {
+        var saved=subscriptions.save(row);
+        if(events!=null&&org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(saved.getTemplateId()))
+            events.publishEvent(new org.com.sharekhan.strategy.StrategyFeedChanged(saved.getTemplateId()));
+        return saved;
+    }
+
     private final AppUserRepository users;
     private final UserTradingAccess access;
     private final jakarta.persistence.EntityManager entityManager;
@@ -31,7 +40,7 @@ public class StrategySubscriptionLifecycleService {
         if (!List.of("ACTIVE", "TRIGGERED").contains(subscription.getStatus())) throw invalidState();
         subscription.setStatus("PAUSED");
         subscription.setLastMessage("Strategy paused. Existing orders and positions continue to be managed.");
-        return subscriptions.save(subscription);
+        return saveAndNotify(subscription);
     }
 
     @Transactional
@@ -50,7 +59,7 @@ public class StrategySubscriptionLifecycleService {
         subscription.setStatus("ACTIVE");
         subscription.setLastMessage("Strategy resumed. Evaluation continues on the next scheduled cycle.");
         // In particular, keep completedAt: pausing must not bypass today's entry limit.
-        return subscriptions.save(subscription);
+        return saveAndNotify(subscription);
     }
 
     private void requireOwner(StrategySubscriptionEntity subscription, Long userId, boolean admin) {

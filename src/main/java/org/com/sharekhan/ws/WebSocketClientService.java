@@ -103,24 +103,31 @@ public class WebSocketClientService  {
     public void onOpen(Session session) {
         log.info("✅ Connected to Sharekhan WebSocket");
         eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
+        webSocketSubscriptionHelper.connectionLost();
         this.session = session;
         webSocketConnector.setSession(session);
         
         // Reset subscription helper state on new connection to ensure we re-subscribe correctly
         webSocketSubscriptionHelper.reset();
 
-        sendSubscribeMessage();
+        if(!sendSubscribeMessage()) {
+            webSocketConnector.clearSession(session);
+            try {session.close();}catch(Exception failure){log.warn("Unable to close uninitialized websocket: {}",failure.getClass().getSimpleName());}
+            return;
+        }
+        webSocketSubscriptionHelper.restoreOwnedLtpFeeds();
         tradeExecutionService.subscribeForOpenTrades();
         eventPublisher.publishEvent(new org.com.sharekhan.monitoring.BrokerOrderHintEvent("Sharekhan",null));
     }
 
 
 
-    private void sendSubscribeMessage() {
+    private boolean sendSubscribeMessage() {
         String subscribeMsg = "{\"action\":\"subscribe\",\"key\":[\"feed\",\"ack\"],\"value\":[\"\"]}";
-        webSocketConnector.send(subscribeMsg);
+        boolean sent=webSocketConnector.trySend(subscribeMsg);
         // NOTE: Per-customer ACK subscriptions will be created when trades are placed.
-        log.info("📡 Sent initial subscribe message (ACK subscriptions will be created per customer when trades are placed)");
+        log.info("Initial websocket subscription frame sent={}",sent);
+        return sent;
     }
 
 
@@ -353,6 +360,12 @@ public class WebSocketClientService  {
 
         try {
             quoteCacheService.recordQuote(sc, bestBid, bestAsk, lv,"SHAREKHAN_WS",feedExchange,"scrip:"+sc,bidQuantity,askQuantity);
+            if(lv!=null&&Double.isFinite(lv)&&lv>0) {
+                String exchange=switch(java.util.Objects.toString(feedExchange,"").toUpperCase(java.util.Locale.ROOT)) {
+                    case "NSE" -> "NC";case "BSE" -> "BC";case "NFO" -> "NF";case "BFO" -> "BF";default -> feedExchange;
+                };
+                if(exchange!=null)webSocketSubscriptionHelper.recordLtpReceived(exchange+sc,java.time.Instant.now());
+            }
         } catch (Exception e) {
             log.warn("Failed to record quote snapshot for {}: {}", sc, e.getMessage());
         }
@@ -408,8 +421,10 @@ public class WebSocketClientService  {
 
     public void close() {
         try {
-            if (session != null && session.isOpen()) {
-                session.close();
+            Session closing=this.session;
+            if(closing!=null && webSocketConnector.clearSession(closing))webSocketSubscriptionHelper.connectionLost();
+            if (closing != null && closing.isOpen()) {
+                closing.close();
                 log.info("🔌 WebSocket session closed.");
             }
         } catch (IOException e) {
@@ -476,17 +491,24 @@ public class WebSocketClientService  {
 
     @OnError
     public void onError(Session session, Throwable thr) {
+        if(session!=null&&session!=this.session)return;
+        if(session!=null&&webSocketConnector.clearSession(session)) {
+            webSocketSubscriptionHelper.connectionLost();
+            try {session.close();}catch(Exception failure){log.warn("Unable to close failed websocket: {}",failure.getClass().getSimpleName());}
+        }
         eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
         log.warn("SHAREKHAN_WS_ERROR | type={}",thr.getClass().getSimpleName());
     }
 
 
     public boolean isConnected() {
-        return session != null && session.isOpen();
+        return webSocketConnector.isConnected();
     }
 
     @OnClose
     public void onClose(Session session, CloseReason closeReason) {
+        if(session!=this.session)return;
+        if(webSocketConnector.clearSession(session))webSocketSubscriptionHelper.connectionLost();
         eventPublisher.publishEvent(new org.com.sharekhan.strategy.mcx.NaturalGasLiveCandles.StreamInterrupted());
         log.warn("SHAREKHAN_WS_CLOSED | code={}",closeReason.getCloseCode().getCode());
 

@@ -47,6 +47,8 @@ public class StrategySubscriptionService {
 
     @org.springframework.beans.factory.annotation.Autowired
     private TradeAuditService tradeAudit;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.context.ApplicationEventPublisher feedEvents;
 
     /** Retain changing blockers without writing an audit row on every two-second poll. */
     void auditNiftyEvaluation(StrategySubscriptionEntity subscription, String status, String message, LocalDateTime at) {
@@ -121,7 +123,10 @@ public class StrategySubscriptionService {
         entity.setStatus(CANCELLED);
         entity.setCompletedAt(LocalDateTime.now());
         entity.setLastMessage("Strategy cancelled by user.");
-        return repository.save(entity);
+        var saved=repository.save(entity);
+        if(feedEvents!=null&&org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(saved.getTemplateId()))
+            feedEvents.publishEvent(new org.com.sharekhan.strategy.StrategyFeedChanged(saved.getTemplateId()));
+        return saved;
     }
 
     public StrategySubscriptionEntity updateSymbols(Long id, String symbols, Long currentUserId, boolean admin) {

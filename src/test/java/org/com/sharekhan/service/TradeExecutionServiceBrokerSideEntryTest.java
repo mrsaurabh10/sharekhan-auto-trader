@@ -72,6 +72,19 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(price).isNull();
     }
 
+    @Test void reconnectLeavesNiftySpotOwnershipToLifecycleButPreservesOtherStrategies() {
+        for(boolean nifty:List.of(true,false)) {
+            var ctx=new TestContext(pending("unused"));ctx.useSimulatorBroker();
+            var trade=TriggeredTradeSetupEntity.builder().id(88L).scripCode(123456).spotScripCode(20000).exchange("NF")
+                    .appUserId(9L).brokerCredentialsId(55L).status(TriggeredTradeStatus.EXECUTED)
+                    .source(nifty?org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.SOURCE:"strategy:OTHER").build();
+            when(ctx.triggeredRepo.findByStatus(TriggeredTradeStatus.EXECUTED)).thenReturn(List.of(trade));
+            when(ctx.scriptRepo.findByScripCode(20000)).thenReturn(ScriptMasterEntity.builder().scripCode(20000).exchange("NC").tradingSymbol("NIFTY").build());
+            ctx.service.subscribeForOpenTrades();verify(ctx.subscriptionService).subscribeToScrip("NF123456");
+            verify(ctx.subscriptionService,times(nifty?0:1)).subscribeToScripLtp("NC20000");
+        }
+    }
+
     private TriggerRequest shortCashInput(TestContext ctx) {
         ctx.useSimulatorBroker(); configureFiveAttemptPolicy(ctx);
         ctx.service=org.mockito.Mockito.spy(ctx.service);
