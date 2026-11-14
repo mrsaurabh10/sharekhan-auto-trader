@@ -19,4 +19,11 @@ class BatmanMarketEntryTest {
  @Test void cannotUseMarketAssumptionForLiveBroker(){when(credentials.findById(4L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().appUserId(3L).brokerName("Sharekhan").build()));assertThatThrownBy(()->service.price(trade())).hasMessageContaining("Simulator-only");}
  @Test void changedLegCannotUseReviewedPlan(){var t=trade();t.setQuantity(65L);assertThatThrownBy(()->service.price(t)).hasMessageContaining("differs");}
  @Test void scheduledBasketAndAlreadyArmedBasketKeepNormalExecution(){basket.setPlanJson("[{\"marketEntry\":false}]");assertThat(service.price(trade())).isEmpty();basket.setState("ARMED");assertThat(service.price(trade())).isEmpty();}
+ void freshPolicy(){basket.setPlanJson(basket.getPlanJson().replace("\"marketEntry\":true","\"marketEntry\":false,\"freshLtpEntry\":true"));}
+ @Test void scheduledLtpEntryRequiresCurrentPriceAndNeverRecordedFallback(){freshPolicy();assertThatThrownBy(()->service.price(trade())).hasMessageContaining("fresh exact-contract");}
+ @Test void persistedLtpPolicyAppliesToMarksAndExitsAfterArming(){freshPolicy();basket.setState("ARMED");
+  var q=QuoteCacheService.QuoteSnapshot.builder().bestBid(75d).bestAsk(75d).coherentBook(true).bidQuantity(0d).askQuantity(0d).lastBookAt(Instant.now()).build();
+  when(books.simulatorPrice(1,"NF",true,130)).thenReturn(q);assertThat(service.freshQuote(trade())).contains(q);assertThat(service.price(trade())).isEmpty();
+  when(books.simulatorPrice(1,"NF",true,130)).thenReturn(null);assertThat(service.freshQuote(trade())).isEmpty();}
+ @Test void oldBasketNeverChangesItsPricingPolicy(){basket.setState("ARMED");assertThat(service.freshQuote(trade())).isEmpty();verify(books,never()).simulatorPrice(anyInt(),anyString(),anyBoolean(),anyLong());}
 }

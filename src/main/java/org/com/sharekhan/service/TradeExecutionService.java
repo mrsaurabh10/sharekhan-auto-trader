@@ -1834,6 +1834,8 @@ public class TradeExecutionService {
     @Autowired private org.com.sharekhan.strategy.batman.BatmanMarketEntry batmanMarketEntry;
     public Optional<QuoteCacheService.QuoteSnapshot> strategyProfitExitQuote(TriggeredTradeSetupEntity trade, Instant now) {
         if(trade!=null && org.com.sharekhan.strategy.batman.BatmanRules.owns(trade.getSource())) {
+            var simulated=batmanMarketEntry.freshQuote(trade);
+            if(simulated.isPresent())return simulated;
             var q=batmanBooks.book(trade.getScripCode(),trade.getExchange(),TradeSide.isShort(trade),trade.getQuantity());
             boolean shortSide=TradeSide.isShort(trade);
             return Optional.ofNullable(q).filter(v->org.com.sharekhan.strategy.batman.BatmanBooks.valid(v,Instant.now()))
@@ -6572,9 +6574,9 @@ public class TradeExecutionService {
         String exchange = requestEntity.getExchange();
         boolean isMxExchange = exchange != null && exchange.equalsIgnoreCase("MX");
 
-        var reviewedMarket=batmanMarketEntry==null?java.util.OptionalDouble.empty():batmanMarketEntry.requestPrice(requestEntity);
-        if(reviewedMarket.isPresent())ltp=reviewedMarket.getAsDouble();
-        if (!isMxExchange && reviewedMarket.isEmpty()) {
+        var batmanPrice=batmanMarketEntry==null?java.util.OptionalDouble.empty():batmanMarketEntry.requestPrice(requestEntity);
+        if(batmanPrice.isPresent())ltp=batmanPrice.getAsDouble();
+        if (!isMxExchange && batmanPrice.isEmpty()) {
             ltp = resolveEntryReferencePrice(optionScripCode, "executeTradeFromEntity",
                     () -> entryQuoteWindowOpen(requestEntity.getSource()));
 
@@ -6628,7 +6630,7 @@ public class TradeExecutionService {
         // direct/replayed call cannot authorize an entry on the wrong side.
         // Real brokers can hold a trigger order themselves; the simulator cannot.
         if (isSimulatorBrokerRequest(requestEntity)
-                && reviewedMarket.isEmpty()
+                && batmanPrice.isEmpty()
                 && !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(requestEntity.getSource())
                 && !org.com.sharekhan.strategy.mcx.NaturalGasAveragingStrategy.SOURCE.equalsIgnoreCase(requestEntity.getSource())
                 && !chaseEntryUntilExecuted

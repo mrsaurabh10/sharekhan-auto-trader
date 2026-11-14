@@ -15,6 +15,14 @@ import java.util.*;
 /** Exact-contract books; failed price/depth checks try the next independent provider. */
 @Service
 public class BatmanBooks {
+    @org.springframework.beans.factory.annotation.Autowired
+    private BatmanLtpService ltp;
+    /** Fresh LTP observation for Simulator fills, with existing full-book fallback. */
+    public QuoteCacheService.QuoteSnapshot simulatorPrice(int code,String exchange,boolean buy,long units){
+        var script=scripts.findByScripCode(code);
+        if(script==null||!exchange.equals(script.getExchange()))return null;
+        var q=ltp.quote(script);return q!=null?q:book(code,exchange,buy,units);
+    }
     private final QuoteCacheService cache;
     private final ScriptMasterRepository scripts;
     private final ShoonyaQuoteService shoonya;

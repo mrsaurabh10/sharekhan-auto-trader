@@ -28,6 +28,7 @@ class BatmanStrategyTest{
  BatmanBasket claimed;final List<TriggeredTradeSetupEntity> actual=new ArrayList<>();final List<String> placedSides=new ArrayList<>();final Instant now=Instant.parse("2026-09-15T03:50:01Z");
  @BeforeEach void setup(){
   ReflectionTestUtils.setField(strategy,"clock",Clock.fixed(now,BatmanRules.IST));
+  when(books.simulatorPrice(anyInt(),anyString(),anyBoolean(),anyLong())).thenAnswer(a->books.book(a.getArgument(0),a.getArgument(1),a.getArgument(2),a.getArgument(3)));
   when(credentials.findById(2L)).thenReturn(Optional.of(BrokerCredentialsEntity.builder().id(2L).appUserId(1L).brokerName("Simulator").active(true).tradingEnabled(true).build()));
   when(brokers.getService("Simulator")).thenReturn(broker);when(broker.supportsCarryOptionShorts()).thenReturn(true);
   when(calendar.isTradingDay(any())).thenAnswer(a->{LocalDate d=a.getArgument(0);return d.getDayOfWeek().getValue()<6&&!d.equals(LocalDate.of(2026,9,14));});
@@ -58,6 +59,11 @@ class BatmanStrategyTest{
   assertThat(strategy.resumeMarket(r).getStatus()).isEqualTo("triggered");
   assertThat(placedSides).containsExactly("BUY","BUY","SELL","SELL");assertThat(actual).hasSize(4);
   verify(store,times(2)).arm(eq(claimed),eq(new BigDecimal("5200.00")));verify(store,times(1)).claim(any());
+ }
+ @Test void deltaSelectionDoesNotRejectZeroChainDepthBeforeFreshLtpFallback(){
+  var rows=List.of(new BatmanRules.Option("CE",24500,.20,0,0,0,0,"1"),new BatmanRules.Option("CE",24600,.16,0,0,0,0,"3"),new BatmanRules.Option("PE",23500,-.20,0,0,0,0,"2"),new BatmanRules.Option("PE",23400,-.16,0,0,0,0,"4"));
+  when(chains.fetch(anyString(),any())).thenReturn(new DhanOptionChainClient.Chain("NIFTY",LocalDate.of(2026,10,27),24000,now,rows));
+  assertThat(strategy.apply(request()).getStatus()).isEqualTo("triggered");assertThat(claimed.getPlanJson()).contains("freshLtpEntry");assertThat(placedSides).hasSize(4);
  }
  @Test void confirmsBothLongsBeforeShortsAndArmsActualCredit(){
   var response=strategy.apply(request());assertThat(placedSides).containsExactly("BUY","BUY","SELL","SELL");assertThat(response.getStatus()).isEqualTo("triggered");
