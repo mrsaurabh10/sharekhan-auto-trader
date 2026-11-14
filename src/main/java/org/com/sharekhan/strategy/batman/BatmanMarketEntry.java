@@ -32,7 +32,7 @@ public class BatmanMarketEntry {
     }
     private void verifyFreshLeg(TriggeredTradeSetupEntity trade,org.com.sharekhan.entity.BatmanBasket b,org.json.JSONObject leg){
         if(!Objects.equals(trade.getScripCode(),leg.getInt("code"))||!Objects.equals(trade.getExchange(),leg.getString("exchange"))
-                ||trade.getQuantity()==null||trade.getQuantity()!=leg.getLong("quantity")||!TradeSide.entry(trade).equals(leg.getString("action"))
+                ||trade.getQuantity()==null||(trade.getQuantity()<1||trade.getQuantity()>leg.getLong("quantity"))||!TradeSide.entry(trade).equals(leg.getString("action"))
                 ||trade.getStrikePrice()==null||Double.compare(trade.getStrikePrice(),leg.getDouble("strike"))!=0||!Objects.equals(trade.getOptionType(),leg.getString("side"))
                 ||!b.getExpiry().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/uuuu")).equals(trade.getExpiry()))throw new IllegalArgumentException("Fresh LTP trade differs from persisted basket");
         if(credentials.findById(trade.getBrokerCredentialsId()).filter(c->"Simulator".equalsIgnoreCase(c.getBrokerName())&&Objects.equals(c.getAppUserId(),trade.getAppUserId())).isEmpty())throw new IllegalArgumentException("LTP-fill assumption is Simulator-only");

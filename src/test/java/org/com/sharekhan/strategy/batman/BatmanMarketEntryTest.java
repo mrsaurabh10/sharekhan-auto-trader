@@ -26,4 +26,8 @@ class BatmanMarketEntryTest {
   when(books.simulatorPrice(1,"NF",true,130)).thenReturn(q);assertThat(service.freshQuote(trade())).contains(q);assertThat(service.price(trade())).isEmpty();
   when(books.simulatorPrice(1,"NF",true,130)).thenReturn(null);assertThat(service.freshQuote(trade())).isEmpty();}
  @Test void oldBasketNeverChangesItsPricingPolicy(){basket.setState("ARMED");assertThat(service.freshQuote(trade())).isEmpty();verify(books,never()).simulatorPrice(anyInt(),anyString(),anyBoolean(),anyLong());}
+ @Test void remainingPartialQuantityCanStillBeMarkedAndClosed(){freshPolicy();basket.setState("EXITING");var t=trade();t.setQuantity(65L);
+  var q=QuoteCacheService.QuoteSnapshot.builder().bestBid(75d).bestAsk(75d).coherentBook(true).bidQuantity(0d).askQuantity(0d).lastBookAt(Instant.now()).build();
+  when(books.simulatorPrice(1,"NF",true,65)).thenReturn(q);assertThat(service.freshQuote(t)).contains(q);
+  t.setQuantity(131L);assertThatThrownBy(()->service.freshQuote(t)).hasMessageContaining("differs");}
 }
