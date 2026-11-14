@@ -132,7 +132,7 @@ class BatmanStrategyTest{
   assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,15,11,0))).isTrue();
   assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,16,11,0))).isFalse();
   assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,15,15,0))).isFalse();
-  r.setBatmanManualEntryDay(null);assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,15,11,0))).isFalse();
+  r.setBatmanManualEntryDay(null);assertThat(BatmanStrategy.entryWindow(r,LocalDateTime.of(2026,9,15,11,0))).isTrue();
  }
  @Test void manualFlagCannotBeSetThroughGenericApplyJson() throws Exception {
   var r=new com.fasterxml.jackson.databind.ObjectMapper().registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule())

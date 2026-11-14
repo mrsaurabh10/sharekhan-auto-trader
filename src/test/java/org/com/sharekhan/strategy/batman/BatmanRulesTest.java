@@ -40,7 +40,7 @@ class BatmanRulesTest{
         assertThat(BatmanRules.expiry(List.of(expiry),LocalDate.of(2026,9,14),trading)).isEmpty();
         assertThat(BatmanRules.expiry(List.of(LocalDate.of(2026,10,6),LocalDate.of(2026,10,13),LocalDate.of(2026,10,20),expiry),LocalDate.of(2026,9,15),trading)).contains(expiry);
         assertThat(BatmanRules.expiry(List.of(expiry),LocalDate.of(2026,9,16),trading)).contains(expiry);
-        assertThat(BatmanRules.entryWindow(LocalDateTime.of(2026,9,15,9,20))).isTrue();assertThat(BatmanRules.entryWindow(LocalDateTime.of(2026,9,15,9,25))).isFalse();
+        assertThat(BatmanRules.entryWindow(LocalDateTime.of(2026,9,15,9,20))).isTrue();assertThat(BatmanRules.entryWindow(LocalDateTime.of(2026,9,15,9,25))).isTrue();
     }
     @Test void carryForwardAndNoCustomTargetsAreForced(){
         var r=new StrategyApplyRequest();r.setSymbol(" nifty ");r.setIntraday(true);BatmanRules.validate(r);assertThat(r.getSymbol()).isEqualTo("NIFTY");assertThat(r.getIntraday()).isFalse();assertThat(r.getLots()).isEqualTo(1);
@@ -62,11 +62,23 @@ class BatmanRulesTest{
         assertThat(BatmanStrategy.matches(b,actual,true)).isTrue();assertThat(BatmanStrategy.matches(b,actual.subList(0,2),true)).isFalse();assertThat(BatmanStrategy.matches(b,actual.subList(0,2),false)).isTrue();
         actual.get(3).setQuantity(65L);assertThat(BatmanStrategy.matches(b,actual,true)).isFalse();actual.get(3).setQuantity(130L);actual.get(0).setAppUserId(9L);assertThat(BatmanStrategy.matches(b,actual,true)).isFalse();
     }
-    @Test void listedWeeklyOrMonthlyUsesInclusive40To45Range(){
+    @Test void listedWeeklyOrMonthlyUsesInclusive1To45Range(){
         var day=LocalDate.of(2026,11,12);
         assertThat(BatmanRules.expiry(List.of(day.plusDays(39),day.plusDays(40),day.plusDays(44),day.plusDays(47),day.plusDays(51)),day,d->true)).contains(day.plusDays(44));
-        for(int d:List.of(40,45))assertThat(BatmanRules.expiry(List.of(day.plusDays(d)),day,x->true)).contains(day.plusDays(d));
-        assertThat(BatmanRules.expiry(List.of(day.plusDays(39),day.plusDays(46)),day,d->true)).isEmpty();
+        for(int d:List.of(1,40,45))assertThat(BatmanRules.expiry(List.of(day.plusDays(d)),day,x->true)).contains(day.plusDays(d));
+        assertThat(BatmanRules.expiry(List.of(day.minusDays(1),day,day.plusDays(46)),day,d->true)).isEmpty();
         assertThat(BatmanRules.expiry(List.of(day.plusDays(45)),day,d->false)).isEmpty();
+    }
+    @Test void automaticEntryRetriesThroughSessionButNotBefore0920OrAfter1500(){
+        var day=LocalDate.of(2026,11,16);
+        assertThat(BatmanRules.entryWindow(day.atTime(9,19,59))).isFalse();
+        assertThat(BatmanRules.entryWindow(day.atTime(9,20))).isTrue();
+        assertThat(BatmanRules.entryWindow(day.atTime(14,59,59))).isTrue();
+        assertThat(BatmanRules.entryWindow(day.atTime(15,0))).isFalse();
+    }
+    @Test void shorterDatedExpiryFillsGapsWithoutInventingOrSelectingToday(){
+        var day=LocalDate.of(2026,11,16);
+        assertThat(BatmanRules.expiry(List.of(day.plusDays(8),day.plusDays(31),day.plusDays(46)),day,d->true)).contains(day.plusDays(31));
+        assertThat(BatmanRules.expiry(List.of(day,day.plusDays(1)),day,d->true)).contains(day.plusDays(1));
     }
 }

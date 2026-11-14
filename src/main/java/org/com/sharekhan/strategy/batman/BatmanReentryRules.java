@@ -21,8 +21,6 @@ public final class BatmanReentryRules {
     public static String cooldown(BatmanBasket prior,StrategyRun run,LocalDate day){
         if(!prior.getClaimedAt().toLocalDate().isBefore(day))return "A Batman basket was already attempted today; next-day entries only";
         if(run.getClosedAt()==null||!run.getClosedAt().toLocalDate().isBefore(day))return "Prior basket has not completed its next-trading-day cooldown";
-        if(Set.of("STRATEGY_PROFIT_TARGET","STRATEGY_MAX_LOSS").contains(Objects.toString(run.getExitReason(),"")))return null;
-        if(!prior.getExpiry().isBefore(day))return "Prior basket did not finish at SL or target; automatic re-entry is blocked pending review or expiry";
         return null;
     }
     private static boolean flat(TriggeredTradeStatus status,String reason){return status!=null&&FLAT.contains(status)&&!uncertain(reason);}

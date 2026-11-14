@@ -161,7 +161,8 @@ public class StrategySubscriptionService {
         List<StrategySubscriptionEntity> active = repository.findByStatusInOrderByIdDesc(List.of(ACTIVE, TRIGGERED));
         evaluateBatch(active.stream().filter(s -> !org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId()))
                 .filter(s -> !org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId()))
-                .filter(s -> !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
+                .filter(s -> !org.com.sharekhan.strategy.adxdmi.AdxDmiRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId()))
+                .filter(s -> !org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
     }
 
     /** MCX is evaluated independently of the NSE calendar and afternoon entry cutoff. */
@@ -280,12 +281,18 @@ public class StrategySubscriptionService {
         return subscription.getCompletedAt().toLocalDate().equals(LocalDateTime.now(MARKET_ZONE).toLocalDate());
     }
 
-    /** Batman entry and next-day re-entry run only in the 09:20 IST minute. */
-    @Scheduled(cron = "0,10,20,30,40,50 20 9 * * MON-FRI", zone = "Asia/Kolkata")
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.com.sharekhan.repository.BatmanBasketRepository batmanBaskets;
+    /** Target 09:20; retry unclaimed flat subscriptions through the entry session. */
+    @Scheduled(cron = "0/10 * 9-14 * * MON-FRI", zone = "Asia/Kolkata")
     public void enterBatmanBaskets() {
-        if(!nseMarketCalendar.isTradingDay(LocalDateTime.now(MARKET_ZONE).toLocalDate())) return;
+        enterBatmanBaskets(LocalDateTime.now(MARKET_ZONE));
+    }
+    void enterBatmanBaskets(LocalDateTime now){
+        if(!nseMarketCalendar.isTradingDay(now.toLocalDate())||!org.com.sharekhan.strategy.batman.BatmanRules.entryWindow(now))return;
         evaluateBatch(repository.findByStatusInOrderByIdDesc(List.of(ACTIVE,TRIGGERED)).stream()
-                .filter(s->org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId())).toList());
+                .filter(s->org.com.sharekhan.strategy.batman.BatmanRules.TEMPLATE.equalsIgnoreCase(s.getTemplateId()))
+                .filter(s->!batmanBaskets.hasDailyEntryBlocker(s.getAppUserId(),s.getBrokerCredentialsId(),s.getSymbol(),now.toLocalDate().atStartOfDay())).toList());
     }
     private void validate(StrategyApplyRequest request) {
         if (request == null) {
