@@ -13,6 +13,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.util.List;
 
 class StrategySubscriptionServiceTest {
+    @org.junit.jupiter.api.Test void batmanKeepsRetryingAfter0920ButSkipsOpenAndTodaysAttempts(){
+        var repo=mock(StrategySubscriptionRepository.class);var evaluator=mock(StrategyTemplateService.class);var calendar=mock(NseMarketCalendar.class);
+        var service=new StrategySubscriptionService(repo,evaluator,calendar,enrollment(repo));var baskets=mock(org.com.sharekhan.repository.BatmanBasketRepository.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"batmanBaskets",baskets);
+        var dispatcher=mock(MoverStrategyEvaluationDispatcher.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service,"moverDispatcher",dispatcher);
+        doAnswer(i->{java.util.List<StrategySubscriptionEntity> batch=i.getArgument(0);java.util.function.Consumer<StrategySubscriptionEntity> action=i.getArgument(1);batch.forEach(action);return null;}).when(dispatcher).dispatchAll(anyList(),any());
+        var day=java.time.LocalDate.of(2026,11,16);when(calendar.isTradingDay(day)).thenReturn(true);
+        var sub=StrategySubscriptionEntity.builder().id(191L).templateId("BATMAN_MONTHLY").status("ACTIVE").symbol("NIFTY").appUserId(3L).brokerCredentialsId(4L).lots(1).build();
+        when(repo.findByStatusInOrderByIdDesc(anyList())).thenReturn(List.of(sub));
+        when(evaluator.apply(any())).thenReturn(StrategyApplyResponse.builder().status("waiting").message("Waiting for price").build());
+        service.enterBatmanBaskets(day.atTime(10,30));service.enterBatmanBaskets(day.atTime(10,31));verify(evaluator,times(2)).apply(any());
+        clearInvocations(evaluator);when(baskets.hasDailyEntryBlocker(3L,4L,"NIFTY",day.atStartOfDay())).thenReturn(true);
+        service.enterBatmanBaskets(day.atTime(11,0));verifyNoInteractions(evaluator);
+        clearInvocations(repo);service.enterBatmanBaskets(day.atTime(9,19,59));service.enterBatmanBaskets(day.atTime(15,0));
+        when(calendar.isTradingDay(day)).thenReturn(false);service.enterBatmanBaskets(day.atTime(10,0));verifyNoInteractions(repo);
+    }
+
     @org.junit.jupiter.api.Test void auditFailureDoesNotPreventNiftyEvaluation() {
         var repo=mock(StrategySubscriptionRepository.class);var evaluator=mock(StrategyTemplateService.class);
         var service=new StrategySubscriptionService(repo,evaluator,mock(NseMarketCalendar.class),enrollment(repo));

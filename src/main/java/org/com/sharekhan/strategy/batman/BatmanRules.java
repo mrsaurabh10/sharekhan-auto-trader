@@ -23,10 +23,10 @@ public final class BatmanRules {
         if(org.com.sharekhan.strategy.run.StrategyRiskSettings.validate(r.getRiskSettings(),r.getLots())!=null||r.getProfitTargetPerLot()!=null)throw new IllegalArgumentException("Batman TP and SL are computed from actual center credit; custom risk overrides are not supported");
         r.setRiskSettings(null);r.setIntraday(false);r.setSource("strategy:"+TEMPLATE);
     }
-    public static boolean entryWindow(LocalDateTime now){return !now.toLocalTime().isBefore(LocalTime.of(9,20))&&now.toLocalTime().isBefore(LocalTime.of(9,21));}
+    public static boolean entryWindow(LocalDateTime now){return !now.toLocalTime().isBefore(LocalTime.of(9,20))&&now.toLocalTime().isBefore(LocalTime.of(15,0));}
     public static Optional<LocalDate> expiry(Collection<LocalDate> listed,LocalDate day,Predicate<LocalDate> trading){
         if(!trading.test(day))return Optional.empty();
-        return listed.stream().filter(e->{long d=java.time.temporal.ChronoUnit.DAYS.between(day,e);return d>=40&&d<=45;})
+        return listed.stream().filter(e->{long d=java.time.temporal.ChronoUnit.DAYS.between(day,e);return d>=1&&d<=45;})
                 .min(Comparator.<LocalDate>comparingLong(e->Math.abs(java.time.temporal.ChronoUnit.DAYS.between(day,e)-45)).thenComparing(Comparator.naturalOrder()));
     }
 

@@ -35,7 +35,7 @@ public class BatmanStrategy implements StrategyEvaluator {
         this.scripts=scripts;this.credentials=credentials;this.brokers=brokers;this.chains=chains;this.identities=identities;this.books=books;this.baskets=baskets;this.store=store;this.runs=runs;this.trades=trades;this.execution=execution;this.coordinator=coordinator;this.calendar=calendar;this.support=support;this.shared=shared;this.clock=Clock.system(BatmanRules.IST);
     }
     @Override public StrategyMetadata metadata(){return new StrategyMetadata(BatmanRules.TEMPLATE,"Batman Ratio Spread",
-            "Listed weekly or monthly expiry, 40–45 DTE nearest 45; entries at 09:20 IST. After SL/target, re-enter only on a later trading day after all prior exposure is confirmed flat. Buy 1 lot near 20 delta and sell 2 near 16 delta per side. Carry overnight; no adjustments. Combined gross TP and equal SL use actual center credit. Base lots scale the entire basket; option-short support depends on the execution adapter.","CE+PE");}
+            "Listed weekly or monthly expiry, 1–45 DTE nearest 45; entries from 09:20 IST with flat-entry retries until 15:00. After any completed exit, re-enter on the next trading day after all prior exposure is confirmed flat. Buy 1 lot near 20 delta and sell 2 near 16 delta per side. Carry overnight; no adjustments. Combined gross TP and equal SL use actual center credit. Base lots scale the entire basket; option-short support depends on the execution adapter.","CE+PE");}
     public void validateConfiguration(StrategyApplyRequest request){
         BatmanRules.validate(request);
         if(request.isBatmanMarketEntry()&&(request.getBatmanManualEntryDay()==null||request.getBatmanRetryOfRunId()==null))throw new IllegalArgumentException("Reviewed same-day retry is required for Simulator market entry");
@@ -49,7 +49,7 @@ public class BatmanStrategy implements StrategyEvaluator {
     }
     @Override public synchronized StrategyApplyResponse apply(StrategyApplyRequest request){
         validateConfiguration(request);var now=LocalDateTime.now(clock);String symbol=request.getSymbol();
-        if(!calendar.isTradingDay(now.toLocalDate())||!entryWindow(request,now))return support.waiting(metadata(),symbol,"Waiting for 09:20 IST; fresh entries require a listed expiry at 40–45 DTE");
+        if(!calendar.isTradingDay(now.toLocalDate())||!entryWindow(request,now))return support.waiting(metadata(),symbol,"Waiting for 09:20–15:00 IST; fresh entries require a listed expiry at 1–45 DTE");
         boolean market=request.isBatmanMarketEntry();
         boolean freshLtp=!market&&credentials.findById(request.getBrokerCredentialsId()).map(c->"Simulator".equalsIgnoreCase(c.getBrokerName())).orElse(false);
         String blocked=request.getBatmanRetryOfRunId()==null?store.entryBlockReason(request.getUserId(),request.getBrokerCredentialsId(),symbol,now.toLocalDate())
@@ -58,7 +58,7 @@ public class BatmanStrategy implements StrategyEvaluator {
         Set<LocalDate> ce=dates(scripts.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol,"CE"));
         ce.retainAll(dates(scripts.findAllOptionExpiriesByTradingSymbolAndOptionType(symbol,"PE")));
         var expiry=BatmanRules.expiry(ce,now.toLocalDate(),calendar::isTradingDay);
-        if(expiry.isEmpty())return support.waiting(metadata(),symbol,"No listed expiry at 40–45 DTE; waiting for the next eligible morning");
+        if(expiry.isEmpty())return support.waiting(metadata(),symbol,"No listed expiry at 1–45 DTE; waiting for the next eligible morning");
         String id=id(request.getUserId()+":"+request.getBrokerCredentialsId()+":"+symbol+":"+now.toLocalDate()+(request.getBatmanRetryOfRunId()==null?"":":manual-retry"));
         if(baskets.existsById(id))return support.waiting(metadata(),symbol,"A Batman basket was already attempted today; no same-day re-entry");
         try{

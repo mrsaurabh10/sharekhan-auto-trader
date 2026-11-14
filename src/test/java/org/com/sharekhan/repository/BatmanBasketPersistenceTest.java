@@ -22,4 +22,14 @@ class BatmanBasketPersistenceTest{
   assertThat(baskets.findByStrategyRunId("b-run").orElseThrow().getState()).isEqualTo("ARMED");assertThat(baskets.arm("b",BigDecimal.TEN)).isZero();
   runs.requestClose("b-run","TEST",LocalDateTime.now());assertThat(runs.armBatmanRisk("b-run",BigDecimal.TEN,StrategyRiskSettings.AmountMode.TOTAL)).isZero();
  }
+ @Test void pollingSkipsOpenAndSameDayBasketsButAllowsOlderConfirmedClosure(){
+  var day=LocalDate.of(2026,11,16);var start=day.atStartOfDay();
+  var run=runs.saveAndFlush(StrategyRun.builder().id("poll-run").appUserId(1L).brokerCredentialsId(2L).templateId(BatmanRules.TEMPLATE).symbol("NIFTY").tradingDay(day.minusDays(3)).instance("DAY").status("CLOSED").createdAt(start.minusDays(3)).closedAt(start.minusDays(3).plusHours(14)).build());
+  var b=baskets.saveAndFlush(BatmanBasket.builder().id("poll-basket").appUserId(1L).brokerCredentialsId(2L).symbol("NIFTY").strategyRunId(run.getId()).expiry(day.plusDays(43)).claimedAt(start.minusDays(3).plusHours(9)).baseLots(1).lotSize(65).planJson("[]").state("CLOSED").build());
+  assertThat(baskets.hasDailyEntryBlocker(1L,2L,"NIFTY",start)).isFalse();
+  run.setClosedAt(start);runs.saveAndFlush(run);assertThat(baskets.hasDailyEntryBlocker(1L,2L,"NIFTY",start)).isTrue();
+  run.setClosedAt(null);run.setStatus("OPEN");runs.saveAndFlush(run);assertThat(baskets.hasDailyEntryBlocker(1L,2L,"NIFTY",start)).isTrue();
+  run.setStatus("CLOSED");run.setClosedAt(start.minusDays(1));runs.saveAndFlush(run);b.setClaimedAt(start);baskets.saveAndFlush(b);assertThat(baskets.hasDailyEntryBlocker(1L,2L,"NIFTY",start)).isTrue();
+  assertThat(baskets.hasDailyEntryBlocker(1L,9L,"NIFTY",start)).isFalse();
+ }
 }
