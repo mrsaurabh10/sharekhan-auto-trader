@@ -41,6 +41,17 @@ public class TradeCostCalculator {
         return calculateCharges(trade, entryPrice, trade.getExitPrice(), trade.getPnl());
     }
 
+    /** Estimate liquidation net at a proposed fill, without changing stored fills or P&L. */
+    public static Double estimatedNetPnlAtExit(TriggeredTradeSetupEntity trade, double exitPrice) {
+        if (trade == null || !Double.isFinite(exitPrice) || exitPrice < 0d) return null;
+        Double entryPrice = trade.getActualEntryPrice() != null
+                ? trade.getActualEntryPrice() : trade.getEntryPrice();
+        if (entryPrice == null || !Double.isFinite(entryPrice) || entryPrice < 0d) return null;
+        // An old stored gross P&L must never override the proposed entry/exit cash flows.
+        TradeCharges charges = calculateCharges(trade, entryPrice, exitPrice, null);
+        return charges == null ? null : charges.effectivePnl();
+    }
+
     private static TradeCharges calculateCharges(TriggeredTradeSetupEntity trade,
                                                  double entryPrice,
                                                  double exitPrice,

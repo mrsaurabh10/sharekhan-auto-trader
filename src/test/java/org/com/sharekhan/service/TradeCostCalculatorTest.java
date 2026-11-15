@@ -9,6 +9,29 @@ class TradeCostCalculatorTest {
 
     private final TradeCostCalculator calculator = new TradeCostCalculator();
 
+    @Test void hypotheticalNetUsesProposedFillAndChargesWithoutChangingHistoricalValues() {
+        var trade=TriggeredTradeSetupEntity.builder().actualEntryPrice(24d).entryPrice(696.2)
+                .quantity(1350L).lots(1).optionType("PE").exchange("NF")
+                .exitPrice(21.85).pnl(-2902d).tradeCost(67.93).effectivePnl(-2969.93).build();
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,24.79)).isEqualTo(992.96);
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,24.8)).isEqualTo(1006.44);
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,25.1)).isEqualTo(1410.87);
+        assertThat(trade.getExitPrice()).isEqualTo(21.85);
+        assertThat(trade.getPnl()).isEqualTo(-2902d);
+        assertThat(trade.getTradeCost()).isEqualTo(67.93);
+        assertThat(trade.getEffectivePnl()).isEqualTo(-2969.93);
+    }
+    @Test void hypotheticalNetRejectsMissingQuantityAndNonfinitePrices() {
+        var trade=TriggeredTradeSetupEntity.builder().actualEntryPrice(24d).quantity(1350L).lots(1).build();
+        for(double invalid:new double[]{Double.NaN,Double.POSITIVE_INFINITY,-1d})
+            assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,invalid)).isNull();
+        trade.setActualEntryPrice(Double.NaN);
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,25d)).isNull();
+        trade.setActualEntryPrice(24d);trade.setQuantity(0L);
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,25d)).isNull();
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(null,25d)).isNull();
+    }
+
     private TriggeredTradeSetupEntity bankLeg(long quantity,int stage) {
         return TriggeredTradeSetupEntity.builder().exchange("NC").instrumentType("EQ").entryAction("SELL").intraday(true)
             .actualEntryPrice(125.65).exitPrice(126.50).quantity(quantity).lots((int)quantity).originalLots(3982)

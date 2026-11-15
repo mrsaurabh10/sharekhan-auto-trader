@@ -102,6 +102,64 @@ class FnoMoverExitPolicyServiceTest {
         assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(10.25);
         assertThat(observe(start.plusSeconds(15),100,10.25).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"CE","PE"})
+    void thousandNetArmsBeforeFivePercentThenTrailsHalfThePremiumGain(String side) {
+        trade.setOptionType(side);trade.setStopLoss("CE".equals(side)?98d:102d);
+        trade.setActualEntryPrice(24d);trade.setQuantity(1350L);
+        // Gross gain is already above Rs 1,000, but estimated net is only Rs 992.96.
+        observe(start,100,24.79);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,24.8)).isEqualTo(1006.44);
+        assertThat(observe(start.plusSeconds(5),100,24.8).exit()).isFalse();
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(24.4);
+        observe(start.plusSeconds(10),100,25.1);
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(24.55);
+        service=instance();
+        assertThat(observe(start.plusSeconds(15),100,24.8).exit()).isFalse();
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(24.55);
+        assertThat(observe(start.plusSeconds(20),100,24.55).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
+    }
+    @Test void existingSavedPeakCanArmTheRupeeThresholdAndExitAfterRetracement() {
+        trade.setActualEntryPrice(24d);trade.setQuantity(1350L);
+        observe(start,100,24);
+        jdbc.update("UPDATE fno_mover_exit_state SET peak_bid=25.1, protection_armed=false, protection_floor=0 WHERE trade_id=1");
+        service=instance();
+        assertThat(observe(start.plusSeconds(5),100,24.5).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
+        assertThat(jdbc.queryForObject("SELECT peak_bid FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(25.1);
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(24.55);
+    }
+    @Test void rupeeArmedPartialKeepsProtectionEvenWhenRemainingNetIsBelowThousand() {
+        trade.setActualEntryPrice(24d);trade.setQuantity(1350L);trade.setLots(3);
+        observe(start,100,24.9);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+        var remaining=TriggeredTradeSetupEntity.builder().id(3L).appUserId(4L).brokerCredentialsId(6L)
+                .source(FnoMoverExitPolicyService.SOURCE).symbol("TEST").exchange("NF").scripCode(123).spotScripCode(456)
+                .intraday(true).optionType("PE").entryAction("BUY").actualEntryPrice(24d)
+                .entryAt(trade.getEntryAt()).quantity(450L).lots(1).build();
+        tx.executeWithoutResult(s->service.inherit(trade,remaining));
+        trade=remaining;service=instance();
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,24.9)).isLessThan(1000d);
+        assertThat(observe(start.plusSeconds(5),100,24.4).reason()).isEqualTo(FnoMoverExitPolicyService.PROFIT_PROTECTION);
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=3",Double.class)).isEqualTo(24.45);
+    }
+    @Test void invalidBooksCannotUseTheRupeeThresholdToRecordAnArmingPeak() {
+        trade.setActualEntryPrice(24d);trade.setQuantity(1350L);
+        observe(start,100,24);
+        var at=start.plusSeconds(10);
+        var wrong=QuoteCacheService.QuoteSnapshot.builder().bestBid(24.8).bestAsk(24.9).coherentBook(true)
+                .lastBookAt(at).bookSource("SHOONYA").bookExchange("NF").bookProviderIdentity("999:OTHER").bidQuantity(1350d).build();
+        var crossed=QuoteCacheService.QuoteSnapshot.builder().bestBid(24.8).bestAsk(24.7).coherentBook(true)
+                .lastBookAt(at).bookSource("SHOONYA").bookExchange("NF").bookProviderIdentity("123:TEST").bidQuantity(1350d).build();
+        for(var b:List.of(book(start,24.8,"SHOONYA",1350d),book(at,24.8,"UNKNOWN",1350d),
+                book(at,24.8,"SHOONYA",1349d),wrong,crossed)) {
+            when(quotes.getSnapshot(123)).thenReturn(Optional.of(b));
+            assertThat(tx.execute(s->service.evaluate(trade,at)).exit()).isFalse();
+        }
+        assertThat(jdbc.queryForObject("SELECT peak_bid FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(24d);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+    }
     @Test void lowerThresholdAppliesToExistingUnarmedSavedPeakWithoutReset() {
         observe(start,100,10);
         jdbc.update("UPDATE fno_mover_exit_state SET peak_bid=10.6, protection_armed=false, protection_floor=0 WHERE trade_id=1");

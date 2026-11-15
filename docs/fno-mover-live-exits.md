@@ -32,8 +32,21 @@ peaks and floors; their next valid quote is evaluated under the lower threshold.
 An already-retraced open position can therefore request an immediate exit; this
 does not recreate a fill at an earlier protected price.
 
-Arm when a verified option **bid** is at least 5% above the actual entry premium
-and exceeds the application-estimated round-trip cost floor.
+### Combined activation (15 November 2026)
+
+Arm when either condition is reached by the highest verified option **bid**:
+
+- premium is at least 5% above the actual entry premium; or
+- estimated net liquidation profit on the remaining position is at least ₹1,000.
+
+Both routes still require the peak to clear the application-estimated round-trip
+cost floor. The rupee calculation uses actual entry premium, remaining quantity
+and lots, and the existing option-charge estimator, including estimated exit
+charges. It does not use displayed LTP, gross profit, another account's profit or
+already-booked profit from closed partial legs. This is a per-position trigger,
+not a daily account-profit trigger. An armed remaining partial position inherits
+the peak/floor even if its reduced size would no longer meet either threshold.
+
 Thereafter the floor is the higher of:
 
 - entry premium plus 50% of the maximum observed premium gain; and
@@ -43,6 +56,15 @@ The floor never decreases. A later verified bid at/below the floor closes the
 entire remaining position with `FNO_EARLY_PROFIT_PROTECTION`. This is not a promise
 of break-even or a guaranteed fill: a gap, slippage or actual broker charges can
 produce a loss.
+
+For example, entry ₹24 with 1,350 units and one lot reaches estimated net
+₹1,006.44 at bid ₹24.80, before the 5% threshold of ₹25.20. It arms with a
+premium floor of ₹24.40. If the accepted peak rises to ₹25.10, the floor rises
+to ₹24.55. A later qualifying bid at or below ₹24.55 requests a full remaining
+exit at the then-available price. This retains half the premium gain; it does
+not promise half the net profit or a ₹500 minimum net profit. The ₹500 staircase
+is not used. Existing saved peaks, arming and higher floors are preserved, so a
+next valid observation can arm and exit an already-retraced open position.
 
 ## Data and order handling
 
