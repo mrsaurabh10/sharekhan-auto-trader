@@ -4058,6 +4058,29 @@ public class TradeExecutionService {
                         closeEntryDecision(control);
                         continue;
                     }
+                    if (FnoMoverEntryRiskPolicy.owns(trade)
+                            && !FnoMoverEntrySignal.valid(trade.getStrategyDecision(), LocalDateTime.now(entryClock))) {
+                        // Paused/uncertain orders can still be open at the broker. Do not offer
+                        // a fresh retry or assume that an expiry/cancellation intent made them flat.
+                        stopEntryOrderChase(trade.getId());
+                        clearEntryButtons(control);
+                        control.setState(EntryChaseControl.State.CANCEL_PENDING);
+                        control.setReason("Expired FNO signal; awaiting broker status/cancellation confirmation");
+                        entryChaseControlRepository.save(control);
+                        trade.setReason(FnoMoverEntrySignal.REJECTION);
+                        triggeredTradeRepo.save(trade);
+                        BrokerContext ctx = resolveBrokerContext(trade.getBrokerCredentialsId(), trade.getAppUserId());
+                        if (!isBrokerContextUsable(ctx)) continue;
+                        EntryOrderSnapshot snapshot = fetchEntryOrderSnapshot(trade, ctx, trade.getOrderId());
+                        if (snapshot.status() == TradeStatus.PENDING) {
+                            BrokerService broker = brokerServiceFactory.getService(ctx.getBrokerName());
+                            if (broker instanceof ModifiableEntryBrokerService modifiable)
+                                cancelFnoEntryForRisk(trade, control, modifiable, ctx, FnoMoverEntrySignal.REJECTION);
+                        } else if (snapshot.status() != TradeStatus.NO_RECORDS) {
+                            closeEntryDecision(control);
+                        }
+                        continue;
+                    }
                     if (control.getState() == EntryChaseControl.State.RUNNING) {
                         if (!isEntryOrderChaseActive(trade.getId())) scheduleEntryOrderChase(trade, control.isWaitForBrokerTrigger());
                     } else if (control.getState() == EntryChaseControl.State.ACTION_PENDING) {

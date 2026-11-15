@@ -71,5 +71,12 @@ of cancellation. Cancellation intent is persisted before I/O, and actual full
 or partial fills remain managed. Filled positions do not lose their exits or
 profit-lock state, and existing ADX/Batman/MCX entry rules retain their scope.
 
+The existing 30-second recovery loop also checks paused, running, interrupted
+and cancellation-pending FNO entry controls. An expired signal never receives
+new retry buttons. A confirmed-open broker order gets cancellation of its
+unfilled remainder; an unknown status stays unresolved without a blind cancel,
+and a confirmed terminal order closes only its entry control. A broker fill
+can race expiry/cancellation, so deadlines do not promise an exact fill cutoff.
+
 Startup logs `FNO_ENTRY_CANDLE_POLICY` with `EXPECTED_COMPLETED_5M`,
 `COMPLETED_REGULAR_SESSION`, `CE_UPPER_PE_LOWER` and `NEXT_5M_CLOSE`.

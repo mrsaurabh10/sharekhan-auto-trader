@@ -1905,6 +1905,42 @@ class TradeExecutionServiceBrokerSideEntryTest {
         verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value=EntryChaseControl.State.class,names={"PAUSED","RUNNING","ACTION_PENDING","CANCEL_PENDING"})
+    void expiredFnoRecoveryHandlesEveryPendingStateWithoutGuessingBrokerOutcome(EntryChaseControl.State state) {
+        for(String outcome:new String[]{"Partially Executed","Fully Executed","UNKNOWN"}) {
+            var ctx=pausedEntry();var trade=ctx.savedTrade.get();
+            trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);
+            trade.setStrategyDecision(FnoMoverEntrySignal.decision(LocalDateTime.of(2026,11,13,9,55)));
+            freshRiskSpot(ctx,100);expireFnoSignal(ctx);ctx.controls.get(88L).setState(state);
+            when(ctx.broker.fetchOrderStatus(any(),any(),eq("ACTION-1"))).thenReturn(
+                    outcome.equals("UNKNOWN")?new JSONObject():outcome.equals("Fully Executed")?orderHistory(outcome):partialOrderHistory(outcome));
+            ctx.service.recoverEntryDecisions();
+            if(outcome.equals("Partially Executed")) {
+                verify(ctx.broker).cancelEntryOrder(any(),any(),eq("ACTION-1"));
+                assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CANCEL_PENDING);
+            } else {
+                verify(ctx.broker,never()).cancelEntryOrder(any(),any(),anyString());
+                assertThat(ctx.controls.get(88L).getState()).isEqualTo(outcome.equals("UNKNOWN")
+                        ?EntryChaseControl.State.CANCEL_PENDING:EntryChaseControl.State.CLOSED);
+            }
+            assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+            assertThat(trade.getQuantity()).isEqualTo(50L);
+            verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+            verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+        }
+    }
+
+    @Test void legacyFnoPausedOrderCannotResumeWithoutServerSignalMetadataAfterRestart() {
+        var ctx=pausedEntry();var trade=ctx.savedTrade.get();trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);
+        trade.setStrategyDecision(null);freshRiskSpot(ctx,100);
+        ctx.service.recoverEntryDecisions();
+        verify(ctx.broker).cancelEntryOrder(any(),any(),eq("ACTION-1"));
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        assertThat(trade.getReason()).isEqualTo(FnoMoverEntrySignal.REJECTION);
+        assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CANCEL_PENDING);
+    }
+
     @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
     void fnoAdmissionRejectsBelowMinimumForLiveAndSimulator(boolean simulator) {
         var ctx=new TestContext(pending("unused"));if(simulator)ctx.useSimulatorBroker();
