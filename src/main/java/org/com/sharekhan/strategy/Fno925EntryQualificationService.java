@@ -41,6 +41,8 @@ public class Fno925EntryQualificationService {
         org.slf4j.LoggerFactory.getLogger(Fno925EntryQualificationService.class).info(
                 "FNO_FRESH_RETEST_POLICY | enabled={} | maxBarsAfterRejection=3 | retestDistanceAtr=0.35 | hardRiskCapAtr=2.0",
                 freshRetestEnabled);
+        org.slf4j.LoggerFactory.getLogger(Fno925EntryQualificationService.class).info(
+                "FNO_ENTRY_CANDLE_POLICY | signal=EXPECTED_COMPLETED_5M | indicators=COMPLETED_REGULAR_SESSION | rejectionWick=CE_UPPER_PE_LOWER | entryDeadline=NEXT_5M_CLOSE");
     }
 
     /** Market-only results, shared by all accounts in one scheduler pass; never contains account orders. */
@@ -161,8 +163,13 @@ public class Fno925EntryQualificationService {
     }
 
     private Qualification qualifyMarket(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {
-        CandleLoad load = support.loadCandlesWithHistoricalFallback(candidate.spot(), ATR_PERIOD + 1);
+        // Reserve one extra bar: the provider may also return the current unfinished candle.
+        CandleLoad load = support.loadCandlesWithHistoricalFallback(candidate.spot(), ATR_PERIOD + 2);
         List<StrategyCandle> allCandles = load.candles().stream()
+                .filter(candle -> candle != null && candle.date() != null && candle.time() != null)
+                .filter(candle -> !candle.time().isBefore(OR_START) && candle.time().isBefore(LocalTime.of(15, 30)))
+                .filter(candle -> candle.time().getMinute() % 5 == 0 && candle.time().getSecond() == 0 && candle.time().getNano() == 0)
+                .filter(candle -> !candle.date().atTime(candle.time()).plusMinutes(5).isAfter(now))
                 .sorted(Comparator.comparing(StrategyCandle::date).thenComparing(StrategyCandle::time))
                 .toList();
         Qualification baseline = qualifyLoaded(candidate, now, requireDirectionalCandle, allCandles);
@@ -202,6 +209,11 @@ public class Fno925EntryQualificationService {
 
         // Do not backfill an old candle: an evaluation must act on the most recently completed candle only.
         StrategyCandle breakout = completedBreakouts.get(completedBreakouts.size() - 1);
+        LocalDateTime expected = now.withSecond(0).withNano(0)
+                .minusMinutes(now.getMinute() % 5).minusMinutes(5);
+        if (!breakout.date().atTime(breakout.time()).equals(expected)) {
+            return Qualification.waiting("expected latest completed five-minute signal candle is unavailable");
+        }
         if (requireDirectionalCandle) {
             boolean bullish = "CE".equalsIgnoreCase(candidate.optionType());
             boolean matchesDirection = bullish ? breakout.close() > breakout.open() : breakout.close() < breakout.open();
@@ -448,10 +460,10 @@ public class Fno925EntryQualificationService {
         if (body / range < minBodyToRange) {
             return Optional.of("breakout candle body is too small for its range");
         }
-        double opposingWick = "CE".equalsIgnoreCase(optionType)
-                ? Math.min(breakout.open(), breakout.close()) - breakout.low()
-                : breakout.high() - Math.max(breakout.open(), breakout.close());
-        if (opposingWick / range > maxOpposingWickToRange) {
+        double rejectionWick = "CE".equalsIgnoreCase(optionType)
+                ? breakout.high() - Math.max(breakout.open(), breakout.close())
+                : Math.min(breakout.open(), breakout.close()) - breakout.low();
+        if (rejectionWick / range > maxOpposingWickToRange) {
             return Optional.of("breakout candle has an immediate rejection wick");
         }
         return Optional.empty();

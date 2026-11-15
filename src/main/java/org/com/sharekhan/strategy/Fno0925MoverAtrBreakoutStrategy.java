@@ -247,6 +247,8 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         trigger.setUserId(request.getUserId());
         trigger.setBrokerCredentialsId(request.getBrokerCredentialsId());
         trigger.setSource(sourceFor(request));
+        trigger.setStrategyDecision(org.com.sharekhan.service.FnoMoverEntrySignal.decision(
+                signal.breakoutCandle().date().atTime(signal.breakoutCandle().time())));
         int lots = request.getLots() != null && request.getLots() > 0 ? request.getLots() : DEFAULT_LOTS;
         trigger.setLots(lots);
         trigger.setQuantity(lots);

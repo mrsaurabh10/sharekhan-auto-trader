@@ -38,7 +38,7 @@ class Fno925EntryQualificationServiceTest {
         candles.add(new StrategyCandle(day, LocalTime.of(9, 25), 104d, 105d, 101d, 102d, 100L));
         candles.add(new StrategyCandle(day, LocalTime.of(9, 30), 102d, 104d, 100d, 103d, 100L));
         candles.add(new StrategyCandle(day, LocalTime.of(9, 35), 103d, 108d, 102d, 107d, 250L));
-        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(76)))
+        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(77)))
                 .thenReturn(new CandleLoad(candles, true, null));
 
         Fno925EntryQualificationService service = new Fno925EntryQualificationService(support);
@@ -71,7 +71,7 @@ class Fno925EntryQualificationServiceTest {
         candles.add(new StrategyCandle(day, LocalTime.of(9, 35), 101d, 103d, 100d, 102d, 100L));
         candles.add(new StrategyCandle(day, LocalTime.of(9, 40), 102d, 103d, 101d, 102.5d, 100L));
         candles.add(new StrategyCandle(day, LocalTime.of(9, 45), 102.5d, 104.5d, 102d, 104d, 250L));
-        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(76)))
+        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(77)))
                 .thenReturn(new CandleLoad(candles, true, null));
 
         Fno925EntryQualificationService service = configuredService(support);
@@ -100,7 +100,7 @@ class Fno925EntryQualificationServiceTest {
         candles.add(new StrategyCandle(day, LocalTime.of(9, 25), 104d, 105d, 101d, 102d, 100L));
         candles.add(new StrategyCandle(day, LocalTime.of(9, 30), 102d, 104d, 100d, 103d, 100L));
         candles.add(new StrategyCandle(day, LocalTime.of(9, 35), 103d, 108d, 102d, 107d, 90L));
-        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(76)))
+        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(77)))
                 .thenReturn(new CandleLoad(candles, true, null));
 
         Fno925EntryQualificationService service = configuredService(support);
@@ -252,7 +252,7 @@ class Fno925EntryQualificationServiceTest {
     private Fno925EntryQualificationService directionalService(List<StrategyCandle> candles) {
         StrategySupport support = mock(StrategySupport.class);
         when(support.roundPrice(anyDouble())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(76)))
+        when(support.loadCandlesWithHistoricalFallback(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.eq(77)))
                 .thenReturn(new CandleLoad(candles, true, null));
         Fno925EntryQualificationService service = configuredService(support);
         // Match the existing reclaim fixture; isolate direction from unrelated extension/support checks.

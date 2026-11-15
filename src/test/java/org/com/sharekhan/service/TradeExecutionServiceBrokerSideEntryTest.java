@@ -1809,6 +1809,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
 
     private TriggeredTradeSetupEntity fnoRiskTrade() {
         return TriggeredTradeSetupEntity.builder().source(FnoMoverEntryRiskPolicy.SOURCE)
+                .strategyDecision(FnoMoverEntrySignal.decision(LocalDateTime.of(2026,11,13,9,55)))
                 .symbol("TEST").exchange("NF").scripCode(123456).spotScripCode(20000)
                 .optionType("CE").entryPrice(100d).stopLoss(90d).target1(111d)
                 .useSpotForEntry(true).useSpotForSl(true).useSpotForTarget(true)
@@ -1816,9 +1817,92 @@ class TradeExecutionServiceBrokerSideEntryTest {
     }
 
     private void freshRiskSpot(TestContext ctx,double spot) {
+        ReflectionTestUtils.setField(ctx.service,"entryClock",java.time.Clock.fixed(LocalDateTime.of(2026,11,13,10,1).atZone(java.time.ZoneId.of("Asia/Kolkata")).toInstant(),java.time.ZoneId.of("Asia/Kolkata")));
         when(ctx.ltpCache.getLtp(20000)).thenReturn(spot);
         when(ctx.ltpCache.getObservedAt(20000)).thenAnswer(i -> LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata")));
         when(ctx.ltpCache.getPriceObservation(20000)).thenAnswer(i -> new LtpCacheService.CachedPriceObservation(spot, LocalDateTime.now(java.time.ZoneId.of("Asia/Kolkata"))));
+    }
+
+    private void expireFnoSignal(TestContext ctx) {
+        ReflectionTestUtils.setField(ctx.service,"entryClock",java.time.Clock.fixed(
+                LocalDateTime.of(2026,11,13,10,5).atZone(java.time.ZoneId.of("Asia/Kolkata")).toInstant(),java.time.ZoneId.of("Asia/Kolkata")));
+    }
+
+    @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
+    void fnoMissingOrExpiredSignalCannotSubmitForLiveOrSimulator(boolean simulator) {
+        for(boolean missing:new boolean[]{false,true}) {
+            var ctx=new TestContext(pending("unused"));if(simulator)ctx.useSimulatorBroker();
+            configureFiveAttemptPolicy(ctx);configureTightFreshQuote(ctx,10.50,10.60,10.55);freshRiskSpot(ctx,100);
+            var trade=fnoRiskTrade();if(missing)trade.setStrategyDecision(null);else expireFnoSignal(ctx);
+            BrokerContext broker=ReflectionTestUtils.invokeMethod(ctx.service,"resolveBrokerContext",55L,9L);
+            OrderPlacementResult result=ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",trade,10.55,broker,ctx.broker,false);
+            assertThat(result.isSuccess()).isFalse();assertThat(result.getRejectionReason()).isEqualTo(FnoMoverEntrySignal.REJECTION);
+            verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+            verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        }
+    }
+
+    @Test void fnoSignalExpiryDuringQuotePreparationCannotSubmit() {
+        var ctx=new TestContext(pending("unused"));configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx,10.50,10.60,10.55);freshRiskSpot(ctx,100);
+        when(ctx.quoteCache.getSnapshot(123456)).thenAnswer(i->{expireFnoSignal(ctx);return Optional.of(quote(10.50,10.60,10.55));});
+        var trade=fnoRiskTrade();BrokerContext broker=ReflectionTestUtils.invokeMethod(ctx.service,"resolveBrokerContext",55L,9L);
+        OrderPlacementResult result=ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",trade,10.55,broker,ctx.broker,false);
+        assertThat(result.getRejectionReason()).isEqualTo(FnoMoverEntrySignal.REJECTION);
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
+    }
+
+    @Test void expiredFnoRetryCancelsOnlyUnfilledRemainderAndRetainsPartialFill() {
+        var ctx=new TestContext(pending("unused"));configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx,10.50,10.60,10.55);freshRiskSpot(ctx,100);
+        var trade=fnoRiskTrade();trade.setStatus(TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION);
+        BrokerContext broker=ReflectionTestUtils.invokeMethod(ctx.service,"resolveBrokerContext",55L,9L);
+        when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenAnswer(i->{expireFnoSignal(ctx);return pending("EXPIRED-PARTIAL");});
+        AtomicBoolean cancelled=new AtomicBoolean(false);
+        doAnswer(i->{cancelled.set(true);return null;}).when(ctx.broker).cancelEntryOrder(any(),any(),eq("EXPIRED-PARTIAL"));
+        when(ctx.broker.fetchOrderStatus(any(),any(),eq("EXPIRED-PARTIAL")))
+                .thenAnswer(i->partialOrderHistory(cancelled.get()?"Cancelled":"Partially Executed"));
+        OrderPlacementResult result=ReflectionTestUtils.invokeMethod(ctx.service,"attemptEntryPlacement",trade,10.55,broker,ctx.broker,false);
+        assertThat(result.isSuccess()).isTrue();assertThat(result.getExecutedQuantity()).isEqualTo(20);
+        verify(ctx.broker).cancelEntryOrder(any(),any(),eq("EXPIRED-PARTIAL"));
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+    }
+
+    @Test void scheduledExpiredFnoEntryCancelsButAlreadyFilledEntryIsNotCancelled() {
+        for(boolean filled:new boolean[]{false,true}) {
+            var ctx=pausedEntry();var trade=ctx.savedTrade.get();
+            trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);trade.setOptionType("CE");
+            trade.setStrategyDecision(FnoMoverEntrySignal.decision(LocalDateTime.of(2026,11,13,9,55)));
+            trade.setUseSpotForSl(true);trade.setUseSpotForTarget(true);trade.setStopLoss(90d);trade.setTarget1(111d);
+            freshRiskSpot(ctx,100);expireFnoSignal(ctx);
+            if(filled)when(ctx.broker.fetchOrderStatus(any(),any(),eq("ACTION-1"))).thenReturn(orderHistory("Fully Executed"));
+            var scheduler=mock(java.util.concurrent.ScheduledExecutorService.class);
+            when(scheduler.scheduleWithFixedDelay(any(Runnable.class),anyLong(),anyLong(),any())).thenReturn(mock(java.util.concurrent.ScheduledFuture.class));
+            ReflectionTestUtils.setField(ctx.service,"entryChaseScheduler",scheduler);
+            ctx.controls.get(88L).setState(EntryChaseControl.State.RUNNING);
+            ReflectionTestUtils.invokeMethod(ctx.service,"scheduleEntryOrderChase",trade,false);
+            var task=ArgumentCaptor.forClass(Runnable.class);verify(scheduler).scheduleWithFixedDelay(task.capture(),anyLong(),anyLong(),any());
+            task.getValue().run();
+            if(filled)verify(ctx.broker,never()).cancelEntryOrder(any(),any(),anyString());
+            else {
+                verify(ctx.broker).cancelEntryOrder(any(),any(),eq("ACTION-1"));
+                assertThat(ctx.controls.get(88L).getState()).isEqualTo(EntryChaseControl.State.CANCEL_PENDING);
+                assertThat(trade.getReason()).isEqualTo(FnoMoverEntrySignal.REJECTION);
+            }
+            verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+        }
+    }
+
+    @Test void manualFnoRepricingCannotOverrideExpiredSignal() {
+        var ctx=pausedEntry();var trade=ctx.savedTrade.get();
+        trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);trade.setOptionType("CE");
+        trade.setStrategyDecision(FnoMoverEntrySignal.decision(LocalDateTime.of(2026,11,13,9,55)));
+        trade.setUseSpotForSl(true);trade.setUseSpotForTarget(true);trade.setStopLoss(90d);trade.setTarget1(111d);
+        freshRiskSpot(ctx,100);expireFnoSignal(ctx);
+        String token=ctx.controls.get(88L).getDecisionToken();
+        assertThat(ctx.service.handleEntryAction(88L,token,"market")).contains("admission validation");
+        verify(ctx.broker).cancelEntryOrder(any(),any(),eq("ACTION-1"));
+        verify(ctx.broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
     }
 
     @ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(booleans={false,true})
@@ -1864,6 +1948,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
     @Test void fnoManualRepriceCannotOverrideAdmissionPolicy() {
         var ctx=pausedEntry();var trade=ctx.savedTrade.get();
         trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);trade.setOptionType("CE");
+        trade.setStrategyDecision(FnoMoverEntrySignal.decision(LocalDateTime.of(2026,11,13,9,55)));
         trade.setUseSpotForSl(true);trade.setUseSpotForTarget(true);trade.setStopLoss(90d);trade.setTarget1(111d);
         freshRiskSpot(ctx,100.5);
         var token=ctx.controls.get(88L).getDecisionToken();
@@ -1877,6 +1962,7 @@ class TradeExecutionServiceBrokerSideEntryTest {
     @Test void fnoScheduledChaseCancelsOnDeteriorationWithoutReplacingTheOrder() {
         var ctx=pausedEntry();var trade=ctx.savedTrade.get();
         trade.setSource(FnoMoverEntryRiskPolicy.SOURCE);trade.setOptionType("CE");
+        trade.setStrategyDecision(FnoMoverEntrySignal.decision(LocalDateTime.of(2026,11,13,9,55)));
         trade.setUseSpotForSl(true);trade.setUseSpotForTarget(true);trade.setStopLoss(90d);trade.setTarget1(111d);
         freshRiskSpot(ctx,100.5);
         var scheduler=mock(java.util.concurrent.ScheduledExecutorService.class);

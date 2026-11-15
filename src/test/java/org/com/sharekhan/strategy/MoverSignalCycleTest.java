@@ -39,9 +39,9 @@ class MoverSignalCycleTest {
             var first = executor.submit(() -> qualify(cycle));
             var second = executor.submit(() -> qualify(cycle));
             assertThat(first.get(3,TimeUnit.SECONDS)).isSameAs(second.get(3,TimeUnit.SECONDS));
-            verify(support,times(1)).loadCandlesWithHistoricalFallback(any(),eq(76));
+            verify(support,times(1)).loadCandlesWithHistoricalFallback(any(),eq(77));
             qualify(new Fno925EntryQualificationService.EvaluationCycle(now));
-            verify(support,times(2)).loadCandlesWithHistoricalFallback(any(),eq(76));
+            verify(support,times(2)).loadCandlesWithHistoricalFallback(any(),eq(77));
         } finally { executor.shutdownNow(); }
     }
     @Test void directionAndContractAreNotMixedInTheSharedCache() {
@@ -51,7 +51,7 @@ class MoverSignalCycleTest {
             service.qualifyWithDirectionalCandle(new Fno925Candidate("WIPRO",candidate.spot(),"PE"),now);
             service.qualifyWithDirectionalCandle(new Fno925Candidate("OTHER",ScriptMasterEntity.builder().exchange("NC").scripCode(42).build(),"CE"),now);
         });
-        verify(support,times(3)).loadCandlesWithHistoricalFallback(any(),eq(76));
+        verify(support,times(3)).loadCandlesWithHistoricalFallback(any(),eq(77));
     }
     @Test void ageAndCompletedCandleBoundaryInvalidateOldSignals() {
         var cycle = new Fno925EntryQualificationService.EvaluationCycle(now);
@@ -69,6 +69,6 @@ class MoverSignalCycleTest {
         assertThat(service.cycleTiming()).isEqualTo("cycle=direct");
         assertThat(service.isCycleExpired()).isFalse();
         service.qualifyWithDirectionalCandle(candidate,now);
-        verify(support).loadCandlesWithHistoricalFallback(any(),eq(76));
+        verify(support).loadCandlesWithHistoricalFallback(any(),eq(77));
     }
 }

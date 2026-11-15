@@ -38,3 +38,38 @@ The threshold is a user-approved operating choice following exploratory research
 not an established optimum. It can reject winners. Market movement between the
 last check and broker fill remains possible; no post-fill bracket movement or
 automatic loss exit is introduced.
+
+## Completed signal and pending-entry validity (15 November 2026)
+
+The shared FNO qualification path uses completed, aligned five-minute candles
+from regular sessions only, including historical ATR inputs. A forming, future
+or off-session candle cannot change the ATR or a completed signal's brackets.
+The loader reserves an extra candle so excluding the forming bar does not count
+it toward ATR(75) warmup. Missing completed history waits instead of fabricating it.
+
+The signal must be the expected latest completed candle, rather than merely the
+latest candle the provider returned. A fresh scheduler cycle or fresh spot does
+not make an old signal valid. This validation applies to the common ORB/VWAP
+qualification path and the fresh-retest path. The rejection-wick filter checks
+the upper wick for CE and lower wick for PE, using the existing configured limit.
+Volume, body, ATR, cutoff, shortlist and directional thresholds are unchanged.
+
+New FNO Movers requests persist server-owned `FNO_SIGNAL_V1` metadata in the
+existing immutable `strategy_decision` field. Entry remains eligible from the
+signal's close until the next five-minute candle completes, exclusive. For a
+09:55 candle, eligibility is 10:00 <= time < 10:05 IST. The metadata is not
+refreshed by a restart, quote retry, manual reprice or queue delay. It is kept
+out of user-facing comments. No new column or migration is required.
+
+Normal initial placement, immediate retries, scheduled entry chase and manual
+reprice all check this deadline in addition to the original fresh-spot 1.10R
+gate. Missing, malformed or expired FNO metadata fails closed with
+`FNO_ENTRY_SIGNAL_MISSING_OR_EXPIRED`. Legacy unfilled requests without this
+metadata cannot place or modify a new entry; existing broker order IDs go
+through normal cancellation/reconciliation. Unknown broker status is not proof
+of cancellation. Cancellation intent is persisted before I/O, and actual full
+or partial fills remain managed. Filled positions do not lose their exits or
+profit-lock state, and existing ADX/Batman/MCX entry rules retain their scope.
+
+Startup logs `FNO_ENTRY_CANDLE_POLICY` with `EXPECTED_COMPLETED_5M`,
+`COMPLETED_REGULAR_SESSION`, `CE_UPPER_PE_LOWER` and `NEXT_5M_CLOSE`.

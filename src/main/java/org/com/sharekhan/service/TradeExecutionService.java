@@ -878,7 +878,9 @@ public class TradeExecutionService {
                 .useSpotPrice(request.getUseSpotPrice()) // Store legacy flag
                 .spotScripCode(spotScripCode)
                 .executionSettings(org.com.sharekhan.execution.TradeExecutionSettings.prepare(request.getExecutionSettings(), spotScripCode, request.getBrokerProductType()))
-                .source(request.getSource()).strategyRunId(request.getStrategyRunId()).comment(request.getStrategyDecision()).strategyDecision(request.getStrategyDecision()) // store source
+                .source(request.getSource()).strategyRunId(request.getStrategyRunId())
+                .comment(FnoMoverEntryRiskPolicy.SOURCE.equals(request.getSource()) ? null : request.getStrategyDecision())
+                .strategyDecision(request.getStrategyDecision())
                 .brokerProductType(request.getBrokerProductType())
                 .openingRuleReset(Boolean.FALSE)
                 .gapReentryCount(0)
@@ -2975,6 +2977,10 @@ public class TradeExecutionService {
     private FnoMoverEntryRiskPolicy.Check checkFnoEntryRisk(TriggeredTradeSetupEntity trade) {
         if (!FnoMoverEntryRiskPolicy.owns(trade))
             return FnoMoverEntryRiskPolicy.evaluate(trade, null, null, null);
+        if (!FnoMoverEntrySignal.valid(trade.getStrategyDecision(), LocalDateTime.now(entryClock))) {
+            log.info("FNO_ENTRY_SIGNAL_CHECK | trigger={} | allowed=false | reason={}", triggerLogId(trade), FnoMoverEntrySignal.REJECTION);
+            return new FnoMoverEntryRiskPolicy.Check(true, false, FnoMoverEntrySignal.REJECTION, null, null);
+        }
         Integer code = trade.getSpotScripCode();
         var observation = code == null ? null : ltpCacheService.getPriceObservation(code);
         var check = FnoMoverEntryRiskPolicy.evaluate(trade,
@@ -3807,6 +3813,11 @@ public class TradeExecutionService {
                     TradeEventLogger.logOrderAttempt("ENTRY_CHASE", latest, chaseState.modifyAttempts + 1, "MODIFY", candidatePrice, latestOrderId);
                     currentControl.setAttempts(currentControl.getAttempts() + 1);
                     entryChaseControlRepository.save(currentControl); // consume budget before broker I/O
+                    var submissionRiskCheck = checkFnoEntryRisk(latest);
+                    if (!submissionRiskCheck.allowed()) {
+                        cancelFnoEntryForRisk(latest, currentControl, modifiableEntryBroker, ctx, submissionRiskCheck.reason());
+                        return;
+                    }
                     OrderPlacementResult modifyResult = modifiableEntryBroker.modifyEntryOrder(latest, ctx, latestOrderId, candidatePrice);
                     if (modifyResult != null && modifyResult.getAttemptedPrice() == null) {
                         modifyResult.setAttemptedPrice(candidatePrice);
@@ -3994,6 +4005,11 @@ public class TradeExecutionService {
                     triggeredTradeRepo.save(trade);
                     broker.cancelEntryOrder(trade, ctx, trade.getOrderId());
                     return "Cancellation requested for trade #" + tradeId + ". Waiting for broker confirmation; any fills are retained.";
+                }
+                var submissionRiskCheck = checkFnoEntryRisk(trade);
+                if (!submissionRiskCheck.allowed()) {
+                    cancelFnoEntryForRisk(trade, control, broker, ctx, submissionRiskCheck.reason());
+                    return "FNO signal expired or admission changed; cancellation requested for the unfilled remainder. Any fills are retained.";
                 }
                 OrderPlacementResult result = broker.modifyEntryOrder(trade, ctx, trade.getOrderId(), price);
                 if (result != null && result.isSuccess()) {

@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDateTime;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.Clock;
 import java.util.List;
 
@@ -231,7 +233,8 @@ class Fno0925MoverAtrBreakoutStrategyTest {
                 mock(Fno925EntryQualificationService.class), mock(MoverSelectionSnapshotStore.class));
         Fno925Candidate candidate = new Fno925Candidate("ADANIPORTS", ScriptMasterEntity.builder().build(), "PE");
         Fno925EntryQualificationService.Signal signal = new Fno925EntryQualificationService.Signal(
-                1690d, 1691.25d, 4d, 0d, 0d, null, "MORNING_ORB");
+                1690d, 1691.25d, 4d, 0d, 0d,
+                new StrategyCandle(LocalDate.of(2026,8,11), LocalTime.of(9,55),1695,1696,1689,1690,100L), "MORNING_ORB");
         StrategyApplyRequest request = new StrategyApplyRequest();
 
         TriggerRequest trigger = ReflectionTestUtils.invokeMethod(strategy, "buildTrigger", request, candidate, signal);
@@ -240,5 +243,9 @@ class Fno0925MoverAtrBreakoutStrategyTest {
         assertThat(trigger.getTarget1()).isEqualTo(1682d);
         assertThat(trigger.getTarget2()).isEqualTo(1678d);
         assertThat(trigger.getTarget3()).isEqualTo(1674d);
+        assertThat(org.com.sharekhan.service.FnoMoverEntrySignal.valid(trigger.getStrategyDecision(),
+                LocalDateTime.of(2026,8,11,10,0))).isTrue();
+        assertThat(org.com.sharekhan.service.FnoMoverEntrySignal.valid(trigger.getStrategyDecision(),
+                LocalDateTime.of(2026,8,11,10,5))).isFalse();
     }
 }

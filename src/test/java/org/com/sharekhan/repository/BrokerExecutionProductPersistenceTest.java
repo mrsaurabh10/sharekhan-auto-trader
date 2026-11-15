@@ -13,6 +13,25 @@ class BrokerExecutionProductPersistenceTest {
     @Autowired EntityManager entityManager;
 
     @Autowired TriggerTradeRequestRepository requests;
+    @Test void fnoSignalDeadlinePersistsAcrossReloadAndCannotBeExtendedByCommentOrEntityUpdates() {
+        var candle=java.time.LocalDateTime.of(2026,11,13,9,55);
+        var metadata=org.com.sharekhan.service.FnoMoverEntrySignal.decision(candle);
+        var request=requests.saveAndFlush(org.com.sharekhan.entity.TriggerTradeRequestEntity.builder()
+                .source(org.com.sharekhan.service.FnoMoverEntryRiskPolicy.SOURCE).strategyDecision(metadata).build());
+        var trade=trades.saveAndFlush(TriggeredTradeSetupEntity.builder()
+                .source(org.com.sharekhan.service.FnoMoverEntryRiskPolicy.SOURCE).strategyDecision(metadata).build());
+        entityManager.clear();
+        var storedRequest=requests.findById(request.getId()).orElseThrow();
+        var storedTrade=trades.findById(trade.getId()).orElseThrow();
+        assertThat(storedRequest.getStrategyDecision()).isEqualTo(metadata);
+        assertThat(org.com.sharekhan.service.FnoMoverEntrySignal.valid(storedTrade.getStrategyDecision(),candle.plusMinutes(10))).isFalse();
+        storedRequest.setComment("Repriced after restart");storedRequest.setStrategyDecision(org.com.sharekhan.service.FnoMoverEntrySignal.decision(candle.plusMinutes(5)));
+        storedTrade.setComment("Changed display comment");storedTrade.setStrategyDecision(org.com.sharekhan.service.FnoMoverEntrySignal.decision(candle.plusMinutes(5)));
+        requests.saveAndFlush(storedRequest);trades.saveAndFlush(storedTrade);entityManager.clear();
+        assertThat(requests.findById(request.getId()).orElseThrow().getStrategyDecision()).isEqualTo(metadata);
+        assertThat(trades.findById(trade.getId()).orElseThrow().getStrategyDecision()).isEqualTo(metadata);
+    }
+
     @Test void cashShortDirectionSurvivesRestartForRequestsAndFilledPositions() {
         var request = requests.saveAndFlush(org.com.sharekhan.entity.TriggerTradeRequestEntity.builder().entryAction("SELL").build());
         var trade = trades.saveAndFlush(TriggeredTradeSetupEntity.builder().entryAction("SELL").intraday(true).brokerExecutionProduct("INTRADAY").build());

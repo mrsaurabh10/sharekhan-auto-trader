@@ -17,7 +17,7 @@ class FnoFreshRetestIntegrationTest {
     final List<StrategyCandle> bars=new ArrayList<>();
     FnoFreshRetestIntegrationTest() {
         when(support.roundPrice(anyDouble())).thenAnswer(i->Math.round((double)i.getArgument(0)*100)/100d);
-        when(support.loadCandlesWithHistoricalFallback(any(),eq(76))).thenAnswer(i->new CandleLoad(List.copyOf(bars),true,null));
+        when(support.loadCandlesWithHistoricalFallback(any(),eq(77))).thenAnswer(i->new CandleLoad(List.copyOf(bars),true,null));
         ReflectionTestUtils.setField(service,"orbVolumeMultiplier",.75);
         ReflectionTestUtils.setField(service,"baseVolumeMultiplier",1d);
         ReflectionTestUtils.setField(service,"volumeLookback",5);
