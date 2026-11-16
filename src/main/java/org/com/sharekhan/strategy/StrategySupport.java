@@ -322,24 +322,37 @@ public class StrategySupport {
                 throw new IllegalStateException("current spot price is invalid");
             }
 
-            String expiry = preferredFnoExpiry(symbol, metadata.optionType());
-            double strike = nearestStrike(symbol, metadata.optionType(), expiry, referencePrice);
-            TriggerRequest warmup = new TriggerRequest();
-            warmup.setInstrument(symbol);
-            warmup.setStrikePrice(strike);
-            warmup.setOptionType(metadata.optionType());
-            warmup.setExpiry(expiry);
-            warmup.setUserId(request.getUserId());
-            warmup.setBrokerCredentialsId(request.getBrokerCredentialsId());
-            warmup.setSource(StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + metadata.id());
-
-            if (tradeExecutionService.warmUpOptionLtp(warmup, "F&O strategy monitoring").isPresent()) {
-                warmedFnoOptions.put(fnoWarmupKey(request, metadata, symbol), new FnoOptionContract(expiry, strike));
-            }
+            warmFnoOption(request, metadata, symbol, referencePrice);
         } catch (Exception e) {
             log.warn("Unable to warm preferred F&O option feed for strategy template={} symbol={} direction={}: {}",
                     metadata.id(), symbol, metadata.optionType(), e.getMessage());
             log.debug("Preferred F&O option warm-up failed", e);
+        }
+    }
+
+    /** Only qualified FNO candidates need account-specific option preparation; reuse the signal price. */
+    public void warmUpQualifiedFnoFeeds(StrategyApplyRequest request, StrategyMetadata metadata,
+                                         String symbol, ScriptMasterEntity spot, double referencePrice) {
+        tradeExecutionService.warmUpSpotLtp(spot, "F&O qualified strategy monitoring");
+        try {
+            warmFnoOption(request, metadata, symbol, referencePrice);
+        } catch (SharedMarketDecisions.ExpiredDecisionException expired) {
+            throw expired;
+        } catch (RuntimeException failure) {
+            log.warn("FNO_QUALIFIED_WARMUP_WAIT | symbol={} | errorType={}", symbol, failure.getClass().getSimpleName());
+        }
+    }
+
+    private void warmFnoOption(StrategyApplyRequest request, StrategyMetadata metadata, String symbol, double referencePrice) {
+        if (!Double.isFinite(referencePrice) || referencePrice <= 0d) throw new IllegalArgumentException("Invalid FNO reference price");
+        String expiry = preferredFnoExpiry(symbol, metadata.optionType());
+        double strike = nearestStrike(symbol, metadata.optionType(), expiry, referencePrice);
+        TriggerRequest warmup = new TriggerRequest();
+        warmup.setInstrument(symbol); warmup.setStrikePrice(strike); warmup.setOptionType(metadata.optionType());
+        warmup.setExpiry(expiry); warmup.setUserId(request.getUserId()); warmup.setBrokerCredentialsId(request.getBrokerCredentialsId());
+        warmup.setSource(StringUtils.hasText(request.getSource()) ? request.getSource().trim() : "strategy:" + metadata.id());
+        if (tradeExecutionService.warmUpOptionLtp(warmup, "F&O strategy monitoring").isPresent()) {
+            warmedFnoOptions.put(fnoWarmupKey(request, metadata, symbol), new FnoOptionContract(expiry, strike));
         }
     }
 

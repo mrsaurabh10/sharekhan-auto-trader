@@ -22,6 +22,24 @@ import static org.mockito.Mockito.when;
 
 class Fno925EntryQualificationServiceTest {
 
+    @ParameterizedTest
+    @CsvSource({"CE,MORNING_ORB", "PE,MORNING_ORB", "CE,VWAP_RECLAIM_BASE_BREAKOUT", "PE,VWAP_RECLAIM_BASE_BREAKOUT"})
+    void preparedMarketInputPreservesRulesAndGlobalVwapPause(String side, String setup) {
+        var day=LocalDate.of(2026,7,17);
+        var bars=directionalFixture(day,side,setup,false);
+        var service=directionalService(bars);
+        var now=day.atTime(setup.equals("MORNING_ORB")?LocalTime.of(9,40):LocalTime.of(9,50));
+        ReflectionTestUtils.setField(service,"clock",java.time.Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        var candidate=new Fno925Candidate("TEST",ScriptMasterEntity.builder().exchange("NC").scripCode(1).build(),side);
+        var prepared=service.qualifyPreparedMover(candidate,now,new CandleLoad(bars,true,null));
+        assertThat(prepared.qualified()).isTrue();assertThat(prepared.signal().setup()).isEqualTo(setup);
+        var paused=directionalService(bars);
+        ReflectionTestUtils.setField(paused,"clock",java.time.Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        ReflectionTestUtils.setField(paused,"vwapReclaimCutoff",LocalTime.MIDNIGHT);
+        assertThat(paused.qualifyPreparedMover(candidate,now,new CandleLoad(bars,true,null)).qualified()).isEqualTo(setup.equals("MORNING_ORB"));
+        assertThat(service.qualifyPreparedMover(candidate,now.plusMinutes(5),new CandleLoad(bars,true,null)).qualified()).isFalse();
+    }
+
     @Test
     void ceUsesLatestConfirmedPostRangeSwingLowInsteadOfSessionLow() {
         StrategySupport support = mock(StrategySupport.class, Answers.RETURNS_DEFAULTS);

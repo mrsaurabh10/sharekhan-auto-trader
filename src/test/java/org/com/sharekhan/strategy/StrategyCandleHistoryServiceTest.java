@@ -23,6 +23,26 @@ class StrategyCandleHistoryServiceTest {
     @Autowired private EntityManager entityManager;
 
     @Test
+    void fnoAtr75HistoryRetainsFullPreviousSessionBeforeDiscardingUnfinishedAndNonSessionRows() {
+        LocalDateTime now=LocalDateTime.of(2026,11,16,9,30);
+        var previous=session(now.toLocalDate().minusDays(3),75);
+        history.mergeAndSave("NC:10604",previous,now.minusDays(2));
+        entityManager.flush();entityManager.clear();
+        var incoming=new ArrayList<StrategyCandle>(List.of(
+                candle(now.toLocalDate(),LocalTime.of(9,0),101),
+                candle(now.toLocalDate(),LocalTime.of(9,15),102),
+                candle(now.toLocalDate(),LocalTime.of(9,20),103),
+                candle(now.toLocalDate(),LocalTime.of(9,25),104),
+                candle(now.toLocalDate(),LocalTime.of(9,30),105),
+                candle(now.toLocalDate().minusDays(3),LocalTime.of(15,30),106)));
+        var restarted=new StrategyCandleHistoryService(repository);
+        var complete=restarted.mergeAndSave("NC:10604",incoming,now);
+        assertThat(complete).hasSize(78);
+        assertThat(complete.get(77).date().atTime(complete.get(77).time())).isEqualTo(now.minusMinutes(5));
+        assertThat(complete).allMatch(c->!c.time().isBefore(LocalTime.of(9,15)) && c.time().isBefore(LocalTime.of(15,30)));
+    }
+
+    @Test
     void previousSessionSurvivesServiceRestartAndFormingCandleDoesNotConsumeMinimumHistory() {
         LocalDateTime now = LocalDateTime.of(2026, 10, 5, 9, 30);
         List<StrategyCandle> previous = session(now.toLocalDate().minusDays(3), 47);

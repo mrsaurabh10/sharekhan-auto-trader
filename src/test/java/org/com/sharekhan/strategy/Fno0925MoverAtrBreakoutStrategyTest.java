@@ -27,6 +27,60 @@ import static org.mockito.Mockito.*;
 class Fno0925MoverAtrBreakoutStrategyTest {
 
     @Test
+    void checksAllReadyStocksBeforeFirstQualifiedOptionPreparationAndNeverLoadsUnqualifiedOptionFeeds() {
+        var support=mock(StrategySupport.class);var snapshots=mock(MoverSelectionSnapshotStore.class);
+        when(support.waiting(any(),anyString(),anyString())).thenCallRealMethod();
+        var qualification=mock(Fno925EntryQualificationService.class);var preparation=mock(FnoMoverCandlePreparation.class);
+        var now=LocalDateTime.of(2026,11,16,10,0);
+        var selections=java.util.stream.IntStream.rangeClosed(1,5).mapToObj(i->new Fno925Candidate("S"+i,
+                ScriptMasterEntity.builder().exchange("NC").scripCode(i).tradingSymbol("S"+i).build(),"CE")).toList();
+        var load=new CandleLoad(List.of(),true,null);
+        when(snapshots.loadOrCapture(anyString(),eq(now),any())).thenReturn(java.util.Optional.of(selections));
+        when(preparation.ready(any(),eq(now))).thenReturn(java.util.Optional.of(load));
+        when(qualification.qualifyPreparedMover(any(),eq(now),eq(load)))
+                .thenReturn(Fno925EntryQualificationService.Qualification.waiting("No breakout"));
+        var candle=new StrategyCandle(now.toLocalDate(),now.toLocalTime().minusMinutes(5),100,103,99,102,1000L);
+        var signal=new Fno925EntryQualificationService.Signal(102,99,2,101,99,candle,"MORNING_ORB");
+        when(qualification.qualifyPreparedMover(eq(selections.get(0)),eq(now),eq(load)))
+                .thenReturn(Fno925EntryQualificationService.Qualification.qualified(signal));
+        doAnswer(a->{
+            verify(qualification,times(5)).qualifyPreparedMover(any(),eq(now),eq(load));
+            throw new SharedMarketDecisions.ExpiredDecisionException();
+        }).when(support).warmUpQualifiedFnoFeeds(any(),any(),eq("S1"),any(),anyDouble());
+        var strategy=new Fno0925MoverAtrBreakoutStrategy(support,mock(ScriptMasterRepository.class),mock(MStockGainerLoserService.class),qualification,snapshots,
+                Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        ReflectionTestUtils.setField(strategy,"marketPreparation",preparation);
+        var request=new StrategyApplyRequest();request.setUserId(4L);request.setBrokerCredentialsId(6L);
+        assertThat(strategy.apply(request).getStatus()).isEqualTo("waiting");
+        verify(support,never()).warmUpPreferredFnoFeeds(any(),any(),anyString(),any());
+        verify(support,times(1)).warmUpQualifiedFnoFeeds(any(),any(),anyString(),any(),anyDouble());
+        verify(support,never()).executeTriggeredTrade(any());
+    }
+
+    @Test
+    void unreadyFirstStockDoesNotPreventLastStockFromBeingQualified() {
+        var support=mock(StrategySupport.class);var snapshots=mock(MoverSelectionSnapshotStore.class);
+        var qualification=mock(Fno925EntryQualificationService.class);var preparation=mock(FnoMoverCandlePreparation.class);
+        var now=LocalDateTime.of(2026,11,16,10,0);
+        var spot=ScriptMasterEntity.builder().exchange("NC").scripCode(1).build();
+        var first=new Fno925Candidate("SLOW",spot,"CE");var last=new Fno925Candidate("LAST",spot,"CE");
+        var load=new CandleLoad(List.of(),true,null);
+        when(snapshots.loadOrCapture(anyString(),eq(now),any())).thenReturn(java.util.Optional.of(List.of(first,last)));
+        when(preparation.ready(eq(first),eq(now))).thenReturn(java.util.Optional.empty());
+        when(preparation.ready(eq(last),eq(now))).thenReturn(java.util.Optional.of(load));
+        when(qualification.qualifyPreparedMover(eq(last),eq(now),eq(load)))
+                .thenReturn(Fno925EntryQualificationService.Qualification.waiting("No breakout"));
+        var strategy=new Fno0925MoverAtrBreakoutStrategy(support,mock(ScriptMasterRepository.class),mock(MStockGainerLoserService.class),qualification,snapshots,
+                Clock.fixed(now.atZone(StrategySupport.MARKET_ZONE).toInstant(),StrategySupport.MARKET_ZONE));
+        ReflectionTestUtils.setField(strategy,"marketPreparation",preparation);
+        var request=new StrategyApplyRequest();request.setUserId(3L);request.setBrokerCredentialsId(4L);
+        strategy.apply(request);
+        verify(qualification).qualifyPreparedMover(last,now,load);
+        verify(qualification,never()).qualifyPreparedMover(eq(first),any(),any());
+        verify(support,never()).warmUpPreferredFnoFeeds(any(),any(),anyString(),any());
+    }
+
+    @Test
     void simulatorPrePlacementWaitDoesNotPreventNextFnoCandidateOrLaterRetry() {
         var support = mock(StrategySupport.class);
         var snapshots = mock(MoverSelectionSnapshotStore.class);

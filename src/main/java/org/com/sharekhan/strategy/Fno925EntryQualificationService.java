@@ -155,6 +155,21 @@ public class Fno925EntryQualificationService {
         return isCycleExpired() ? Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle") : result;
     }
 
+    /** Shared completed market input prepared independently of account and broker workers. */
+    public Qualification qualifyPreparedMover(Fno925Candidate candidate, LocalDateTime now, CandleLoad load) {
+        if (isCycleExpired()) return Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle");
+        var baseline = sharedDecisions == null ? qualifyCandles(candidate, now, true, load)
+                : sharedDecisions.share("FNO_PREPARED_BREAKOUT", candidate.symbol(),
+                    candidate.spot().getExchange() + ":" + candidate.spot().getScripCode() + ":" + candidate.optionType(),
+                    now, () -> qualifyCandles(candidate, now, true, load));
+        if (isCycleExpired()) return Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle");
+        if (!freshRetestEnabled || baseline.retestFrame() == null) return baseline;
+        String key = candidate.spot().getExchange() + ":" + candidate.spot().getScripCode()
+                + ":" + candidate.symbol() + ":" + candidate.optionType();
+        var result = freshRetest.evaluate(key, candidate.optionType(), baseline, LocalDateTime.now(clock));
+        return isCycleExpired() ? Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle") : result;
+    }
+
     private Qualification qualify(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {
         return sharedDecisions == null ? qualifyMarket(candidate, now, requireDirectionalCandle)
                 : sharedDecisions.share("FNO_BREAKOUT", candidate.symbol(), candidate.spot().getExchange() + ":"
@@ -165,6 +180,11 @@ public class Fno925EntryQualificationService {
     private Qualification qualifyMarket(Fno925Candidate candidate, LocalDateTime now, boolean requireDirectionalCandle) {
         // Reserve one extra bar: the provider may also return the current unfinished candle.
         CandleLoad load = support.loadCandlesWithHistoricalFallback(candidate.spot(), ATR_PERIOD + 2);
+        return qualifyCandles(candidate, now, requireDirectionalCandle, load);
+    }
+
+    private Qualification qualifyCandles(Fno925Candidate candidate, LocalDateTime now,
+                                          boolean requireDirectionalCandle, CandleLoad load) {
         List<StrategyCandle> allCandles = load.candles().stream()
                 .filter(candle -> candle != null && candle.date() != null && candle.time() != null)
                 .filter(candle -> !candle.time().isBefore(OR_START) && candle.time().isBefore(LocalTime.of(15, 30)))

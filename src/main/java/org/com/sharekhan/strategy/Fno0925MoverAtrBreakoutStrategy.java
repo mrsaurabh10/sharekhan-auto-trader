@@ -33,6 +33,13 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
 
+    @Autowired private FnoMoverCandlePreparation marketPreparation;
+
+    @jakarta.annotation.PostConstruct
+    void logScanPolicy() {
+        log.info("FNO_MOVER_SCAN_POLICY | mode=ASYNC_SHARED_COMPLETED_CANDLES | workers=5 | accountWait=false | qualifyBeforeContract=true");
+    }
+
     public static final String TEMPLATE_ID = "FNO_0925_MOVER_ATR_BREAKOUT";
     private static final StrategyMetadata METADATA = new StrategyMetadata(
             TEMPLATE_ID,
@@ -115,6 +122,29 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
         int evaluated = 0;
         int qualified = 0;
         String strategySource = sourceFor(request);
+        // Finish cheap market-only checks for the entire basket before any contract or order work.
+        // A slow/unready stock must not prevent a ready later stock from being checked.
+        Map<Fno925Candidate, Fno925EntryQualificationService.Qualification> prepared = new java.util.LinkedHashMap<>();
+        if (marketPreparation != null) {
+            marketPreparation.prepare(selections, now);
+            for (Fno925Candidate selection : selections) {
+                if (submitted.contains(selection.symbol())) continue;
+                var load = marketPreparation.ready(selection, now);
+                Fno925EntryQualificationService.Qualification result;
+                try {
+                    result = entryQualificationService.isCycleExpired()
+                            ? Fno925EntryQualificationService.Qualification.waiting("Mover evaluation expired; waiting for a fresh cycle")
+                            : load.isEmpty()
+                            ? Fno925EntryQualificationService.Qualification.waiting("Preparing shared completed candles and ATR history")
+                            : entryQualificationService.qualifyPreparedMover(selection, now, load.get());
+                } catch (SharedMarketDecisions.ExpiredDecisionException expired) {
+                    result = Fno925EntryQualificationService.Qualification.waiting(expired.getMessage());
+                }
+                prepared.put(selection, result);
+                log.info("FNO_MARKET_CHECK | symbol={} | ready={} | qualified={} | evaluatedAt={} | {}",
+                        selection.symbol(), load.isPresent(), result.qualified(), now, entryQualificationService.cycleTiming());
+            }
+        }
         for (Fno925Candidate selection : selections) {
             if (submitted.contains(selection.symbol())) {
                 logQualification(selection, "ALREADY_SUBMITTED", null, null);
@@ -132,8 +162,14 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
             }
             try {
                 evaluated++;
-                support.warmUpPreferredFnoFeeds(request, metadataFor(selection.optionType()), selection.symbol(), selection.spot());
-                Fno925EntryQualificationService.Qualification qualification = entryQualificationService.qualifyMoverWithFreshRetest(selection, now);
+                Fno925EntryQualificationService.Qualification qualification;
+                if (marketPreparation != null) {
+                    qualification = prepared.get(selection);
+                } else {
+                    // Constructor-only legacy callers; Spring always supplies the shared preparation bean.
+                    support.warmUpPreferredFnoFeeds(request, metadataFor(selection.optionType()), selection.symbol(), selection.spot());
+                    qualification = entryQualificationService.qualifyMoverWithFreshRetest(selection, now);
+                }
                 if (!qualification.qualified()) {
                     support.auditStrategy(request, metadataFor(selection.optionType()), selection.symbol(),
                             "STRATEGY_EVALUATION", "REJECTED", qualification.reason(), null, null);
@@ -142,6 +178,14 @@ public class Fno0925MoverAtrBreakoutStrategy implements StrategyEvaluator {
                     continue;
                 }
                 qualified++;
+                if (marketPreparation != null) {
+                    support.warmUpQualifiedFnoFeeds(request, metadataFor(selection.optionType()), selection.symbol(),
+                            selection.spot(), qualification.signal().entryPrice());
+                    if (entryQualificationService.isCycleExpired()) {
+                        waiting.add(selection.symbol() + ": mover evaluation expired; waiting for a fresh cycle");
+                        continue;
+                    }
+                }
                 TriggerRequest trigger = buildTrigger(request, selection, qualification.signal());
                 support.auditStrategy(request, metadataFor(selection.optionType()), selection.symbol(),
                         "STRATEGY_EVALUATION", "QUALIFIED", qualification.signal().setup(), qualification.signal(), trigger);
