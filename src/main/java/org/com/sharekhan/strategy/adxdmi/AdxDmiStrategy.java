@@ -56,11 +56,11 @@ public class AdxDmiStrategy implements StrategyEvaluator {
         if(!quotes.freshSpot(cash,q,java.time.Instant.now(),spot.getScripCode()))return waitFor(symbol,"Waiting for fresh exact spot quote: "+quotes.reason(spot.getScripCode(),cash,false));
         String exchange=AdxDmiRules.optionExchange(cash);
         var contracts=scripts.findByExchangeIgnoreCaseAndTradingSymbolIgnoreCase(exchange,symbol);
-        var option=contract(contracts,symbol,exchange,signal.side(),q.getLastTradedPrice(),now.toLocalDate());
-        var warm=new TriggerRequest();warm.setInstrument(symbol);warm.setExchange(option.getExchange());warm.setOptionType(signal.side());warm.setExpiry(option.getExpiry());warm.setStrikePrice(option.getStrikePrice());
-        feeds.warmUpOptionLtp(warm,"ADX DMI exact ATM option");
-        if(!signal.crossed(q.getLastTradedPrice()))return waitFor(symbol,"Waiting for "+signal.side()+" breakout; signal="+signal.key());
         try{
+            var option=contract(contracts,symbol,exchange,signal.side(),q.getLastTradedPrice(),now.toLocalDate());
+            var warm=new TriggerRequest();warm.setInstrument(symbol);warm.setExchange(option.getExchange());warm.setOptionType(signal.side());warm.setExpiry(option.getExpiry());warm.setStrikePrice(option.getStrikePrice());
+            feeds.warmUpOptionLtp(warm,"ADX DMI exact ATM option");
+            if(!signal.crossed(q.getLastTradedPrice()))return waitFor(symbol,"Waiting for "+signal.side()+" breakout; signal="+signal.key());
             var reading=greeks.read(spot,option);
             var actualNow=LocalDateTime.now(AdxDmiRules.IST);
             if(!signal.inWindow(actualNow))return waitFor(symbol,"Signal expired while preparing the option order");
@@ -118,7 +118,13 @@ public class AdxDmiStrategy implements StrategyEvaluator {
                 && exchange.equalsIgnoreCase(s.getExchange()) && s.getScripCode()!=null && s.getStrikePrice()!=null && Double.isFinite(s.getStrikePrice()) && s.getStrikePrice()>0
                 && expiry(s.getExpiry())!=null && !expiry(s.getExpiry()).isBefore(day)).toList();
         var expiry=available.stream().map(s->expiry(s.getExpiry())).min(Comparator.naturalOrder()).orElseThrow(()->new IllegalStateException("No listed "+symbol+" "+side+" expiry available"));
-        return available.stream().filter(s->expiry.equals(expiry(s.getExpiry())))
+        var front=available.stream().filter(s->expiry.equals(expiry(s.getExpiry()))).toList();
+        var strikes=front.stream().map(ScriptMasterEntity::getStrikePrice).distinct().sorted().toList();
+        // A truncated master can otherwise label its last (deep ITM/OTM) row as ATM.
+        // Require a bracket around spot; never substitute a later expiry to hide incomplete coverage.
+        if(!Double.isFinite(spot) || spot<=0 || strikes.getFirst()>spot || strikes.getLast()<spot)
+            throw new IllegalStateException("ATM coverage missing for "+symbol+" "+expiry+"; refresh the contract master");
+        return front.stream()
                 .min(Comparator.comparingDouble((ScriptMasterEntity s)->Math.abs(s.getStrikePrice()-spot)).thenComparingDouble(ScriptMasterEntity::getStrikePrice).thenComparingInt(ScriptMasterEntity::getScripCode)).orElseThrow();
     }
     private static LocalDate expiry(String text){if(text==null)return null;for(var f:List.of(DateTimeFormatter.ofPattern("dd/MM/uuuu"),DateTimeFormatter.ISO_LOCAL_DATE))try{return LocalDate.parse(text.trim(),f);}catch(java.time.format.DateTimeParseException ignored){ }return null;}

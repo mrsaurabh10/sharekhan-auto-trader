@@ -340,16 +340,57 @@ class TradeExecutionServiceBrokerSideEntryTest {
             saved.setStopLoss(input.getStopLoss());saved.setTarget1(input.getTarget1());saved.setUseSpotForSl(true);saved.setUseSpotForTarget(true);
             saved.setStrategyDecision(saved.getComment()+"ADX_EXIT=INDEX_15M_V1;ADX_INDEX_T1=23020;");saved.setComment("A separate outcome comment");
         }
-        when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenReturn(new org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.Batch(prepared,true));
+        var nextId=new java.util.concurrent.atomic.AtomicLong(77);
+        when(ctx.triggerRepo.save(any())).thenAnswer(call->{
+            TriggerTradeRequestEntity entity=call.getArgument(0);
+            if(entity.getId()==null)entity.setId(nextId.getAndIncrement());
+            return entity;
+        });
+        when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenAnswer(call->{
+            java.util.function.Function<TriggerRequest,TriggerTradeRequestEntity> prepare=call.getArgument(1);
+            for(int i=0;i<3;i++){
+                prepare.apply(orders.get(i));
+                // This runs inside admission, before its transaction would commit visible TRIGGERED rows.
+                assertThat(ctx.service.isBrokerTriggerEntryInFlight(77L+i)).isTrue();
+            }
+            return new org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.Batch(prepared,true);
+        });
         when(admission.place(any(),any())).thenAnswer(i->((java.util.function.Supplier<?>)i.getArgument(1)).get());
         when(ctx.broker.placeOrder(any(),any(),anyDouble())).thenAnswer(i->{var trade=(TriggeredTradeSetupEntity)i.getArgument(0);
+            // A recovery sweep while any leg is placing must skip its not-yet-submitted siblings too.
+            for(long id=77;id<=79;id++)assertThat(ctx.service.isBrokerTriggerEntryInFlight(id)).isTrue();
             return OrderPlacementResult.builder().success(true).orderId("ADX-"+trade.getTriggerRequestId()).status("Fully Executed").executedPrice(226.55).build();});
         assertThat(ctx.service.executeAdxDmiRequests(orders)).hasSize(3);
+        for(long id=77;id<=79;id++)assertThat(ctx.service.isBrokerTriggerEntryInFlight(id)).isFalse();
         var placed=ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(ctx.broker,times(3)).placeOrder(placed.capture(),any(),anyDouble());
         assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTriggerRequestId).containsExactly(77L,78L,79L);
         assertThat(placed.getAllValues()).extracting(TriggeredTradeSetupEntity::getTarget1).containsExactly(indexExits?23020d:227.6,indexExits?23040d:228.6,indexExits?23060d:229.6);
         assertThat(placed.getAllValues()).allSatisfy(t->{assertThat(t.getStopLoss()).isEqualTo(indexExits?23000d:216.6);assertThat(t.getQuantity()).isEqualTo(50L);assertThat(t.getTslEnabled()).isFalse();});
         assertThat(ctx.savedTrade.get().getEntryPrice()).isEqualTo(226.6);assertThat(ctx.savedTrade.get().getActualEntryPrice()).isEqualTo(226.55);
+    }
+
+    @Test void adxAdmissionRollbackClearsRecoveryProtectionWithoutSubmittingOrders(){
+        var ctx=new TestContext(OrderPlacementResult.builder().success(true).build());
+        configureFiveAttemptPolicy(ctx);configureTightFreshQuote(ctx,226.50,226.60,226.55);
+        when(ctx.ltpCache.getLtp(123456)).thenReturn(226.55);
+        var admission=mock(org.com.sharekhan.strategy.adxdmi.AdxDmiEntryAdmission.class);
+        ReflectionTestUtils.setField(ctx.service,"adxAdmission",admission);
+        var orders=new java.util.ArrayList<TriggerRequest>();
+        for(int leg=1;leg<=3;leg++){
+            var input=optionRequest();input.setSource(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.PREMIUM_SOURCE);
+            input.setQuantity(1);input.setEntryPrice(226.6);input.setStopLoss(216.6);
+            input.setTarget1(226.6+leg);input.setTarget2(null);input.setTarget3(null);input.setTslEnabled(false);orders.add(input);
+        }
+        when(admission.prepareBatch(org.mockito.ArgumentMatchers.anyList(),any())).thenAnswer(call->{
+            java.util.function.Function<TriggerRequest,TriggerTradeRequestEntity> prepare=call.getArgument(1);
+            prepare.apply(orders.getFirst());
+            assertThat(ctx.service.isBrokerTriggerEntryInFlight(77L)).isTrue();
+            throw new IllegalStateException("admission rolled back");
+        });
+        org.assertj.core.api.Assertions.assertThatThrownBy(()->ctx.service.executeAdxDmiRequests(orders))
+                .isInstanceOf(IllegalStateException.class).hasMessage("admission rolled back");
+        assertThat(ctx.service.isBrokerTriggerEntryInFlight(77L)).isFalse();
+        verify(ctx.broker,never()).placeOrder(any(),any(),anyDouble());
     }
 
     @Test void adxFullEntryPathUsesRealSimulatorForThreePremiumEntriesWithIndexExits(){

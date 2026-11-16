@@ -57,13 +57,13 @@ class AdxDmiPersistenceTest {
     QuoteCacheService.QuoteSnapshot spot(double price){return QuoteCacheService.QuoteSnapshot.builder().scripCode(20000).lastTradedPrice(price)
             .lastLtpAt(AT).ltpSource("SHAREKHAN_WS").ltpExchange("NC").ltpProviderIdentity("scrip:20000").build();}
     @Test void restartRetainsSignalDedupAndChargeAwareBidExit(){
-        var req=paper.open(request,signal,option,20000,List.of(option));
+        var req=paper.open(request,signal,option,20000,AdxDmiStrategyTest.covered(option));
         var t=trades.findByTriggerRequestId(req.getId()).getFirst();
         assertEquals(101,t.getActualEntryPrice());assertEquals(23002,t.getEntryPrice());assertEquals(23024,t.getTarget1());
         when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(22979)));paper.evaluate(t.getId());
         var closed=trades.findById(t.getId()).orElseThrow();assertEquals(100,closed.getExitPrice());assertTrue(closed.getEffectivePnl()<closed.getPnl());
         assertEquals("ADX_DMI_STOP",closed.getExitReason());
-        assertThrows(IllegalStateException.class,()->paper.open(request,signal,option,20000,List.of(option)));
+        assertThrows(IllegalStateException.class,()->paper.open(request,signal,option,20000,AdxDmiStrategyTest.covered(option)));
         assertEquals(3,trades.count());assertEquals(1,requests.count());
     }
     @Test void concurrentEvaluationsCannotOpenTwoPositionsOnTheSameBroker() throws Exception {
@@ -71,7 +71,7 @@ class AdxDmiPersistenceTest {
         try(var pool=Executors.newFixedThreadPool(2)){
             Callable<Boolean> work=()->{
                 var r=new StrategyApplyRequest();r.setUserId(1L);r.setBrokerCredentialsId(request.getBrokerCredentialsId());r.setLots(3);r.setSymbol("NIFTY");
-                start.await();try{paper.open(r,signal,option,20000,List.of(option));return true;}catch(IllegalStateException blocked){return false;}
+                start.await();try{paper.open(r,signal,option,20000,AdxDmiStrategyTest.covered(option));return true;}catch(IllegalStateException blocked){return false;}
             };
             var a=pool.submit(work);var b=pool.submit(work);start.countDown();
             assertNotEquals(a.get(10,TimeUnit.SECONDS),b.get(10,TimeUnit.SECONDS));

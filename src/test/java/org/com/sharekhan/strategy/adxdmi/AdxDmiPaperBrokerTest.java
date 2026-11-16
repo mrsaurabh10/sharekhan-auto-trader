@@ -47,7 +47,7 @@ class AdxDmiPaperBrokerTest {
     QuoteCacheService.QuoteSnapshot book(double bid,double ask,double bq,double aq,Instant at){return QuoteCacheService.QuoteSnapshot.builder().scripCode(123)
             .bestBid(bid).bestAsk(ask).bidQuantity(bq).askQuantity(aq).coherentBook(true).lastBookAt(at)
             .bookSource("SHAREKHAN_WS").bookExchange("NF").bookProviderIdentity("scrip:123").build();}
-    TriggerTradeRequestEntity open(){return paper.open(r,signal,option,20000,List.of(option));}
+    TriggerTradeRequestEntity open(){return paper.open(r,signal,option,20000,AdxDmiStrategyTest.covered(option));}
     TriggeredTradeSetupEntity position(){
         var t=TriggeredTradeSetupEntity.builder().id(22L).appUserId(1L).brokerCredentialsId(2L).strategyRunId("run-1")
                 .source(AdxDmiRules.SOURCE).scripCode(123).spotScripCode(20000).symbol("NIFTY").optionType("CE").exchange("NF")
@@ -66,12 +66,12 @@ class AdxDmiPaperBrokerTest {
     @Test void mirroredPeIsStillBoughtAndUsesDownsideSpotTarget(){
         var pe=AdxDmiStrategyTest.option(123,"PE","10/11/2026",23000);
         var s=new AdxDmiRules.Signal(-1,signal.end(),23003,23020,new AdxDmiRules.Reading(10,30,30));
-        var req=paper.open(r,s,pe,20000,List.of(pe));assertEquals("PE",req.getOptionType());assertEquals("BUY",req.getEntryAction());
+        var req=paper.open(r,s,pe,20000,AdxDmiStrategyTest.covered(pe));assertEquals("PE",req.getOptionType());assertEquals("BUY",req.getEntryAction());
         assertEquals(22984,req.getTarget1());assertEquals(23020,req.getStopLoss());
     }
     @Test void expiredSignalAndStaleOrShallowBooksNeverCreateRequests(){
         var expired=new AdxDmiRules.Signal(1,signal.end().minusMinutes(5),23001,22980,new AdxDmiRules.Reading(30,10,30));
-        assertThrows(IllegalStateException.class,()->paper.open(r,expired,option,20000,List.of(option)));
+        assertThrows(IllegalStateException.class,()->paper.open(r,expired,option,20000,AdxDmiStrategyTest.covered(option)));
         when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,65,65,instant.minusSeconds(6))));
         assertThrows(IllegalStateException.class,this::open);
         when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,65,64,instant)));
@@ -179,7 +179,7 @@ class AdxDmiPaperBrokerTest {
         var broker=new AdxDmiPaperBroker(em,trades,requests,data,runs,audit,Clock.fixed(instant,AdxDmiRules.IST));
         r.setSymbol("SENSEX");
         var signal=new AdxDmiRules.Signal(1,now.withMinute(0),81800,81700,new AdxDmiRules.Reading(30,10,30));
-        var req=broker.open(r,signal,contract,999901,List.of(contract));
+        var req=broker.open(r,signal,contract,999901,AdxDmiStrategyTest.covered(contract));
         assertEquals(60,req.getQuantity());assertEquals(81879.4,req.getEntryPrice());
         var saved=org.mockito.ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);
         verify(trades,times(3)).saveAndFlush(saved.capture());assertTrue(saved.getAllValues().stream().allMatch(t->t.getActualEntryPrice()==440d && t.getQuantity()==20L && t.getStopLoss()==81700d));

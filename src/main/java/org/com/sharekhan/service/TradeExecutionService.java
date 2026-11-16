@@ -191,9 +191,11 @@ public class TradeExecutionService {
         return t;
     });
     private final Set<Long> brokerTriggerEntriesInFlight = ConcurrentHashMap.newKeySet();
+    // Includes queued siblings: recovery must not confuse batch preparation with an interrupted submission.
+    private final Set<Long> adxBatchEntriesInFlight = ConcurrentHashMap.newKeySet();
 
     public boolean isBrokerTriggerEntryInFlight(Long requestId) {
-        return requestId != null && brokerTriggerEntriesInFlight.contains(requestId);
+        return requestId != null && (brokerTriggerEntriesInFlight.contains(requestId) || adxBatchEntriesInFlight.contains(requestId));
     }
 
     private final ConcurrentMap<Long, ScheduledFuture<?>> exitChaseFutures = new ConcurrentHashMap<>();
@@ -1946,19 +1948,32 @@ public class TradeExecutionService {
                     || order.getTarget2()!=null || order.getTarget3()!=null || Boolean.TRUE.equals(order.getTslEnabled()))
                 throw new InvalidTradeRequestException("ADX requests must share contract, account, entry and fixed SL, with one lot and one target each");
         }
-        var admission=adxAdmission.prepareBatch(orders,order->executeTrade(order,false,false));
-        if(!admission.created())return admission.requests();
-        var completed=new ArrayList<TriggerTradeRequestEntity>();
+        var protectedIds=new ArrayList<Long>();
         try {
-            for(var saved:admission.requests()) completed.add(executePreparedTriggeredRequest(saved));
-        } catch(RuntimeException failure){
-            // A broker failure can leave a filled/uncertain earlier order. Preserve it, and never submit the unattempted requests.
-            for(int i=completed.size()+1;i<admission.requests().size();i++)triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(
-                    admission.requests().get(i).getId(),TriggeredTradeStatus.TRIGGERED.name(),TriggeredTradeStatus.CANCELLED.name(),
-                    "ADX_BATCH_NOT_SUBMITTED","Another request in this signal failed; this request was not submitted.");
-            throw failure;
+            var admission=adxAdmission.prepareBatch(orders,order->{
+                var saved=executeTrade(order,false,false);
+                // Register inside the admission transaction, before TRIGGERED rows become visible to recovery.
+                adxBatchEntriesInFlight.add(saved.getId());protectedIds.add(saved.getId());
+                return saved;
+            });
+            if(!admission.created())return admission.requests();
+            log.info("ADX batch admitted; requests={}; recovery protected until batch completes",protectedIds);
+            var completed=new ArrayList<TriggerTradeRequestEntity>();
+            try {
+                for(var saved:admission.requests()) completed.add(executePreparedTriggeredRequest(saved));
+            } catch(RuntimeException failure){
+                log.warn("ADX batch stopped; requests={}, completedLegs={}, failureType={}",protectedIds,completed.size(),failure.getClass().getSimpleName());
+                // Preserve filled/uncertain orders; only cancel siblings that have not been attempted.
+                for(int i=completed.size()+1;i<admission.requests().size();i++)triggerTradeRequestRepository.claimIfStatusEqualsWithOutcome(
+                        admission.requests().get(i).getId(),TriggeredTradeStatus.TRIGGERED.name(),TriggeredTradeStatus.CANCELLED.name(),
+                        "ADX_BATCH_NOT_SUBMITTED","Another request in this signal failed; this request was not submitted.");
+                throw failure;
+            }
+            return completed;
+        } finally {
+            // Also clear registrations when admission rolls back. After a restart the existing conservative recovery applies.
+            protectedIds.forEach(adxBatchEntriesInFlight::remove);
         }
-        return completed;
     }
 
     private TriggerTradeRequestEntity executePreparedTriggeredRequest(TriggerTradeRequestEntity saved) {
