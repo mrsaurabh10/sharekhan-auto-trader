@@ -12,7 +12,11 @@ public final class NiftyThreeCandleRules {
     public static final String TEMPLATE="NIFTY_THREE_CANDLE_ATM", SOURCE="strategy:"+TEMPLATE;
     public static final double DAILY_LOSS=5000;
     public static boolean owns(String source) { return SOURCE.equalsIgnoreCase(source); }
-    public record Signal(String side, LocalDateTime end, double trigger, double stop, double ema, double priorEma) {
+    public record Signal(String side, LocalDateTime end, double trigger, double stop, double ema, double priorEma,
+                         LocalDateTime colourRunStart) {
+        public Signal(String side, LocalDateTime end, double trigger, double stop, double ema, double priorEma) {
+            this(side,end,trigger,stop,ema,priorEma,end.minusMinutes(15));
+        }
         public boolean pe(){return "PE".equals(side);}
         public boolean inWindow(LocalDateTime now){return !now.isBefore(end) && now.isBefore(end.plusMinutes(5)) && now.toLocalTime().isBefore(LocalTime.of(15,30));}
         public boolean crossed(double price){return Double.isFinite(price) && price>0 && (pe()?price<=trigger:price>=trigger);}
@@ -52,7 +56,16 @@ public final class NiftyThreeCandleRules {
             if(i==n-4)prior=ema;
         }
         if(!(ce?ema>prior:ema<prior))return new SignalCheck(null,"EMA20 direction does not match "+(ce?"CE":"PE")+" pattern; end="+end);
-        var s=new Signal(ce?"CE":"PE",end,Math.round((ce?c.high()+.05:c.low()-.05)*100)/100d,ce?c.low():c.high(),ema,prior);
+        // Only completed candles establish/reset a colour run; the forming fourth candle cannot reset it.
+        int first=n-3;
+        while(first>0){
+            var previous=bars.get(first-1);var current=bars.get(first);
+            if(!previous.date().equals(c.date()) || !previous.time().plusMinutes(5).equals(current.time())
+                    || !(ce?previous.close()>previous.open():previous.close()<previous.open()))break;
+            first--;
+        }
+        var runStart=LocalDateTime.of(bars.get(first).date(),bars.get(first).time());
+        var s=new Signal(ce?"CE":"PE",end,Math.round((ce?c.high()+.05:c.low()-.05)*100)/100d,ce?c.low():c.high(),ema,prior,runStart);
         return s.inWindow(now)?new SignalCheck(s,null):new SignalCheck(null,"The fourth-candle entry window has expired; signal="+s.key());
     }
     private static boolean valid(StrategyCandle c){

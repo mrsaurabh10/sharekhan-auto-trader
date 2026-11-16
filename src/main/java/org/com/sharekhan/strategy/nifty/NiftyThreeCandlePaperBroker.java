@@ -88,6 +88,12 @@ public class NiftyThreeCandlePaperBroker {
         if(prior.stream().anyMatch(t->!terminal(t.getStatus())))throw new IllegalStateException("A CE/PE paper position is already open or unresolved");
         if(prior.stream().anyMatch(t->isToday(t,now.toLocalDate()) && t.getComment()!=null && t.getComment().contains("signal="+signal.key()+";")))
             throw new IllegalStateException("This signal has already been traded");
+        // Persisted fills, checked under the account lock, survive restarts and shared subscriptions.
+        // A detected signal or a quote/depth rejection does not consume the colour run.
+        if(prior.stream().anyMatch(t->t.getEntryAt()!=null && t.getActualEntryPrice()!=null
+                && signal.side().equals(t.getOptionType()) && !t.getEntryAt().isBefore(signal.colourRunStart())
+                && t.getEntryAt().isBefore(signal.end().plusMinutes(5))))
+            throw new IllegalStateException("This colour run already has a filled trade; waiting for a completed opposite-colour or doji candle");
         if(prior.stream().anyMatch(t->t.getEntryAt()!=null && !t.getEntryAt().isAfter(signal.end())
                 && t.getExitedAt()!=null && !t.getExitedAt().isBefore(signal.end())))
             throw new IllegalStateException("This pattern completed while the previous position was open");
@@ -137,7 +143,7 @@ public class NiftyThreeCandlePaperBroker {
                 .quantity(qty).lots(1).entryPrice(entry).stopLoss(signal.stop()).target1(signal.target(entry)).tslEnabled(false)
                 .useSpotPrice(true).useSpotForEntry(true).useSpotForSl(true).useSpotForTarget(true).spotScripCode(spotCode)
                 .intraday(true).source(NiftyThreeCandleRules.SOURCE).status(TriggeredTradeStatus.EXECUTED).createdAt(now)
-                .reason("NIFTY_3C_PAPER_ASK_FILL").comment("signal="+signal.key()+"; option ask fill; CE researched / PE mirrored; fees="+"legacy-option-lot-estimate").build();
+                .reason("NIFTY_3C_PAPER_ASK_FILL").comment("signal="+signal.key()+"; colourRunStart="+signal.colourRunStart()+"; option ask fill; CE researched / PE mirrored; fees="+"legacy-option-lot-estimate").build();
         req=requests.save(req);
         var trade=TriggeredTradeSetupEntity.builder().strategyRunId(trigger.getStrategyRunId()).triggerRequestId(req.getId())
                 .appUserId(r.getUserId()).brokerCredentialsId(r.getBrokerCredentialsId()).symbol("NIFTY").scripCode(option.getScripCode())

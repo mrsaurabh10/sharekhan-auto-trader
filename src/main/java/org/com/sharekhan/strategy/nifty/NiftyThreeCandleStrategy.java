@@ -46,7 +46,7 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
         this.feeds=feeds;this.paper=paper;this.calendar=calendar;this.clock=clock;
     }
     private static final StrategyMetadata META=new StrategyMetadata(NiftyThreeCandleRules.TEMPLATE,"Nifty Three Candles — Simulator",
-            "Nifty 5-minute three green/rising EMA20 → ATM CE, or three red/falling EMA20 → ATM PE. Fourth-candle breakout, C3 spot stop, 1R target. One lot, one shared position, ₹5,000 combined daily paper loss control; exits at 15:30. Paper ask/bid fills require displayed depth. PE is a mirrored trial, not backtested here.","AUTO");
+            "Nifty 5-minute three green/rising EMA20 → ATM CE, or three red/falling EMA20 → ATM PE. Fourth-candle breakout, C3 spot stop, 1R target. One filled trade per colour run; completed opposite-colour/doji resets eligibility. One lot, one shared position, ₹5,000 combined daily paper loss control; exits at 15:30. Paper ask/bid fills require displayed depth. PE is a mirrored trial, not backtested here.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r){
         r.setTemplateId(NiftyThreeCandleRules.TEMPLATE);

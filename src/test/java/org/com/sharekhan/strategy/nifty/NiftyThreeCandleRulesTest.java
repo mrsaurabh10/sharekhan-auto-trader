@@ -52,6 +52,37 @@ class NiftyThreeCandleRulesTest {
         bs=candles(false);bs.add(new StrategyCandle(DAY,LocalTime.of(9,25),102,104,101,103,null));
         assertTrue(NiftyThreeCandleRules.signal(bs,DAY.atTime(9,30)).isEmpty());
     }
+    @Test void rollingSignalsKeepTheSameColourRunAndIgnoreTheFormingOppositeCandle(){
+        for(boolean pe:List.of(false,true)){
+            var bs=candles(pe);double direction=pe?-1:1;
+            var first=NiftyThreeCandleRules.signal(bs,DAY.atTime(9,30)).orElseThrow();
+            for(int i=3;i<5;i++){
+                double open=100+direction*i,close=open+direction;
+                bs.add(new StrategyCandle(DAY,LocalTime.of(9,15).plusMinutes(5L*i),open,Math.max(open,close)+.2,Math.min(open,close)-.2,close,null));
+            }
+            var rolling=NiftyThreeCandleRules.signal(bs,DAY.atTime(9,40)).orElseThrow();
+            assertNotEquals(first.key(),rolling.key());
+            assertEquals(DAY.atTime(9,15),rolling.colourRunStart());
+            bs.add(new StrategyCandle(DAY,LocalTime.of(9,40),110,111,89,90,null));
+            assertEquals(rolling,NiftyThreeCandleRules.signal(bs,DAY.atTime(9,41)).orElseThrow());
+        }
+    }
+    @Test void completedOppositeOrDojiStartsANewRunWithoutChangingBreakoutRules(){
+        for(boolean pe:List.of(false,true))for(boolean doji:List.of(false,true)){
+            var bs=candles(pe);double direction=pe?-1:1;
+            double resetClose=doji?100:100-direction;
+            bs.add(new StrategyCandle(DAY,LocalTime.of(9,30),100,102,98,resetClose,null));
+            for(int i=0;i<3;i++){
+                double open=100+direction*(10+i),close=open+direction;
+                bs.add(new StrategyCandle(DAY,LocalTime.of(9,35).plusMinutes(5L*i),open,Math.max(open,close)+.2,Math.min(open,close)-.2,close,null));
+            }
+            var signal=NiftyThreeCandleRules.signal(bs,DAY.atTime(9,50)).orElseThrow();
+            assertEquals(DAY.atTime(9,35),signal.colourRunStart());
+            var c=bs.getLast();
+            assertEquals(pe?c.low()-.05:c.high()+.05,signal.trigger(),1e-8);
+            assertEquals(pe?c.high():c.low(),signal.stop(),1e-8);
+        }
+    }
     static QuoteCacheService.QuoteSnapshot book(Instant at){return QuoteCacheService.QuoteSnapshot.builder().scripCode(123).bestBid(100d).bestAsk(101d)
             .coherentBook(true).bookSource("SHAREKHAN_WS").bookExchange("NF").bookProviderIdentity("scrip:123").lastBookAt(at).build();}
     @Test void onlyFreshCoherentExactExchangeBooksQualify(){

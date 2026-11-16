@@ -128,6 +128,40 @@ class NiftyThreeCandlePaperBrokerTest {
         var t=position();t.setEntryAt(now.minusMinutes(5));t.setExitedAt(now.minusSeconds(20));t.setExitPrice(102d);t.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);
         assertThrows(IllegalStateException.class,this::open);verify(requests,never()).save(any());
     }
+    TriggeredTradeSetupEntity earlierFill(String side,LocalDateTime entry){
+        var t=position();t.setOptionType(side);t.setEntryAt(entry);t.setExitedAt(entry.plusMinutes(1));
+        t.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);t.setExitPrice(102d);
+        // Legacy fills have no colour-run marker, and may belong to an earlier tracked strategy run.
+        t.setComment("signal="+entry.withSecond(0)+":"+side+"; option ask fill");t.setStrategyRunId("earlier-run");
+        return t;
+    }
+    @Test void persistedFillBlocksRollingContinuationForCeAndPeAcrossRestart(){
+        for(String side:List.of("CE","PE")){
+            rows.clear();earlierFill(side,signal.end().minusMinutes(20));
+            var rolling=new NiftyThreeCandleRules.Signal(side,signal.end(),23001,22980,23000,22999,signal.end().minusMinutes(25));
+            var restarted=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,Clock.fixed(instant,NiftyThreeCandleRules.IST));
+            var error=assertThrows(IllegalStateException.class,()->restarted.open(r,rolling,option,20000,List.of(option)));
+            assertTrue(error.getMessage().contains("colour run already has a filled trade"));
+        }
+        verify(requests,never()).save(any());
+    }
+    @Test void completedResetAllowsSameSideAgainAndOtherAccountsDoNotConsumeRun(){
+        var prior=earlierFill("CE",signal.end().minusMinutes(20));
+        assertDoesNotThrow(this::open); // Current run begins 09:45, after the old 09:40 entry.
+        prior.setEntryAt(signal.end().minusMinutes(10));prior.setExitedAt(signal.end().minusMinutes(9));
+        prior.setAppUserId(9L);assertDoesNotThrow(this::open);
+        prior.setAppUserId(1L);prior.setBrokerCredentialsId(9L);assertDoesNotThrow(this::open);
+        prior.setBrokerCredentialsId(2L);prior.setEntryAt(now.minusDays(1));prior.setExitedAt(now.minusDays(1).plusMinutes(1));
+        assertDoesNotThrow(this::open);
+    }
+    @Test void quoteRejectionDoesNotConsumeRunAndLaterFirstFillRemainsEligible(){
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,65,64,instant)));
+        assertThrows(IllegalStateException.class,this::open);
+        verify(requests,never()).save(any());verify(trades,never()).saveAndFlush(any());
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,65,65,instant)));
+        var req=open();assertTrue(req.getComment().contains("colourRunStart="+signal.colourRunStart()+";"));
+        verify(requests,times(1)).save(any());
+    }
     @Test void changedAtmContractWaitsForTheNewContractBook(){
         var closer=NiftyThreeCandleStrategyTest.option(124,"CE","10/11/2026",23002);
         assertThrows(IllegalStateException.class,()->paper.open(r,signal,option,20000,List.of(option,closer)));verify(requests,never()).save(any());

@@ -21,7 +21,13 @@ and broker account. No subscription is created by installing this code.
   entry. Levels remain fixed. No target splitting or automatic trailing.
 - One position at a time across both sides and all subscriptions on this account.
   Patterns completed while the previous position was open cannot be entered later.
-  A persisted signal identity prevents reentry after a restart or an early exit.
+  One **filled trade per uninterrupted same-colour run**, across subscriptions on
+  this account. A completed opposite-colour or doji candle resets eligibility;
+  the forming candle cannot reset it. Rolling triples remain eligible until the
+  first fill, so an unbroken/missed breakout or unavailable book does not consume
+  the run. Persisted filled trades enforce this after restart or an early exit,
+  including existing fills created before this rule was installed. The colour
+  run is distinct from the application strategy-run lifecycle.
 - Open positions are exited from 15:30 IST. Management continues after subscription
   pause or cancellation. A triggered exit remains pending if quotes/depth are
   unavailable and is retried without inventing a fill.
