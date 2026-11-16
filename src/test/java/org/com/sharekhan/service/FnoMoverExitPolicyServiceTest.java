@@ -48,6 +48,40 @@ class FnoMoverExitPolicyServiceTest {
         when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(at,bid,"SHOONYA",trade.getQuantity().doubleValue())));
         return tx.execute(status->service.evaluate(trade,at));
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints={1,2,3,5})
+    void rupeeActivationRequiresThousandNetForEveryRemainingLot(int lots) {
+        trade.setLots(lots);trade.setQuantity(1000L*lots);trade.setActualEntryPrice(100d);
+        // Same premium move and lot size must produce the same decision for every position size.
+        double below=TradeCostCalculator.estimatedNetPnlAtExit(trade,101);
+        assertThat(below).isLessThan(1000d*lots);
+        if(lots>=2)assertThat(below).isGreaterThan(1000d); // Old total-position rule armed too soon.
+        observe(start,100,101);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,101.5)).isGreaterThan(1000d*lots);
+        observe(start.plusSeconds(1),100,101.5);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(100.75);
+    }
+
+    @Test void fivePercentStillArmsWithoutThousandNetPerLot() {
+        trade.setLots(3);trade.setQuantity(30L);trade.setActualEntryPrice(100d);
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,105)).isLessThan(3000d);
+        observe(start,100,105);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(102.5);
+    }
+
+    @Test void remainingLotsAndQuantityDetermineActivationRatherThanOriginalLotsOrBookedProfit() {
+        trade.setLots(2);trade.setOriginalLots(5);trade.setQuantity(2000L);trade.setActualEntryPrice(100d);
+        trade.setPnl(100000d); // Booked/stored P&L is never added to unrealized remaining-position net.
+        observe(start,100,101);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+        observe(start.plusSeconds(1),100,101.5);
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,101.5)).isBetween(2000d,5000d);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+    }
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(strings={"CE","PE"})
     void neverProgressingTradeDoesNotExitAt45Or60Or120Minutes(String side) {
@@ -130,10 +164,12 @@ class FnoMoverExitPolicyServiceTest {
         assertThat(jdbc.queryForObject("SELECT peak_bid FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(25.1);
         assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(24.55);
     }
-    @Test void rupeeArmedPartialKeepsProtectionEvenWhenRemainingNetIsBelowThousand() {
+    @Test void legacyTotalProfitArmedPartialKeepsItsSavedProtectionUnderPerLotRule() {
         trade.setActualEntryPrice(24d);trade.setQuantity(1350L);trade.setLots(3);
         observe(start,100,24.9);
-        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+        // An already armed row from the prior total-position policy must retain its protection.
+        jdbc.update("UPDATE fno_mover_exit_state SET protection_armed=true, protection_floor=24.45 WHERE trade_id=1");
         var remaining=TriggeredTradeSetupEntity.builder().id(3L).appUserId(4L).brokerCredentialsId(6L)
                 .source(FnoMoverExitPolicyService.SOURCE).symbol("TEST").exchange("NF").scripCode(123).spotScripCode(456)
                 .intraday(true).optionType("PE").entryAction("BUY").actualEntryPrice(24d)

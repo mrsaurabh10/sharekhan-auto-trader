@@ -29,7 +29,7 @@ public class FnoMoverExitPolicyService {
     private static final ZoneId ZONE = ZoneId.of("Asia/Kolkata");
     private static final Duration MAX_AGE = Duration.ofSeconds(5);
     private static final Duration MAX_SPOT_GAP = Duration.ofSeconds(15);
-    private static final double ARM_NET_PROFIT = 1_000d;
+    private static final double ARM_NET_PROFIT_PER_LOT = 1_000d;
     private final JdbcTemplate jdbc;
     private final QuoteCacheService quotes;
     private final LtpCacheService prices;
@@ -41,7 +41,7 @@ public class FnoMoverExitPolicyService {
         this.jdbc=jdbc;this.quotes=quotes;this.prices=prices;this.requests=requests;
     }
     @PostConstruct void configured() {
-        log.info("FNO_MOVER_EXIT_POLICY | enabled={} | version={} | mode=PROFIT_LOCK_ONLY | noProgressEnabled=false | armMode=EITHER | armGain=5% | armNetProfit=1000 | retainPeakGain=50%",
+        log.info("FNO_MOVER_EXIT_POLICY | enabled={} | version={} | mode=PROFIT_LOCK_ONLY | noProgressEnabled=false | armMode=EITHER | armGain=5% | armNetProfitPerLot=1000 | lotBasis=REMAINING | retainPeakGain=50%",
                 enabled, VERSION);
     }
     public boolean enabled() { return enabled; }
@@ -104,7 +104,7 @@ public class FnoMoverExitPolicyService {
             Double netFloor=TradeCostCalculator.minimumProfitableExitPrice(t,.01);
             Double peakNet=TradeCostCalculator.estimatedNetPnlAtExit(t,state.peak);
             boolean reachedArmingThreshold=state.peak+1e-9>=state.premium*1.05
-                    || peakNet!=null && peakNet>=ARM_NET_PROFIT;
+                    || peakNet!=null && peakNet>=ARM_NET_PROFIT_PER_LOT*t.getLots();
             if(netFloor!=null && reachedArmingThreshold && state.peak+1e-9>=netFloor) state.armed=true;
             double ratchet=state.premium+.5*(state.peak-state.premium);
             if(state.armed && netFloor!=null) state.floor=Math.max(state.floor,Math.max(netFloor,ratchet));
