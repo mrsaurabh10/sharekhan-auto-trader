@@ -26,7 +26,7 @@ public class MStockAuthProvider implements BrokerAuthProvider {
     private final MStockProperties props;
     private final CryptoService cryptoService;
 
-    private static final String VERIFY_TOTP_URL = "https://api.mstock.trade/openapi/typea/session/verifytotp";
+    private String verifyTotpUrl = "https://api.mstock.trade/openapi/typea/session/verifytotp";
 
     @Override
     public Broker getBroker() {
@@ -75,14 +75,12 @@ public class MStockAuthProvider implements BrokerAuthProvider {
                 throw new IllegalStateException("MStock TOTP secret is not configured");
             }
 
-            // Mask apiKey for safe logging (show first 4 and last 4 chars)
-            String maskedApiKey = maskMiddle(apiKey, 4, 4);
-            log.info("MStock verify request prepared. apiKey={}, totpPresent={}", maskedApiKey, totpSecret != null && !totpSecret.isBlank());
+            log.debug("mStock TOTP session request prepared");
 
             String body = "api_key=" + URLEncoder.encode(apiKey, StandardCharsets.UTF_8)
                     + "&totp=" + URLEncoder.encode(totpCode, StandardCharsets.UTF_8);
 
-            URL url = new URL(VERIFY_TOTP_URL);
+            URL url = new URL(verifyTotpUrl);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setConnectTimeout(15_000);
@@ -107,53 +105,44 @@ public class MStockAuthProvider implements BrokerAuthProvider {
 
             StringBuilder sb = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) {
-                sb.append(line).append('\n');
-            }
+            try (reader) {
+                while ((line = reader.readLine()) != null) sb.append(line).append('\n');
+            } finally { conn.disconnect(); }
 
             String resp = sb.toString().trim();
-            log.debug("MStock verifytotp response: {}", resp);
+            log.debug("MStock verifytotp returned HTTP {}", rc);
 
             JSONObject json = null;
             try {
                 json = new JSONObject(resp);
             } catch (Exception e) {
-                log.warn("MStock verifytotp returned non-JSON response: {}", resp);
+                log.warn("MStock verifytotp returned non-JSON response (HTTP {})", rc);
             }
 
             String status = (json != null) ? json.optString("status", "") : "";
-            if (!"success".equalsIgnoreCase(status)) {
-                // include the full response body to help debugging
-                log.warn("MStock verifytotp failed (http {}): {}", rc, resp);
-                String msg = (json != null && json.has("message")) ? json.optString("message") : resp;
+            if (rc != 200 || !"success".equalsIgnoreCase(status)) {
+                // Never log broker response bodies: successful or failed responses can contain secrets.
+                log.warn("MStock verifytotp failed (http {})", rc);
+                String msg = "Verify the API key and TOTP setup";
                 throw new RuntimeException("MStock auth failed (http:" + rc + "): " + msg);
             }
 
             JSONObject data = json.getJSONObject("data");
             String accessToken = data.optString("access_token", null);
             if (accessToken == null || accessToken.isBlank()) {
-                throw new RuntimeException("MStock response did not contain access_token; full response: " + resp);
+                throw new RuntimeException("MStock response did not contain access_token");
             }
 
-            // expiresIn not provided in the response — use a conservative default (e.g., 8 hours)
-            long expiresIn = 8L * 60 * 60;
+            // mStock sessions expire at the end of the Indian trading date.
+            var now = java.time.ZonedDateTime.now(java.time.ZoneId.of("Asia/Kolkata"));
+            long expiresIn = java.time.Duration.between(now, now.toLocalDate().plusDays(1).atStartOfDay(now.getZone())).getSeconds();
 
             return new AuthTokenResult(accessToken, expiresIn);
 
         } catch (Exception e) {
-            log.error("❌ MStock login failed", e);
-            throw new RuntimeException("MStock login failed: " + e.getMessage(), e);
+            log.warn("mStock login failed ({})", e.getClass().getSimpleName());
+            throw new IllegalStateException("mStock login failed: verify the API key and TOTP setup");
         }
     }
 
-    private static String maskMiddle(String s, int left, int right) {
-        if (s == null) return null;
-        int len = s.length();
-        if (len <= left + right) return "****";
-        StringBuilder sb = new StringBuilder();
-        sb.append(s, 0, Math.min(left, len));
-        for (int i = 0; i < Math.max(0, len - left - right); i++) sb.append('*');
-        sb.append(s, Math.max(left, len - right), len);
-        return sb.toString();
-    }
 }

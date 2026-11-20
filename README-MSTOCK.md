@@ -1,3 +1,9 @@
+# mStock
+
+Customer order execution and account setup are documented in [mStock orders](docs/mstock-orders.md).
+Order execution requires an account-scoped session; the global credentials below are for
+existing authentication and market-data configuration.
+
 MStock configuration and testing
 
 This document explains how to define the `app.mstock.api-key` and `app.mstock.totp-secret` properties used by the MStock authentication and LTP code, and how to test the flow locally.

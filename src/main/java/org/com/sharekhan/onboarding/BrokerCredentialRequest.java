@@ -34,6 +34,9 @@ public record BrokerCredentialRequest(String brokerName, String customerId, Stri
                     throw new ResponseStatusException(BAD_REQUEST, "Complete all required broker credentials, including customer ID");
             }
         }
+        if ("MStock".equalsIgnoreCase(brokerName) && totpSecret != null && !totpSecret.isBlank()
+                && !totpSecret.matches("(?i)[A-Z2-7]{16,128}=*"))
+            throw new ResponseStatusException(BAD_REQUEST, "Enter the authenticator setup secret, not a one-time TOTP code");
         if ("Dhan".equalsIgnoreCase(brokerName)) {
             if (clientCode != null && !clientCode.isBlank() && !clientCode.trim().matches("[0-9]{1,20}"))
                 throw new ResponseStatusException(BAD_REQUEST, "Dhan Client ID must contain digits only");

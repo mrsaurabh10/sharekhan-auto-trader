@@ -23,6 +23,7 @@ public class BrokerConnectionService {
     private final BrokerConnectionRepository connections;
     private final SharekhanAuthProvider provider;
     private final org.com.sharekhan.auth.DhanAuthProvider dhan;
+    private final org.com.sharekhan.auth.MStockAuthProvider mstock;
     private final AccessTokenPersistenceService tokens;
     private final StrategySubscriptionRepository subscriptions;
     private final TriggeredTradeSetupRepository trades;
@@ -34,7 +35,12 @@ public class BrokerConnectionService {
         if ("Sharekhan".equalsIgnoreCase(broker.getBrokerName()) && (broker.getCustomerId() == null || broker.getCustomerId() <= 0))
             throw new ResponseStatusException(BAD_REQUEST, "Add the Sharekhan customer ID before verifying this connection");
         try {
-            var result = "Dhan".equalsIgnoreCase(broker.getBrokerName()) ? dhan.loginAndFetchToken(broker) : provider.loginAndFetchToken(broker);
+            var result = switch (org.com.sharekhan.enums.Broker.fromDisplayName(broker.getBrokerName())) {
+                case DHAN -> dhan.loginAndFetchToken(broker);
+                case MSTOCK -> mstock.loginAndFetchToken(broker);
+                case SHAREKHAN -> provider.loginAndFetchToken(broker);
+                default -> throw new IllegalArgumentException("Unsupported connection provider");
+            };
             return recordConnection(broker, result);
         } catch (Exception ex) {
             throw new ResponseStatusException(BAD_REQUEST, broker.getBrokerName() + " connection failed. Check your credentials and try again.");
@@ -49,7 +55,7 @@ public class BrokerConnectionService {
             BrokerConnection connection = connections.findById(id).orElseGet(BrokerConnection::new);
             connection.setCredentialId(id); connection.setVerifiedUntil(until); connections.save(connection);
             broker.setActive(true); brokers.save(broker);
-            return Map.of("message", "Dhan".equalsIgnoreCase(broker.getBrokerName()) ? "Dhan connection verified. Whitelist your server static IP in Dhan before enabling trading." : "Sharekhan connection verified. You can enable trading.", "verifiedUntil", until);
+            return Map.of("message", "Dhan".equalsIgnoreCase(broker.getBrokerName()) ? "Dhan connection verified. Whitelist your server static IP in Dhan before enabling trading." : broker.getBrokerName() + " connection verified. You can enable trading.", "verifiedUntil", until);
     }
     @Transactional
     public Map<String, Object> completeDhanConsent(Long id, String tokenId) {

@@ -64,6 +64,31 @@ class OrderStatusPollingServiceDhanUpdateTest {
         verify(engine,never()).syncLinkedEntryRequestStatus(any(),any());verify(engine,never()).releaseOptionFeedIfUnused(any(),any());
         if(!futures.isEmpty())verify(futures.getFirst()).cancel(false);verify(broker,never()).fetchOrderStatus(any(),any(),anyString());
     }
+    @Test void mstockHintUsesScopedRestAndDoesNotCrossAccountOrTrustPushedState() {
+        var credential=credentials.findById(7L).orElseThrow();credential.setBrokerName("MStock");credential.setApiKey("encrypted-api");
+        when(((CryptoService)ReflectionTestUtils.getField(service,"cryptoService")).decrypt("encrypted-api")).thenReturn("test-api");
+        when(factory.getService("MStock")).thenReturn(broker);
+        when(broker.fetchOrderStatus(any(),any(),eq("12345"))).thenReturn(row("Pending"));
+        service.monitorOrderStatus(trade);
+        service.onMStockOrderHint(new org.com.sharekhan.mstock.MStockOrderHintEvent(99L));
+        verify(broker,never()).fetchOrderStatus(any(),any(),anyString());
+        service.onMStockOrderHint(new org.com.sharekhan.mstock.MStockOrderHintEvent(7L));
+        verify(broker,times(1)).fetchOrderStatus(any(),any(),eq("12345"));
+        verify(broker,never()).normalizeOrderUpdate(any(),any(),anyString(),any());
+    }
+    @Test void mstockPartialInactiveExitStopsChaseAndRequiresPositionReconciliation() {
+        var credential=credentials.findById(7L).orElseThrow();credential.setBrokerName("MStock");credential.setApiKey("encrypted-api");
+        when(((CryptoService)ReflectionTestUtils.getField(service,"cryptoService")).decrypt("encrypted-api")).thenReturn("test-api");
+        when(factory.getService("MStock")).thenReturn(broker);
+        when(broker.fetchOrderStatus(any(),any(),eq("12345"))).thenReturn(new JSONObject()
+            .put("requiresExitReconciliation",true).put("filledQuantity",20).put("remainingQuantity",30));
+        service.monitorOrderStatus(trade);assertThat(tasks).hasSize(1);tasks.getFirst().run();
+        assertThat(trade.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_FAILED);
+        assertThat(trade.getReason()).isEqualTo("MSTOCK_PARTIAL_EXIT_RECONCILIATION_REQUIRED");
+        verify(engine).stopExitOrderChase(trade.getId());
+        verify(engine,never()).syncLinkedEntryRequestStatus(any(),any());
+        verify(engine,never()).evaluateOrderFinalStatus(any(),any());
+    }
     @Test void sharedSharekhanTargetRejectionIsReconciledOnAckWithoutRecurringPolling() {
         var credential=credentials.findById(7L).orElseThrow();credential.setBrokerName("Sharekhan");credential.setCustomerId(123L);credential.setApiKey("encrypted-api");
         when(((CryptoService)ReflectionTestUtils.getField(service,"cryptoService")).decrypt("encrypted-api")).thenReturn("test-api");

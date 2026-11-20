@@ -122,6 +122,22 @@ public class OrderStatusPollingService {
             });}catch(RejectedExecutionException ignored){queuedHints.remove(key);}
         }
     }
+    @EventListener public void onMStockOrderHint(org.com.sharekhan.mstock.MStockOrderHintEvent event) {
+        // The stream is per credential; an identical broker order ID in another account must not wake it.
+        for (var entry : registrations.entrySet()) {
+            String key = entry.getKey();var registration = entry.getValue();
+            if (!"MStock".equalsIgnoreCase(registration.broker()) || !Objects.equals(event.credentialId(),registration.credential())
+                || !queuedHints.add(key)) continue;
+            try {executor.execute(() -> {
+                try {
+                    if (registrations.get(key) != registration || tradeExecutionService.isEntryOrderChaseActive(Long.valueOf(key))
+                        || tradeExecutionService.isExitOrderChaseActive(Long.valueOf(key))) return;
+                    var handler = pushedReconciliations.get(key);
+                    if (handler != null) handler.accept(new JSONObject().put("_forceMStockRest",true));
+                } finally {queuedHints.remove(key);}
+            });} catch (RejectedExecutionException unavailable) {queuedHints.remove(key);}
+        }
+    }
     @EventListener public void onDhanStreamConnected(org.com.sharekhan.dhan.DhanOrderStreamConnectedEvent event) {
         for(var entry:dhanCredentials.entrySet()) if(event.credentialId().equals(entry.getValue())) {
             var handler=pushedReconciliations.get(entry.getKey());
@@ -151,7 +167,10 @@ public class OrderStatusPollingService {
     @org.springframework.beans.factory.annotation.Autowired
     private ExitChaseControlService exitControls;
     private void requireDhanAttention(TriggeredTradeSetupEntity trade,String detail,boolean failedExit,boolean finalSession) {
-        String reason=failedExit ? "DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED" : finalSession ? "DHAN_SESSION_RECONCILIATION_REQUIRED" : "DHAN_ORDER_RECONCILIATION_REQUIRED";
+        requireBrokerAttention(trade,detail,failedExit,finalSession,"Dhan","DHAN");
+    }
+    private void requireBrokerAttention(TriggeredTradeSetupEntity trade,String detail,boolean failedExit,boolean finalSession,String broker,String prefix) {
+        String reason=failedExit ? prefix+"_PARTIAL_EXIT_RECONCILIATION_REQUIRED" : finalSession ? prefix+"_SESSION_RECONCILIATION_REQUIRED" : prefix+"_ORDER_RECONCILIATION_REQUIRED";
         boolean first=!reason.equals(trade.getReason());
         if(failedExit)trade.setStatus(TriggeredTradeStatus.EXIT_FAILED);
         if(first) {
@@ -159,7 +178,7 @@ public class OrderStatusPollingService {
             String comment=(trade.getComment()==null ? "" : trade.getComment()+"; ")+detail;
             trade.setComment(comment.substring(0,Math.min(2000,comment.length())));
             trade.setReason(reason);tradeRepo.save(trade);
-            try {telegramNotificationService.sendTradeMessageForUser(trade.getAppUserId(),"Dhan order needs reconciliation",detail+"; trade="+trade.getId()+". Position remains open; no replacement order submitted.");}catch(Exception ignored){}
+            try {telegramNotificationService.sendTradeMessageForUser(trade.getAppUserId(),broker+" order needs reconciliation",detail+"; trade="+trade.getId()+". Position remains open; no replacement order submitted.");}catch(Exception ignored){}
         }
     }
 
@@ -412,12 +431,17 @@ public class OrderStatusPollingService {
                 }
                 JSONObject response;
                 if(snapshot)response=pushed.getJSONObject("_snapshot");
-                else if(pushed!=null) {
+                else if(pushed!=null && !pushed.optBoolean("_forceMStockRest",false)) {
                     var broker=brokerServiceFactory.getService(ctx.getBrokerName());
                     if(!(broker instanceof OrderUpdateBrokerService updates))return;
                     response=updates.normalizeOrderUpdate(currentTrade,toBrokerContext(ctx),orderIdToMonitor,pushed);
                     if(response==null)return;
                 } else response=fetchBrokerOrderStatus(currentTrade,ctx,orderIdToMonitor);
+                if ("MStock".equalsIgnoreCase(ctx.getBrokerName()) && response != null && response.optBoolean("requiresExitReconciliation", false)) {
+                    requireBrokerAttention(currentTrade,"Inactive mStock exit has filled="+response.optLong("filledQuantity")
+                        +", remaining="+response.optLong("remainingQuantity")+"; reconcile actual position before replacement",true,false,"mStock","MSTOCK");
+                    stopTimer(tradeKey);tradeExecutionService.stopExitOrderChase(currentTrade.getId());return;
+                }
                 if(dhan && response!=null && response.optBoolean("requiresExitReconciliation",false)) {
                     requireDhanAttention(currentTrade,"Inactive Dhan exit has filled="+response.optLong("filledQuantity")+", remaining="+response.optLong("remainingQuantity")+"; reconcile actual position before another sell",true,false);
                     budget.finalAttempted=true;stopTimer(tradeKey);tradeExecutionService.stopExitOrderChase(currentTrade.getId());return;
@@ -620,6 +644,7 @@ public class OrderStatusPollingService {
         boolean dhan="Dhan".equalsIgnoreCase(initialContext.getBrokerName());
         boolean socket=dhan || "Sharekhan".equalsIgnoreCase(initialContext.getBrokerName());
         pushedReconciliations.put(tradeKey,guarded);
+        if ("MStock".equalsIgnoreCase(initialContext.getBrokerName()) && "MSTOCK_PARTIAL_EXIT_RECONCILIATION_REQUIRED".equals(trade.getReason())) return;
         if(dhan) {
             dhanCredentials.put(tradeKey,trade.getBrokerCredentialsId());
             dhanRoutes.computeIfAbsent(new Route(registration.credential(),registration.orderId()),ignored->ConcurrentHashMap.newKeySet()).add(tradeKey);

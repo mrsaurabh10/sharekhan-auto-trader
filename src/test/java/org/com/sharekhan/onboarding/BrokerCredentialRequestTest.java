@@ -26,6 +26,15 @@ class BrokerCredentialRequestTest {
         assertThatThrownBy(()->new BrokerCredentialRequest("Dhan",null,"key",null,null,"1000000001",null,null,false).fields(true)).isInstanceOf(ResponseStatusException.class);
         assertThatThrownBy(()->new BrokerCredentialRequest("Dhan",null,null,null,"123456","1000000001","123456",null,false).fields(true)).isInstanceOf(ResponseStatusException.class);
     }
+    @Test void mstockNeedsApiKeyAndSetupSecretButNoSharekhanCustomerId() {
+        assertThat(new BrokerCredentialRequest("MStock",null,"key",null,null,null,"JBSWY3DPEHPK3PXP",null,false).fields(true))
+            .containsKeys("apiKey","totpSecret").doesNotContainKey("customerId");
+        assertThatThrownBy(()->new BrokerCredentialRequest("MStock",null,"key",null,null,null,"123456",null,false).fields(true))
+            .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(()->new BrokerCredentialRequest("MStock",null,"key",null,null,null,null,null,false).fields(true))
+            .isInstanceOf(ResponseStatusException.class);
+        assertThat(BrokerCatalog.tradingSupported("MStock")).isTrue();
+    }
     private BrokerCredentialRequest input(String id,String password,String broker) {
         return new BrokerCredentialRequest(broker,id,"test-api",null,password,"test-client","test-totp","test-secret",false);
     }

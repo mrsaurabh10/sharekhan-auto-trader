@@ -13,11 +13,12 @@ class BrokerConnectionServiceTest {
     BrokerCredentialsRepository brokers=mock(BrokerCredentialsRepository.class);
     BrokerConnectionRepository connections=mock(BrokerConnectionRepository.class);
     SharekhanAuthProvider provider=mock(SharekhanAuthProvider.class);
+    MStockAuthProvider mstock=mock(MStockAuthProvider.class);
     AccessTokenPersistenceService tokens=mock(AccessTokenPersistenceService.class);
     StrategySubscriptionRepository subscriptions=mock(StrategySubscriptionRepository.class);
     TriggeredTradeSetupRepository trades=mock(TriggeredTradeSetupRepository.class);
     TriggerTradeRequestRepository requests=mock(TriggerTradeRequestRepository.class);
-    BrokerConnectionService service=new BrokerConnectionService(access,brokers,connections,provider,mock(DhanAuthProvider.class),tokens,subscriptions,trades,requests);
+    BrokerConnectionService service=new BrokerConnectionService(access,brokers,connections,provider,mock(DhanAuthProvider.class),mstock,tokens,subscriptions,trades,requests);
     @Test void verifiesWithoutImplicitlyEnablingTradingOrReturningToken() {
         var broker=broker();when(provider.loginAndFetchToken(broker)).thenReturn(new AuthTokenResult("private-token",3600));
         var result=service.connect(1L);
@@ -39,6 +40,16 @@ class BrokerConnectionServiceTest {
         when(trades.existsByBrokerCredentialsIdAndStatusIn(eq(1L),any())).thenReturn(true);
         assertThatThrownBy(()->service.disconnect(1L)).isInstanceOf(ResponseStatusException.class);
         verify(brokers,never()).save(any());
+    }
+    @Test void mstockUsesItsOwnProviderAndRemainsOptInForTrading() {
+        var b=broker();b.setBrokerName("MStock");b.setCustomerId(null);b.setApiKey("cipher");
+        when(mstock.loginAndFetchToken(b)).thenReturn(new AuthTokenResult("mstock-token",3600));
+        assertThat(service.connect(1L).get("message").toString()).contains("MStock").doesNotContain("Sharekhan");
+        assertThat(b.getTradingEnabled()).isFalse();
+        verify(tokens).replaceTokenForBrokerCredentials(eq("MStock"),eq(1L),eq("mstock-token"),any());
+        verifyNoInteractions(provider);
+        when(access.connected(1L)).thenReturn(true);service.setTrading(1L,true);
+        assertThat(b.getTradingEnabled()).isTrue();
     }
     BrokerCredentialsEntity broker() {
         var b=BrokerCredentialsEntity.builder().id(1L).appUserId(7L).customerId(12345L).brokerName("Sharekhan").active(false).tradingEnabled(false).build();

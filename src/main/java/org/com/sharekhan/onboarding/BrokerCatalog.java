@@ -16,14 +16,19 @@ public final class BrokerCatalog {
                 List.of("customerId", "clientCode", "apiKey", "brokerPassword", "totpSecret", "secretKey")),
                 new SupportedBroker("Dhan", "Dhan", true,
                     "Generate a Dhan access token using PIN + TOTP or API key + secret browser login. Supports cash and option limit orders with explicit trading consent; whitelist your server static IP in Dhan.",
-                    List.of("clientCode")));
+                    List.of("clientCode")),
+                new SupportedBroker("MStock", "mStock", true,
+                    "Connect using your mStock API key and authenticator setup secret. Enable TOTP in mStock first.",
+                    List.of("apiKey", "totpSecret")));
     }
 
     public static boolean tradingSupported(String name) {
-        return "Sharekhan".equalsIgnoreCase(name) || "Dhan".equalsIgnoreCase(name);
+        return "Sharekhan".equalsIgnoreCase(name) || "Dhan".equalsIgnoreCase(name) || "MStock".equalsIgnoreCase(name);
     }
 
     public static boolean hasTradingIdentity(org.com.sharekhan.entity.BrokerCredentialsEntity broker) {
+        if ("MStock".equalsIgnoreCase(broker.getBrokerName()))
+            return broker.getId() != null && broker.getAppUserId() != null && broker.getApiKey() != null && !broker.getApiKey().isBlank();
         return "Dhan".equalsIgnoreCase(broker.getBrokerName())
             ? broker.getClientCode() != null && !broker.getClientCode().isBlank()
             : "Sharekhan".equalsIgnoreCase(broker.getBrokerName()) && broker.getCustomerId() != null && broker.getCustomerId() > 0;
