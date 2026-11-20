@@ -26,9 +26,12 @@ class DhanOrderUpdateServiceTest {
     DhanOrderUpdateService service=new DhanOrderUpdateService(brokers,trades,tokens,crypto,connector,events);
     List<WebSocket.Listener> listeners=new ArrayList<>();List<WebSocket> sockets=new ArrayList<>();
     Instant now=Instant.parse("2026-10-19T04:30:00Z");
+    TriggeredTradeSetupEntity pending;
     @BeforeEach void setup() {
         ReflectionTestUtils.setField(service,"clock",Clock.fixed(now,ZoneOffset.UTC));
-        when(trades.findByStatusIn(any())).thenReturn(List.of());
+        pending=TriggeredTradeSetupEntity.builder().appUserId(4L).brokerCredentialsId(7L)
+            .status(org.com.sharekhan.enums.TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION).orderId("12345").build();
+        when(trades.findByStatusIn(any())).thenReturn(List.of(pending));
         when(brokers.findAllByBrokerName("Dhan")).thenReturn(List.of(BrokerCredentialsEntity.builder().id(7L).appUserId(4L).brokerName("Dhan").clientCode("enc-client").active(true).tradingEnabled(true).build()));
         when(crypto.decrypt("enc-client")).thenReturn("1000000001");
         when(tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",7L)).thenReturn(Optional.of(AccessTokenEntity.builder().token("test-token").expiry(now.plusSeconds(3600)).build()));
@@ -90,8 +93,9 @@ class DhanOrderUpdateServiceTest {
     }
     @Test void pendingExitKeepsStreamWhenNewTradingDisabledAndHeartbeatDetectsDeadConnection() {
         var broker=brokers.findAllByBrokerName("Dhan").getFirst();broker.setTradingEnabled(false);
-        service.refresh();verifyNoInteractions(connector);
-        when(trades.findByStatusIn(any())).thenReturn(List.of(TriggeredTradeSetupEntity.builder().brokerCredentialsId(7L).build()));
+        when(trades.findByStatusIn(any())).thenReturn(List.of());service.refresh();verifyNoInteractions(connector);
+        pending.setStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXIT_ORDER_PLACED);pending.setExitOrderId("54321");
+        when(trades.findByStatusIn(any())).thenReturn(List.of(pending));
         ReflectionTestUtils.setField(service,"configurationDirty",true);service.refresh();verify(connector,times(1)).connect(any());
         ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(35),ZoneOffset.UTC));service.refresh();verify(sockets.getFirst()).sendPing(any());
         ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(100),ZoneOffset.UTC));service.refresh();verify(sockets.getFirst(),atLeastOnce()).abort();
@@ -103,6 +107,53 @@ class DhanOrderUpdateServiceTest {
         ReflectionTestUtils.setField(service,"deliveryGap",true);service.refresh();verify(sockets.getFirst(),atLeastOnce()).abort();
         ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(40),ZoneOffset.UTC));service.refresh();
         verify(connector,times(2)).connect(any());verifyNoInteractions(brokers,trades,tokens,crypto);
+    }
+
+    void drain() {
+        try {((ExecutorService)ReflectionTestUtils.getField(service,"delivery")).submit(()->{}).get(1,TimeUnit.SECONDS);}
+        catch(Exception failure){throw new AssertionError(failure);}
+    }
+    @Test void enabledAccountWithoutPlacedOrdersNeverOpensOrReadsCredentials() {
+        when(trades.findByStatusIn(any())).thenReturn(List.of());service.refresh();
+        verifyNoInteractions(connector,brokers,tokens,crypto);
+    }
+    @Test void pendingRequestWithoutBrokerHandleAndForeignOwnershipDoNotCreateDemand() {
+        for(String handle:new String[]{"","0","NA","null"}) {pending.setOrderId(handle);ReflectionTestUtils.setField(service,"configurationDirty",true);service.refresh();}
+        pending.setOrderId("12345");pending.setAppUserId(99L);ReflectionTestUtils.setField(service,"configurationDirty",true);service.refresh();
+        verifyNoInteractions(connector,tokens);
+    }
+    @Test void closesIdleStreamBeforeReconnectAndRestoresOnlyForNewPlacedOrder() {
+        service.refresh();listeners.getFirst().onClose(sockets.getFirst(),1006,"ignored");
+        when(trades.findByStatusIn(any())).thenReturn(List.of());
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(60),ZoneOffset.UTC));service.refresh();
+        verify(connector,times(1)).connect(any());
+        when(trades.findByStatusIn(any())).thenReturn(List.of(pending));
+        service.onOrderPlaced(new org.com.sharekhan.monitoring.OrderPlacedEvent(pending));
+        verify(connector,timeout(1000).times(2)).connect(any());
+    }
+    @Test void finalSettledOrderClosesStreamButOneOfTwoPendingKeepsIt() {
+        service.refresh();
+        when(trades.findByStatusIn(any())).thenReturn(List.of(pending,pending));
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(60),ZoneOffset.UTC));service.refresh();
+        verify(sockets.getFirst(),never()).abort();verify(connector,times(1)).connect(any());
+        when(trades.findByStatusIn(any())).thenReturn(List.of());
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(65),ZoneOffset.UTC));service.refresh();
+        verify(trades,times(2)).findByStatusIn(any());
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(120),ZoneOffset.UTC));service.refresh();
+        verify(sockets.getFirst()).abort();verify(connector,times(1)).connect(any());
+    }
+    @Test void terminalUpdateRefreshesDemandOnNextTickWithoutWaitingAMinute() {
+        service.refresh();send(alert("Traded",10,0,"2026-10-19 10:00:00"));drain();
+        when(trades.findByStatusIn(any())).thenReturn(List.of());
+        ReflectionTestUtils.setField(service,"clock",Clock.fixed(now.plusSeconds(5),ZoneOffset.UTC));service.refresh();
+        verify(sockets.getFirst()).abort();verify(trades,times(2)).findByStatusIn(any());
+    }
+    @Test void ambiguousSubmissionKeepsStreamButKnownInactiveExitDoesNot() {
+        pending.setOrderId("DHAN-CORR-sat-test");service.refresh();verify(connector).connect(any());
+        pending.setStatus(org.com.sharekhan.enums.TriggeredTradeStatus.EXIT_FAILED);pending.setExitOrderId("12345");
+        pending.setReason("DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED");
+        ReflectionTestUtils.setField(service,"configurationDirty",true);service.refresh();verify(sockets.getFirst()).abort();
+        service.refresh();verify(connector,times(1)).connect(any());
     }
 
 }

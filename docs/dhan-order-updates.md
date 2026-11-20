@@ -8,8 +8,9 @@ confirm execution. This restores entry confirmation through REST/chase snapshots
 when a socket fill is missed. Only a consistent full fill with a positive actual
 average price reaches the existing execution persistence and post-entry hooks.
 Source reviewed 2026-10-17: https://dhanhq.co/docs/v2/order-update/ .
-Local tests use mocked sockets/broker responses. No live broker connection, order,
-production CPU measurement or deployment has been performed for this feature.
+Local tests use mocked sockets/broker responses. Dhan tracking is included in the
+deployed application; test results do not establish real order execution or a
+measured production CPU saving.
 
 ## Monitoring policy
 
@@ -43,9 +44,19 @@ It sends SELF LoginReq with MsgCode 42, ClientId and the valid same-credential
 access token. Sending login does not prove broker authorization. Tokens, raw
 messages and credentials are not logged.
 
-A five-second in-memory maintenance tick handles reconnection/heartbeat. Account,
-token and pending-order demand are refreshed from the database once per minute;
-placement requests a coalesced earlier refresh. This means credential changes
+A five-second in-memory maintenance tick handles reconnection/heartbeat. A stream
+opens only for an account with a persisted pending entry/target/exit order and a
+usable broker order ID or `DHAN-CORR-...` recovery handle. An active, trading-enabled
+account, an unplaced signal or an open position without a pending exit is not
+stream demand. Confirmed inactive exits do not keep a connection alive.
+
+Account, token and pending-order demand are refreshed from the database once per
+minute; placement requests a coalesced earlier refresh. A delivered terminal
+stream update requests a demand refresh on the next five-second maintenance tick.
+The last settled order closes its account stream; a later placed order opens it
+again. Outcomes confirmed only by REST close the idle stream on the next minute
+scan. Demand is refreshed before reconnecting, so an idle connection is not reopened
+on the same tick. This retains the existing database polling budget. This means credential changes
 can take up to a minute to reach an already-connected stream. Cached expiry is
 checked every tick. New order actions still validate current scoped credentials.
 Trading-disabled accounts retain streams required by pending orders. No implicit

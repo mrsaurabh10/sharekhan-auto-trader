@@ -62,7 +62,8 @@ public class DhanOrderUpdateService {
     public synchronized void refresh() {
         if (stopped) return;
         if (!enabled) {sessions.values().forEach(this::close);sessions.clear();return;}
-        // Heartbeats/reconnects use memory only. Credentials/demand need a DB scan once a minute.
+        // Refresh demand before reconnecting, so an idle account cannot reopen on the same tick.
+        if(configurationDirty || !clock.instant().isBefore(nextConfigurationRefresh)) refreshDemand();
         if(deliveryGap) {
             deliveryGap=false;
             sessions.values().forEach(session->failed(session,session.generation));
@@ -72,14 +73,20 @@ public class DhanOrderUpdateService {
                 sessions.remove(entry.getKey(),entry.getValue());close(entry.getValue());configurationDirty=true;
             } else connectIfDue(entry.getValue());
         }
-        if(!configurationDirty && clock.instant().isBefore(nextConfigurationRefresh))return;
+    }
+    private void refreshDemand() {
         configurationDirty=false;nextConfigurationRefresh=clock.instant().plusSeconds(60);
-        Set<Long> needed=new HashSet<>();
-        for (var trade:trades.findByStatusIn(TRACKED)) if(trade.getBrokerCredentialsId()!=null) needed.add(trade.getBrokerCredentialsId());
+        Map<Long,Set<Long>> needed=new HashMap<>();
+        try {
+            for(var trade:trades.findByStatusIn(TRACKED)) if(needsStream(trade))
+                needed.computeIfAbsent(trade.getBrokerCredentialsId(),ignored->new HashSet<>()).add(trade.getAppUserId());
+        } catch(RuntimeException unavailable) {configurationDirty=true;return;}
+        // Trading permission and open positions alone do not require an order stream.
+        if(needed.isEmpty()) {sessions.values().forEach(this::close);sessions.clear();return;}
         Set<Long> retained=new HashSet<>();
-        for (var broker:brokers.findAllByBrokerName("Dhan")) {
+        for(var broker:brokers.findAllByBrokerName("Dhan")) {
             Long id=broker.getId();
-            if(id==null || broker.getAppUserId()==null || (!needed.contains(id) && !(Boolean.TRUE.equals(broker.getActive()) && Boolean.TRUE.equals(broker.getTradingEnabled())))) continue;
+            if(id==null || broker.getAppUserId()==null || !needed.getOrDefault(id,Set.of()).contains(broker.getAppUserId())) continue;
             try {
                 var token=tokens.findLatestByBrokerAndBrokerCredentialsId("Dhan",id).orElseThrow();
                 if(token.getExpiry()==null || !token.getExpiry().isAfter(clock.instant()) || token.getToken()==null || token.getToken().isBlank()) continue;
@@ -91,12 +98,17 @@ public class DhanOrderUpdateService {
                     if(current!=null) close(current);
                     current=new Session(id,client,token.getToken(),token.getExpiry());sessions.put(id,current);
                 }
-                connectIfDue(current);
             } catch(Exception ignored) { /* Invalid scoped credentials suspend streaming; REST recovery remains independent. */ }
         }
         for(var entry:new ArrayList<>(sessions.entrySet())) if(!retained.contains(entry.getKey())) {
             sessions.remove(entry.getKey(),entry.getValue());close(entry.getValue());
         }
+    }
+    private static boolean needsStream(TriggeredTradeSetupEntity trade) {
+        if(trade==null || trade.getBrokerCredentialsId()==null || trade.getAppUserId()==null
+            || Set.of("DHAN_PARTIAL_EXIT_RECONCILIATION_REQUIRED","EXIT_BROKER_ORDER_INACTIVE").contains(Objects.toString(trade.getReason(),"")))return false;
+        String id=trade.getStatus()==TriggeredTradeStatus.PLACED_PENDING_CONFIRMATION?trade.getOrderId():trade.getExitOrderId();
+        return id!=null && ((id.matches("[0-9]+") && !id.matches("0+")) || id.matches("DHAN-CORR-[A-Za-z0-9_-]{1,30}"));
     }
     private void connectIfDue(Session session) {
         synchronized(session) {
@@ -211,7 +223,12 @@ public class DhanOrderUpdateService {
             session.versions.put(id,new Version(time,filled,status));session.failures=0;session.lastPong=clock.instant();
         }
         var event=new DhanOrderUpdateEvent(session.id,id,correlation,row.toString());
-        enqueue(()->{if(current(session,generation))events.publishEvent(event);});
+        enqueue(()->{if(current(session,generation)) {
+            events.publishEvent(event);
+            // Synchronous consumers persist the terminal outcome before the next maintenance tick.
+            // A missed stream update is still covered by the minute demand scan and REST recovery.
+            if(terminal(status))configurationDirty=true;
+        }});
     }
     private static boolean terminal(String status){return Set.of("TRADED","REJECTED","CANCELLED","EXPIRED").contains(status);}
     private static Instant timestamp(String value) {
