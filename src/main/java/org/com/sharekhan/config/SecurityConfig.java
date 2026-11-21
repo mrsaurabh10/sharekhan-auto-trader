@@ -40,7 +40,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .dispatcherTypeMatchers(jakarta.servlet.DispatcherType.ERROR).permitAll()
                         .requestMatchers(org.springframework.http.HttpMethod.POST,"/api/stock-analysis/fluency/capture").hasRole("ADMIN")
-                        .requestMatchers("/portal", "/portal/", "/stock-analysis", "/api/stock-analysis/**").hasAnyRole("ADMIN", "USER")
+                        .requestMatchers("/strategy-research/ema921", "/api/strategy-research/**", "/portal", "/portal/", "/stock-analysis", "/api/stock-analysis/**").hasAnyRole("ADMIN", "USER")
                         .requestMatchers("/", "/login", "/account", "/portal/**", "/error", "/api/account/**", "/api/auth/csrf-token").permitAll()
                         .requestMatchers("/admin/login", "/css/**", "/js/**", "/images/**", "/strategy-runs.js", "/strategy-runs.css").permitAll()
                         .requestMatchers("/h2-console/**").denyAll()
