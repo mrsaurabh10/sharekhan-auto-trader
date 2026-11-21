@@ -1804,10 +1804,25 @@ public class TradeExecutionService {
     @Autowired(required=false)
     private org.com.sharekhan.strategy.run.StrategyRunCoordinator runCoordinator;
 
+    @Autowired(required=false)
+    private NaturalGasScalpSessionCloseService naturalGasScalpSessionClose;
+    private java.time.Clock naturalGasSessionClock=java.time.Clock.system(MARKET_ZONE);
+    private LocalDateTime naturalGasNow(){return LocalDateTime.ofInstant(naturalGasSessionClock.instant(),MARKET_ZONE);}
+
+    /** Restore durable closure intent first, then use the existing same-order/atomic placement workflow. */
+    public void closeNaturalGasScalpSessionTrade(Long id) {
+        if(naturalGasScalpSessionClose==null)return;
+        var plan=naturalGasScalpSessionClose.prepare(id,naturalGasNow());
+        if(plan.isPresent())squareOff(plan.get().trade(),plan.get().bid(),NaturalGasScalpSessionCloseService.REASON);
+    }
+
     /** Generic run exits keep each existing sell ID; no source-based owner matching. */
     public void squareOffStrategyRunTrade(Long id,String runId,String reason) {
         var trade=triggeredTradeRepo.findById(id).orElseThrow();
         if(!Objects.equals(runId,trade.getStrategyRunId())) throw new IllegalArgumentException("Trade does not belong to run");
+        if(naturalGasScalpSessionClose!=null && NaturalGasScalpSessionCloseService.due(trade,naturalGasNow())) {
+            closeNaturalGasScalpSessionTrade(id);return;
+        }
         squareOffAtCurrentTradedPrice(trade,reason);
     }
 
@@ -2855,6 +2870,11 @@ public class TradeExecutionService {
         // Re-load the trade from DB (within transaction) to avoid races. Claim the trade by setting status
         TriggeredTradeSetupEntity persisted = triggeredTradeRepo.findById(trade.getId())
                 .orElseThrow(() -> new RuntimeException("Trade not found: " + trade.getId()));
+
+        if(naturalGasScalpSessionClose!=null && !NaturalGasScalpSessionCloseService.REASON.equals(exitReason)
+                && NaturalGasScalpSessionCloseService.due(persisted,naturalGasNow())) {
+            closeNaturalGasScalpSessionTrade(persisted.getId());return;
+        }
 
         // An existing sell remains authoritative even when its last modification
         // timed out. Never replace it merely because the local state was claimed.
@@ -5868,7 +5888,7 @@ public class TradeExecutionService {
     }
 
     public boolean modifyExitOrderForProtectiveExit(TriggeredTradeSetupEntity trade,double newPrice,String reason) {
-        if(!ProtectiveExitReasons.contains(reason)) throw new IllegalArgumentException("Unsupported protective exit reason");
+        if(!ProtectiveExitReasons.contains(reason,trade)) throw new IllegalArgumentException("Unsupported protective exit reason");
         return repriceExistingExitAndChase(trade,newPrice,reason);
     }
 
@@ -5901,7 +5921,7 @@ public class TradeExecutionService {
     }
 
     private boolean isStopExit(TriggeredTradeSetupEntity trade) {
-        return "STOP_LOSS_HIT".equals(trade.getExitReason()) || ProtectiveExitReasons.contains(trade.getExitReason());
+        return "STOP_LOSS_HIT".equals(trade.getExitReason()) || ProtectiveExitReasons.contains(trade.getExitReason(),trade);
     }
 
     public boolean modifyExitOrderForTarget(TriggeredTradeSetupEntity trade, double newPrice) {

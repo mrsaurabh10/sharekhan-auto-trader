@@ -12,6 +12,13 @@ class WebSocketLifecycleSchedulerTest {
         when(subs.findByStatusInOrderByIdDesc(anyList())).thenReturn(List.of(StrategySubscriptionEntity.builder().templateId(NaturalGasSession.TEMPLATE).build()));
         new WebSocketLifecycleScheduler(ws,subs).manage(LocalDateTime.of(2026,10,26,8,55));verify(ws).connect();
     }
+    @Test void mcxPositionDemandConnectsAtOpenEvenWithPausedEntrySubscriptions(){
+        var ws=mock(WebSocketClientService.class);var subs=mock(StrategySubscriptionRepository.class);
+        var feeds=mock(WebSocketSubscriptionService.class);when(feeds.getActiveScripKeys()).thenReturn(Set.of("MX583837"));
+        var scheduler=new WebSocketLifecycleScheduler(ws,subs);
+        org.springframework.test.util.ReflectionTestUtils.setField(scheduler,"feedDemand",feeds);
+        scheduler.manage(LocalDateTime.of(2026,11,19,9,0));verify(ws).connect();
+    }
     @Test void equityOnlyRetainsExistingConnectionWindow(){
         var ws=mock(WebSocketClientService.class);var subs=mock(StrategySubscriptionRepository.class);
         new WebSocketLifecycleScheduler(ws,subs).manage(LocalDateTime.of(2026,10,26,9,0));verify(ws,never()).connect();

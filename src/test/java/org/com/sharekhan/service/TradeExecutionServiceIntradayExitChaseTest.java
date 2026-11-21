@@ -78,6 +78,29 @@ class TradeExecutionServiceIntradayExitChaseTest {
                 "MCX_AVERAGING_DAILY_LOSS", TriggeredTradeStatus.EXIT_ORDER_PLACED);
     }
 
+    @Test void ngasSessionEntryPointDoesNotPlaceAnythingWhenFreshBidIsUnavailable() {
+        var close=mock(NaturalGasScalpSessionCloseService.class);
+        ReflectionTestUtils.setField(service,"naturalGasScalpSessionClose",close);
+        when(close.prepare(eq(trade.getId()),any())).thenReturn(Optional.empty());
+        service.closeNaturalGasScalpSessionTrade(trade.getId());
+        verify(broker,never()).placeExitOrder(any(),any(),anyDouble());
+        verify(broker,never()).modifyEntryOrder(any(),any(),anyString(),anyDouble());
+    }
+    @Test void freshNgastSessionRecoveryRepricesSameSellAndDirectTargetCannotOverrideIt() {
+        trade.setSource(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE);trade.setExchange("MX");
+        trade.setEntryAt(LocalDateTime.of(2026,11,18,20,40));
+        var now=LocalDateTime.of(2026,11,19,9,0).atZone(ZoneId.of("Asia/Kolkata")).toInstant();
+        ReflectionTestUtils.setField(service,"naturalGasSessionClock",Clock.fixed(now,ZoneOffset.UTC));
+        var close=mock(NaturalGasScalpSessionCloseService.class);
+        ReflectionTestUtils.setField(service,"naturalGasScalpSessionClose",close);
+        when(close.prepare(eq(trade.getId()),any())).thenAnswer(inv->{trade.setExitReason("MCX_SESSION_CLOSE");return Optional.of(new NaturalGasScalpSessionCloseService.Exit(trade,42));});
+        service.squareOff(trade,50,"TARGET_HIT");
+        verify(close).prepare(eq(trade.getId()),any());
+        verify(broker).modifyEntryOrder(eq(trade),any(),eq("211652102"),eq(42d));
+        verify(broker,never()).placeExitOrder(any(),any(),anyDouble());
+        assertThat(trade.getExitReason()).isEqualTo("MCX_SESSION_CLOSE");
+    }
+
     @Test
     void immediateExitNotifiesOwnerWithActualFillAndCalculatedPnlExactlyOnce() {
         assertThat(immediateExit("Fully Executed", 41.5, 1).isSuccess()).isTrue();
@@ -162,8 +185,9 @@ class TradeExecutionServiceIntradayExitChaseTest {
     }
 
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings={"FNO_NO_PROGRESS_45M","NGAS_SCALP_PROFIT_LOCK"})
+    @org.junit.jupiter.params.provider.ValueSource(strings={"FNO_NO_PROGRESS_45M","NGAS_SCALP_PROFIT_LOCK","MCX_SESSION_CLOSE"})
     void protectiveExitReusesSameOrderAndRetriesFailedModifyWithoutLosingIntent(String reason) {
+        if("MCX_SESSION_CLOSE".equals(reason))trade.setSource(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE);
         when(broker.modifyEntryOrder(any(),any(),anyString(),anyDouble()))
                 .thenReturn(OrderPlacementResult.builder().success(false).build())
                 .thenReturn(OrderPlacementResult.builder().success(true).orderId("211652102").build());

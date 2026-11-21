@@ -41,6 +41,13 @@ public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTr
     long countOpenContract(@Param("credential") Long credential,@Param("exchange") String exchange,
         @Param("symbol") String symbol,@Param("expiry") String expiry,@Param("option") String option,
         @Param("strike") Double strike,@Param("statuses") java.util.Set<TriggeredTradeStatus> statuses);
+    /** Latch closure before any quote lookup or broker call; a target worker loses its old-status claim. */
+    @Modifying(clearAutomatically=true,flushAutomatically=true) @Transactional
+    @Query(value="UPDATE triggered_trade_setups SET exit_reason='MCX_SESSION_CLOSE',status=CASE WHEN status='EXIT_ORDER_PLACED' AND exit_order_id IS NOT NULL AND TRIM(exit_order_id)<>'' THEN status ELSE 'EXIT_TRIGGERED' END,exit_claimed_at=COALESCE(exit_claimed_at,:now) " +
+            "WHERE id=:id AND source='strategy:MCX_NATURALGAS_SCALPING' AND status IN ('EXECUTED','TARGET_ORDER_PLACED','EXIT_TRIGGERED','EXIT_ORDER_PLACED','EXIT_FAILED') " +
+            "AND (exit_reason IS NULL OR exit_reason<>'MCX_SESSION_CLOSE' OR status IN ('EXECUTED','TARGET_ORDER_PLACED','EXIT_FAILED') OR (status='EXIT_ORDER_PLACED' AND (exit_order_id IS NULL OR TRIM(exit_order_id)='')))",nativeQuery=true)
+    int latchNaturalGasSessionClose(@Param("id") Long id,@Param("now") LocalDateTime now);
+
     List<TriggeredTradeSetupEntity> findByStrategyRunId(String runId);
 
     List<TriggeredTradeSetupEntity> findBySource(String source);

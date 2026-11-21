@@ -16,6 +16,29 @@ class WebSocketSubscriptionHelperTest {
         helper = new WebSocketSubscriptionHelper(connector);
     }
 
+    @Test void namedFullBookIsIdempotentSharedAndCannotBeReleasedByOrdinaryWatcher() {
+        helper.retainFullFeed("position:1","MX583837");helper.retainFullFeed("position:1","MX583837");
+        helper.retainFullFeed("position:2","MX583837");helper.subscribeToScrip("MX583837");
+        assertEquals(1,connector.lastMessages.size());
+        assertFalse(helper.unsubscribeFromScrip("MX583837"));helper.releaseFullFeed("position:1");
+        assertEquals(1,connector.lastMessages.size());assertFalse(helper.getObserverOnlyScripKeys().contains("MX583837"));
+        helper.releaseFullFeed("position:2");assertEquals(2,connector.lastMessages.size());
+        assertFalse(helper.getActiveScripKeys().contains("MX583837"));
+    }
+    @Test void fullBookOwnershipSurvivesReconnectAndRefreshIsRateLimitedWithoutFakeTicks() {
+        var start=java.time.Instant.parse("2026-11-18T17:50:00Z");
+        org.springframework.test.util.ReflectionTestUtils.setField(helper,"fullFeedClock",java.time.Clock.fixed(start,java.time.ZoneOffset.UTC));
+        helper.retainFullFeed("position:1","MX583837");
+        assertFalse(helper.refreshFullFeed("position:1","MX583837"));
+        assertFalse(helper.refreshFullFeed("foreign","MX583837"));assertEquals(1,connector.lastMessages.size());
+        org.springframework.test.util.ReflectionTestUtils.setField(helper,"fullFeedClock",java.time.Clock.fixed(start.plusSeconds(31),java.time.ZoneOffset.UTC));
+        assertTrue(helper.refreshFullFeed("position:1","MX583837"));
+        assertFalse(helper.refreshFullFeed("position:1","MX583837"));assertEquals(2,connector.lastMessages.size());
+        helper.reset();helper.restoreOwnedLtpFeeds();helper.restoreOwnedLtpFeeds();
+        assertEquals(3,connector.lastMessages.size());assertTrue(helper.getActiveScripKeys().contains("MX583837"));
+        helper.releaseFullFeed("position:1");assertEquals(4,connector.lastMessages.size());
+    }
+
     @Test void explicitDepthFeedUsesDocumentedModeAndSeparateReferences(){
         helper.subscribeToScripDepth("NF64159");helper.subscribeToScripDepth("NF64159");
         assertTrue(helper.hasDepthFeed("NF64159"));
