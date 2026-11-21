@@ -15,6 +15,8 @@ public class WebSocketLifecycleScheduler {
 
     private final WebSocketClientService webSocketClientService;
     private final org.com.sharekhan.repository.StrategySubscriptionRepository subscriptions;
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private WebSocketSubscriptionService feedDemand;
     private static final LocalTime START_TIME = LocalTime.of(9, 10);
     private static final LocalTime END_TIME = LocalTime.of(23, 30);
     private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
@@ -30,7 +32,8 @@ public class WebSocketLifecycleScheduler {
         if(!inWindow && !now.isBefore(LocalTime.of(8,55)) && now.isBefore(START_TIME)
                 && dateTime.getDayOfWeek()!=java.time.DayOfWeek.SATURDAY && dateTime.getDayOfWeek()!=java.time.DayOfWeek.SUNDAY) {
             inWindow=subscriptions.findByStatusInOrderByIdDesc(java.util.List.of("ACTIVE","TRIGGERED")).stream()
-                    .anyMatch(s->org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId()));
+                    .anyMatch(s->org.com.sharekhan.strategy.mcx.NaturalGasSession.isTemplate(s.getTemplateId()))
+                    || (feedDemand!=null && feedDemand.getActiveScripKeys().stream().anyMatch(k->k.startsWith("MX")));
         }
 
         if (inWindow) {

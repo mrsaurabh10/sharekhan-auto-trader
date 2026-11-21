@@ -26,7 +26,7 @@ public class ExitChaseControlService {
     public ExitChaseControl begin(TriggeredTradeSetupEntity trade,Instant proposedStart) {
         ExitChaseControl control=controls.findById(trade.getId()).orElseGet(ExitChaseControl::new);
         if(Objects.equals(control.getOrderId(),trade.getExitOrderId()) && control.getStartedAt()!=null) {
-            boolean protectiveTransition=("STOP_LOSS_HIT".equals(trade.getExitReason()) || "INTRADAY_CLOSE".equals(trade.getExitReason()) || ProtectiveExitReasons.contains(trade.getExitReason()))
+            boolean protectiveTransition=("STOP_LOSS_HIT".equals(trade.getExitReason()) || "INTRADAY_CLOSE".equals(trade.getExitReason()) || ProtectiveExitReasons.contains(trade.getExitReason(),trade))
                     && !Objects.equals(control.getIntent(),trade.getExitReason());
             if(!protectiveTransition)return control;
         }
@@ -54,9 +54,17 @@ public class ExitChaseControlService {
         });
     }
     public void attention(TriggeredTradeSetupEntity trade,String detail,Instant now) {
+        recordAttention(trade,detail,now,true);
+    }
+    /** A missing price must not stop status reconciliation of an already submitted broker sell. */
+    public void quoteAttention(TriggeredTradeSetupEntity trade,String detail,Instant now) {
+        recordAttention(trade,detail,now,false);
+    }
+    private void recordAttention(TriggeredTradeSetupEntity trade,String detail,Instant now,boolean stopChase) {
         boolean changed=independently(()->{
             ExitChaseControl c=controls.findById(trade.getId()).orElseGet(ExitChaseControl::new);
-            c.setTradeId(trade.getId());c.setOrderId(trade.getExitOrderId());c.setActive(false);
+            c.setTradeId(trade.getId());c.setOrderId(trade.getExitOrderId());
+            if(stopChase || c.getStartedAt()==null)c.setActive(false);
             boolean different=!Objects.equals(c.getAttention(),detail);
             if(different) {
                 c.setAttention(detail);c.setNotificationAttempts(0);c.setNotificationDelivered(false);c.setNextNotificationAt(now);

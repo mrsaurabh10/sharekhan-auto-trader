@@ -19,9 +19,12 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
 
     private final WebSocketConnector connector;
     private final java.util.Map<String,String> liveLtpOwners=new ConcurrentHashMap<>();
+    private final java.util.Map<String,String> liveFullOwners=new ConcurrentHashMap<>();
+    private final java.util.Map<String,java.time.Instant> fullRefreshAt=new ConcurrentHashMap<>();
     private final Set<String> sentFeeds=ConcurrentHashMap.newKeySet();
     private final java.util.Map<String,java.time.Instant> lastLtpTicks=new ConcurrentHashMap<>();
     private volatile boolean feedConnectionReady=true;
+    private java.time.Clock fullFeedClock=java.time.Clock.systemUTC();
 
     @Override public synchronized boolean retainLtpFeed(String owner,String key) {
         if(owner==null||owner.isBlank()||key==null||!key.matches("[A-Z]{2}[0-9]+"))throw new IllegalArgumentException("Feed owner and exact feed key are required");
@@ -37,13 +40,40 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
     private void releaseUnusedLtp(String key) {
         if(!liveLtpOwners.containsValue(key)&&!refCounts.containsKey(refKey("ltp",key)))sendUnsubscribe("ltp",key);
     }
-    public synchronized void connectionLost(){feedConnectionReady=false;sentFeeds.clear();lastLtpTicks.clear();}
+    @Override public synchronized boolean retainFullFeed(String owner,String key) {
+        if(owner==null||owner.isBlank()||key==null||!key.matches("[A-Z]{2}[0-9]+"))throw new IllegalArgumentException("Feed owner and exact feed key are required");
+        if(liveFullOwners.size()>=2048&&!liveFullOwners.containsKey(owner))return false;
+        String previous=liveFullOwners.put(owner,key);
+        requestIfNeeded("full",key);
+        if(previous!=null&&!previous.equals(key))releaseUnusedFull(previous);
+        return true;
+    }
+    @Override public synchronized void releaseFullFeed(String owner) {
+        String key=liveFullOwners.remove(owner);if(key!=null)releaseUnusedFull(key);
+    }
+    private void releaseUnusedFull(String key) {
+        if(!liveFullOwners.containsValue(key)) {
+            fullRefreshAt.remove(key);
+            if(!refCounts.containsKey(refKey("full",key)))sendUnsubscribe("full",key);
+        }
+    }
+    @Override public synchronized boolean refreshFullFeed(String owner,String key) {
+        if(key==null||owner==null||!key.equals(liveFullOwners.get(owner))||!feedConnectionReady||!connector.isConnected())return false;
+        var now=fullFeedClock.instant();var previous=fullRefreshAt.get(key);
+        if(previous!=null&&previous.plusSeconds(30).isAfter(now))return false;
+        fullRefreshAt.put(key,now);
+        sentFeeds.remove(refKey("full",key));
+        return requestIfNeeded("full",key);
+    }
+    public synchronized void connectionLost(){feedConnectionReady=false;sentFeeds.clear();lastLtpTicks.clear();fullRefreshAt.clear();}
     @Override public synchronized void restoreOwnedLtpFeeds() {
         feedConnectionReady=true;
         for(String key:new java.util.HashSet<>(liveLtpOwners.values()))requestIfNeeded("ltp",key);
+        for(String key:new java.util.HashSet<>(liveFullOwners.values()))requestIfNeeded("full",key);
     }
     public synchronized void retryOwnedLtpFeeds() {
         for(String key:new java.util.HashSet<>(liveLtpOwners.values()))requestIfNeeded("ltp",key);
+        for(String key:new java.util.HashSet<>(liveFullOwners.values()))requestIfNeeded("full",key);
     }
     public void recordLtpReceived(String key,java.time.Instant receivedAt) {
         if(receivedAt!=null&&(liveLtpOwners.containsValue(key)||refCounts.containsKey(refKey("ltp",key))||refCounts.containsKey(refKey("full",key))))
@@ -66,7 +96,11 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         String ref=refKey(mode,key);
         if(!feedConnectionReady||sentFeeds.contains(ref)||!connector.isConnected())return false;
         boolean sent=connector.trySend("{\"action\":\"feed\",\"key\":[\""+mode+"\"],\"value\":[\""+key+"\"]}");
-        if(sent)sentFeeds.add(ref);return sent;
+        if(sent) {
+            sentFeeds.add(ref);
+            if("full".equals(mode)&&liveFullOwners.containsValue(key))fullRefreshAt.putIfAbsent(key,fullFeedClock.instant());
+        }
+        return sent;
     }
     private boolean sendUnsubscribe(String mode,String key) {
         if(!sentFeeds.remove(refKey(mode,key)))return false;
@@ -92,6 +126,7 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
         java.util.Map<String,Integer> all=new java.util.HashMap<>();
         refCounts.forEach((ref,count)->all.merge(scripKey(ref),count.get(),Integer::sum));
         liveLtpOwners.values().forEach(key->all.merge(key,1,Integer::sum));
+        liveFullOwners.values().forEach(key->all.merge(key,1,Integer::sum));
         java.util.Set<String> result=new java.util.HashSet<>();
         owned.forEach((key,count)->{if(all.getOrDefault(key,0)>0&&all.getOrDefault(key,0)<=count)result.add(key);});
         return result;
@@ -162,7 +197,8 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
             return v;
         });
 
-        if(shouldUnsub[0] && !("ltp".equals(feedMode)&&liveLtpOwners.containsValue(scripKey)))
+        if(shouldUnsub[0] && !("ltp".equals(feedMode)&&liveLtpOwners.containsValue(scripKey))
+                && !("full".equals(feedMode)&&liveFullOwners.containsValue(scripKey)))
             return sendUnsubscribe(feedMode,scripKey);
         return false;
     }
@@ -170,7 +206,7 @@ public class WebSocketSubscriptionHelper implements WebSocketSubscriptionService
     @Override
     public Set<String> getActiveScripKeys() {
         var keys=refCounts.keySet().stream().map(WebSocketSubscriptionHelper::scripKey).collect(Collectors.toSet());
-        keys.addAll(liveLtpOwners.values());return keys;
+        keys.addAll(liveLtpOwners.values());keys.addAll(liveFullOwners.values());return keys;
     }
 
     private static String refKey(String feedMode, String scripKey) {

@@ -938,11 +938,15 @@ public class PriceTriggerService {
 
     protected void handleTradeWithLock(Long tradeId, double tradedLtp, Double spotLtp) {
         try {
+            var initialTrade=triggeredRepo.findById(tradeId).orElse(null);
+            if(NaturalGasScalpSessionCloseService.due(initialTrade,nowIst())) {
+                tradeExecutionService.closeNaturalGasScalpSessionTrade(tradeId);return;
+            }
             // Record progress before target/stop claims so closing T1 cannot erase the group observation.
             if(tradeTimeExitService!=null && tradeTimeExitService.observeFromCache(tradeId)) {
                 if(tradeTimeExitExecution!=null)tradeTimeExitExecution.submit(tradeId);return;
             }
-            OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(tradeId, tradedLtp);
+            OptionalDouble confirmedStopPrice = reconfirmOptionPremiumStopWithShoonya(initialTrade, tradedLtp);
             if (confirmedStopPrice.isEmpty()) {
                 return;
             }
@@ -1259,7 +1263,11 @@ public class PriceTriggerService {
      * actual SL exit is decided using the fresh Shoonya price.
      */
     private OptionalDouble reconfirmOptionPremiumStopWithShoonya(Long tradeId, double cachedLtp) {
-        TriggeredTradeSetupEntity trade = triggeredRepo.findById(tradeId).orElse(null);
+        return reconfirmOptionPremiumStopWithShoonya(triggeredRepo.findById(tradeId).orElse(null),cachedLtp);
+    }
+
+    private OptionalDouble reconfirmOptionPremiumStopWithShoonya(TriggeredTradeSetupEntity trade,double cachedLtp) {
+        Long tradeId=trade==null?null:trade.getId();
         if (trade == null
                 || usesSpotForSl(trade)
                 || !hasOptionType(trade.getOptionType())

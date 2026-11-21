@@ -40,12 +40,53 @@ class ExitSafetyPersistenceTest {
         assertThat(controlRows.findById(trade.getId()).orElseThrow().getStartedAt()).isEqualTo(start);
     }
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings={"STOP_LOSS_HIT","FNO_EARLY_PROFIT_PROTECTION","NGAS_SCALP_PROFIT_LOCK"})
+    @org.junit.jupiter.params.provider.ValueSource(strings={"STOP_LOSS_HIT","FNO_EARLY_PROFIT_PROTECTION","NGAS_SCALP_PROFIT_LOCK","MCX_SESSION_CLOSE"})
     void protectiveIntentTransitionStartsOneNewBudgetAndThenPreservesIt(String reason) {
+        if("MCX_SESSION_CLOSE".equals(reason))trade.setSource(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE);
         controls.begin(trade,start);trade.setExitReason(reason);
         assertThat(controls.begin(trade,start.plusSeconds(1000)).getStartedAt()).isEqualTo(start.plusSeconds(1000));
         assertThat(controls.begin(trade,start.plusSeconds(1200)).getStartedAt()).isEqualTo(start.plusSeconds(1000));
     }
+    @Test void missingQuoteAttentionDoesNotStopExistingSellReconciliationOrResetAlertDelivery() {
+        controls.begin(trade,start);controls.quoteAttention(trade,"Waiting for a fresh book",start.plusSeconds(10));
+        assertThat(controlRows.findById(trade.getId()).orElseThrow().isActive()).isTrue();
+        assertThat(controls.dueAlerts(start.plusSeconds(10))).hasSize(1);
+        controls.delivered(trade.getId(),"Waiting for a fresh book");
+        controls.quoteAttention(trade,"Waiting for a fresh book",start.plusSeconds(20));
+        assertThat(controls.dueAlerts(start.plusSeconds(20))).isEmpty();
+    }
+    @Test void ngasSessionIntentSurvivesReloadAndBeatsACompetingTargetClaim() {
+        trade.setSource(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE);
+        trade.setExitOrderId(null);trade.setStatus(TriggeredTradeStatus.EXECUTED);trades.saveAndFlush(trade);
+        var now=java.time.LocalDateTime.of(2026,11,18,23,20);
+        assertThat(trades.latchNaturalGasSessionClose(trade.getId(),now)).isEqualTo(1);
+        var reloaded=trades.findById(trade.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_TRIGGERED);
+        assertThat(reloaded.getExitReason()).isEqualTo("MCX_SESSION_CLOSE");
+        assertThat(trades.claimIfStatusEquals(trade.getId(),"EXECUTED","EXIT_TRIGGERED","TARGET_HIT")).isZero();
+        assertThat(trades.latchNaturalGasSessionClose(trade.getId(),now.plusDays(1))).isZero();
+        assertThat(trades.findById(trade.getId()).orElseThrow().getExitClaimedAt()).isEqualTo(now);
+    }
+    @Test void ngasSessionRecoversAnOrphanPlacedStatusWithoutCreatingASecondSell() {
+        trade.setSource(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE);
+        trade.setExitReason("MCX_SESSION_CLOSE");trade.setExitOrderId(null);trades.saveAndFlush(trade);
+        assertThat(trades.latchNaturalGasSessionClose(trade.getId(),java.time.LocalDateTime.of(2026,11,18,23,20))).isEqualTo(1);
+        var current=trades.findById(trade.getId()).orElseThrow();
+        assertThat(current.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_TRIGGERED);assertThat(current.getExitOrderId()).isNull();
+    }
+
+    @Test void ngasSessionLatchKeepsPendingSellAndDoesNotRewriteOtherStrategiesOrClosedHistory() {
+        var now=java.time.LocalDateTime.of(2026,11,18,23,20);
+        assertThat(trades.latchNaturalGasSessionClose(trade.getId(),now)).isZero();
+        trade.setSource(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE);trades.saveAndFlush(trade);
+        assertThat(trades.latchNaturalGasSessionClose(trade.getId(),now)).isEqualTo(1);
+        var current=trades.findById(trade.getId()).orElseThrow();
+        assertThat(current.getStatus()).isEqualTo(TriggeredTradeStatus.EXIT_ORDER_PLACED);
+        assertThat(current.getExitOrderId()).isEqualTo(trade.getExitOrderId());
+        current.setStatus(TriggeredTradeStatus.EXITED_SUCCESS);trades.saveAndFlush(current);
+        assertThat(trades.latchNaturalGasSessionClose(trade.getId(),now.plusDays(1))).isZero();
+    }
+
     @Test void failedAlertRemainsDurableAndRetryIsBoundedWithHistoryPreserved() {
         controls.attention(trade,"Exit unresolved",start);
         assertThat(trades.findById(trade.getId()).orElseThrow().getReason()).isEqualTo("EXIT_RECONCILIATION_REQUIRED");

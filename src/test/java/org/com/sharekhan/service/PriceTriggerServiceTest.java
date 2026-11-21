@@ -40,6 +40,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PriceTriggerServiceTest {
+    @Test void ngasOvernightPositionClosesAsSessionExitBeforeNextMorningTargetOrStop() {
+        var t=ngasTrade();t.setEntryAt(LocalDateTime.of(2026,7,2,20,40));t.setActualEntryPrice(7.45);t.setTarget1(8.95);
+        when(triggeredRepo.findById(t.getId())).thenReturn(Optional.of(t));
+        service.handleTradeWithLock(t.getId(),14.5,null);
+        verify(tradeExecutionService).closeNaturalGasScalpSessionTrade(t.getId());
+        verify(triggeredRepo,never()).claimIfStatusEquals(anyLong(),anyString(),anyString(),anyString());
+        verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),eq("TARGET_HIT"));
+    }
+
     @Test void niftyPaperPositionsBypassGenericCandleStopsAndPartialTargets() {
         var t=TriggeredTradeSetupEntity.builder().id(601L).source(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.SOURCE)
                 .status(TriggeredTradeStatus.EXECUTED).optionType("CE").scripCode(123).entryPrice(23000d).actualEntryPrice(100d)

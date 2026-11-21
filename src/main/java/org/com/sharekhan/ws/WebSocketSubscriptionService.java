@@ -6,8 +6,15 @@ public interface WebSocketSubscriptionService {
     /** Named live demand; repeated retention is idempotent and survives a reconnect. */
     default boolean retainLtpFeed(String owner,String key){return false;}
     default void releaseLtpFeed(String owner) { }
+    /** Restores named LTP and full-book routes on the new connection. */
     default void restoreOwnedLtpFeeds() { }
     default java.util.Map<String,Object> ltpFeedStatus(String key){return java.util.Map.of();}
+
+    /** Named full-book demand; repeated retention does not grow reference counts. */
+    default boolean retainFullFeed(String owner,String key){return false;}
+    default void releaseFullFeed(String owner) { }
+    /** Re-request an owned route without releasing shared demand or inventing a tick. */
+    default boolean refreshFullFeed(String owner,String key){return false;}
 
     /** Observer may retain only an already active route. Implementations without ownership support refuse. */
     default boolean retainObserverFeed(String owner,String key,boolean full) { return false; }
