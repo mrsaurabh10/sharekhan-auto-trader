@@ -89,6 +89,7 @@ public class AdxDmiEntryAdmission {
                         throw new IllegalStateException("An ADX position is open or exited within this signal candle");
                 }
             }
+            requireDailySetupAvailable(order.getUserId(),order.getBrokerCredentialsId(),order.getInstrument(),key);
             // This callback only prepares/persists the standard request. No broker RPC occurs in this transaction.
             var saved=prepare.get();return new Admission(saved,true);
         });
@@ -96,6 +97,9 @@ public class AdxDmiEntryAdmission {
     public OrderPlacementResult place(TriggeredTradeSetupEntity trade,Supplier<OrderPlacementResult> place){
         return tx.execute(status->{
             deadline(decision(trade),LocalDateTime.now(clock));
+            var account=em.find(BrokerCredentialsEntity.class,trade.getBrokerCredentialsId(),LockModeType.PESSIMISTIC_WRITE);
+            if(account==null || !Boolean.TRUE.equals(account.getActive()) || !Objects.equals(account.getAppUserId(),trade.getAppUserId()))
+                throw new IllegalStateException("Account unavailable");
             if(trade.getStrategyRunId()==null)throw new IllegalStateException("ADX strategy run required");
             var run=runs.findById(trade.getStrategyRunId()).orElseThrow();
             if(run.getSubscriptionId()!=null){
@@ -104,7 +108,15 @@ public class AdxDmiEntryAdmission {
             }
             em.refresh(run,LockModeType.PESSIMISTIC_WRITE);
             if(!"OPEN".equals(run.getStatus()) || !Objects.equals(run.getAppUserId(),trade.getAppUserId()) || !Objects.equals(run.getBrokerCredentialsId(),trade.getBrokerCredentialsId()))throw new IllegalStateException("Strategy instance closing or changed");
+            requireDailySetupAvailable(trade.getAppUserId(),trade.getBrokerCredentialsId(),trade.getSymbol(),field(decision(trade),"ADX_SIGNAL"));
             return place.get();
         });
+    }
+
+    private void requireDailySetupAvailable(Long user,Long broker,String symbol,String signal) {
+        var start=LocalDate.now(clock).atStartOfDay();
+        var sources=List.of(AdxDmiRules.SOURCE.toLowerCase(Locale.ROOT),AdxDmiRules.PREMIUM_SOURCE.toLowerCase(Locale.ROOT));
+        var filled=trades.findAdxDailyFilledLegs(user,broker,AdxDmiRules.symbol(symbol),sources,start,start.plusDays(1));
+        AdxDmiDailySetupLimit.requireAvailable(filled,signal);
     }
 }

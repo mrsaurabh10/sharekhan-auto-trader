@@ -17,6 +17,17 @@ import java.time.LocalDateTime;
 
 @Repository
 public interface TriggeredTradeSetupRepository extends JpaRepository<TriggeredTradeSetupEntity, Long> {
+    /** Include closed and partially filled/reconciled entries; an unfilled rejection consumes no setup. */
+    @Query("""
+        select t from TriggeredTradeSetupEntity t where t.appUserId=:user and t.brokerCredentialsId=:broker
+        and upper(t.symbol)=:symbol and lower(t.source) in :sources
+        and ((t.entryAt>=:start and t.entryAt<:end)
+          or (t.entryAt is null and t.actualEntryPrice>0 and t.triggeredAt>=:start and t.triggeredAt<:end))
+        """)
+    List<TriggeredTradeSetupEntity> findAdxDailyFilledLegs(@Param("user") Long user,@Param("broker") Long broker,
+            @Param("symbol") String symbol,@Param("sources") List<String> sources,
+            @Param("start") LocalDateTime start,@Param("end") LocalDateTime end);
+
     List<TriggeredTradeSetupEntity> findByExecutionSettings_TimeExitGroupIdAndAppUserIdAndBrokerCredentialsId(String groupId,Long user,Long broker);
     List<TriggeredTradeSetupEntity> findByExecutionSettings_TimeExitMinutesIsNotNullAndStatusIn(List<TriggeredTradeStatus> statuses);
 
