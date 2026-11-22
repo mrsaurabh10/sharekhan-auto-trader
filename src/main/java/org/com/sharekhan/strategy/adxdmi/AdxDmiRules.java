@@ -13,6 +13,7 @@ public final class AdxDmiRules {
     public static final LocalTime CUTOFF=LocalTime.NOON, HARD_CUTOFF=LocalTime.of(14,50), SQUARE_OFF=LocalTime.of(15,20);
     public static final double TICK=.05, DELTA=.5;
     public static final String PREMIUM_SOURCE=SOURCE+":OPTION_DELTA";
+    public static final int MAX_DAILY_SETUPS=2;
     public static boolean premium(String source){return PREMIUM_SOURCE.equalsIgnoreCase(source);}
     public static boolean owns(String source){return SOURCE.equalsIgnoreCase(source);}
     /** Index spot masters can omit tick metadata. Use an explicit strategy increment, never an option tick. */

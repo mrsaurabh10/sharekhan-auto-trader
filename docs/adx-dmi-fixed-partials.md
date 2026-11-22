@@ -13,6 +13,19 @@ Simulator test instances; this change does not activate any live subscriptions.
   history across sessions; require 200 bars and use the existing rolling history.
 - Skip only 09:15–09:20 as a signal; retain it in indicator history. Earliest
   qualifying signal closes09:25. Entries must occur before12:00.
+- Maximum **two entered setups per underlying symbol, owned account and IST
+  trading date**, shared across that account's subscriptions and CE/PE signals.
+  Each setup still submits three one-lot requests, so its legs count together.
+  The first confirmed fill consumes a setup, including a partially filled basket;
+  closing it or cancelling the remaining legs does not release that daily slot.
+  Requests rejected/cancelled without a fill consume no slot. Unresolved orders
+  retain the existing reconciliation block. Count persisted entry timestamps and
+  server-owned signal identities, including closed trades, so restart/reapply
+  cannot reset the limit. The allowance resets on the next IST date. Other symbols,
+  users and accounts have independent limits. Admission and initial placement
+  enforce the cap under the existing account lock; remaining legs of the second
+  entered setup may still place. Missing legacy filled-setup identity waits for
+  reconciliation instead of silently granting another setup. No new ledger/table.
 - Next-bar breakout: signal high plus one underlying tick for CE, low minus one
   tick for PE. Signal expires after that next five-minute candle.
 - Use exact fresh underlying quotes and an exact fresh ATM option book. Choose

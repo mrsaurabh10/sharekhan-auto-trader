@@ -24,7 +24,7 @@ public class AdxDmiStrategy implements StrategyEvaluator {
     @org.springframework.beans.factory.annotation.Value("${app.strategy.adx-dmi.fallback-spot-tick:0.05}")
     private double fallbackSpotTick=0.05;
     private static final StrategyMetadata META=new StrategyMetadata(AdxDmiRules.TEMPLATE,"ADX / DMI Fixed Partials",
-            "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Next-bar breakout by one underlying tick, three separate one-lot requests at 1R/2R/3R, fixed index SL throughout. Exit remaining lots if index T1 is not observed within 15 minutes of the first fill. Entries before noon IST; square-off 15:20. ATM option executes at its own quoted premium. Skip the first opening candle; selected account executes through the standard order engine.","AUTO");
+            "Symbol input, 5m ADX(14,14)>25; dominant DI>25, opposite DI<20. Maximum two entered setups per symbol/account per IST day; each setup has three separate one-lot requests at 1R/2R/3R, fixed index SL throughout. Next-bar breakout by one underlying tick. Exit remaining lots if index T1 is not observed within 15 minutes of the first fill. Entries before noon IST; square-off 15:20. ATM option executes at its own quoted premium. Skip the first opening candle; selected account executes through the standard order engine.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r){
         r.setTemplateId(AdxDmiRules.TEMPLATE);r.setSymbol(AdxDmiRules.symbol(r.getSymbol()));r.setIntraday(true);
