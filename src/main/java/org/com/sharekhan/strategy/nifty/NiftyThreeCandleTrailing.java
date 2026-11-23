@@ -3,17 +3,21 @@ package org.com.sharekhan.strategy.nifty;
 import java.math.BigDecimal;
 import java.time.*;
 import java.util.*;
-import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.com.sharekhan.entity.TriggeredTradeSetupEntity;
 import org.com.sharekhan.repository.ScriptMasterRepository;
 import org.com.sharekhan.strategy.StrategyCandle;
 import org.springframework.stereotype.Service;
 
 /** Original spot risk gates eligibility; confirmed pivots can only tighten on the profit side. */
-@Service @RequiredArgsConstructor
+@Service
 public class NiftyThreeCandleTrailing {
     private final NiftyThreeCandleMarketData data;
     private final ScriptMasterRepository scripts;
+    // StrategySupport routes execution back to the paper broker; resolve history lazily to avoid a startup cycle.
+    public NiftyThreeCandleTrailing(@Lazy NiftyThreeCandleMarketData data,ScriptMasterRepository scripts){
+        this.data=data;this.scripts=scripts;
+    }
     public record Candidate(double stop, LocalDateTime pivot, LocalDateTime confirmed) { }
     public static boolean eligible(TriggeredTradeSetupEntity t) {
         return t!=null && NiftyThreeCandleRules.owns(t.getSource()) && t.getEntryAt()!=null

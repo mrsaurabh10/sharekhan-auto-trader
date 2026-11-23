@@ -15,6 +15,18 @@ class NiftyThreeCandleTrailingTest {
     StrategyCandle bar(int minute,double low,double high){return new StrategyCandle(day,LocalTime.of(9,minute),(low+high)/2,high,low,(low+high)/2,null);}
     List<StrategyCandle> bars(boolean pe){return pe?List.of(bar(35,80,90),bar(40,82,95),bar(45,80,92))
             :List.of(bar(35,110,120),bar(40,105,118),bar(45,108,120));}
+    @Test void candleHistoryCanDependBackOnThePositionManagerWithoutAStartupCycle(){
+        try(var context=new org.springframework.context.annotation.AnnotationConfigApplicationContext()){
+            context.registerBean(NiftyThreeCandleTrailing.class);
+            context.registerBean(org.com.sharekhan.repository.ScriptMasterRepository.class,
+                    ()->org.mockito.Mockito.mock(org.com.sharekhan.repository.ScriptMasterRepository.class));
+            context.registerBean(NiftyThreeCandleMarketData.class,()->{
+                assertNotNull(context.getBean(NiftyThreeCandleTrailing.class));
+                return org.mockito.Mockito.mock(NiftyThreeCandleMarketData.class);
+            });
+            context.refresh();assertNotNull(context.getBean(NiftyThreeCandleTrailing.class));
+        }
+    }
     @Test void onlyRiskStrictlyAbove50AndExactStrategyQualifies(){
         var t=trade(false);t.setStopLoss(50d);assertFalse(NiftyThreeCandleTrailing.eligible(t));
         t.setStopLoss(49.95);assertTrue(NiftyThreeCandleTrailing.eligible(t));
