@@ -22,7 +22,7 @@ compatibility and diagnostics. This rollout neither resets nor erases existing
 premium peaks, armed state or profit floors. The historical `FNO_NO_PROGRESS_45M`
 reason remains recognized only so an already-claimed protective exit can still be
 reconciled safely; no new evaluation emits that reason. Startup explicitly logs
-`mode=PROFIT_LOCK_ONLY | noProgressEnabled=false`.
+`mode=PROFIT_LOCK_AND_LOSS_GUARD | maxNetLossPerLot=2500 | noProgressEnabled=false`.
 
 ## Early premium profit protection
 
@@ -37,7 +37,7 @@ does not recreate a fill at an earlier protected price.
 Arm when either condition is reached by the highest verified option **bid**:
 
 - premium is at least 5% above the actual entry premium; or
-- estimated net liquidation profit on the remaining position is at least ₹1,000.
+- estimated net liquidation profit on the remaining position is at least ₹1,000 per remaining lot.
 
 Both routes still require the peak to clear the application-estimated round-trip
 cost floor. The rupee calculation uses actual entry premium, remaining quantity
@@ -65,6 +65,30 @@ exit at the then-available price. This retains half the premium gain; it does
 not promise half the net profit or a ₹500 minimum net profit. The ₹500 staircase
 is not used. Existing saved peaks, arming and higher floors are preserved, so a
 next valid observation can arm and exit an already-retraced open position.
+
+## Net-loss guard per remaining lot (23 November 2026)
+
+The same policy now requests a full remaining exit with `FNO_NET_LOSS_GUARD`
+when estimated option liquidation net P&L is **at or below −₹2,500 × remaining lots**.
+It uses actual entry premium, the verified executable bid, remaining quantity/lots
+and the existing round-trip option-charge estimator. One remaining lot therefore
+has a ₹2,500 trigger budget; three have ₹7,500. Original lot count and already
+booked partial profits do not increase that budget.
+
+This guard is active from the first valid observation, independently of profit
+arming. Existing stock stops, targets, partial exits and premium profit protection
+continue; the first valid exit claim owns the order. Existing stock-stop priority
+is retained when both are detected in the same evaluation. If a severe premium
+gap also crosses an armed profit floor, the policy records the loss-guard reason.
+No time-based exit is reintroduced. The policy version/state schema, accepted
+peaks, armed flags and ratcheted profit floors are preserved across restart.
+
+The exact same source-owned rule applies to live and Simulator positions. It
+requires the same fresh exact full-size Shoonya book as profit protection and
+uses the existing atomic claim, protective dispatch and reconciliation workflow.
+A missing/stale/undersized book cannot fabricate a price or order. The ₹2,500
+amount is an **exit trigger, not a guaranteed maximum realized loss**: quotes,
+liquidity, gaps, slippage, actual charges and execution latency can increase loss.
 
 ## Data and order handling
 

@@ -49,6 +49,94 @@ class FnoMoverExitPolicyServiceTest {
         return tx.execute(status->service.evaluate(trade,at));
     }
 
+    void lossSizedTrade(int lots) {
+        trade.setActualEntryPrice(100d);trade.setLots(lots);trade.setQuantity(1000L*lots);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(ints={1,2,3,5})
+    void netLossBudgetScalesWithRemainingLotsAndDoesNotRequireProfitArming(int lots) {
+        lossSizedTrade(lots);
+        double above=TradeCostCalculator.estimatedNetPnlAtExit(trade,97.8);
+        assertThat(above).isGreaterThan(-2500d*lots);
+        if(lots>1)assertThat(above).isLessThan(-2500d);
+        assertThat(observe(start,100,97.8).exit()).isFalse();
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isFalse();
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,97.65)).isLessThan(-2500d*lots);
+        assertThat(observe(start.plusSeconds(1),100,97.65).reason()).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+        assertThat(jdbc.queryForObject("SELECT last_message FROM fno_mover_exit_state WHERE trade_id=1",String.class)).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+        assertThat(trade.getStopLoss()).isEqualTo(102d);
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.CsvSource({"CE,6,4","PE,6,4","CE,4,3","PE,4,3"})
+    void callsPutsLiveAndSimulatorUseTheSameLossCalculation(String side,long broker,long owner) {
+        lossSizedTrade(1);trade.setOptionType(side);trade.setBrokerCredentialsId(broker);trade.setAppUserId(owner);
+        trade.setStopLoss("CE".equals(side)?98d:102d);
+        assertThat(observe(start,100,97.65).reason()).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+    }
+
+    @Test void exactNetLossBoundaryIncludesEstimatedCharges() {
+        lossSizedTrade(1);
+        double low=97,high=98;
+        for(int i=0;i<60;i++) {
+            double middle=(low+high)/2;
+            if(TradeCostCalculator.estimatedNetPnlAtExit(trade,middle)>-2500)high=middle;else low=middle;
+        }
+        assertThat(TradeCostCalculator.estimatedNetPnlAtExit(trade,low)).isEqualTo(-2500d);
+        assertThat((100-low)*trade.getQuantity()).isLessThan(2500d);
+        assertThat(observe(start,100,low+.001).exit()).isFalse();
+        assertThat(observe(start.plusSeconds(1),100,low).reason()).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+    }
+
+    @Test void unarmedLossGuardWorksAfterServiceRestart() {
+        lossSizedTrade(1);assertThat(observe(start,100,97.8).exit()).isFalse();
+        service=instance();
+        assertThat(observe(start.plusSeconds(1),100,97.65).reason()).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+    }
+
+    @Test void remainingPartialUsesCurrentLotsWithoutBookedProfitOrOriginalLotAllowance() {
+        lossSizedTrade(3);observe(start,100,100);
+        var remaining=TriggeredTradeSetupEntity.builder().id(2L).appUserId(4L).brokerCredentialsId(6L)
+                .source(FnoMoverExitPolicyService.SOURCE).symbol("TEST").exchange("NF").scripCode(123).spotScripCode(456)
+                .intraday(true).optionType("PE").entryAction("BUY").entryPrice(100d).stopLoss(102d)
+                .actualEntryPrice(100d).entryAt(trade.getEntryAt()).quantity(1000L).lots(1).originalLots(3)
+                .pnl(100000d).useSpotForSl(true).status(TriggeredTradeStatus.EXECUTED).build();
+        tx.executeWithoutResult(s->service.inherit(trade,remaining));
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(start.plusSeconds(1),97.65,"SHOONYA",1000d)));
+        assertThat(tx.execute(s->service.evaluate(remaining,start.plusSeconds(1))).reason()).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+        assertThat(jdbc.queryForObject("SELECT peak_bid FROM fno_mover_exit_state WHERE trade_id=2",Double.class)).isEqualTo(100d);
+    }
+
+    @Test void invalidBooksCannotTriggerLossGuardAndFreshFullSizeBookCan() {
+        lossSizedTrade(1);var at=start.plusSeconds(5);
+        for(var b:List.of(book(start.minusSeconds(1),95,"SHOONYA",1000d),book(at.plusSeconds(1),95,"SHOONYA",1000d),
+                book(at,95,"UNKNOWN",1000d),book(at,95,"SHOONYA",999d),
+                QuoteCacheService.QuoteSnapshot.builder().bestBid(95d).bestAsk(94d).coherentBook(true).lastBookAt(at).build(),
+                QuoteCacheService.QuoteSnapshot.builder().bestBid(95d).bestAsk(95.1).coherentBook(true).lastBookAt(at).bookSource("SHOONYA").bookExchange("NF").bookProviderIdentity("999:OTHER").bidQuantity(1000d).build(),
+                QuoteCacheService.QuoteSnapshot.builder().bestBid(95d).bestAsk(95.1).coherentBook(true).lastBookAt(at).bookSource("SHOONYA").bookExchange("BF").bookProviderIdentity("123:OTHER").bidQuantity(1000d).build())) {
+            when(quotes.getSnapshot(123)).thenReturn(Optional.of(b));
+            assertThat(tx.execute(s->service.evaluate(trade,at)).exit()).isFalse();
+        }
+        assertThat(observe(at,100,95).reason()).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+    }
+
+    @Test void lossGuardTakesReasonPriorityOnGapButPreservesArmedPeakAndFloor() {
+        lossSizedTrade(1);observe(start,100,110);
+        assertThat(observe(start.plusSeconds(1),100,95).reason()).isEqualTo(FnoMoverExitPolicyService.LOSS_GUARD);
+        assertThat(jdbc.queryForObject("SELECT peak_bid FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(110d);
+        assertThat(jdbc.queryForObject("SELECT protection_floor FROM fno_mover_exit_state WHERE trade_id=1",Double.class)).isEqualTo(105d);
+        assertThat(jdbc.queryForObject("SELECT protection_armed FROM fno_mover_exit_state WHERE trade_id=1",Boolean.class)).isTrue();
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"manual","strategy:STOCK_0925_MOVER_ATR_BREAKOUT","strategy:NIFTY_THREE_CANDLE"})
+    void lossGuardDoesNotAdoptOtherSources(String source) {
+        lossSizedTrade(1);trade.setSource(source);
+        assertThat(observe(start,100,95).exit()).isFalse();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM fno_mover_exit_state",Integer.class)).isZero();
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(ints={1,2,3,5})
     void rupeeActivationRequiresThousandNetForEveryRemainingLot(int lots) {
@@ -108,6 +196,7 @@ class FnoMoverExitPolicyServiceTest {
     @Test void legacyExitReasonRemainsRecognizedForAlreadyClaimedExitRecovery() {
         assertThat(FnoMoverExitPolicyService.isExitReason("FNO_NO_PROGRESS_45M")).isTrue();
         assertThat(FnoMoverExitPolicyService.isExitReason("FNO_EARLY_PROFIT_PROTECTION")).isTrue();
+        assertThat(FnoMoverExitPolicyService.isExitReason("FNO_NET_LOSS_GUARD")).isTrue();
         assertThat(FnoMoverExitPolicyService.isExitReason("TARGET_1")).isFalse();
     }
     @Test void reachedHalfRiskPersistsAcrossRestartAndNeverBecomesNoProgressOnReversal() {

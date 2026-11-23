@@ -186,7 +186,7 @@ class PriceTriggerServiceTest {
     }
 
     @Test void fnoProtectiveExitClosesWholePositionOnceInsteadOfPartialTargetBooking() {
-        for(String reason:List.of(FnoMoverExitPolicyService.NO_PROGRESS,FnoMoverExitPolicyService.PROFIT_PROTECTION)) {
+        for(String reason:List.of(FnoMoverExitPolicyService.NO_PROGRESS,FnoMoverExitPolicyService.PROFIT_PROTECTION,FnoMoverExitPolicyService.LOSS_GUARD)) {
             org.mockito.Mockito.reset(triggeredRepo,tradeExecutionService);
             var policy=mock(FnoMoverExitPolicyService.class);
             ReflectionTestUtils.setField(service,"fnoMoverExitPolicy",policy);
@@ -217,7 +217,7 @@ class PriceTriggerServiceTest {
                 .intraday(true).useSpotForSl(true).entryPrice(100d).stopLoss(102d).quantity(100L).lots(1)
                 .status(TriggeredTradeStatus.EXECUTED).build();
         when(triggeredRepo.findById(8801L)).thenReturn(Optional.of(trade));
-        when(policy.evaluate(eq(trade),any())).thenReturn(new FnoMoverExitPolicyService.Decision(FnoMoverExitPolicyService.NO_PROGRESS,9.5));
+        when(policy.evaluate(eq(trade),any())).thenReturn(new FnoMoverExitPolicyService.Decision(FnoMoverExitPolicyService.LOSS_GUARD,9.5));
         when(tradeExecutionService.hasUsableTradedExitPrice(trade,9.5)).thenReturn(true);
         service.handleTradeWithLock(8801L,10d,100d);
         verify(tradeExecutionService,never()).squareOff(any(),anyDouble(),anyString());

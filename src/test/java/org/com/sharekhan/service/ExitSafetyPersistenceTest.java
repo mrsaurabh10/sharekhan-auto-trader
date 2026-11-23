@@ -40,7 +40,7 @@ class ExitSafetyPersistenceTest {
         assertThat(controlRows.findById(trade.getId()).orElseThrow().getStartedAt()).isEqualTo(start);
     }
     @org.junit.jupiter.params.ParameterizedTest
-    @org.junit.jupiter.params.provider.ValueSource(strings={"STOP_LOSS_HIT","FNO_EARLY_PROFIT_PROTECTION","NGAS_SCALP_PROFIT_LOCK","MCX_SESSION_CLOSE"})
+    @org.junit.jupiter.params.provider.ValueSource(strings={"STOP_LOSS_HIT","FNO_EARLY_PROFIT_PROTECTION","FNO_NET_LOSS_GUARD","NGAS_SCALP_PROFIT_LOCK","MCX_SESSION_CLOSE"})
     void protectiveIntentTransitionStartsOneNewBudgetAndThenPreservesIt(String reason) {
         if("MCX_SESSION_CLOSE".equals(reason))trade.setSource(org.com.sharekhan.strategy.mcx.NaturalGasScalpingStrategy.SOURCE);
         controls.begin(trade,start);trade.setExitReason(reason);

@@ -26,10 +26,12 @@ public class FnoMoverExitPolicyService {
     /** Legacy reason retained only for already-claimed exit reconciliation and historical records. */
     public static final String NO_PROGRESS = "FNO_NO_PROGRESS_45M";
     public static final String PROFIT_PROTECTION = "FNO_EARLY_PROFIT_PROTECTION";
+    public static final String LOSS_GUARD = "FNO_NET_LOSS_GUARD";
     private static final ZoneId ZONE = ZoneId.of("Asia/Kolkata");
     private static final Duration MAX_AGE = Duration.ofSeconds(5);
     private static final Duration MAX_SPOT_GAP = Duration.ofSeconds(15);
     private static final double ARM_NET_PROFIT_PER_LOT = 1_000d;
+    private static final double MAX_NET_LOSS_PER_LOT = 2_500d;
     private final JdbcTemplate jdbc;
     private final QuoteCacheService quotes;
     private final LtpCacheService prices;
@@ -41,7 +43,7 @@ public class FnoMoverExitPolicyService {
         this.jdbc=jdbc;this.quotes=quotes;this.prices=prices;this.requests=requests;
     }
     @PostConstruct void configured() {
-        log.info("FNO_MOVER_EXIT_POLICY | enabled={} | version={} | mode=PROFIT_LOCK_ONLY | noProgressEnabled=false | armMode=EITHER | armGain=5% | armNetProfitPerLot=1000 | lotBasis=REMAINING | retainPeakGain=50%",
+        log.info("FNO_MOVER_EXIT_POLICY | enabled={} | version={} | mode=PROFIT_LOCK_AND_LOSS_GUARD | maxNetLossPerLot=2500 | noProgressEnabled=false | armMode=EITHER | armGain=5% | armNetProfitPerLot=1000 | lotBasis=REMAINING | retainPeakGain=50%",
                 enabled, VERSION);
     }
     public boolean enabled() { return enabled; }
@@ -51,7 +53,7 @@ public class FnoMoverExitPolicyService {
                 && !"SELL".equalsIgnoreCase(t.getEntryAction());
     }
     public static boolean isExitReason(String reason) {
-        return NO_PROGRESS.equals(reason) || PROFIT_PROTECTION.equals(reason);
+        return NO_PROGRESS.equals(reason) || PROFIT_PROTECTION.equals(reason) || LOSS_GUARD.equals(reason);
     }
     public record Decision(String reason, Double bid) {
         public static Decision waitForData() { return new Decision(null,null); }
@@ -97,6 +99,7 @@ public class FnoMoverExitPolicyService {
         QuoteCacheService.QuoteSnapshot book=quotes.getSnapshot(t.getScripCode()).orElse(null);
         boolean executable=usableBook(t,book,instant);
         Decision decision=Decision.waitForData();
+        Double currentNet=null;
         if(executable) {
             double bid=book.getBestBid();
             state.peak=Math.max(state.peak,bid);
@@ -108,15 +111,20 @@ public class FnoMoverExitPolicyService {
             if(netFloor!=null && reachedArmingThreshold && state.peak+1e-9>=netFloor) state.armed=true;
             double ratchet=state.premium+.5*(state.peak-state.premium);
             if(state.armed && netFloor!=null) state.floor=Math.max(state.floor,Math.max(netFloor,ratchet));
-            if(state.armed && state.floor>0 && bid<=state.floor+1e-9) decision=new Decision(PROFIT_PROTECTION,bid);
+            // An independent loss guard: remaining size only, including estimated round-trip charges.
+            // Booked partial profit and the original lot count cannot mask a loss in the open remainder.
+            currentNet=TradeCostCalculator.estimatedNetPnlAtExit(t,bid);
+            if(currentNet!=null && currentNet<=-MAX_NET_LOSS_PER_LOT*t.getLots()) decision=new Decision(LOSS_GUARD,bid);
+            else if(state.armed && state.floor>0 && bid<=state.floor+1e-9) decision=new Decision(PROFIT_PROTECTION,bid);
         }
         String message=decision.exit()?decision.reason():!executable?"WAITING_FRESH_EXACT_OPTION_BOOK"
                 :state.armed?"PROFIT_PROTECTION_ARMED":"OBSERVING_PROFIT_LOCK";
         jdbc.update("UPDATE fno_mover_exit_state SET peak_bid=?,reached_half_risk=?,progress_coverage_valid=?,last_spot_at=?,last_evaluated_at=?,protection_armed=?,protection_floor=?,last_message=? WHERE trade_id=?",
                 state.peak,state.reached,state.coverage,state.lastSpotAt==null?null:Timestamp.valueOf(state.lastSpotAt),
                 Timestamp.valueOf(now),state.armed,state.floor,message,t.getId());
-        if(decision.exit()) log.info("FNO_MOVER_EXIT_DECISION | tradeId={} | reason={} | bid={} | peakBid={} | floor={} | reachedHalfRisk={} | entryAt={}",
-                t.getId(),decision.reason(),decision.bid(),state.peak,state.floor,state.reached,state.entryAt);
+        if(decision.exit()) log.info("FNO_MOVER_EXIT_DECISION | tradeId={} | reason={} | bid={} | peakBid={} | floor={} | reachedHalfRisk={} | entryAt={} | estimatedNet={} | maxNetLoss={} | remainingLots={}",
+                t.getId(),decision.reason(),decision.bid(),state.peak,state.floor,state.reached,state.entryAt,
+                currentNet,MAX_NET_LOSS_PER_LOT*t.getLots(),t.getLots());
         return decision;
     }
 
