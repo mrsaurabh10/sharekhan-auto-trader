@@ -18,7 +18,19 @@ and broker account. No subscription is created by installing this code.
 - Strict breaks use the 0.05-point grid increment. Doji bars do not qualify. No
   volume, body/wick, ADX, sharp-fall or overextension conditions apply.
 - CE stop is C3 low; PE stop is C3 high. The target is 1R from the observed spot
-  entry. Levels remain fixed. No target splitting or automatic trailing.
+  entry. Original C3 stop and 1R target stay fixed; no target splitting.
+- When the original entry-to-C3-stop distance is strictly greater than 50 spot
+  points, a confirmed five-minute swing may tighten the active stop. CE uses a
+  swing low minus 2 points; PE uses a swing high plus 2 points. The pivot must be
+  strictly lower/higher than one completed neighbour on each side, begin after
+  entry, and wait until the right neighbour closes. A new stop must be strictly
+  beyond entry on the profitable spot side and tighter than the current stop.
+  This is spot profit protection, not a guarantee of positive option net P&L.
+  The active level persists separately in `trailingSl`; original `stopLoss` and
+  `target1` are unchanged, including for original risk and audit calculations.
+  Existing executable book/depth guards still apply. Observed trail touches
+  latch as `NIFTY_3C_TRAIL` while awaiting an executable exit book. Generic TSL
+  remains disabled; the Nifty position manager owns this confirmed-swing rule.
 - One position at a time across both sides and all subscriptions on this account.
   Patterns completed while the previous position was open cannot be entered later.
   One **filled trade per uninterrupted same-colour run**, across subscriptions on

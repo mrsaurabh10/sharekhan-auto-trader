@@ -27,6 +27,8 @@ public class NiftyThreeCandlePaperBroker {
     private final Clock clock;
     @org.springframework.beans.factory.annotation.Autowired
     private SpotQuoteService spotQuotes;
+    @Autowired
+    private NiftyThreeCandleTrailing trailing;
     private QuoteCacheService.QuoteSnapshot spotQuote(int code) {
         return spotQuotes==null?quotes.getSnapshot(code).orElse(null):spotQuotes.spot(code,"NC");
     }
@@ -167,24 +169,49 @@ public class NiftyThreeCandlePaperBroker {
         var spot=spotQuote(t.getSpotScripCode());
         var instant=clock.instant();
         var now=LocalDateTime.ofInstant(instant,NiftyThreeCandleRules.IST);
-        boolean eod=t.getEntryAt().toLocalDate().isBefore(now.toLocalDate()) || !now.toLocalTime().isBefore(LocalTime.of(15,30));
-        String reason=t.getExitReason(); // Persist the first observed trigger while awaiting an executable book.
-        if(reason==null && eod)reason="NIFTY_3C_SESSION_CLOSE";
+        String reason=exitReason(t,book,spot,instant);
+        if(reason==null && trailing!=null && NiftyThreeCandleTrailing.eligible(t)){
+            NiftyThreeCandleTrailing.Candidate candidate=null;
+            try{candidate=trailing.candidate(t,now);}
+            catch(RuntimeException unavailable){log.warn("Nifty swing candles unavailable for trade {}; retaining active stop",id);}
+            // Candle loading may wait on a provider. Never fill using the earlier quote snapshots.
+            book=quotes.getSnapshot(t.getScripCode()).orElse(null);
+            spot=spotQuote(t.getSpotScripCode());instant=clock.instant();
+            now=LocalDateTime.ofInstant(instant,NiftyThreeCandleRules.IST);
+            reason=exitReason(t,book,spot,instant);
+            if(reason==null && candidate!=null && freshSpot(spot,instant,t.getSpotScripCode())){
+                double old=NiftyThreeCandleTrailing.activeStop(t);
+                t.setTrailingSl(candidate.stop());trades.saveAndFlush(t);
+                record(t,"TRAILING_SL_UPDATE","NIFTY_3C_CONFIRMED_SWING",
+                        "initialStop="+t.getStopLoss()+", oldActiveStop="+old+", activeStop="+candidate.stop()
+                        +", pivot="+candidate.pivot()+", confirmed="+candidate.confirmed()
+                        +", originalRisk="+Math.abs(t.getEntryPrice()-t.getStopLoss())+", buffer=2.0");
+                // A newly confirmed stop already breached by a gap exits at the CURRENT executable bid.
+                reason=exitReason(t,book,spot,instant);
+            }
+        }
         boolean usable=NiftyThreeCandleRules.freshBook(book,instant,t.getScripCode());
-        if(usable){
-            double daily=realized(owned(t.getAppUserId(),t.getBrokerCredentialsId()),now.toLocalDate())+netAt(t,book.getBestBid());
-            if(daily<=-NiftyThreeCandleRules.DAILY_LOSS)reason="NIFTY_3C_DAILY_LOSS";
-        }
-        if(reason==null && freshSpot(spot,instant,t.getSpotScripCode())){
-            double p=spot.getLastTradedPrice();boolean pe="PE".equals(t.getOptionType());
-            if(pe?p>=t.getStopLoss():p<=t.getStopLoss())reason="NIFTY_3C_STOP";
-            else if(pe?p<=t.getTarget1():p>=t.getTarget1())reason="NIFTY_3C_TARGET";
-        }
         if(reason!=null){
             t.setExitReason(reason);trades.saveAndFlush(t);
             if(lossExit(reason) && t.getStrategyRunId()!=null)runs.requestClose(t.getStrategyRunId(),reason);
             if(usable)finish(t,book,spot,reason,now);
         }
+    }
+    private String exitReason(TriggeredTradeSetupEntity t,QuoteCacheService.QuoteSnapshot book,
+                              QuoteCacheService.QuoteSnapshot spot,Instant instant){
+        var now=LocalDateTime.ofInstant(instant,NiftyThreeCandleRules.IST);
+        String reason=t.getExitReason();
+        if(reason==null && (t.getEntryAt().toLocalDate().isBefore(now.toLocalDate()) || !now.toLocalTime().isBefore(LocalTime.of(15,30))))
+            reason="NIFTY_3C_SESSION_CLOSE";
+        if(NiftyThreeCandleRules.freshBook(book,instant,t.getScripCode())
+                && realized(owned(t.getAppUserId(),t.getBrokerCredentialsId()),now.toLocalDate())+netAt(t,book.getBestBid())<=-NiftyThreeCandleRules.DAILY_LOSS)
+            return "NIFTY_3C_DAILY_LOSS";
+        if(reason!=null || !freshSpot(spot,instant,t.getSpotScripCode()))return reason;
+        double p=spot.getLastTradedPrice();boolean pe="PE".equals(t.getOptionType());
+        if(pe?p>=t.getStopLoss():p<=t.getStopLoss())return "NIFTY_3C_STOP";
+        double active=NiftyThreeCandleTrailing.activeStop(t);
+        if(active!=t.getStopLoss() && (pe?p>=active:p<=active))return "NIFTY_3C_TRAIL";
+        return (pe?p<=t.getTarget1():p>=t.getTarget1())?"NIFTY_3C_TARGET":null;
     }
     /** Used by run Close All and ordinary manual square-off; never use an entered/manual exit price. */
     @Transactional

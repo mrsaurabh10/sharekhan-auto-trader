@@ -221,6 +221,40 @@ class NiftyThreeCandlePaperBrokerTest {
         when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(98,101,65,65,instant)));paper.evaluate(22L);
         assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,t.getStatus());assertEquals(98,t.getExitPrice());
     }
+    @Test void confirmedTrailingStopPersistsWithoutChangingInitialBracketAndUsesCurrentBid(){
+        var t=position();t.setStopLoss(22900d);t.setTarget1(23104d);
+        var trail=mock(NiftyThreeCandleTrailing.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(paper,"trailing",trail);
+        when(trail.candidate(t,now)).thenReturn(new NiftyThreeCandleTrailing.Candidate(23010,now.minusMinutes(15),now.minusMinutes(5)));
+        when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(23008)));
+        paper.evaluate(22L);
+        assertEquals(23010,t.getTrailingSl());assertEquals(22900,t.getStopLoss());assertEquals(23104,t.getTarget1());
+        assertEquals("NIFTY_3C_TRAIL",t.getExitReason());assertEquals(100,t.getExitPrice());
+        assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,t.getStatus());
+    }
+    @Test void persistedTrailSurvivesRestartAndStaleBookCannotEraseItsExitTrigger(){
+        var t=position();t.setStopLoss(22900d);t.setTrailingSl(23010d);t.setTarget1(23104d);
+        when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(23008)));
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,65,65,instant.minusSeconds(6))));
+        paper.evaluate(22L);assertEquals("NIFTY_3C_TRAIL",t.getExitReason());assertEquals(TriggeredTradeStatus.EXECUTED,t.getStatus());
+        when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(23020)));
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(99,101,65,65,instant)));
+        paper.evaluate(22L);assertEquals("NIFTY_3C_TRAIL",t.getExitReason());assertEquals(99,t.getExitPrice());
+    }
+    @Test void peTrailStopsOnAnUpwardSpotCrossWithoutChangingItsBracket(){
+        var t=position();t.setOptionType("PE");t.setStopLoss(23104d);t.setTarget1(22900d);t.setTrailingSl(22994d);
+        when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(23000)));
+        paper.evaluate(22L);assertEquals("NIFTY_3C_TRAIL",t.getExitReason());
+        assertEquals(23104,t.getStopLoss());assertEquals(22900,t.getTarget1());assertEquals(100,t.getExitPrice());
+    }
+    @Test void candleFetchDelayCannotFillWithStalePreloadSnapshots(){
+        var t=position();t.setStopLoss(22900d);t.setTarget1(23104d);
+        var moving=new NiftyThreeCandleTimingTest.MovingClock(instant);
+        var timed=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,moving);
+        var trail=mock(NiftyThreeCandleTrailing.class);org.springframework.test.util.ReflectionTestUtils.setField(timed,"trailing",trail);
+        when(trail.candidate(t,now)).thenAnswer(c->{moving.at=instant.plusSeconds(6);return new NiftyThreeCandleTrailing.Candidate(23010,now.minusMinutes(15),now.minusMinutes(5));});
+        timed.evaluate(22L);assertNull(t.getTrailingSl());assertNull(t.getExitPrice());
+    }
     @Test void sessionCloseDoesNotRequireASpotQuoteAndStillUsesOptionBid(){
         var t=position();when(quotes.getSnapshot(20000)).thenReturn(Optional.empty());
         var late=new NiftyThreeCandlePaperBroker(em,trades,requests,quotes,runs,audit,Clock.fixed(now.withHour(15).withMinute(30).atZone(NiftyThreeCandleRules.IST).toInstant(),NiftyThreeCandleRules.IST));

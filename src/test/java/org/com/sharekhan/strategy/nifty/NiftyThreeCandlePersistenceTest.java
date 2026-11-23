@@ -1,6 +1,7 @@
 package org.com.sharekhan.strategy.nifty;
 
 import jakarta.persistence.EntityManager;
+import org.com.sharekhan.enums.TriggeredTradeStatus;
 import org.com.sharekhan.cache.QuoteCacheService;
 import org.com.sharekhan.dto.*;
 import org.com.sharekhan.entity.*;
@@ -32,6 +33,7 @@ class NiftyThreeCandlePersistenceTest {
             return new NiftyThreeCandlePaperBroker(em,t,r,q,runs,audit,Clock.fixed(AT,NiftyThreeCandleRules.IST));
         }
     }
+    @MockBean NiftyThreeCandleTrailing trailing;
     @MockBean QuoteCacheService quotes;
     @MockBean org.com.sharekhan.service.SpotQuoteService spotQuotes;
     @MockBean StrategyRunCoordinator runs;
@@ -68,6 +70,19 @@ class NiftyThreeCandlePersistenceTest {
         assertEquals("NIFTY_3C_STOP",closed.getExitReason());
         assertThrows(IllegalStateException.class,()->paper.open(request,signal,option,20000,List.of(option)));
         assertEquals(1,trades.count());assertEquals(1,requests.count());
+    }
+    @Test void trailingLevelAndOriginalBracketPersistAcrossReload(){
+        var req=paper.open(request,signal,option,20000,List.of(option));
+        var t=trades.findByTriggerRequestId(req.getId()).getFirst();
+        t.setStopLoss(22900d);t.setTarget1(23104d);trades.saveAndFlush(t);
+        when(trailing.candidate(any(),eq(NOW))).thenReturn(new NiftyThreeCandleTrailing.Candidate(23010,NOW.minusMinutes(15),NOW.minusMinutes(5)));
+        when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(23020)));paper.evaluate(t.getId());
+        var reloaded=trades.findById(t.getId()).orElseThrow();assertEquals(23010,reloaded.getTrailingSl());
+        assertEquals(22900,reloaded.getStopLoss());assertEquals(23104,reloaded.getTarget1());
+        org.mockito.Mockito.reset(trailing); // A later manager has only persisted state, no newly confirmed pivot.
+        when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(23008)));paper.evaluate(t.getId());
+        reloaded=trades.findById(t.getId()).orElseThrow();assertEquals("NIFTY_3C_TRAIL",reloaded.getExitReason());
+        assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,reloaded.getStatus());
     }
     @Test void concurrentEvaluationsCannotOpenTwoPositionsOnTheSameBroker() throws Exception {
         var start=new CountDownLatch(1);
