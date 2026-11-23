@@ -3424,14 +3424,15 @@ public class TradeExecutionService {
 
     private double entryPriceFloor(TriggeredTradeSetupEntity trigger, double reference) {
         reference=marketableEntryReference(trigger,reference);
-        return Math.ceil((reference * (1d - configuredEntryMaxSlippagePercent(trigger) / 100d) - 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
+        double rawFloor = reference * (1d - configuredEntryMaxSlippagePercent(trigger) / 100d);
+        return alignEntryPrice(trigger, rawFloor, java.math.RoundingMode.CEILING);
     }
 
     private double entryPriceCeiling(TriggeredTradeSetupEntity trigger, double initialOptionPrice) {
         if(trigger!=null && org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()) && !marketableEntry(trigger))return trigger.getEntryPrice();
         initialOptionPrice=marketableEntryReference(trigger,initialOptionPrice);
         double rawCeiling = initialOptionPrice * (1d + configuredEntryMaxSlippagePercent(trigger) / 100d);
-        return Math.floor((rawCeiling + 0.000001d) / ENTRY_TICK_SIZE) * ENTRY_TICK_SIZE;
+        return alignEntryPrice(trigger, rawCeiling, java.math.RoundingMode.FLOOR);
     }
 
     private double brokerTriggerEntryLimitPrice(double triggerPrice) {
@@ -4550,7 +4551,8 @@ public class TradeExecutionService {
             int fractionIndex = Math.min(Math.max(attemptIndex, 0), ENTRY_SPREAD_FRACTIONS.length - 1);
             rawPrice = mid + TradeSide.sign(trigger) * spread * ENTRY_SPREAD_FRACTIONS[fractionIndex];
             if (fractionIndex == ENTRY_SPREAD_FRACTIONS.length - 1) {
-                rawPrice = TradeSide.isShort(trigger) ? bid - ENTRY_TICK_SIZE : ask + ENTRY_TICK_SIZE;
+                double tickSize = entryTickSize(trigger);
+                rawPrice = TradeSide.isShort(trigger) ? bid - tickSize : ask + tickSize;
             } else {
                 rawPrice = TradeSide.isShort(trigger) ? Math.max(bid, rawPrice) : Math.min(ask, rawPrice);
             }
@@ -4562,32 +4564,27 @@ public class TradeExecutionService {
         }
 
         if(org.com.sharekhan.strategy.adxdmi.AdxDmiRules.premium(trigger.getSource()) && !marketableEntry(trigger))rawPrice=Math.min(rawPrice,trigger.getEntryPrice());
-        return normalisePriceToTick(diagnostics, rawPrice);
+        return alignEntryPrice(trigger, rawPrice, java.math.RoundingMode.HALF_UP);
     }
 
-    private double normalisePriceToTick(EntryDiagnostics diagnostics, double price) {
-        double tickSize = resolveTickSizeFromDiagnostics(diagnostics);
-        if (tickSize <= 0d) {
-            return roundPrice(price);
-        }
-
-        double scaled = Math.round(price / tickSize) * tickSize;
-        double rounded = Math.round(scaled * 100.0d) / 100.0d;
-        double roundedTick = Math.round(tickSize * 100.0d) / 100.0d;
-        double epsilon = 1e-6;
-        double residual = rounded % roundedTick;
-        if (residual > epsilon && roundedTick - residual > epsilon) {
-            if (residual < roundedTick / 2) {
-                rounded = Math.round((rounded - residual) * 100.0d) / 100.0d;
-            } else {
-                rounded = Math.round((rounded + (roundedTick - residual)) * 100.0d) / 100.0d;
-            }
-        }
-        return rounded;
+    private double alignEntryPrice(TriggeredTradeSetupEntity trade, double price, java.math.RoundingMode rounding) {
+        var tick = java.math.BigDecimal.valueOf(entryTickSize(trade));
+        // Ignore sub-paise binary arithmetic noise before aligning to the instrument grid.
+        return java.math.BigDecimal.valueOf(price).setScale(10, java.math.RoundingMode.HALF_UP)
+                .divide(tick, 0, rounding).multiply(tick).doubleValue();
     }
 
-    private double resolveTickSizeFromDiagnostics(EntryDiagnostics diagnostics) {
-        return 0.05d;
+    private double entryTickSize(TriggeredTradeSetupEntity trade) {
+        ScriptMasterEntity script = trade != null && trade.getScripCode() != null && scriptMasterRepository != null
+                ? scriptMasterRepository.findByScripCode(trade.getScripCode()) : null;
+        if (script != null && trade.getExchange() != null && script.getExchange() != null
+                && !trade.getExchange().equalsIgnoreCase(script.getExchange())) {
+            throw new EntryNotReadyException("Entry instrument exchange does not match its tick metadata");
+        }
+        Double tick = script != null ? script.getTickSize() : null;
+        if (tick != null && Double.isFinite(tick) && tick > 0d) return tick;
+        // Preserve the existing grid for instruments whose master omits a published tick.
+        return ENTRY_TICK_SIZE;
     }
 
     public void squareOffTrade(Long id) {

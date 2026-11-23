@@ -306,6 +306,40 @@ class DhanBrokerServiceTest {
         assertThat(service.normalizeOrderUpdate(trade,context,"12345",order("TRADED",10,0).put("transactionType","SELL"))).isNull();
         verifyNoInteractions(client);
     }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = {"CANCELLED", "REJECTED", "EXPIRED"})
+    void inactiveUnfilledOrderWithZeroRemainingReconcilesOverRestAndStream(String status) throws Exception {
+        var row = order(status, 0, 0).put("averageTradedPrice", 0);
+        when(client.exchange(eq("GET"), eq("/orders/12345"), anyString(), isNull()))
+                .thenReturn(response(200, row));
+        for (var result : java.util.List.of(service.fetchOrderStatus(trade, context, "12345"),
+                service.normalizeOrderUpdate(trade, context, "12345", row))) {
+            var normalized = result.getJSONArray("data").getJSONObject(0);
+            assertThat(normalized.getString("orderStatus")).isEqualTo("Rejected");
+            assertThat(normalized.getLong("execQty")).isZero();
+            assertThat(result.getBoolean("requiresExitReconciliation")).isFalse();
+        }
+        verify(client, never()).exchange(eq("POST"), anyString(), anyString(), any());
+    }
+
+    @Test void cancelledPartialExitWithZeroOpenQuantityRetainsUnfilledExposure() throws Exception {
+        trade.setExitOrderId("12345");
+        var row = order("CANCELLED", 3, 0).put("transactionType", "SELL");
+        when(client.exchange(eq("GET"), anyString(), anyString(), isNull())).thenReturn(response(200, row));
+        var result = service.fetchOrderStatus(trade, context, "12345");
+        assertThat(result.getBoolean("requiresExitReconciliation")).isTrue();
+        assertThat(result.getLong("remainingQuantity")).isEqualTo(7);
+        assertThat(result.getJSONArray("data").getJSONObject(0).getString("orderStatus"))
+                .isEqualTo("Partly Executed");
+    }
+
+    @Test void zeroRemainingCannotHideMalformedLiveOrTerminalQuantities() {
+        for (var row : java.util.List.of(order("PENDING", 3, 0), order("TRADED", 3, 0),
+                order("CANCELLED", 3, 5), order("CANCELLED", 10, 0), order("CANCELLED", -1, 0))) {
+            assertThat(service.normalizeOrderUpdate(trade, context, "12345", row)).isNull();
+        }
+    }
+
     @Test void partialCancelledExitStaysPendingToPreventOverselling() throws Exception {
         trade.setExitOrderId("12345");
         when(client.exchange(eq("GET"),anyString(),anyString(),isNull())).thenReturn(response(200,order("CANCELLED",3,7).put("transactionType","SELL")));

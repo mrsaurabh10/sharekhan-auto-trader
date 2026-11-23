@@ -1848,6 +1848,66 @@ class TradeExecutionServiceBrokerSideEntryTest {
         assertThat(ctx.service.isFundsManagedOptionRequest(ctx.savedRequest.get())).isFalse();
     }
 
+    @ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = {false, true})
+    void pennyTickFnoEntryActuallyModifiesTowardAskForLiveAndSimulator(boolean simulator) {
+        var ctx = new TestContext(pending("penny-order"));
+        if (simulator) ctx.useSimulatorBroker();
+        configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, 6.64, 6.68, 6.66);
+        freshRiskSpot(ctx, 100d);
+        when(ctx.scriptRepo.findByScripCode(123456)).thenReturn(ScriptMasterEntity.builder()
+                .scripCode(123456).exchange("NF").tickSize(.01).build());
+        when(ctx.broker.fetchOrderStatus(any(), any(), eq("penny-order")))
+                .thenReturn(orderHistory("Pending"));
+        when(ctx.broker.modifyEntryOrder(any(), any(), eq("penny-order"), anyDouble()))
+                .thenAnswer(call -> (double) call.getArgument(3) >= 6.68
+                        ? OrderPlacementResult.builder().success(true).orderId("penny-order")
+                            .status("Fully Executed").executedPrice(6.68).executedQuantity(50L).build()
+                        : pending("penny-order"));
+        when(ctx.broker.placeOrder(any(), any(), anyDouble())).thenReturn(pending("penny-order"));
+        BrokerContext broker = ReflectionTestUtils.invokeMethod(ctx.service, "resolveBrokerContext", 55L, 9L);
+        OrderPlacementResult result = ReflectionTestUtils.invokeMethod(ctx.service, "attemptEntryPlacement",
+                fnoRiskTrade(), 6.63, broker, ctx.broker, false);
+
+        verify(ctx.broker).placeOrder(any(), any(), eq(6.66));
+        var prices = ArgumentCaptor.forClass(Double.class);
+        verify(ctx.broker, times(2)).modifyEntryOrder(any(), any(), eq("penny-order"), prices.capture());
+        assertThat(prices.getAllValues()).containsExactly(6.67, 6.68);
+        assertThat(result.getExecutedPrice()).isEqualTo(6.68);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0.01,BUY,6.75,6.76,6.755,6.76", "0.01,SELL,6.50,6.54,6.52,6.50",
+                "0.05,BUY,6.65,6.70,6.675,6.75", "0.05,SELL,6.50,6.55,6.525,6.50"})
+    void entryTickAlignmentKeepsBuyAndShortRetriesInsideSlippageBounds(
+            double tick, String side, double bid, double ask, double mid, double expected) {
+        var ctx = new TestContext(pending("unused"));
+        configureFiveAttemptPolicy(ctx);
+        configureTightFreshQuote(ctx, bid, ask, mid);
+        when(ctx.scriptRepo.findByScripCode(123456)).thenReturn(ScriptMasterEntity.builder()
+                .scripCode(123456).exchange("NF").tickSize(tick).build());
+        var trade = fnoRiskTrade(); trade.setEntryAction(side);
+        Object diagnostics = ReflectionTestUtils.invokeMethod(ctx.service, "analyseEntry", trade, 6.63);
+        Double price = ReflectionTestUtils.invokeMethod(ctx.service, "resolveEntryAttemptPrice",
+                trade, diagnostics, 4, 6.63, false);
+        assertThat(price).isEqualTo(expected);
+        if ("SELL".equals(side)) assertThat(price).isGreaterThanOrEqualTo(6.63 * .98);
+        else assertThat(price).isLessThanOrEqualTo(6.63 * 1.02);
+    }
+
+    @Test
+    void entryTickRejectsMetadataForAnotherExchange() {
+        var ctx = new TestContext(pending("unused"));
+        configureFiveAttemptPolicy(ctx);
+        when(ctx.scriptRepo.findByScripCode(123456)).thenReturn(ScriptMasterEntity.builder()
+                .scripCode(123456).exchange("BF").tickSize(.01).build());
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ReflectionTestUtils.invokeMethod(
+                ctx.service, "entryPriceCeiling", fnoRiskTrade(), 6.63))
+                .isInstanceOf(org.com.sharekhan.exception.EntryNotReadyException.class)
+                .hasMessageContaining("exchange");
+    }
+
     private TriggeredTradeSetupEntity fnoRiskTrade() {
         return TriggeredTradeSetupEntity.builder().source(FnoMoverEntryRiskPolicy.SOURCE)
                 .strategyDecision(FnoMoverEntrySignal.decision(LocalDateTime.of(2026,11,13,9,55)))

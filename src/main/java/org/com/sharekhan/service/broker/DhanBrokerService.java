@@ -416,10 +416,15 @@ public class DhanBrokerService implements RefusedExitRecovery, ModifiableEntryBr
         String status = row.getString("orderStatus");
         long quantity = units(row,"quantity"), filled = units(row,"filledQty"), remaining = units(row,"remainingQuantity");
         double average = row.optDouble("averageTradedPrice",0);
-        if (quantity <= 0 || filled < 0 || remaining < 0 || filled > quantity || remaining != quantity-filled) throw new IllegalArgumentException();
-        boolean full = "TRADED".equals(status) && filled == quantity && remaining==0 && Double.isFinite(average) && average>0;
+        if (quantity <= 0 || filled < 0 || remaining < 0 || filled > quantity) throw new IllegalArgumentException();
         if (!Set.of("TRANSIT","PENDING","PART_TRADED","TRADED","REJECTED","CANCELLED","EXPIRED").contains(status)) throw new IllegalArgumentException();
         boolean inactive = Set.of("REJECTED","CANCELLED","EXPIRED").contains(status);
+        long unfilled = quantity - filled;
+        // Dhan may zero the open order quantity after cancellation, rejection or expiry.
+        // Preserve the unfilled exposure for partial exits; zero open orders does not mean a full fill.
+        if (inactive ? remaining != 0 && remaining != unfilled : remaining != unfilled) throw new IllegalArgumentException();
+        remaining = unfilled;
+        boolean full = "TRADED".equals(status) && filled == quantity && remaining==0 && Double.isFinite(average) && average>0;
         // A partly filled, inactive exit needs manual remaining-quantity reconciliation. Keep its ID and exposure.
         boolean partialInactiveExit=exit && inactive && filled>0 && remaining>0;
         if (partialInactiveExit) inactive=false;
