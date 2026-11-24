@@ -12,6 +12,22 @@ import java.util.*;
 import static org.mockito.Mockito.*;
 
 class StrategyEnrollmentFeedEventTest {
+    @Test void reconfiguringNiftyPersistsLotsOnTheExistingBrokerSubscription(){
+        var subscriptions=mock(StrategySubscriptionRepository.class);var users=mock(AppUserRepository.class);
+        var enrollment=new StrategyEnrollmentService(subscriptions,users);
+        when(users.lockForEnrollment(3L)).thenReturn(Optional.of(new AppUser()));
+        var existing=StrategySubscriptionEntity.builder().id(188L).appUserId(3L).brokerCredentialsId(4L)
+                .templateId(NiftyThreeCandleRules.TEMPLATE).symbol("NIFTY").source(NiftyThreeCandleRules.SOURCE).lots(1).status("ACTIVE").build();
+        when(subscriptions.findByStatusInAndTemplateIdIgnoreCaseAndSymbolIgnoreCaseAndAppUserId(anyList(),anyString(),anyString(),anyLong())).thenReturn(List.of(existing));
+        when(subscriptions.save(any())).thenAnswer(c->c.getArgument(0));
+        var request=new StrategyApplyRequest();request.setUserId(3L);request.setBrokerCredentialsId(4L);request.setLots(3);
+        org.com.sharekhan.strategy.nifty.NiftyThreeCandleStrategy.validate(request);
+        var saved=enrollment.enroll(request,NiftyThreeCandleRules.TEMPLATE,"NIFTY",NiftyThreeCandleRules.SOURCE);
+        org.junit.jupiter.api.Assertions.assertSame(existing,saved);
+        org.junit.jupiter.api.Assertions.assertEquals(3,saved.getLots());
+        org.junit.jupiter.api.Assertions.assertEquals(9000,saved.getRiskSettings().scale(saved.getRiskSettings().getMaxLoss(),saved.getLots()).intValue());
+    }
+
     @Test void enrollingNiftyPublishesFeedDemandAfterSavingItsSubscription(){
         var subscriptions=mock(StrategySubscriptionRepository.class);var users=mock(AppUserRepository.class);
         var events=mock(ApplicationEventPublisher.class);var enrollment=new StrategyEnrollmentService(subscriptions,users);

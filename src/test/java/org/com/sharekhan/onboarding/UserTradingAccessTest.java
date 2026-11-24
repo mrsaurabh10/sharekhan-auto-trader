@@ -49,6 +49,20 @@ class UserTradingAccessTest {
         when(profiles.existsById(7L)).thenReturn(true);
         assertThatThrownBy(()->access.requireOnboardedReady(7L,99L)).isInstanceOf(AccessDeniedException.class);
     }
+    @Test void niftyPaperEnrollmentRequiresAnActiveOwnedSimulatorAndScopesTheOwner() {
+        when(current.requireAppUserId()).thenReturn(7L);
+        var b=BrokerCredentialsEntity.builder().id(1L).appUserId(7L).brokerName("Simulator").active(true).build();
+        when(brokers.findById(1L)).thenReturn(Optional.of(b));
+        var r=new org.com.sharekhan.dto.StrategyApplyRequest();r.setUserId(99L);r.setBrokerCredentialsId(1L);r.setLots(2);
+        r.setTemplateId(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE);
+        access.scope(r);assertThat(r.getUserId()).isEqualTo(7L);
+        verifyNoInteractions(connections);
+        b.setAppUserId(99L);assertThatThrownBy(()->access.scope(r)).isInstanceOf(AccessDeniedException.class);
+        b.setAppUserId(7L);b.setActive(false);assertThatThrownBy(()->access.scope(r)).isInstanceOf(ResponseStatusException.class);
+        b.setActive(true);b.setBrokerName("Sharekhan");assertThatThrownBy(()->access.scope(r)).isInstanceOf(ResponseStatusException.class);
+        b.setBrokerName("Simulator");r.setTemplateId("ANOTHER_STRATEGY");
+        assertThatThrownBy(()->access.scope(r)).isInstanceOf(ResponseStatusException.class);
+    }
     BrokerCredentialsEntity readyBroker() {
         var b=BrokerCredentialsEntity.builder().id(1L).appUserId(7L).customerId(12345L).brokerName("Sharekhan").active(true).tradingEnabled(true).build();
         when(brokers.findById(1L)).thenReturn(Optional.of(b)); var c=new BrokerConnection();c.setVerifiedUntil(Instant.now().plusSeconds(60));

@@ -1,10 +1,10 @@
-# Nifty Three Candles simulator trial
+# Nifty Three Candles
 
 Template: `NIFTY_THREE_CANDLE_ATM`; source: `strategy:NIFTY_THREE_CANDLE_ATM`.
 
 This template accepts only an active Simulator account owned by the requesting user.
-One lot is taken from the selected contract's current master metadata. CE and PE
-share one position limit and a ₹5,000 daily paper loss control for this strategy
+The selected lot count (1–1000) is multiplied by the lot size from the selected contract's current master metadata. CE and PE
+share one position limit and a ₹3,000 × selected lots daily paper loss control for this strategy
 and broker account. No subscription is created by installing this code.
 
 ## Frozen signals and exits
@@ -79,7 +79,7 @@ charges. That tariff is an estimate, not reconciled broker contract-note charges
 An overdue position closed today counts in today's ledger. The daily-loss trigger
 is persisted and prevents further CE/PE entries that day even if the eventual exit
 quote improves. Mark-to-bid losses, gaps and stale/insufficient books can make final
-loss exceed ₹5,000; the limit is reactive, not a guaranteed cap.
+loss exceed ₹3,000 × selected lots; the limit is reactive, not a guaranteed cap.
 
 Stored trades distinguish spot entry/stop/target from actual option entry/exit
 premiums. Audit events record spot R separately from option gross and estimated
@@ -97,12 +97,12 @@ Use the normal authenticated strategy-start flow with an owned Simulator account
   "brokerCredentialsId": "<owned Simulator ID>",
   "lots": 1,
   "intraday": true,
-  "riskSettings": {"amountMode": "TOTAL", "maxLoss": 5000}
+  "riskSettings": {"amountMode": "PER_LOT", "maxLoss": 3000}
 }
 ```
 
 The portal pre-fills these trial settings. Server validation rejects real broker
-accounts, multiple lots and additional run profit/trailing controls. Generic/manual
+accounts, invalid lot counts and additional run profit/trailing controls. Generic/manual
 entry routes reject this reserved strategy source. Close All and ordinary manual
 square-off route back to the paper bid-fill handler.
 
@@ -189,3 +189,10 @@ connection, last actual websocket LTP receipt and five-second tick freshness.
 States distinguish DISCONNECTED, PENDING_SUBSCRIBE, WAITING_FOR_TICKS, RECEIVING,
 STALE and NOT_REQUESTED. Shoonya/MStock fallback quotes never mark websocket ticks
 as received. No exchange/server acknowledgement is inferred from a local request.
+
+Lot sizing is configurable in both strategy forms. Use **Change lots** on an active
+subscription, or configure the same strategy and broker again. Resume a paused
+subscription before resizing it. New lot counts apply to future entries; open
+positions retain their filled quantity and ₹3,000-per-filled-lot loss threshold.
+The combined daily CE/PE ledger and daily loss latch survive resizing and restarts.
+Older saved ₹5,000 controls are normalized to ₹3,000 per lot on evaluation.

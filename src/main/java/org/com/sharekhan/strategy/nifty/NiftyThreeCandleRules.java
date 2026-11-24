@@ -10,7 +10,13 @@ public final class NiftyThreeCandleRules {
     private NiftyThreeCandleRules() { }
     public static final ZoneId IST=ZoneId.of("Asia/Kolkata");
     public static final String TEMPLATE="NIFTY_THREE_CANDLE_ATM", SOURCE="strategy:"+TEMPLATE;
-    public static final double DAILY_LOSS=5000;
+    public static final int DAILY_LOSS_PER_LOT=3000;
+    public static int lots(Integer lots) {
+        int value=lots==null?1:lots;
+        if(value<1 || value>1000)throw new IllegalArgumentException("Choose between 1 and 1000 lots");
+        return value;
+    }
+    public static double dailyLoss(Integer lots) { return (double)DAILY_LOSS_PER_LOT*lots(lots); }
     public static boolean owns(String source) { return SOURCE.equalsIgnoreCase(source); }
     public record Signal(String side, LocalDateTime end, double trigger, double stop, double ema, double priorEma,
                          LocalDateTime colourRunStart) {

@@ -45,21 +45,21 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
         this.brokers=brokers;this.scripts=scripts;this.support=support;this.data=data;this.quotes=quotes;
         this.feeds=feeds;this.paper=paper;this.calendar=calendar;this.clock=clock;
     }
-    private static final StrategyMetadata META=new StrategyMetadata(NiftyThreeCandleRules.TEMPLATE,"Nifty Three Candles — Simulator",
-            "Nifty 5-minute three green/rising EMA20 → ATM CE, or three red/falling EMA20 → ATM PE. Fourth-candle breakout, C3 spot stop, 1R target. Original spot risk >50 points enables confirmed 5-minute profit-side swing trailing with a 2-point buffer; initial C3 stop and 1R target stay fixed. One filled trade per colour run; completed opposite-colour/doji resets eligibility. One lot, one shared position, ₹5,000 combined daily paper loss control; exits at 15:30. Paper ask/bid fills require displayed depth. PE is a mirrored trial, not backtested here.","AUTO");
+    private static final StrategyMetadata META=new StrategyMetadata(NiftyThreeCandleRules.TEMPLATE,"Nifty Three Candles",
+            "Nifty 5-minute three green/rising EMA20 → ATM CE, or three red/falling EMA20 → ATM PE. Fourth-candle breakout, C3 spot stop, 1R target. Original spot risk >50 points enables confirmed 5-minute profit-side swing trailing with a 2-point buffer; initial C3 stop and 1R target stay fixed. One filled trade per colour run; completed opposite-colour/doji resets eligibility. Configurable lots, one shared position, ₹3,000 daily paper loss control per lot; exits at 15:30. Paper ask/bid fills require displayed depth. PE is a mirrored trial, not backtested here.","AUTO");
     @Override public StrategyMetadata metadata(){return META;}
     public static void validate(StrategyApplyRequest r){
         r.setTemplateId(NiftyThreeCandleRules.TEMPLATE);
         if(r.getSymbol()!=null && !r.getSymbol().isBlank() && !Set.of("NIFTY","NIFTY50").contains(r.getSymbol().trim().toUpperCase(Locale.ROOT)))
             throw new IllegalArgumentException("This trial supports NIFTY only");
         r.setSymbol("NIFTY");r.setIntraday(true);
-        if(r.getLots()!=null && r.getLots()!=1)throw new IllegalArgumentException("Nifty three-candle paper trial uses one lot");
-        r.setLots(1);
-        var risk=StrategyRiskSettings.validate(r.getRiskSettings(),1);
-        if(risk!=null && (risk.getMaxLoss()!=null && risk.getMaxLoss().compareTo(BigDecimal.valueOf(5000))!=0
-                || risk.getProfitTarget()!=null || risk.getTrailActivation()!=null || risk.getSlStepProfit()!=null))
-            throw new IllegalArgumentException("This frozen trial uses a ₹5,000 total daily loss control and no run profit/trailing rules");
-        risk=new StrategyRiskSettings();risk.setAmountMode(StrategyRiskSettings.AmountMode.TOTAL);risk.setMaxLoss(new BigDecimal("5000.00"));
+        r.setLots(NiftyThreeCandleRules.lots(r.getLots()));
+        var risk=StrategyRiskSettings.validate(r.getRiskSettings(),r.getLots());
+        if(risk!=null && (risk.getProfitTarget()!=null || risk.getTrailActivation()!=null || risk.getSlStepProfit()!=null))
+            throw new IllegalArgumentException("Nifty three-candle uses ₹3,000 daily loss per lot and no run profit/trailing rules");
+        // Normalize older subscriptions with the previous TOTAL ₹5,000 setting as well.
+        risk=new StrategyRiskSettings();risk.setAmountMode(StrategyRiskSettings.AmountMode.PER_LOT);
+        risk.setMaxLoss(BigDecimal.valueOf(NiftyThreeCandleRules.DAILY_LOSS_PER_LOT).setScale(2));
         r.setRiskSettings(risk);r.setSource(NiftyThreeCandleRules.SOURCE);
     }
     public void validateConfiguration(StrategyApplyRequest r){
@@ -94,7 +94,7 @@ public class NiftyThreeCandleStrategy implements StrategyEvaluator {
         try {
             var req=paper.open(r,signal,option,spot.getScripCode(),contracts);
             return StrategyApplyResponse.builder().templateId(META.id()).symbol("NIFTY").direction(signal.side()).status("triggered")
-                    .message("Paper "+signal.side()+" opened at option ask; fixed C3 spot stop and 1R target; ₹5,000 combined daily control. Charges use the app's estimate.")
+                    .message("Paper "+signal.side()+" opened at option ask; fixed C3 spot stop and 1R target; ₹3,000 daily loss control per lot. Charges use the app's estimate.")
                     .tradeRequest(req).breakoutClose(q.getLastTradedPrice()).build();
         } catch(IllegalStateException waiting){return waitFor(waiting.getMessage());}
     }

@@ -100,8 +100,8 @@ public class NiftyThreeCandlePaperBroker {
                 && t.getExitedAt()!=null && !t.getExitedAt().isBefore(signal.end())))
             throw new IllegalStateException("This pattern completed while the previous position was open");
         if(prior.stream().anyMatch(t->isToday(t,now.toLocalDate()) && lossExit(t.getExitReason()))
-                || realized(prior,now.toLocalDate())<=-NiftyThreeCandleRules.DAILY_LOSS)
-            throw new IllegalStateException("₹5,000 combined daily paper loss limit reached; entries stopped for today");
+                || realized(prior,now.toLocalDate())<=-NiftyThreeCandleRules.dailyLoss(r.getLots()))
+            throw new IllegalStateException("Daily paper loss limit of ₹"+NiftyThreeCandleRules.dailyLoss(r.getLots())+" (₹3,000 per lot) reached; entries stopped for today");
         var spot=spotQuote(spotCode);
         var book=quotes.getSnapshot(option.getScripCode()).orElse(null);
         var instant=clock.instant();
@@ -118,9 +118,9 @@ public class NiftyThreeCandlePaperBroker {
         if(!Objects.equals(option.getScripCode(),NiftyThreeCandleStrategy.contract(contracts,signal.side(),entry,now.toLocalDate()).getScripCode()))
             throw new IllegalStateException("ATM contract changed; waiting for its exact book");
         if(!signal.crossed(entry) || (signal.pe()?entry>=signal.stop():entry<=signal.stop()))throw new IllegalStateException("Waiting for the spot breakout");
-        long qty=option.getLotSize();
+        long qty=Math.multiplyExact((long)option.getLotSize(),r.getLots());
         if(book.getAskQuantity()==null || !Double.isFinite(book.getAskQuantity()) || book.getAskQuantity()<qty)
-            throw new IllegalStateException("Paper entry requires one lot displayed at the ask");
+            throw new IllegalStateException("Paper entry requires all "+r.getLots()+" lots displayed at the ask");
         var trigger=new TriggerRequest();trigger.setUserId(r.getUserId());trigger.setBrokerCredentialsId(r.getBrokerCredentialsId());
         runs.attach(trigger);
         if(trigger.getStrategyRunId()==null)throw new IllegalStateException("A tracked strategy run is required for paper entries");
@@ -130,10 +130,14 @@ public class NiftyThreeCandlePaperBroker {
             if(sub==null || !Objects.equals(sub.getAppUserId(),r.getUserId()) || !Objects.equals(sub.getBrokerCredentialsId(),r.getBrokerCredentialsId())
                     || !NiftyThreeCandleRules.TEMPLATE.equals(sub.getTemplateId()) || !List.of("ACTIVE","TRIGGERED").contains(sub.getStatus()))
                 throw new IllegalStateException("Strategy subscription paused or cancelled before entry");
+            if(!Objects.equals(sub.getLots(),r.getLots()))
+                throw new IllegalStateException("Strategy lot sizing changed before entry; waiting for the updated configuration");
         }
         var run=em.find(StrategyRun.class,trigger.getStrategyRunId(),LockModeType.PESSIMISTIC_WRITE);
         if(run==null || !"OPEN".equals(run.getStatus()) || !Objects.equals(run.getAppUserId(),r.getUserId())
                 || !Objects.equals(run.getBrokerCredentialsId(),r.getBrokerCredentialsId()))throw new IllegalStateException("Strategy run is closing or closed");
+        run.setLots(r.getLots());
+        run.setRiskSettings(r.getRiskSettings());
         var fillInstant=clock.instant();
         if(!signal.inWindow(LocalDateTime.ofInstant(fillInstant,NiftyThreeCandleRules.IST)))
             throw new IllegalStateException("The fourth-candle entry window has expired");
@@ -142,7 +146,7 @@ public class NiftyThreeCandlePaperBroker {
         var req=TriggerTradeRequestEntity.builder().strategyRunId(trigger.getStrategyRunId()).appUserId(r.getUserId()).brokerCredentialsId(r.getBrokerCredentialsId())
                 .symbol("NIFTY").scripCode(option.getScripCode()).exchange(option.getExchange()).instrumentType(option.getInstrumentType())
                 .strikePrice(option.getStrikePrice()).optionType(signal.side()).expiry(option.getExpiry()).entryAction("BUY")
-                .quantity(qty).lots(1).entryPrice(entry).stopLoss(signal.stop()).target1(signal.target(entry)).tslEnabled(false)
+                .quantity(qty).lots(r.getLots()).entryPrice(entry).stopLoss(signal.stop()).target1(signal.target(entry)).tslEnabled(false)
                 .useSpotPrice(true).useSpotForEntry(true).useSpotForSl(true).useSpotForTarget(true).spotScripCode(spotCode)
                 .intraday(true).source(NiftyThreeCandleRules.SOURCE).status(TriggeredTradeStatus.EXECUTED).createdAt(now)
                 .reason("NIFTY_3C_PAPER_ASK_FILL").comment("signal="+signal.key()+"; colourRunStart="+signal.colourRunStart()+"; option ask fill; CE researched / PE mirrored; fees="+"legacy-option-lot-estimate").build();
@@ -150,7 +154,7 @@ public class NiftyThreeCandlePaperBroker {
         var trade=TriggeredTradeSetupEntity.builder().strategyRunId(trigger.getStrategyRunId()).triggerRequestId(req.getId())
                 .appUserId(r.getUserId()).brokerCredentialsId(r.getBrokerCredentialsId()).symbol("NIFTY").scripCode(option.getScripCode())
                 .exchange(option.getExchange()).instrumentType(option.getInstrumentType()).strikePrice(option.getStrikePrice()).optionType(signal.side()).expiry(option.getExpiry())
-                .quantity(qty).lots(1).originalLots(1).entryAction("BUY").entryPrice(entry).actualEntryPrice(book.getBestAsk())
+                .quantity(qty).lots(r.getLots()).originalLots(r.getLots()).entryAction("BUY").entryPrice(entry).actualEntryPrice(book.getBestAsk())
                 .stopLoss(signal.stop()).target1(signal.target(entry)).tslEnabled(false).useSpotPrice(true).useSpotForEntry(true).useSpotForSl(true).useSpotForTarget(true)
                 .spotScripCode(spotCode).intraday(true).source(NiftyThreeCandleRules.SOURCE).status(TriggeredTradeStatus.EXECUTED)
                 .triggeredAt(now).entryAt(now).orderId("SIM-N3C-"+UUID.randomUUID()).reason(req.getReason()).comment(req.getComment()).build();
@@ -204,7 +208,7 @@ public class NiftyThreeCandlePaperBroker {
         if(reason==null && (t.getEntryAt().toLocalDate().isBefore(now.toLocalDate()) || !now.toLocalTime().isBefore(LocalTime.of(15,30))))
             reason="NIFTY_3C_SESSION_CLOSE";
         if(NiftyThreeCandleRules.freshBook(book,instant,t.getScripCode())
-                && realized(owned(t.getAppUserId(),t.getBrokerCredentialsId()),now.toLocalDate())+netAt(t,book.getBestBid())<=-NiftyThreeCandleRules.DAILY_LOSS)
+                && realized(owned(t.getAppUserId(),t.getBrokerCredentialsId()),now.toLocalDate())+netAt(t,book.getBestBid())<=-NiftyThreeCandleRules.dailyLoss(t.getOriginalLots()!=null?t.getOriginalLots():t.getLots()))
             return "NIFTY_3C_DAILY_LOSS";
         if(reason!=null || !freshSpot(spot,instant,t.getSpotScripCode()))return reason;
         double p=spot.getLastTradedPrice();boolean pe="PE".equals(t.getOptionType());

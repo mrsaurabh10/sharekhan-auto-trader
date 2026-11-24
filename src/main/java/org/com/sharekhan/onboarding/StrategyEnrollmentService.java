@@ -31,6 +31,7 @@ public class StrategyEnrollmentService {
     public StrategySubscriptionEntity enroll(StrategyApplyRequest request, String templateId,
                                               String symbol, String source) {
         boolean stockMover = Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(templateId);
+        boolean niftyThree = org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(templateId);
         boolean straddle = org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.TEMPLATE_ID.equalsIgnoreCase(templateId);
         var profitTarget = straddle ? org.com.sharekhan.strategy.straddle.ExpiryStraddleRules.profitTarget(request.getProfitTargetPerLot()) : null;
         if (stockMover) Stock0925MoverAtrBreakoutStrategy.validateInvestment(request);
@@ -48,6 +49,7 @@ public class StrategyEnrollmentService {
             if ("PAUSED".equals(subscription.getStatus()))
                 throw new IllegalArgumentException("This strategy is paused. Resume the existing subscription to keep its settings and history.");
             subscription.setRiskSettings(risk);
+            if (niftyThree) subscription.setLots(request.getLots());
             if (straddle) {
                 subscription.setProfitTargetPerLot(profitTarget);
                 subscription.setLots(request.getLots());

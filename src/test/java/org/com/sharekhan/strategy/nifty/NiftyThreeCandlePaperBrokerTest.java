@@ -104,6 +104,33 @@ class NiftyThreeCandlePaperBrokerTest {
         assertEquals("BUY",t.getEntryAction());assertEquals("CE",t.getOptionType());assertTrue(t.getOrderId().startsWith("SIM-N3C-"));
         verify(em).find(BrokerCredentialsEntity.class,2L,LockModeType.PESSIMISTIC_WRITE);verify(runs).attach(any());
     }
+    @Test void multipleLotsRequireFullDepthAndPersistCorrectQuantity(){
+        r.setLots(3);
+        assertThrows(IllegalStateException.class,this::open);
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,195,195,instant)));
+        var req=open();assertEquals(195L,req.getQuantity());assertEquals(3,req.getLots());
+        var capture=org.mockito.ArgumentCaptor.forClass(TriggeredTradeSetupEntity.class);verify(trades).saveAndFlush(capture.capture());
+        assertEquals(195L,capture.getValue().getQuantity());assertEquals(3,capture.getValue().getOriginalLots());
+    }
+    @Test void dailyLossScalesWithFilledLotsAndIncludesEarlierRealizedLosses(){
+        var prior=earlierFill("PE",now.minusMinutes(20));prior.setActualEntryPrice(150d);prior.setExitPrice(120d);
+        var t=position();t.setLots(2);t.setOriginalLots(2);t.setQuantity(130L);t.setActualEntryPrice(130d);
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,130,130,instant)));
+        paper.evaluate(22L);assertNull(t.getExitReason()); // combined net is below ₹6,000 loss
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(95,96,129,130,instant)));
+        paper.evaluate(22L);assertEquals("NIFTY_3C_DAILY_LOSS",t.getExitReason()); // threshold crossed; insufficient full exit depth
+        assertEquals(TriggeredTradeStatus.EXECUTED,t.getStatus());
+        when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,130,130,instant)));
+        paper.evaluate(22L);assertEquals(TriggeredTradeStatus.EXITED_SUCCESS,t.getStatus());
+        assertEquals(100,t.getExitPrice());
+        r.setLots(10);assertThrows(IllegalStateException.class,this::open); // resizing cannot clear the daily latch
+    }
+    @Test void entryDailyLossThresholdUsesConfiguredLots(){
+        var prior=earlierFill("PE",now.minusMinutes(20));prior.setActualEntryPrice(160d);prior.setExitPrice(100d);
+        assertThrows(IllegalStateException.class,this::open); // > ₹3,000
+        r.setLots(2);when(quotes.getSnapshot(123)).thenReturn(Optional.of(book(100,101,130,130,instant)));
+        assertDoesNotThrow(this::open); // < ₹6,000, with no prior daily-loss exit latch
+    }
     @Test void mirroredPeIsStillBoughtAndUsesDownsideSpotTarget(){
         var pe=NiftyThreeCandleStrategyTest.option(123,"PE","10/11/2026",23000);
         var s=new NiftyThreeCandleRules.Signal("PE",signal.end(),23003,23020,23000,23001);
@@ -178,6 +205,13 @@ class NiftyThreeCandlePaperBrokerTest {
         r.setSubscriptionId(null);
         when(em.find(StrategyRun.class,"run-1",LockModeType.PESSIMISTIC_WRITE)).thenReturn(StrategyRun.builder().id("run-1").appUserId(1L).brokerCredentialsId(2L).status("CLOSING").build());
         assertThrows(IllegalStateException.class,this::open);verify(requests,never()).save(any());
+    }
+    @Test void subscriptionResizeCannotRaceIntoAnEntryWithTheOldQuantity(){
+        r.setSubscriptionId(8L);
+        when(em.find(StrategySubscriptionEntity.class,8L,LockModeType.PESSIMISTIC_WRITE)).thenReturn(StrategySubscriptionEntity.builder()
+                .appUserId(1L).brokerCredentialsId(2L).templateId(NiftyThreeCandleRules.TEMPLATE).lots(2).status("ACTIVE").build());
+        assertTrue(assertThrows(IllegalStateException.class,this::open).getMessage().contains("sizing changed"));
+        verify(requests,never()).save(any());
     }
     @Test void stopUsesCurrentSpotTickAndSellsBidWithoutWaitingForCandleClose(){
         var t=position();when(quotes.getSnapshot(20000)).thenReturn(Optional.of(spot(22979)));

@@ -82,7 +82,11 @@ public class UserTradingAccess {
     public void scope(StrategyApplyRequest request) {
         if (current.isAdmin()) return;
         request.setUserId(current.requireAppUserId());
-        requireReady(request.getUserId(), request.getBrokerCredentialsId());
+        if(org.com.sharekhan.strategy.nifty.NiftyThreeCandleRules.TEMPLATE.equalsIgnoreCase(request.getTemplateId())) {
+            var broker=owned(request.getBrokerCredentialsId());
+            if(!Boolean.TRUE.equals(broker.getActive()) || !"SIMULATOR".equalsIgnoreCase(broker.getBrokerName()))
+                throw new ResponseStatusException(BAD_REQUEST,"Choose an active owned Simulator account");
+        } else requireReady(request.getUserId(), request.getBrokerCredentialsId());
         request.setSource("strategy:" + request.getTemplateId());
         if (org.com.sharekhan.strategy.Stock0925MoverAtrBreakoutStrategy.TEMPLATE_ID.equalsIgnoreCase(request.getTemplateId())) {
             try {

@@ -50,19 +50,24 @@
   }
   const orderColumns = [['Instrument', 'symbol'], ['Side', r=>r.entryAction || 'BUY'], ['Exchange','exchange'], ['Quantity', row => row.lots ? window.StrategyRunView.signedQuantity(row,row.lots)+' lots' : window.StrategyRunView.signedQuantity(row)], ['Entry ₹', 'entryPrice'], ['Stop-loss ₹','stopLoss'], ['Target ₹','target1'], ['Status', row => window.StrategyRunView?.statusTag(row.status || 'PENDING',row.reason) || badge(row.status || 'PENDING')], ['Source', r=>window.StrategyRunView?.sourceTag(r.source) || r.source || 'Unspecified']];
   function readyBrokers() { return state.brokers.filter(b => ['Sharekhan','Dhan','MStock'].includes(b.brokerName) && b.connected && b.active && b.tradingEnabled); }
+  function readyStrategyBrokers() {
+    return $('#subscriptionForm').elements.templateId.value==='NIFTY_THREE_CANDLE_ATM'
+      ? state.brokers.filter(b=>String(b.brokerName).toUpperCase()==='SIMULATOR' && b.active)
+      : readyBrokers();
+  }
   function brokerLabel(b) { return b.brokerName + ' · ' + (b.clientCode || 'Account ' + b.id); }
   function refreshSelectors() {
     for (const selector of ['#orderBroker', '#strategyBroker']) {
       const el = $(selector), previous = el.value; el.replaceChildren();
-      el.append(new Option(readyBrokers().length ? 'Choose a broker account' : 'Connect a broker and enable trading first', ''));
-      const brokers=readyBrokers();
+      const brokers=selector==='#strategyBroker'?readyStrategyBrokers():readyBrokers();
+      el.append(new Option(brokers.length ? 'Choose a broker account' : 'No eligible broker accounts configured', ''));
       brokers.forEach(b => el.append(new Option(brokerLabel(b), b.id, brokers.length===1)));
       el.value=brokers.some(b=>String(b.id)===previous) ? previous : brokers.length===1 ? String(brokers[0].id) : '';
     }
     const ab=$('#analyticsBroker'); const selected=ab.value; ab.replaceChildren(new Option('All my brokers',''), ...state.brokers.map(b=>new Option(brokerLabel(b),b.id))); ab.value=selected;
-    $('#strategyGate').hidden = readyBrokers().length > 0;
-    $('#strategyDialogGate').hidden=readyBrokers().length > 0;
-    $('#subscriptionForm button[type=submit]').disabled=!readyBrokers().length;
+    $('#strategyGate').hidden = readyBrokers().length > 0 || state.brokers.some(b=>String(b.brokerName).toUpperCase()==='SIMULATOR' && b.active);
+    $('#strategyDialogGate').hidden=readyStrategyBrokers().length > 0;
+    $('#subscriptionForm button[type=submit]').disabled=!readyStrategyBrokers().length;
     $('#orderForm button[type=submit]').disabled = !readyBrokers().length;
     $('#orderGate').textContent = readyBrokers().length ? '' : 'Connect a broker and enable trading in Brokers to continue.';
   }
@@ -158,7 +163,7 @@
       const el = button('Configure subscription →',async () => {
         window.StrategyRunView?.riskForm($('#subscriptionRunRisk'));
         window.StrategyRunView?.resetRisk($('#subscriptionRunRisk'));
-        const f = $('#subscriptionForm'); f.reset(); refreshSelectors(); $('#strategyFormError').hidden=true; f.elements.templateId.value=template.id;
+        const f = $('#subscriptionForm'); f.reset(); f.elements.templateId.value=template.id; refreshSelectors(); $('#strategyFormError').hidden=true;
         const stockMover = template.id === 'STOCK_0925_MOVER_ATR_BREAKOUT';
         const naturalGas = ['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(template.id);
         const adxDmi = template.id === 'ADX_DMI_FIXED_PARTIALS';
@@ -177,8 +182,9 @@
           $('#subscriptionRunRisk').querySelector('[data-risk-field=maxLoss]').value='2500';
         }
         const averaging = template.id === 'MCX_NATURALGAS_TREND_AVERAGING';
-        f.elements.lots.readOnly = averaging || niftyThree || adxDmi;
+        f.elements.lots.readOnly = averaging || adxDmi;
         window.StrategyRunView.averagingHelp($('#subscriptionRunRisk'),averaging);
+        window.StrategyRunView.niftyThreeHelp($('#subscriptionRunRisk'),niftyThree);
         $('#subscriptionRunRisk').querySelectorAll('[data-risk-field]').forEach(field=>{field.readOnly=averaging || niftyThree || adxDmi;if(field.tagName==='SELECT')field.disabled=averaging || niftyThree || adxDmi;});
         if (adxDmi) f.elements.lots.value='3';
         if (averaging) {
@@ -188,7 +194,8 @@
         }
         if (niftyThree) {
           f.elements.lots.value='1';
-          $('#subscriptionRunRisk').querySelector('[data-risk-field=maxLoss]').value='5000';
+          $('#subscriptionRunRisk').querySelector('[data-risk-field=maxLoss]').value='3000';
+          $('#subscriptionRunRisk').querySelector('[data-risk-field=amountMode]').value='PER_LOT';
         }
         $('#subscriptionLotsRow').hidden = stockMover;
         f.elements.lots.disabled = stockMover;
@@ -202,6 +209,9 @@
     table($('#subscriptions'),[['Strategy','templateId'],['Broker',r=>{const b=state.brokers.find(b=>b.id===r.brokerCredentialsId);return b ? brokerLabel(b) : 'Account '+r.brokerCredentialsId;}],['Instruments','symbol'],['Size / investment',r=>r.investmentPerStock != null ? '₹'+r.investmentPerStock+' / stock' : r.lots+(r.profitTargetPerLot ? ' lots · profit target ₹'+r.profitTargetPerLot+' / lot / session (₹'+(r.profitTargetPerLot*r.lots).toFixed(2)+' total)' : '')],['Status',r=>badge(r.status,['ACTIVE','TRIGGERED'].includes(r.status))],['Latest update','lastMessage']],state.subscriptions,(row,td)=>{
       if (['ACTIVE','TRIGGERED','PAUSED'].includes(row.status)) {
         const paused = row.status === 'PAUSED';
+        if(row.templateId==='NIFTY_THREE_CANDLE_ATM' && !paused)td.append(button('Change lots',async()=>{
+          if(await window.StrategyRunView.resizeNifty(row,api)){await loadStrategies();notify('Lots saved for future entries. Daily loss limit is ₹3,000 per lot.');}
+        }));
         td.append(button(paused ? 'Resume' : 'Pause',async()=>{
           if (!await confirmAction(paused ? 'Resume scheduled evaluations with the saved settings? Existing daily entry limits still apply.' : 'Pause future strategy evaluations? Existing orders and positions continue to be managed. An entry already being submitted may still complete.')) return;
           await api('/api/strategies/subscriptions/'+row.id+(paused ? '/resume' : '/pause'),'POST',{});
@@ -237,8 +247,9 @@
     if (body.templateId === 'NIFTY_THREE_CANDLE_ATM') {
       const broker=state.brokers.find(b=>b.id===body.brokerCredentialsId);
       if (String(broker?.brokerName || '').toUpperCase() !== 'SIMULATOR') throw new Error('Choose a Simulator account for Nifty Three Candles.');
-      body.symbol='NIFTY';body.intraday=true;body.lots=1;
-      body.riskSettings={amountMode:'TOTAL',maxLoss:5000};
+      body.symbol='NIFTY';body.intraday=true;
+      if (!Number.isInteger(body.lots) || body.lots<1 || body.lots>1000) throw new Error('Choose between 1 and 1000 lots.');
+      body.riskSettings={amountMode:'PER_LOT',maxLoss:3000};
     }
     if (['MCX_NATURALGAS_ATM_BREAKOUT','MCX_NATURALGAS_SCALPING','MCX_NATURALGAS_TREND_AVERAGING'].includes(body.templateId)) {
       body.symbol='NATURALGAS'; body.intraday=true;

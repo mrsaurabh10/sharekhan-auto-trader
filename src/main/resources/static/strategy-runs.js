@@ -61,6 +61,7 @@
           summary.append(sources);
           details.append(node('p','Run '+run.id.slice(0,10)+' · '+run.symbol+' · broker #'+run.brokerCredentialsId+' · '+pnl.openPositions+' open · '+view.requests+' requests','muted'));
           const averaging=run.templateId==='MCX_NATURALGAS_TREND_AVERAGING';
+          const niftyThree=run.templateId==='NIFTY_THREE_CANDLE_ATM';
           const values=node('div',null,'run-pnl');
           for(const [label,value] of [['Realized gross',pnl.realizedGross],['Open gross',pnl.openGross],['Combined gross',pnl.totalGross],[averaging?'Paper cost reserve':'Estimated charges',pnl.estimatedCosts],[averaging?'Paper net':'Estimated net',pnl.estimatedNet],['Peak gross',run.peakPnl],['Active stop floor',run.stopFloor]]) values.append(node('span',label+': '+money(value)));
           details.append(values);
@@ -68,7 +69,7 @@
           if(run.riskSettings) {
             const scale=run.riskSettings.amountMode==='PER_LOT' ? (run.lots||1) : 1;
             const rules=fields.filter(([key])=>run.riskSettings[key]!=null).map(([key,label])=>label+' '+money(run.riskSettings[key]*scale)).join(' · ');
-            details.append(node('p',(averaging?'Basket paper-net target / daily loss allowance (₹): ':'Run controls (total gross ₹): ')+rules,'muted'));
+            details.append(node('p',(niftyThree?'Daily paper-net loss control (total ₹): ':averaging?'Basket paper-net target / daily loss allowance (₹): ':'Run controls (total gross ₹): ')+rules,'muted'));
           }
           if(averaging)details.append(node('p',view.pnlBasis||'Paper cost reserve; not broker-reconciled MCX fees.','muted'));
           details.append(node('p',run.message||'','muted'));
@@ -111,6 +112,24 @@
       element.textContent=enabled?(element.tagName==='LEGEND'?'NG averaging: basket and daily controls':'₹60,000 capital including cost reserves; up to four lots, added one at a time. ₹1,250 paper-net basket target after a provisional ₹100 round-trip reserve per filled lot or higher recorded costs. ₹3,000 total daily loss allowance; profits do not replenish it. These Simulator settings are fixed for the trial.'):element.dataset.originalText;
     }
   }
+  async function resizeNifty(row,api) {
+    const value=window.prompt('Lots for future entries (1–1000). Daily loss limit is ₹3,000 × lots. Open positions keep their filled quantity.',String(row.lots || 1));
+    if(value===null)return false;
+    const lots=Number(value);
+    if(!Number.isInteger(lots) || lots<1 || lots>1000)throw new Error('Choose between 1 and 1000 lots.');
+    await api('/api/strategies/start','POST',{
+      templateId:row.templateId,symbol:'NIFTY',userId:row.appUserId,brokerCredentialsId:row.brokerCredentialsId,
+      source:row.source,lots,intraday:true,riskSettings:{amountMode:'PER_LOT',maxLoss:3000}
+    });
+    return true;
+  }
+  function niftyThreeHelp(container,enabled) {
+    if(!container)return;
+    for(const element of container.querySelectorAll('legend,small')) {
+      if(!element.dataset.originalText)element.dataset.originalText=element.textContent;
+      if(enabled)element.textContent=element.tagName==='LEGEND'?'Nifty daily loss control':'₹3,000 per lot per trading day across CE and PE, including estimated charges. Total daily limit = ₹3,000 × selected lots. Entries stop for the day once the limit is reached. Existing positions keep their filled quantity.';
+    }
+  }
   function readRisk(container) {
     if(!container)return null;const risk={};let enabled=false;
     for(const input of container.querySelectorAll('[data-risk-field]')) {
@@ -121,5 +140,5 @@
     return enabled?risk:null;
   }
   function resetRisk(container) {if(container)for(const input of container.querySelectorAll('[data-risk-field]'))if(input.tagName==='SELECT')input.value='TOTAL';else input.value='';}
-  window.StrategyRunView={mount,riskForm,averagingHelp,readRisk,resetRisk,sourceTag,statusTag,timestamp,signedQuantity};
+  window.StrategyRunView={mount,riskForm,averagingHelp,niftyThreeHelp,resizeNifty,readRisk,resetRisk,sourceTag,statusTag,timestamp,signedQuantity};
 })();

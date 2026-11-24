@@ -2417,18 +2417,19 @@
       const lotsInput = document.getElementById('strategyLots');
       const averaging = String((templateSelect && templateSelect.value) || '') === 'MCX_NATURALGAS_TREND_AVERAGING';
       if (lotsInput) {
-        lotsInput.readOnly=averaging || niftyThree || adxDmi;
+        lotsInput.readOnly=averaging || adxDmi;
         if(averaging){lotsInput.value='4';lotsInput.dataset.averagingDefault='true';}
         else if(lotsInput.dataset.averagingDefault){lotsInput.value='1';delete lotsInput.dataset.averagingDefault;}
       }
       window.StrategyRunView.averagingHelp(document.getElementById('adminRunRisk'),averaging);
+      window.StrategyRunView.niftyThreeHelp(document.getElementById('adminRunRisk'),niftyThree);
       document.querySelectorAll('#adminRunRisk [data-risk-field]').forEach(field=>{field.readOnly=averaging || niftyThree || adxDmi;if(field.tagName==='SELECT')field.disabled=averaging || niftyThree || adxDmi;});
       if(averaging){
         document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='3000';
         document.querySelector('#adminRunRisk [data-risk-field=profitTarget]').value='1250';
       }
       if(adxDmi && lotsInput)lotsInput.value='3';
-      if(niftyThree){symbolInput.value='NIFTY';if(lotsInput)lotsInput.value='1';document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='5000';}
+      if(niftyThree){symbolInput.value='NIFTY';if(lotsInput)lotsInput.value='1';document.querySelector('#adminRunRisk [data-risk-field=maxLoss]').value='3000';if(mode)mode.value='PER_LOT';}
       const investmentRow = document.getElementById('strategyInvestmentRow');
       if (investmentRow) investmentRow.style.display = isStockMover() ? '' : 'none';
       if (lotsInput && (btp || isStockMover())) lotsInput.closest('.form-row').style.display = 'none';
@@ -2560,6 +2561,20 @@
             finally { toggle.disabled = false; }
           });
           action.appendChild(toggle);
+          if(row.templateId==='NIFTY_THREE_CANDLE_ATM' && !paused){
+            const resize=document.createElement('button');resize.className='btn small';resize.textContent='Change lots';
+            resize.addEventListener('click',async()=>{
+              resize.disabled=true;
+              try {
+                const changed=await window.StrategyRunView.resizeNifty(row,async(url,method,body)=>{
+                  await ensureCsrf();return fetchJson(url,{method,body:JSON.stringify(body)});
+                });
+                if(changed)await loadStrategySubscriptions(uid);
+              }catch(error){alert(error.message || 'Unable to change lots.');}
+              finally{resize.disabled=false;}
+            });
+            action.appendChild(resize);
+          }
           const manualFno = ['FNO_VWAP_RECLAIM_BASE_CE', 'FNO_VWAP_RECLAIM_BASE_PE', 'FNO_ATR_PREVIOUS_DAY_CE', 'FNO_ATR_PREVIOUS_DAY_PE'].includes(String(row.templateId || '').toUpperCase());
           if (manualFno) {
             const update = document.createElement('button');
