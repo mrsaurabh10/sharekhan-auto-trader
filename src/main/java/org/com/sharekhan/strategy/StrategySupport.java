@@ -214,7 +214,12 @@ public class StrategySupport {
             // Existing locally captured MStock values win over bootstrap history at the same timestamp.
             List<StrategyCandle> combined = new ArrayList<>(historical);
             combined.addAll(completed);
+            int before = completed.size();
+            long usableHistorical = historical.stream().filter(c -> StrategyCandleHistoryService.usable(c, now)).count();
             completed = candleHistoryService.mergeAndSave(key, combined, now);
+            log.info("FNO_INDICATOR_HISTORY | instrument={} | downloaded={} | usable={} | rejected={} | before={} | merged={} | required={} | ready={}",
+                    key, historical.size(), usableHistorical, historical.size() - usableHistorical,
+                    before, completed.size(), minimumCandles, completed.size() >= minimumCandles);
         }
         indicatorHistoryAttempts.entrySet().removeIf(entry -> entry.getValue().toLocalDate().isBefore(now.toLocalDate()));
         return new CandleLoad(completed, completed.stream().anyMatch(StrategyCandle::hasVolume), intraday.reason());

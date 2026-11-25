@@ -92,6 +92,38 @@ class StrategyCandleHistoryServiceTest {
         assertThat(history.mergeAndSave("NC:20000", List.of(), now).get(249).time()).isEqualTo(LocalTime.of(15, 25));
     }
 
+    @Test
+    void irregularSharekhanHistoryBootstrapsAtrBeforeOpeningWithoutAcceptingFormingOrOffGridBars() {
+        LocalDateTime now=LocalDateTime.of(2026,11,25,9,25);
+        var raw=new org.json.JSONArray();
+        for (int day:new int[]{23,20}) {
+            for (int i=0;i<75;i++) {
+                var end=LocalTime.of(9,19,57).plusMinutes(5L*i);
+                raw.put(new org.json.JSONObject().put("tradeDate",day+"/11/2026").put("tradeTime",end.toString())
+                        .put("open",590).put("high",592).put("low",589).put("close",591).put("qty",1000));
+            }
+        }
+        for (String time:List.of("09:19:52","09:24:54","09:29:51","09:34:57","15:28:03")) {
+            raw.put(new org.json.JSONObject().put("tradeDate","25/11/2026").put("tradeTime",time)
+                    .put("open",590).put("high",592).put("low",589).put("close",591));
+        }
+        var parser=new org.com.sharekhan.service.SharekhanHistoricalService(null,null,null,null);
+        List<org.com.sharekhan.service.SharekhanHistoricalService.HistoricalCandle> parsed=
+                org.springframework.test.util.ReflectionTestUtils.invokeMethod(parser,"parseHistoricalCandles",new org.json.JSONObject().put("data",raw));
+        var normalized=parsed.stream().map(row -> {
+            org.com.sharekhan.service.SharekhanHistoricalService.HistoricalCandle n=
+                    org.springframework.test.util.ReflectionTestUtils.invokeMethod(parser,"normalizeFiveMinuteCandle",row);
+            return new StrategyCandle(n.date(),n.time(),n.open(),n.high(),n.low(),n.close(),n.volume());
+        }).toList();
+        var complete=history.mergeAndSave("NC:467",normalized,now);
+        assertThat(complete).hasSize(152);
+        assertThat(complete).allMatch(c -> c.date().atTime(c.time()).plusMinutes(5).compareTo(now)<=0);
+        assertThat(complete.get(151).date().atTime(complete.get(151).time())).isEqualTo(now.minusMinutes(5));
+        entityManager.flush();entityManager.clear();
+        var afterRestart=new StrategyCandleHistoryService(repository).mergeAndSave("NC:467",List.of(),now);
+        assertThat(afterRestart).containsExactlyElementsOf(complete);
+    }
+
     private List<StrategyCandle> session(LocalDate date, int count) {
         List<StrategyCandle> result = new ArrayList<>();
         for (int i = 0; i < count; i++) result.add(candle(date, LocalTime.of(9, 15).plusMinutes(i * 5L), 100 + i));

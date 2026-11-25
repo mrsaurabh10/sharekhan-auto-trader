@@ -83,6 +83,33 @@ class SharekhanHistoricalServiceTest {
         assertThat(rows).extracting(SharekhanHistoricalService.HistoricalCandle::volume).containsExactly(1234L,456L,null);
         assertThat(rows).extracting(SharekhanHistoricalService.HistoricalCandle::time).containsExactly(LocalTime.of(9,0),LocalTime.of(9,5),LocalTime.of(9,10));
     }
+    @Test void convertsIrregularFinalMinuteTradeTimesButPreservesStartsAndUnknownBoundaries() throws Exception {
+        var scripts=mock(ScriptMasterRepository.class);var tokens=mock(TokenStoreService.class);var crypto=mock(CryptoService.class);
+        when(scripts.findByScripCode(467)).thenReturn(ScriptMasterEntity.builder().exchange("NC").scripCode(467).build());
+        when(tokens.getFirstNonExpiredTokenInfo(Broker.SHAREKHAN)).thenReturn(new TokenStoreService.TokenInfo("test-token","test-key"));
+        when(crypto.decrypt("test-key")).thenReturn("test-key");
+        var service=spy(new SharekhanHistoricalService(scripts,tokens,crypto,new SharekhanProperties()));
+        var times=java.util.List.of("09:19:57","09:24:52","09:19:51","09:24:54","09:29:00","09:34:59.123","09:15:00","15:28:03");
+        var raw=new org.json.JSONArray();
+        for (String time:times) raw.put(new JSONObject().put("tradeDate","23/11/2026").put("tradeTime",time)
+                .put("open",589.1).put("high",594.25).put("low",587.7).put("close",589.7).put("qty",90786));
+        doReturn(new JSONObject().put("data",raw)).when(service).requestHistorical("NC","467","5minute","test-key","test-token");
+        var rows=service.getRecentHistoricalCandles(467,"5minute");
+        assertThat(rows).extracting(SharekhanHistoricalService.HistoricalCandle::time).containsExactly(
+                LocalTime.of(9,15),LocalTime.of(9,20),LocalTime.of(9,15),LocalTime.of(9,20),
+                LocalTime.of(9,25),LocalTime.of(9,30),LocalTime.of(9,15),LocalTime.of(15,28,3));
+        assertThat(rows).allSatisfy(row -> {
+            assertThat(row.date()).isEqualTo(LocalDate.of(2026,11,23));
+            assertThat(row.open()).isEqualTo(589.1);
+            assertThat(row.high()).isEqualTo(594.25);
+            assertThat(row.low()).isEqualTo(587.7);
+            assertThat(row.close()).isEqualTo(589.7);
+            assertThat(row.volume()).isEqualTo(90786L);
+        });
+        assertThat(service.getRecentRawHistoricalCandles(467,"5minute"))
+                .extracting(row -> row.time().toString()).containsExactlyElementsOf(times.stream().map(LocalTime::parse).map(LocalTime::toString).toList());
+    }
+
     @Test void rawHistoryRetainsExactProviderBoundaryAndEndStamps() throws Exception {
         var scripts=mock(ScriptMasterRepository.class);var tokens=mock(TokenStoreService.class);var crypto=mock(CryptoService.class);
         when(scripts.findByScripCode(42)).thenReturn(ScriptMasterEntity.builder().exchange("MX").scripCode(42).build());

@@ -194,11 +194,13 @@ public class SharekhanHistoricalService {
         }
     }
 
-    /** Sharekhan can stamp five-minute bars at their last second; strategy candles use interval starts. */
+    /** Sharekhan can stamp a bar at its last trade in the final minute, rather than exactly :59.
+     * Preserve aligned starts and other timestamps; the consumer still validates completed intervals.
+     */
     private HistoricalCandle normalizeFiveMinuteCandle(HistoricalCandle candle) {
         LocalTime time = candle.time();
-        if (time != null && time.getMinute() % 5 == 4 && time.getSecond() == 59 && time.getNano() == 0) {
-            LocalTime start = time.plusSeconds(1).minusMinutes(5);
+        if (time != null && time.getMinute() % 5 == 4) {
+            LocalTime start = time.minusMinutes(4).withSecond(0).withNano(0);
             return new HistoricalCandle(candle.date(), start, candle.open(), candle.high(), candle.low(), candle.close(), candle.volume());
         }
         return candle;

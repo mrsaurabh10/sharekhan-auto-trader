@@ -43,3 +43,20 @@ managed schemas, apply the additive DDL through the normal approved release
 process before enabling this version. Do not delete snapshot rows during the
 trading day or seed today's row from a current leaderboard. No retention cleanup
 or production data change is part of this fix.
+
+## Five-minute indicator history timestamps
+
+Sharekhan historical bars may carry the final trade time within the interval's
+last minute (for example `09:19:57` or `09:24:52`), rather than exactly `:59`.
+The normalized five-minute history path maps those final-minute stamps to the
+interval start. Already aligned starts, raw-history responses and other intervals
+retain their existing behavior. Other off-grid stamps are left for consumers to
+validate; this is not a general timestamp-rounding rule.
+
+The completed-history cache still rejects unfinished, off-session, invalid OHLC
+and off-grid candles and deduplicates intervals. FNO readiness still requires 76
+completed candles for ATR75 plus the preceding close. Under-sized caches bootstrap
+historical bars before qualification; no gate or entry rule is relaxed.
+`FNO_INDICATOR_HISTORY` logs downloaded, usable, rejected, before/merged and required
+counts on each bootstrap attempt. No credentials or provider response bodies are
+included. Accepted history persists through the existing PostgreSQL cache.
