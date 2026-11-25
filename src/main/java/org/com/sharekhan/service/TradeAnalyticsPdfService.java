@@ -148,7 +148,7 @@ public class TradeAnalyticsPdfService {
         }
 
         private static final PDRectangle TABLE_PAGE = new PDRectangle(PDRectangle.A4.getHeight(), PDRectangle.A4.getWidth());
-        private static final float[] COLUMNS = {32, 85, 80, 100, 30, 48, 48, 75, 75, 60, 54, 75};
+        private static final float[] COLUMNS = {52, 75, 70, 100, 30, 48, 48, 75, 75, 60, 54, 75};
         private static final List<String> HEADERS = List.of("ID", "Symbol", "Source", "Side / status / reason", "Qty",
                 "Entry", "Exit", "Entered", "Exited", "Gross P&L", "Cost", "Effective P&L");
 

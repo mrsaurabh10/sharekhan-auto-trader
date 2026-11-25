@@ -22,7 +22,7 @@ class TradeAnalyticsPdfServiceTest {
         var day = LocalDate.of(2026, 11, 25);
         for (long i = 1; i <= 35; i++) {
             double pnl = i % 3 == 0 ? -300 : 200;
-            positions.add(new TradeAnalyticsReportData.Position(i, "NIFTY 25000 CE", "strategy-" + "long-source-".repeat(8),
+            positions.add(new TradeAnalyticsReportData.Position(11600 + i, "NIFTY 25000 CE", "strategy-" + "long-source-".repeat(8),
                     "BUY", "EXITED_SUCCESS", 75L, 100d, 110d, (i <= 25 ? day.minusDays(1) : day).atTime(9, (int)i), day.atTime(10, (int)i),
                     pnl, 20d, pnl - 20, "Target / stop loss filled"));
         }
@@ -42,12 +42,12 @@ class TradeAnalyticsPdfServiceTest {
         try (var pdf = Loader.loadPDF(bytes)) {
             assertThat(pdf.getNumberOfPages()).isGreaterThan(3);
             String text = new PDFTextStripper().getText(pdf);
-            assertThat(text).contains("Accuracy (win rate)", "Max drawdown", "#35", "Positions continued", "Effective P&L");
+            assertThat(text).contains("Accuracy (win rate)", "Max drawdown", "#11635", "Positions continued", "Effective P&L");
             assertThat(text).contains("Entry date: 2026-11-24", "Entry date: 2026-11-25", "Date subtotal | Positions: 25", "Date subtotal | Positions: 10");
             assertThat(text).contains("Entry date: 2026-11-24 | Day P&L: 1,000.00 | Effective P&L: 500.00",
                     "Entry date: 2026-11-25 | Day P&L: 500.00 | Effective P&L: 300.00");
             assertThat(text.indexOf("Entry date: 2026-11-24")).isLessThan(text.indexOf("Entry date: 2026-11-25"));
-            assertThat(text.indexOf("#1 ")).isLessThan(text.indexOf("#25 "));
+            assertThat(text.indexOf("#11601 ")).isLessThan(text.indexOf("#11625 "));
             for (int i = 2; i <= pdf.getNumberOfPages(); i++) {
                 var stripper = new PDFTextStripper();
                 stripper.setStartPage(i); stripper.setEndPage(i);
