@@ -24,6 +24,7 @@ public class TradeAnalyticsController {
     private final TradeAnalyticsService tradeAnalyticsService;
     private final GeminiTradeInsightService geminiTradeInsightService;
     private final CurrentUserService currentUserService;
+    private final org.com.sharekhan.service.TradeAnalyticsPdfService pdfService;
 
     @GetMapping("/trades")
     public ResponseEntity<TradeAnalyticsResponse> getTradeAnalytics(
@@ -78,6 +79,30 @@ public class TradeAnalyticsController {
             response = geminiTradeInsightService.addNarrative(response);
         }
         return ResponseEntity.ok(response);
+    }
+
+    @GetMapping(value = "/trades/report.pdf", produces = "application/pdf")
+    public ResponseEntity<byte[]> downloadReport(
+            @RequestParam(name = "userId", required = false) Long userId,
+            @RequestParam(name = "from", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam(name = "to", required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to,
+            @RequestParam(name = "symbol", required = false) String symbol,
+            @RequestParam(name = "source", required = false) List<String> sources,
+            @RequestParam(name = "brokerCredentialsId", required = false) Long brokerCredentialsId,
+            @RequestParam(name = "intraday", required = false) Boolean intraday,
+            @RequestParam(name = "scope", required = false) String scope) throws java.io.IOException {
+        Long scopedUserId = currentUserService.scopedUserId(userId);
+        String analyticsScope = normalizeAnalyticsScopeForSession(scope);
+        var report = tradeAnalyticsService.getReportData(scopedUserId, from, to, symbol,
+                normalizeSources(sources), brokerCredentialsId, intraday, analyticsScope);
+        var filters = report.analytics().getFilters();
+        String filename = "trade-analytics-" + filters.getFrom() + "-to-" + filters.getTo() + ".pdf";
+        return ResponseEntity.ok()
+                .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
+                        org.springframework.http.ContentDisposition.attachment().filename(filename).build().toString())
+                .header(org.springframework.http.HttpHeaders.CACHE_CONTROL, "no-store")
+                .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
+                .body(pdfService.generate(report));
     }
 
     @GetMapping("/sources")

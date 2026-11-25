@@ -875,19 +875,7 @@
       if (refreshBtn) refreshBtn.disabled = true;
       if (geminiBtn) geminiBtn.disabled = true;
       await loadAnalyticsSourcesForUser(uid, analyticsScope);
-      const params = new URLSearchParams();
-      params.set('userId', uid);
-      params.set('scope', analyticsScope);
-      const from = (document.getElementById('analyticsFrom') || {}).value;
-      const to = (document.getElementById('analyticsTo') || {}).value;
-      const symbol = ((document.getElementById('analyticsSymbol') || {}).value || '').trim();
-      const sources = selectedAnalyticsSources();
-      const intraday = !!((document.getElementById('analyticsIntraday') || {}).checked);
-      if (from) params.set('from', from);
-      if (to) params.set('to', to);
-      if (symbol) params.set('symbol', symbol);
-      sources.forEach(function(source) { params.append('source', source); });
-      if (intraday) params.set('intraday', 'true');
+      const params = analyticsQueryParams(uid, analyticsScope);
       if (useGemini) params.set('ai', 'true');
       const data = await fetchJson('/api/analytics/trades?' + params.toString());
       renderAnalytics(data);
@@ -901,12 +889,64 @@
     }
   }
 
+  function analyticsQueryParams(uid, analyticsScope) {
+    const params = new URLSearchParams();
+    params.set('userId', uid);
+    params.set('scope', analyticsScope);
+    const from = (document.getElementById('analyticsFrom') || {}).value;
+    const to = (document.getElementById('analyticsTo') || {}).value;
+    const symbol = ((document.getElementById('analyticsSymbol') || {}).value || '').trim();
+    const sources = selectedAnalyticsSources();
+    const intraday = !!((document.getElementById('analyticsIntraday') || {}).checked);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    if (symbol) params.set('symbol', symbol);
+    sources.forEach(function(source) { params.append('source', source); });
+    if (intraday) params.set('intraday', 'true');
+    return params;
+  }
+
+  async function downloadAnalyticsPdf() {
+    const uid = window.selectedUserId;
+    if (!uid) return;
+    setDefaultAnalyticsDates();
+    const button = document.getElementById('analyticsPdfBtn');
+    const state = document.getElementById('analyticsState');
+    try {
+      if (button) button.disabled = true;
+      if (state) state.innerText = 'Generating PDF report...';
+      const params = analyticsQueryParams(uid, activeAnalyticsScope());
+      const response = await fetch('/api/analytics/trades/report.pdf?' + params.toString(), { credentials: 'same-origin' });
+      if (!response.ok || !(response.headers.get('Content-Type') || '').includes('application/pdf')) {
+        throw new Error('PDF download failed. Refresh your session and try again.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const filename = /filename="?([^";]+)"?/.exec(disposition);
+      link.href = url;
+      link.download = filename ? filename[1] : 'trade-analytics.pdf';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function() { URL.revokeObjectURL(url); }, 60000);
+      if (state) state.innerText = 'PDF report downloaded.';
+    } catch (error) {
+      if (state) state.innerText = error.message || 'Unable to download PDF report.';
+    } finally {
+      if (button) button.disabled = false;
+    }
+  }
+
   function refreshAnalyticsForSelectedUser() {
     if (window.selectedUserId) loadAnalyticsForUser(window.selectedUserId, false, activeAnalyticsScope()).catch(function(){});
   }
 
   function wireAnalytics() {
     setDefaultAnalyticsDates();
+    const pdfBtn = document.getElementById('analyticsPdfBtn');
+    if (pdfBtn) pdfBtn.addEventListener('click', downloadAnalyticsPdf);
     const btn = document.getElementById('analyticsRefreshBtn');
     if (btn) btn.addEventListener('click', refreshAnalyticsForSelectedUser);
     const geminiBtn = document.getElementById('analyticsGeminiBtn');

@@ -372,6 +372,37 @@ class TradeAnalyticsServiceTest {
         assertThat(summary.getFiveMinutePnl()).isEqualTo(600.0);
     }
 
+    @Test
+    void reportIncludesAllMatchingPositionsAndReconcilesNetPnl() {
+        var day = LocalDate.of(2026, 11, 25);
+        var trades = new java.util.ArrayList<TriggeredTradeSetupEntity>();
+        for (long i = 1; i <= 15; i++) {
+            var trade = closed(i, "NIFTY", i % 2 == 0 ? -100d : 200d, day.atTime(10, (int) i));
+            trade.setSource(i % 2 == 0 ? "alpha" : "beta");
+            trades.add(trade);
+        }
+        var excluded = closed(90L, "NIFTY", 9999d, day.atTime(11, 0));
+        excluded.setSource("unselected");
+        trades.add(excluded);
+        var outside = closed(91L, "NIFTY", 9999d, day.minusDays(1).atTime(11, 0));
+        outside.setSource("alpha");
+        trades.add(outside);
+        var open = open(92L, 75L, day.atTime(12, 0));
+        open.setSource("beta");
+        trades.add(open);
+        when(tradeRepository.findForAnalyticsByUserExcludingSimulator(1L, "Simulator", null, null, null, null))
+                .thenReturn(trades);
+        var report = service.getReportData(1L, day, day, null, List.of("alpha", "beta"), null, null, "own");
+        assertThat(report.positions()).hasSize(16);
+        assertThat(report.analytics().getRecentClosedTrades()).hasSize(10);
+        assertThat(report.positions()).extracting(TradeAnalyticsReportData.Position::id).doesNotContain(90L, 91L);
+        assertThat(report.positions().stream().filter(p -> p.pnl() != null).mapToDouble(TradeAnalyticsReportData.Position::pnl).sum())
+                .isEqualTo(report.analytics().getSummary().getRealizedPnl());
+        assertThat(report.positions().stream().filter(p -> p.effectivePnl() != null).mapToDouble(TradeAnalyticsReportData.Position::effectivePnl).sum())
+                .isCloseTo(report.analytics().getSummary().getEffectiveRealizedPnl(), org.assertj.core.data.Offset.offset(0.01));
+        assertThat(report.positions().stream().filter(p -> p.id() == 92L).findFirst().orElseThrow().pnl()).isNull();
+    }
+
     private TriggeredTradeSetupEntity closed(Long id, String symbol, Double pnl, LocalDateTime exitedAt) {
         return TriggeredTradeSetupEntity.builder()
                 .id(id)

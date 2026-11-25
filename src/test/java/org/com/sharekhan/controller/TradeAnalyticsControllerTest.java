@@ -25,12 +25,35 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 class TradeAnalyticsControllerTest {
     @Test
+    void pdfDownloadEnforcesSessionScopeAndPreservesAllFilters() throws Exception {
+        var service = mock(TradeAnalyticsService.class);
+        var currentUser = mock(CurrentUserService.class);
+        var pdf = mock(org.com.sharekhan.service.TradeAnalyticsPdfService.class);
+        when(currentUser.scopedUserId(99L)).thenReturn(7L);
+        var day = LocalDate.of(2026, 11, 25);
+        var report = new org.com.sharekhan.service.TradeAnalyticsReportData(
+                TradeAnalyticsResponse.builder().filters(TradeAnalyticsResponse.Filters.builder().from(day).to(day).build()).build(), List.of());
+        when(service.getReportData(7L, day, day, "NIFTY", List.of("alpha", "beta"), 11L, true, "own")).thenReturn(report);
+        when(pdf.generate(report)).thenReturn("%PDF-test".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+        var mvc = MockMvcBuilders.standaloneSetup(new TradeAnalyticsController(service,
+                mock(GeminiTradeInsightService.class), currentUser, pdf)).build();
+        mvc.perform(get("/api/analytics/trades/report.pdf").param("userId", "99").param("scope", "simulator")
+                        .param("from", day.toString()).param("to", day.toString()).param("symbol", "NIFTY")
+                        .param("source", " alpha,beta ", "alpha").param("brokerCredentialsId", "11").param("intraday", "true"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content().contentType("application/pdf"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Cache-Control", "no-store"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("Content-Disposition",
+                        "attachment; filename=\"trade-analytics-2026-11-25-to-2026-11-25.pdf\""));
+    }
+
+    @Test
     void returnsTradeAnalyticsResponseForQueryParams() throws Exception {
         TradeAnalyticsService service = mock(TradeAnalyticsService.class);
         GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
         CurrentUserService currentUserService = mock(CurrentUserService.class);
         when(currentUserService.scopedUserId(7L)).thenReturn(7L);
-        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService, new org.com.sharekhan.service.TradeAnalyticsPdfService());
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -103,7 +126,7 @@ class TradeAnalyticsControllerTest {
         GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
         CurrentUserService currentUserService = mock(CurrentUserService.class);
         when(currentUserService.scopedUserId(7L)).thenReturn(7L);
-        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService, new org.com.sharekhan.service.TradeAnalyticsPdfService());
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -143,7 +166,7 @@ class TradeAnalyticsControllerTest {
         CurrentUserService currentUserService = mock(CurrentUserService.class);
         when(currentUserService.scopedUserId(3L)).thenReturn(3L);
         when(currentUserService.isAdmin()).thenReturn(true);
-        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService, new org.com.sharekhan.service.TradeAnalyticsPdfService());
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -194,7 +217,7 @@ class TradeAnalyticsControllerTest {
         CurrentUserService currentUserService = mock(CurrentUserService.class);
         when(currentUserService.scopedUserId(7L)).thenReturn(7L);
         when(service.getAvailableSources(eq(7L), eq("own"))).thenReturn(List.of("api", "telegram"));
-        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService, new org.com.sharekhan.service.TradeAnalyticsPdfService());
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
@@ -216,7 +239,7 @@ class TradeAnalyticsControllerTest {
         GeminiTradeInsightService geminiTradeInsightService = mock(GeminiTradeInsightService.class);
         CurrentUserService currentUserService = mock(CurrentUserService.class);
         when(currentUserService.scopedUserId(7L)).thenReturn(7L);
-        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService);
+        TradeAnalyticsController controller = new TradeAnalyticsController(service, geminiTradeInsightService, currentUserService, new org.com.sharekhan.service.TradeAnalyticsPdfService());
         ObjectMapper objectMapper = new ObjectMapper()
                 .registerModule(new JavaTimeModule())
                 .disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);

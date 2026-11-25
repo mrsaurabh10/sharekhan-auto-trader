@@ -82,6 +82,18 @@ public class TradeAnalyticsService {
                                                        Long brokerCredentialsId,
                                                        Boolean intraday,
                                                        String scope) {
+        return buildReportData(userId, from, to, symbol, source, sources, brokerCredentialsId, intraday, scope, false).analytics();
+    }
+
+    public TradeAnalyticsReportData getReportData(Long userId, LocalDate from, LocalDate to, String symbol,
+                                                   List<String> sources, Long brokerCredentialsId,
+                                                   Boolean intraday, String scope) {
+        return buildReportData(userId, from, to, symbol, null, sources, brokerCredentialsId, intraday, scope, true);
+    }
+
+    private TradeAnalyticsReportData buildReportData(Long userId, LocalDate from, LocalDate to, String symbol,
+                                                      String source, List<String> sources, Long brokerCredentialsId,
+                                                      Boolean intraday, String scope, boolean includePositions) {
         LocalDate resolvedTo = to != null ? to : LocalDate.now(MARKET_ZONE);
         LocalDate resolvedFrom = from != null ? from : resolvedTo.minusDays(30);
         if (resolvedFrom.isAfter(resolvedTo)) {
@@ -135,7 +147,7 @@ public class TradeAnalyticsService {
                 .filter(trade -> overlapsFundUseWindow(trade, start, end))
                 .toList();
 
-        return TradeAnalyticsResponse.builder()
+        TradeAnalyticsResponse analytics = TradeAnalyticsResponse.builder()
                 .filters(TradeAnalyticsResponse.Filters.builder()
                         .userId(userId)
                         .from(resolvedFrom)
@@ -162,6 +174,23 @@ public class TradeAnalyticsService {
                         scope)))
                 .recentClosedTrades(buildRecentClosedTrades(realizedTrades))
                 .build();
+        if (!includePositions) return new TradeAnalyticsReportData(analytics, List.of());
+        List<TradeAnalyticsReportData.Position> positions = java.util.stream.Stream.concat(realizedTrades.stream(), openTrades.stream())
+                .sorted(Comparator.comparing(this::eventTime, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(TriggeredTradeSetupEntity::getId, Comparator.nullsLast(Comparator.naturalOrder())))
+                .map(trade -> {
+                    boolean closed = isRealizedTrade(trade);
+                    TradeCostCalculator.TradeCharges charges = closed ? TradeCostCalculator.calculateCharges(trade) : null;
+                    Double cost = closed ? (charges != null ? charges.totalTradeCost()
+                            : trade.getTradeCost() != null ? trade.getTradeCost() : 0d) : null;
+                    return new TradeAnalyticsReportData.Position(trade.getId(), trade.getSymbol(), trade.getSource(),
+                            org.com.sharekhan.util.TradeSide.entry(trade), trade.getStatus().name(), trade.getQuantity(),
+                            trade.getActualEntryPrice() != null ? trade.getActualEntryPrice() : trade.getEntryPrice(),
+                            trade.getExitPrice(), trade.getEntryAt() != null ? trade.getEntryAt() : trade.getTriggeredAt(),
+                            trade.getExitedAt(), closed ? trade.getPnl() : null, cost,
+                            closed ? round(trade.getPnl() - cost) : null, trade.getExitReason());
+                }).toList();
+        return new TradeAnalyticsReportData(analytics, positions);
     }
 
     private List<String> normalizeSources(List<String> sources) {
