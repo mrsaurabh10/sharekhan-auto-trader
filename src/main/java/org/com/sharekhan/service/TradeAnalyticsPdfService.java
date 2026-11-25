@@ -352,8 +352,12 @@ public class TradeAnalyticsPdfService {
             stream.stroke();
             float endY = bottom + (float)((equity[equity.length - 1] - low) / range * height);
             String finalValue = money(equity[equity.length - 1]);
-            text(finalValue, left + width - BOLD.getStringWidth(finalValue) / 1000 * 9 - 5,
-                    Math.min(top - 11, endY + 12), 9, BOLD, pnlColor(finalValue));
+            float finalLabelWidth = BOLD.getStringWidth(finalValue) / 1000 * 9;
+            float finalLabelX = left + width - finalLabelWidth - 5;
+            float finalLabelY = Math.min(top - 11, endY + 12);
+            stream.setNonStrokingColor(equity[equity.length - 1] >= 0 ? new Color(228, 246, 237) : new Color(252, 228, 232));
+            stream.addRect(finalLabelX - 4, finalLabelY - 3, finalLabelWidth + 8, 14); stream.fill();
+            text(finalValue, finalLabelX, finalLabelY, 9, BOLD, pnlColor(finalValue));
             stream.setNonStrokingColor(BLUE); stream.addRect(left + width - 2.5f, endY - 2.5f, 5, 5); stream.fill();
             double[] drawdowns = new double[equity.length];
             double peak = 0;
