@@ -9,6 +9,7 @@ import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
 import org.com.sharekhan.dto.TradeAnalyticsResponse;
 import org.springframework.stereotype.Service;
 
+import java.awt.Color;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -23,6 +24,15 @@ import java.util.Locale;
 public class TradeAnalyticsPdfService {
     private static final PDType1Font FONT = new PDType1Font(Standard14Fonts.FontName.HELVETICA);
     private static final PDType1Font BOLD = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);
+    private static final Color TEXT = new Color(30, 44, 65);
+    private static final Color BLUE = new Color(25, 80, 155);
+    private static final Color PALE_BLUE = new Color(232, 241, 253);
+    private static final Color PROFIT = new Color(0, 115, 70);
+    private static final Color LOSS = new Color(185, 35, 50);
+    private static final Color ROW_TINT = new Color(246, 249, 254);
+    private static final java.util.regex.Pattern PNL_VALUE = java.util.regex.Pattern.compile(
+            "(?:Day P&L|Gross P&L|Effective P&L|Gross realized P&L|Effective realized P&L|Average win|Average loss|Best trade|Max single-trade loss): ([-0-9,]+\\.[0-9]{2})");
+
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public byte[] generate(TradeAnalyticsReportData report) throws IOException {
@@ -43,7 +53,7 @@ public class TradeAnalyticsPdfService {
                     + "     Total cost: " + money(s.getTotalTradeCost()));
             page.line("Closed: " + s.getTotalClosedTrades() + "     Wins / losses / breakeven: " + s.getWinningTrades()
                     + " / " + s.getLosingTrades() + " / " + s.getBreakevenTrades() + "     Accuracy (win rate): " + money(s.getWinRate()) + "%");
-            page.line("Profit factor: " + money(s.getProfitFactor()) + "     Average win / loss: " + money(s.getAverageWin()) + " / " + money(s.getAverageLoss()));
+            page.line("Profit factor: " + money(s.getProfitFactor()) + "     Average win: " + money(s.getAverageWin()) + " | Average loss: " + money(s.getAverageLoss()));
             page.line("Best trade: " + money(s.getBestTradePnl()) + "     Max single-trade loss: "
                     + money(s.getWorstTradePnl() == null ? null : Math.max(0, -s.getWorstTradePnl())));
             List<TradeAnalyticsReportData.Position> closed = report.positions().stream().filter(p -> p.pnl() != null && p.exitedAt() != null)
@@ -58,7 +68,7 @@ public class TradeAnalyticsPdfService {
             page.line("Closed trades use exit date; open trades use trigger date. Failed/rejected attempts are counts only.");
             page.line("Accuracy uses gross profitable closed trades / all closed trades. Costs follow the analytics charge model.");
             page.line("Equity starts at zero (cumulative realized P&L); drawdown is peak-to-trough at each trade close.");
-            page.heading("Realized equity | gross (blue) / effective (green)");
+            page.heading("Equity and drawdown");
             page.chart(closed);
             page.positions(report.positions());
             page.finish();
@@ -85,6 +95,8 @@ public class TradeAnalyticsPdfService {
         private final PDDocument document;
         private PDPageContentStream stream;
         private float y;
+        private float pageWidth;
+        private int positionRow;
         private static final float WIDTH = PDRectangle.A4.getWidth() - 80;
 
         Layout(PDDocument document) throws IOException { this.document = document; newPage(); }
@@ -96,20 +108,53 @@ public class TradeAnalyticsPdfService {
             PDPage page = new PDPage(size);
             document.addPage(page);
             stream = new PDPageContentStream(document, page);
+            pageWidth = size.getWidth();
+            stream.setNonStrokingColor(BLUE);
+            stream.addRect(0, size.getHeight() - 8, pageWidth, 8); stream.fill();
             y = size.getHeight() - 42;
         }
 
         void finish() throws IOException {
             if (stream == null) return;
+            stream.setStrokingColor(new Color(190, 210, 237));
+            stream.setLineWidth(0.6f); stream.moveTo(40, 40); stream.lineTo(pageWidth - 40, 40); stream.stroke();
             text("Trading analytics | Page " + document.getNumberOfPages(), 40, 25, 9, FONT);
             stream.close();
             stream = null;
         }
 
         void text(String value, float x, float baseline, float size, PDType1Font font) throws IOException {
-            stream.setNonStrokingColor(new java.awt.Color(30, 44, 65));
+            text(value, x, baseline, size, font, TEXT);
+        }
+
+        void text(String value, float x, float baseline, float size, PDType1Font font, Color color) throws IOException {
+            stream.setNonStrokingColor(color);
             stream.beginText(); stream.setFont(font, size); stream.newLineAtOffset(x, baseline);
             stream.showText(value); stream.endText();
+        }
+
+        Color pnlColor(String amount) {
+            try {
+                double number = Double.parseDouble(amount.replace(",", ""));
+                return number > 0 ? PROFIT : number < 0 ? LOSS : TEXT;
+            } catch (NumberFormatException e) { return TEXT; }
+        }
+
+        void financialText(String value, float x, float baseline, float size, PDType1Font font, Color base) throws IOException {
+            var matcher = PNL_VALUE.matcher(value);
+            int previous = 0;
+            while (matcher.find()) {
+                String prefix = value.substring(previous, matcher.start(1));
+                text(prefix, x, baseline, size, font, base);
+                x += font.getStringWidth(prefix) / 1000 * size;
+                String amount = matcher.group(1);
+                Color color = matcher.group().startsWith("Max single-trade loss:") && Double.parseDouble(amount.replace(",", "")) > 0
+                        ? LOSS : pnlColor(amount);
+                text(amount, x, baseline, size, font, color);
+                x += font.getStringWidth(amount) / 1000 * size;
+                previous = matcher.end(1);
+            }
+            text(value.substring(previous), x, baseline, size, font, base);
         }
 
         List<String> wrap(String input) throws IOException { return wrap(input, WIDTH, 9); }
@@ -137,13 +182,18 @@ public class TradeAnalyticsPdfService {
 
         void heading(String title) throws IOException {
             if (y < 90) newPage();
-            y -= 10; text(title, 40, y, 14, BOLD); y -= 24;
+            y -= 10;
+            stream.setNonStrokingColor(PALE_BLUE);
+            stream.addRect(40, y - 7, pageWidth - 80, 27); stream.fill();
+            stream.setNonStrokingColor(BLUE);
+            stream.addRect(40, y - 7, 4, 27); stream.fill();
+            text(title, 50, y, 14, BOLD, BLUE); y -= 24;
         }
 
         void line(String value) throws IOException {
             for (String row : wrap(value)) {
                 if (y < 50) newPage();
-                text(row, 40, y, 9, FONT); y -= 15;
+                financialText(row, 40, y, 9, FONT, TEXT); y -= 15;
             }
         }
 
@@ -174,6 +224,7 @@ public class TradeAnalyticsPdfService {
                 String label = "Entry date: " + (group.getKey() == null ? "Unknown" : group.getKey())
                         + " | Day P&L: " + money(gross) + " | Effective P&L: " + money(effective);
                 if (y < 160) { newPage(TABLE_PAGE); heading("Positions continued"); }
+                positionRow = 0;
                 tableHeader(label);
                 for (var position : rows) {
                     var cells = List.of("#" + value(position.id()), value(position.symbol()), value(position.source()),
@@ -182,16 +233,21 @@ public class TradeAnalyticsPdfService {
                             date(position.enteredAt()).replace(' ', '\n'), date(position.exitedAt()).replace(' ', '\n'),
                             money(position.pnl()), money(position.cost()), money(position.effectivePnl()));
                     tableRow(cells, false, label);
+                    positionRow++;
                 }
                 if (y < 75) { newPage(TABLE_PAGE); heading("Positions continued"); tableHeader(label + " (continued)"); }
-                text("Date subtotal | Positions: " + rows.size() + " | Gross P&L: " + money(gross)
-                        + " | Cost: " + money(cost) + " | Effective P&L: " + money(effective), 40, y - 14, 9, BOLD);
+                stream.setNonStrokingColor(PALE_BLUE);
+                stream.addRect(40, y - 24, 762, 24); stream.fill();
+                financialText("Date subtotal | Positions: " + rows.size() + " | Gross P&L: " + money(gross)
+                        + " | Cost: " + money(cost) + " | Effective P&L: " + money(effective), 46, y - 15, 9, BOLD, BLUE);
                 y -= 40;
             }
         }
 
         void tableHeader(String label) throws IOException {
-            text(label, 40, y, 11, BOLD); y -= 10;
+            stream.setNonStrokingColor(PALE_BLUE);
+            stream.addRect(40, y - 7, 762, 25); stream.fill();
+            financialText(label, 46, y, 11, BOLD, BLUE); y -= 10;
             tableRow(HEADERS, true, label);
         }
 
@@ -213,15 +269,15 @@ public class TradeAnalyticsPdfService {
                 }
                 int count = Math.min(available, lineCount - offset);
                 float height = count * 11 + 10;
-                if (header) {
-                    stream.setNonStrokingColor(new java.awt.Color(232, 239, 248));
-                    stream.addRect(40, y - height, 762, height); stream.fill();
-                }
+                stream.setNonStrokingColor(header ? BLUE : positionRow % 2 == 0 ? Color.WHITE : ROW_TINT);
+                stream.addRect(40, y - height, 762, height); stream.fill();
                 float x = 40;
                 stream.setLineWidth(0.4f);
                 for (int col = 0; col < cells.size(); col++) {
                     for (int row = 0; row < count && offset + row < wrapped.get(col).size(); row++) {
-                        text(wrapped.get(col).get(offset + row), x + 4, y - 13 - row * 11, 7.5f, header ? BOLD : FONT);
+                        text(wrapped.get(col).get(offset + row), x + 4, y - 13 - row * 11, 7.5f,
+                                header || col == 9 || col == 11 ? BOLD : FONT,
+                                header ? Color.WHITE : col == 9 || col == 11 ? pnlColor(cells.get(col)) : TEXT);
                     }
                     stream.setStrokingColor(new java.awt.Color(205, 215, 228));
                     stream.addRect(x, y - height, COLUMNS[col], height); stream.stroke();
@@ -234,35 +290,121 @@ public class TradeAnalyticsPdfService {
 
         void chart(List<TradeAnalyticsReportData.Position> closed) throws IOException {
             if (closed.isEmpty()) { line("No closed trades for this range."); return; }
-            if (y < 260) newPage();
-            float bottom = y - 175, left = 105, width = WIDTH - 65;
-            double[] gross = new double[closed.size() + 1], net = new double[closed.size() + 1];
-            double min = 0, max = 0;
+            if (y < 330) { newPage(); heading("Equity and drawdown"); }
+            double[] equity = new double[closed.size() + 1];
+            double minimum = 0, maximum = 0;
             for (int i = 0; i < closed.size(); i++) {
-                gross[i + 1] = gross[i] + closed.get(i).pnl(); net[i + 1] = net[i] + closed.get(i).effectivePnl();
-                min = Math.min(min, Math.min(gross[i + 1], net[i + 1])); max = Math.max(max, Math.max(gross[i + 1], net[i + 1]));
+                equity[i + 1] = equity[i] + closed.get(i).pnl();
+                minimum = Math.min(minimum, equity[i + 1]);
+                maximum = Math.max(maximum, equity[i + 1]);
             }
-            if (max == min) { max += 1; min -= 1; }
-            double range = max - min;
-            for (int i = 0; i <= 4; i++) {
-                float yy = bottom + i * 40;
-                stream.setStrokingColor(new java.awt.Color(225, 230, 237)); stream.moveTo(left, yy); stream.lineTo(left + width, yy); stream.stroke();
-                text(money(min + range * i / 4), 40, yy - 3, 8, FONT);
+            double span = maximum - minimum;
+            double targetStep = (span == 0 ? 1 : span * 1.12) / 4;
+            double magnitude = Math.pow(10, Math.floor(Math.log10(targetStep)));
+            double fraction = targetStep / magnitude;
+            double step = (fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10) * magnitude;
+            double low = minimum < 0 ? Math.floor((minimum - span * 0.04) / step) * step : 0;
+            double high = maximum > 0 ? Math.ceil((maximum + span * 0.04) / step) * step : 0;
+            if (low == high) { low = -1; high = 1; step = 0.5; }
+            text("GROSS REALIZED P&L", 40, y + 2, 8, BOLD, BLUE);
+            text(money(equity[equity.length - 1]), 40, y - 18, 16, BOLD, pnlColor(money(equity[equity.length - 1])));
+            text("MAX DRAWDOWN", 310, y + 2, 8, BOLD, BLUE);
+            double maximumDrawdown = drawdown(closed, false);
+            text(money(maximumDrawdown), 310, y - 18, 16, BOLD, maximumDrawdown > 0 ? LOSS : TEXT);
+
+            float left = 105, width = WIDTH - 65, top = y - 48;
+            float totalHeight = Math.min(285, top - 130);
+            float drawdownHeight = 60, panelGap = 30;
+            float height = totalHeight - drawdownHeight - panelGap, bottom = top - height;
+            float drawdownTop = bottom - panelGap, drawdownBottom = drawdownTop - drawdownHeight;
+            double range = high - low;
+            stream.setNonStrokingColor(new Color(250, 252, 255));
+            stream.addRect(left, bottom, width, height); stream.fill();
+            for (double tick = low; tick <= high + step / 100; tick += step) {
+                float yy = bottom + (float)((tick - low) / range * height);
+                stream.setStrokingColor(Math.abs(tick) < step / 100 ? new Color(130, 151, 181) : new Color(220, 229, 241));
+                stream.setLineWidth(Math.abs(tick) < step / 100 ? 1f : 0.5f);
+                stream.moveTo(left, yy); stream.lineTo(left + width, yy); stream.stroke();
+                String label = Math.abs(tick) < 0.00001 ? "0" : String.format(Locale.US, step < 1 ? "%,.2f" : "%,.0f", tick);
+                text(label, left - 10 - FONT.getStringWidth(label) / 1000 * 8, yy - 3, 8, FONT, TEXT);
             }
-            for (int series = 0; series < 2; series++) {
-                stream.setStrokingColor(new java.awt.Color(series == 0 ? 30 : 15, series == 0 ? 100 : 140, series == 0 ? 210 : 95));
-                stream.setLineWidth(1.5f);
-                double[] values = series == 0 ? gross : net;
-                for (int i = 0; i < values.length; i++) {
-                    float xx = left + width * i / closed.size(), yy = bottom + (float)((values[i] - min) / range * 160);
-                    if (i == 0) stream.moveTo(xx, yy); else stream.lineTo(xx, yy);
+            text("INR", 40, top + 4, 8, BOLD, BLUE);
+            int intervals = Math.min(4, closed.size());
+            var dayFormat = DateTimeFormatter.ofPattern("dd MMM", Locale.ENGLISH);
+            var timeFormat = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH);
+            for (int tick = 0; tick <= intervals; tick++) {
+                int index = (int)Math.round((double)tick * closed.size() / intervals);
+                float xx = left + width * index / closed.size();
+                stream.setStrokingColor(new Color(228, 235, 246)); stream.setLineWidth(0.5f);
+                stream.moveTo(xx, bottom); stream.lineTo(xx, top); stream.stroke();
+                String label = index == 0 ? "Start" : dayFormat.format(closed.get(index - 1).exitedAt());
+                text(label, xx - FONT.getStringWidth(label) / 1000 * 8 / 2, drawdownBottom - 17, 8, FONT);
+                if (index > 0) {
+                    String time = timeFormat.format(closed.get(index - 1).exitedAt());
+                    text(time, xx - FONT.getStringWidth(time) / 1000 * 8 / 2, drawdownBottom - 29, 8, FONT);
                 }
-                stream.stroke();
             }
-            text("Start (0)", left, bottom - 17, 8, FONT);
-            text("Trade closes: " + closed.size(), left + width - 90, bottom - 17, 8, FONT);
-            y = bottom - 38;
-            line("First close: " + date(closed.getFirst().exitedAt()) + " | Last close: " + date(closed.getLast().exitedAt()));
+            stream.setStrokingColor(BLUE); stream.setLineWidth(2.2f); stream.setLineJoinStyle(1); stream.setLineCapStyle(1);
+            for (int i = 0; i < equity.length; i++) {
+                float xx = left + width * i / closed.size(), yy = bottom + (float)((equity[i] - low) / range * height);
+                if (i == 0) stream.moveTo(xx, yy); else stream.lineTo(xx, yy);
+            }
+            stream.stroke();
+            float endY = bottom + (float)((equity[equity.length - 1] - low) / range * height);
+            String finalValue = money(equity[equity.length - 1]);
+            text(finalValue, left + width - BOLD.getStringWidth(finalValue) / 1000 * 9 - 5,
+                    Math.min(top - 11, endY + 12), 9, BOLD, pnlColor(finalValue));
+            stream.setNonStrokingColor(BLUE); stream.addRect(left + width - 2.5f, endY - 2.5f, 5, 5); stream.fill();
+            double[] drawdowns = new double[equity.length];
+            double peak = 0;
+            int peakIndex = 0, largestPeak = 0, largestTrough = 0;
+            for (int i = 0; i < equity.length; i++) {
+                if (equity[i] >= peak) { peak = equity[i]; peakIndex = i; }
+                drawdowns[i] = equity[i] - peak;
+                if (drawdowns[i] < drawdowns[largestTrough]) { largestPeak = peakIndex; largestTrough = i; }
+            }
+            if (maximumDrawdown > 0) {
+                float peakX = left + width * largestPeak / closed.size();
+                float troughX = left + width * largestTrough / closed.size();
+                float peakY = bottom + (float)((equity[largestPeak] - low) / range * height);
+                float troughY = bottom + (float)((equity[largestTrough] - low) / range * height);
+                stream.setStrokingColor(new Color(209, 112, 124)); stream.setLineWidth(0.7f);
+                stream.setLineDashPattern(new float[] {2, 2}, 0);
+                stream.moveTo(peakX, peakY); stream.lineTo(troughX, peakY); stream.lineTo(troughX, troughY); stream.stroke();
+                stream.setLineDashPattern(new float[0], 0);
+                String label = "Largest drawdown";
+                float labelWidth = FONT.getStringWidth(label) / 1000 * 7;
+                float labelX = Math.max(left + 4, Math.min(left + width - labelWidth, (peakX + troughX) / 2 - labelWidth / 2));
+                text(label, labelX, Math.min(top - 9, peakY + 10), 7, FONT, LOSS);
+            }
+            text("DRAWDOWN (INR)", left, drawdownTop + 10, 8, BOLD, LOSS);
+            double drawdownScale = maximumDrawdown > 0 ? maximumDrawdown * 1.15 : 1;
+            stream.setNonStrokingColor(new Color(252, 228, 232));
+            stream.moveTo(left, drawdownTop);
+            for (int i = 0; i < drawdowns.length; i++) {
+                stream.lineTo(left + width * i / closed.size(), drawdownTop + (float)(drawdowns[i] / drawdownScale * drawdownHeight));
+            }
+            stream.lineTo(left + width, drawdownTop); stream.closePath(); stream.fill();
+            stream.setStrokingColor(new Color(225, 211, 219)); stream.setLineWidth(0.5f);
+            stream.moveTo(left, drawdownTop); stream.lineTo(left + width, drawdownTop); stream.stroke();
+            stream.setStrokingColor(LOSS); stream.setLineWidth(1f);
+            for (int i = 0; i < drawdowns.length; i++) {
+                float xx = left + width * i / closed.size();
+                float yy = drawdownTop + (float)(drawdowns[i] / drawdownScale * drawdownHeight);
+                if (i == 0) stream.moveTo(xx, yy); else stream.lineTo(xx, yy);
+            }
+            stream.stroke();
+            text("0", left - 14, drawdownTop - 3, 8, FONT);
+            if (maximumDrawdown > 0) {
+                String label = "-" + money(maximumDrawdown);
+                float level = drawdownTop - (float)(maximumDrawdown / drawdownScale * drawdownHeight);
+                text(label, left - 10 - FONT.getStringWidth(label) / 1000 * 8, level - 3, 8, FONT, LOSS);
+            }
+            y = drawdownBottom - 51;
+            text("Trade closes in exit-time order (equally spaced) | Gross P&L before costs", 40, y, 8, FONT);
+            y -= 16;
+            text("First: " + date(closed.getFirst().exitedAt()) + "   Last: " + date(closed.getLast().exitedAt()), 40, y, 8, FONT);
+            y -= 15;
         }
 
         @Override public void close() throws IOException { finish(); }

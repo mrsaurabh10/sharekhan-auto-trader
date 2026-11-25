@@ -54,6 +54,11 @@ class TradeAnalyticsPdfServiceTest {
                 assertThat(stripper.getText(pdf)).contains("Symbol", "Source", "Gross P&L", "Effective P&L", "Entry date:");
                 assertThat(pdf.getPage(i - 1).getMediaBox().getWidth()).isGreaterThan(pdf.getPage(i - 1).getMediaBox().getHeight());
             }
+            var summaryText = new PDFTextStripper();
+            summaryText.setStartPage(1); summaryText.setEndPage(1);
+            String firstPage = summaryText.getText(pdf);
+            assertThat(firstPage).contains("GROSS REALIZED P&L", "MAX DRAWDOWN", "Gross P&L before costs", "DRAWDOWN (INR)", "Largest drawdown")
+                    .doesNotContain("effective (green)");
             var renderer = new PDFRenderer(pdf);
             ImageIO.write(renderer.renderImageWithDPI(0, 120), "png", output.resolve("summary.png").toFile());
             ImageIO.write(renderer.renderImageWithDPI(1, 120), "png", output.resolve("positions.png").toFile());

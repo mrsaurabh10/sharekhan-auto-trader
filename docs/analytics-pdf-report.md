@@ -7,7 +7,7 @@ The PDF contains:
 - Gross and effective realized P&L, brokerage, taxes and total costs.
 - Closed/winning/losing/breakeven counts, accuracy (gross win rate), profit factor, average win/loss and best trade.
 - Maximum single-trade gross loss and maximum gross/effective drawdown.
-- Gross/effective realized equity curves, starting from zero and ordered by exit time, then trade ID.
+- Blue gross realized equity curve with a separate red drawdown panel, largest-drawdown annotation, date/time ticks and final P&L/drawdown callouts, starting from zero and ordered by exit time, then trade ID. Effective P&L remains in the metrics and position table.
 - Peak funds in use, open quantity, and rejected/failed attempt counts.
 - A landscape table grouped by entry date, with gross/effective day P&L in each date heading, repeated headers, daily subtotals and each matching closed/open position's ID, symbol, source, side, status, quantity, entry/exit prices and timestamps, gross/effective P&L, costs and exit reason.
 
